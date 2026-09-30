@@ -37,9 +37,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Linux and Windows build on the self-hosted Proxmox runners. This workflow
+  # only runs on owner-pushed tags and manual dispatch, never on pull requests.
   build-linux:
     name: Build Linux artifacts
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux-proxmox]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,7 +67,7 @@ jobs:
 
   build-windows:
     name: Build Windows artifacts
-    runs-on: windows-latest
+    runs-on: [self-hosted, windows-proxmox]
     steps:
       - uses: actions/checkout@v4
         with:
