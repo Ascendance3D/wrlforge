@@ -12,6 +12,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 # One run per ref; cancel superseded runs so we never stack Electron-adjacent work.
 concurrency:
@@ -24,11 +25,24 @@ permissions:
 jobs:
   test:
     name: test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    # Pushes to main run on the self-hosted Proxmox runners (public-ci runner
+    # group, restricted to this repo). Pull requests always use GitHub-hosted
+    # runners so fork code never executes on the self-hosted machines. There is
+    # no self-hosted macOS runner, so macOS is GitHub-hosted either way.
+    runs-on: ${{ github.event_name == 'pull_request' && matrix.hosted || fromJSON(matrix.self_hosted) }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu
+            hosted: ubuntu-latest
+            self_hosted: '["self-hosted", "linux-proxmox"]'
+          - os: windows
+            hosted: windows-latest
+            self_hosted: '["self-hosted", "windows-proxmox"]'
+          - os: macos
+            hosted: macos-latest
+            self_hosted: '"macos-latest"'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
