@@ -98,7 +98,7 @@ Before opening a pull request:
 - do not add a runtime dependency without discussing it first. The runtime dependency
   set is deliberately `x_ite` only.
 
-See [`AGENTS.md`](AGENTS.md) and [`WD.md`](WD.md) for the architectural constraints that
+See [`CLAUDE.md`](CLAUDE.md) and [`WD.md`](WD.md) for the architectural constraints that
 a change is expected to respect.
 
 ## ⚠️ Do not upload proprietary or private content
