@@ -1,6 +1,6 @@
 # WD.md — the lossless document core
 
-The foundation the **model editor** stands on. Referenced from `AGENTS.md`; read
+The foundation the **model editor** stands on. Referenced from `CLAUDE.md`; read
 this before touching anything under `src/vrml/`, and before designing any feature
 that edits a document rather than merely reading it.
 
