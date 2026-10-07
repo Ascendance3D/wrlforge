@@ -81,7 +81,17 @@
     pickListening: false,
     renderedArmed: false,
     editedIsPrimary: true,  // World: false when the root string is NOT the edited file
+    rescanning: false,      // "Find new files" in flight (the command's enabled state)
   };
+
+  // UI-0: the layout / rescan state behind the preview commands changed. The
+  // editor page's command registry re-reads enabled/checked on this event
+  // (editor.js loads first, so a direct subscription is not possible here).
+  function notifyStateChange() {
+    if (typeof document.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+      document.dispatchEvent(new CustomEvent('wrl-editor-preview-state'));
+    }
+  }
 
   function nowMs() { return Date.now(); }
 
@@ -123,14 +133,12 @@
       divider.setAttribute('aria-valuenow', String(m.splitPercent));
       divider.style.display = m.layout === 'split' ? '' : 'none';
     }
+    // The pressed state and the layout select are painted from the command
+    // registry (preview.toggleMaximize / preview.layout.*); the label stays here.
     const maxBtn = el('previewMaxBtn');
-    if (maxBtn) {
-      maxBtn.textContent = m.maximized ? 'Restore' : 'Maximize';
-      maxBtn.setAttribute('aria-pressed', String(m.maximized));
-    }
-    const sel = el('previewLayoutSelect');
-    if (sel && sel.value !== m.layout) sel.value = m.layout;
+    if (maxBtn) maxBtn.textContent = m.maximized ? 'Restore' : 'Maximize';
     persistLayout(m.layout); persistSplit(m.split);
+    notifyStateChange();
     // Entering a layout that shows the preview for the first time: render it.
     if (m.previewVisible && St.active && St.sm.displayedGeneration === 0 && !St.inFlight) {
       requestUpdate('manual');
@@ -360,11 +368,10 @@
   // no path crosses IPC -- then a fresh Update renders against the new graph.
   async function findNewFiles() {
     if (!St.active || St.context !== 'world') return;
-    const btn = el('previewFindNewBtn');
-    if (btn) btn.disabled = true;
+    St.rescanning = true; notifyStateChange();
     let res = null;
     try { res = await bridge.previewRescan(St.sessionId); } catch (e) { res = null; }
-    if (btn) btn.disabled = false;
+    St.rescanning = false; notifyStateChange();
     if (res && res.ok) manualUpdate();
   }
 
@@ -530,17 +537,8 @@
     wireDivider();
     applyLayout();
     paintChip();
-
-    const upd = el('previewUpdateBtn');
-    if (upd) upd.addEventListener('click', () => manualUpdate());
-    const mx = el('previewMaxBtn');
-    if (mx) mx.addEventListener('click', () => toggleMaximize());
-    const sv = el('previewSavedBtn');
-    if (sv) sv.addEventListener('click', () => showSaved());
-    const fn = el('previewFindNewBtn');
-    if (fn) fn.addEventListener('click', () => findNewFiles());
-    const sel = el('previewLayoutSelect');
-    if (sel) sel.addEventListener('change', () => setLayout(sel.value));
+    // Update / Show saved / Maximize / Find new files and the layout select are
+    // bound to their commands by editor.js (UI-0 command bindings).
 
     // Tell main to drop the overlay if the renderer is torn down (reload / close /
     // navigate). This is the renderer-reload cleanup path.
@@ -559,6 +557,10 @@
   window.wrlEditorPreview = {
     start, stop, onEdit, manualUpdate, showSaved, findNewFiles,
     setLayout, toggleMaximize, stepSplit, armPicking,
+    // UI-0 public read accessors (the command registry must not read _state()).
+    getLayout: () => St.layout,
+    isRescanning: () => St.rescanning,
+    displayedGeneration: () => St.sm.displayedGeneration,
     // QA / introspection (no buffer text exposed).
     _state: () => ({
       state: St.sm.state, failureCategory: St.sm.failureCategory,

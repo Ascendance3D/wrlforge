@@ -5,18 +5,21 @@
 //
 //   * the Model bar -- the Model/Code workspace switch, the always-visible Add
 //     Box / Add Sphere buttons, Duplicate, Delete, a "Selected: ..." line, the
-//     Show/Hide Source toggle and a textual status line;
+//     Show/Hide Source toggle and a textual status line. Since UI-0 (#35) those
+//     buttons are `data-command` controls: their click, `disabled` and
+//     `aria-pressed` belong to the command registry (editor.js); this view keeps
+//     only layout -- the Source toggle's visibility and label -- and the text;
 //   * the "Object" panel -- the beginner properties of the selected simple
 //     object (Position, Rotation, Size|Radius, Color) with the VRML field name
 //     and type as secondary text.
 //
 // It decides NOTHING about the document. Every value it shows comes from
 // `deps.objectFor(itemId)` (the pure simple-object facade over the current
-// parse); every action goes through `deps.add / duplicate / remove /
-// applyProperty`, which plan and verify an exact source edit and dispatch it as
-// one CodeMirror transaction. It never computes an offset, never builds VRML
-// text, keeps no value of its own and owns no selection (it reads the shared
-// selection controller). Numbers are committed on Enter / Apply, a colour on
+// parse); every Object-panel edit goes through `deps.applyProperty`, which
+// plans and verifies an exact source edit and dispatches it as one CodeMirror
+// transaction (the Model-bar actions do the same through their commands). It
+// never computes an offset, never builds VRML text, keeps no value of its own
+// and owns no selection (it reads the shared selection controller). Numbers are committed on Enter / Apply, a colour on
 // the picker's `change` (not on every `input` while dragging).
 
 (function () {
@@ -58,37 +61,17 @@
     }
 
     // --- the Model bar --------------------------------------------------------
+    // Layout and text only: enabled/pressed state comes from the commands.
     function paintBar() {
-      const mode = deps.getMode();
-      els.modelBtn.setAttribute('aria-pressed', String(mode === 'model'));
-      els.codeBtn.setAttribute('aria-pressed', String(mode === 'code'));
       const open = deps.isSourceOpen();
-      els.sourceBtn.hidden = mode !== 'model';
-      els.sourceBtn.setAttribute('aria-pressed', String(open));
+      els.sourceBtn.hidden = deps.getMode() !== 'model';
       els.sourceBtn.textContent = open ? 'Hide Source' : 'Show Source';
-      const docOpen = deps.isOpen();
-      els.addBox.disabled = !docOpen;
-      els.addSphere.disabled = !docOpen;
       const id = selection.getSelection();
       const info = id ? deps.describeSelection(id) : null;
-      const node = !!(info && info.isNode);
-      els.duplicate.disabled = !node;
-      els.remove.disabled = !node;
       els.selected.textContent = info ? `Selected: ${info.label}` : 'Nothing selected';
     }
 
     function wire() {
-      els.modelBtn.addEventListener('click', () => { deps.setMode('model'); refresh(); });
-      els.codeBtn.addEventListener('click', () => { deps.setMode('code'); refresh(); });
-      els.sourceBtn.addEventListener('click', () => { deps.setSourceOpen(!deps.isSourceOpen()); refresh(); });
-      const act = (fn) => () => {
-        const res = fn();
-        if (res && res.message) setStatus(res.message, !res.ok);
-      };
-      els.addBox.addEventListener('click', act(() => deps.add('Box')));
-      els.addSphere.addEventListener('click', act(() => deps.add('Sphere')));
-      els.duplicate.addEventListener('click', act(() => deps.duplicate(selection.getSelection())));
-      els.remove.addEventListener('click', act(() => deps.remove(selection.getSelection())));
       selection.subscribe(() => refresh());
     }
 
