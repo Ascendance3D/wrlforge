@@ -32,6 +32,15 @@
   let lastGoodText = null;       // retained so a temporary parse error keeps the scene
   let mode = 'original';
   const textureWarnings = [];
+  // WD2-D: the private X_ITE pick adapter for THIS browser (editor page only;
+  // window.WrlXitePickAdapter is absent on the Mall workspace page), and the
+  // provenance request of the last editor render, so re-rendering Original
+  // after Cybertown Fit can capture provenance again. `pickShown` is the
+  // generation THIS engine activated together with its scene, so a pick
+  // committed on pointerup can prove its generation is still the displayed one.
+  let pickAdapter = null;
+  let pickShown = null;
+  let lastProvenance = null;
 
   const el = (id) => document.getElementById(id);
 
@@ -75,13 +84,41 @@
       now: () => Date.now(),
     });
     browser = res.browser;
+    discardPickAdapter();
+    if (window.WrlXitePickAdapter) {
+      pickAdapter = window.WrlXitePickAdapter.createXitePickAdapter({ X3D: window.X3D, browser });
+    }
     return browser;
+  }
+
+  function discardPickAdapter() {
+    pickShown = null;
+    if (pickAdapter) pickAdapter.dispose();
+    pickAdapter = null;
+  }
+
+  function activatePick(generation, scene) {
+    pickShown = generation && pickAdapter && pickAdapter.activate(generation, scene) ? { generation, scene } : null;
+  }
+
+  // The displayed scene is about to change: release any pending capture and
+  // retire the active map before parsing.
+  function retirePick(reason) {
+    pickShown = null;
+    if (pickAdapter) { pickAdapter.abort(); pickAdapter.retire(reason); }
+  }
+
+  // null while `generation` is the displayed one, else the REFUSED_STALE reason.
+  function pickCurrentCheck(generation) {
+    if (!pickShown || !generation || pickShown.generation !== generation) return 'hit-from-another-preview-generation';
+    if (!browser || browser.currentScene !== pickShown.scene) return 'preview-scene-replaced';
+    return null;
   }
 
   async function ensureBrowser() {
     if (browser && Readiness.isBrowserUsable(browser)) return browser;
     // A browser that went unusable is discarded, not reused.
-    if (browser) { browser = null; ready = null; }
+    if (browser) { browser = null; ready = null; discardPickAdapter(); }
     if (!ready) {
       ready = acquireBrowser().catch((err) => {
         // Never leave a rejected promise (or a half-initialised browser) cached:
@@ -134,9 +171,18 @@ ${body}
   // Render the geometry for the active mode. Original for bbox computation is
   // always loaded first (bbox reflects authored transforms, not the preview
   // overlay); Fit mode then layers the preview transform + guides.
+  // WD2-D: the Fit render is never a provenance parse; Original re-renders
+  // capture provenance again when the last editor render asked for it.
   async function renderForMode() {
+    retirePick('preview-scene-replaced');
     if (mode === 'fit' && fit) {
       await renderScene(fitPreviewVrml());
+    } else if (pickAdapter && lastProvenance && meta.text === lastProvenance.text) {
+      browser.baseURL = meta.baseURL;
+      const r = await pickAdapter.parseWithProvenance(meta.text, lastProvenance.meta);
+      if (!r.scene) return;
+      await browser.replaceWorld(r.scene);
+      activatePick(r.generation, r.scene);
     } else {
       await renderScene(meta.text);
     }
@@ -183,11 +229,25 @@ ${body}
 
     textureWarnings.length = 0;
     let originalScene;
+    // WD2-D: the editor asks for provenance only in the Model workspace.
+    const provenance = opts && opts.provenance && pickAdapter ? opts.provenance : null;
+    lastProvenance = null;
+    pickShown = null;
     try {
       meta = loaded;
       browser.baseURL = meta.baseURL;
-      originalScene = await browser.createX3DFromString(meta.text);
+      let generation = null;
+      if (provenance) {
+        const r = await pickAdapter.parseWithProvenance(meta.text, provenance);
+        if (!r.scene) return { ok: false, cancelled: true };
+        originalScene = r.scene;
+        generation = r.generation;
+      } else {
+        originalScene = await browser.createX3DFromString(meta.text);
+      }
       await browser.replaceWorld(originalScene);
+      activatePick(generation, originalScene);
+      if (provenance) lastProvenance = { text: meta.text, meta: provenance };
       lastGoodText = meta.text;
     } catch (err) {
       // A dead WebGL context makes X_ITE throw from INSIDE its VRML parser, and
@@ -195,6 +255,7 @@ ${body}
       // readiness predicate before blaming the document.
       if (!Readiness.isBrowserUsable(browser)) {
         browser = null; ready = null;   // next load()/Refresh re-acquires
+        discardPickAdapter();
         const msg = '3D preview lost its graphics context before this file could be parsed. The file was NOT read as invalid — use Refresh Preview to try again.';
         setStatus(msg, true);
         renderReport({ initError: msg });
@@ -355,6 +416,9 @@ ${body}
     // know a last-valid scene exists without reaching into internals).
     hasScene: () => lastGoodText != null,
     currentMode: () => mode,
+    // WD2-D: this browser's pick adapter + its <x3d-canvas>, or null.
+    pickTarget: () => (pickAdapter && browser
+      ? { adapter: pickAdapter, element: el('preview'), retire: retirePick, currentCheck: pickCurrentCheck } : null),
     // exposed for the electron preview harness (test only)
     _debug: () => ({ bbox, fit, remoteUrls: meta && meta.remoteUrls, textureWarnings: dedupe(textureWarnings) }),
   };

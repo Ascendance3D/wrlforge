@@ -374,6 +374,7 @@ import * as vrmlDocumentTransaction from '../../vrml/document-transaction.js';
 import * as vrmlFieldEdit from '../../vrml/field-edit.js';
 import * as inspectorEdit from '../inspector-edit.js';
 import * as firstObject from '../first-object.js';
+import * as viewportPick from '../viewport-pick.js';
 
 window.WRLForgeSceneBridge = Object.freeze({
   sceneTree: Object.freeze({
@@ -436,5 +437,15 @@ window.WRLForgeSceneBridge = Object.freeze({
     displayLabels: firstObject.displayLabels,
     selectInserted: firstObject.selectInserted,
     refusalText: firstObject.refusalText,
+  }),
+  // WD2-D: viewport picking -- the PURE resolver from a plain-data X_ITE hit
+  // snapshot to an existing scene item, or an explicit refusal. It touches no
+  // X_ITE API; src/preview/xite-pick-adapter.js produces the snapshot.
+  viewportPick: Object.freeze({
+    resolvePick: viewportPick.resolvePick,
+    refusalText: viewportPick.refusalText,
+    compatibilityText: viewportPick.compatibilityText,
+    compatibilityRow: viewportPick.compatibilityRow,
+    STATUS: viewportPick.STATUS,
   }),
 });

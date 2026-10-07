@@ -74,6 +74,13 @@
     lastRenderMs: null,     // last scene-replacement duration (QA/perf evidence)
     layout: 'split',
     split: 0.5,
+    // WD2-D viewport picking: armed only in the Model workspace (editor.js).
+    pickArmed: false,
+    pickHandlers: null,     // { onPick(snapshot, currentCheck), onCompatibility(c) }
+    pickDown: null,         // the pending primary pointerdown { snapshot, x, y, pointerId, check }
+    pickListening: false,
+    renderedArmed: false,
+    editedIsPrimary: true,  // World: false when the root string is NOT the edited file
   };
 
   function nowMs() { return Date.now(); }
@@ -248,6 +255,11 @@
     St.sizeTier = res.sizeTier || 'auto';
     St.newRefs = res.buffer && Array.isArray(res.buffer.newRefs) ? res.buffer.newRefs.length : 0;
     paintWorldIdentity(res);
+    // WD2-D: the displayed scene is about to change -- release any pending
+    // provenance capture and retire the active pick map BEFORE parsing.
+    retirePicking('preview-shows-last-valid-scene');
+    St.editedIsPrimary = !(St.context === 'world' && res.editedIsPrimary === false);
+    const provenance = St.pickArmed && St.editedIsPrimary ? { sessionId: St.sessionId, generationId: gen } : null;
     St.sm = PS.beginUpdate(St.sm, gen, res.bufferVersion);
     paintChip(); // "Updating…"
 
@@ -263,7 +275,7 @@
         if (!v.ok) throw new Error(v.error || 'nested text rejected');
       }
       // World refreshes preserve the user's viewpoint/navigation where possible.
-      result = await engine().load({ source: async () => res, preserveView: St.context === 'world' });
+      result = await engine().load({ source: async () => res, preserveView: St.context === 'world', provenance });
     } catch (e) {
       result = { ok: false, parseError: String((e && e.message) || e) };
     }
@@ -275,6 +287,7 @@
     if (result && result.ok) {
       St.sm = PS.succeed(St.sm, gen, res.bufferVersion, 'buffer');
       St.displaySaved = false;
+      St.renderedArmed = St.pickArmed; // provenance was requested where provable
     } else if (result && result.parseError) {
       // X_ITE could not parse the newest text -- preview.js kept the last valid
       // scene on screen. Surface "showing last good version" (or "can't display").
@@ -284,6 +297,7 @@
     }
     paintChip();
     St.inFlight = false;
+    reportPickCompatibility();
     afterFire();
   }
 
@@ -320,6 +334,8 @@
     catch (e) { return; }
     if (!res || !res.ok) return;
     paintWorldIdentity(res);
+    retirePicking('preview-scene-replaced'); // the saved file is not the buffer
+    St.renderedArmed = false;
     try {
       await engine().load({ source: async () => res });
       St.displaySaved = true;
@@ -352,6 +368,105 @@
     if (res && res.ok) manualUpdate();
   }
 
+  // --- WD2-D viewport picking -------------------------------------------------
+  // Pointer glue only. The engine's pick adapter (the one private X_ITE module)
+  // turns a click into a plain-data snapshot; editor.js resolves it through the
+  // pure resolver and the ONE selection authority. Never preventDefault /
+  // stopPropagation: X_ITE's own navigation, sensors and Anchors are untouched.
+  const PICK_SLOP_PX = 4;
+
+  function pickTargets() {
+    const out = [];
+    for (const eng of [window.wrlPreview, window.wrlWorldPreview]) {
+      const t = eng && typeof eng.pickTarget === 'function' ? eng.pickTarget() : null;
+      if (t) out.push(t);
+    }
+    return out;
+  }
+
+  // Abort any pending provenance capture and retire the displayed pick map of
+  // every engine (both X_ITE browsers on the page). Adapters are disposed only
+  // with their browser (engines) or at page teardown (pagehide below).
+  function retirePicking(reason) {
+    for (const t of pickTargets()) t.retire(reason);
+  }
+
+  function activeTarget() {
+    const t = engine() && typeof engine().pickTarget === 'function' ? engine().pickTarget() : null;
+    return t && t.element ? t : null;
+  }
+
+  function onPickDown(e) {
+    St.pickDown = null;
+    if (!St.pickArmed || !St.active || !St.pickHandlers || e.button !== 0 || e.isPrimary === false) return;
+    const canvasEl = document.getElementById(St.context === 'world' ? 'wpCanvas' : 'preview');
+    const path = typeof e.composedPath === 'function' ? e.composedPath() : [e.target];
+    if (!canvasEl || !path.includes(canvasEl)) return;
+    const t = activeTarget();
+    let snapshot;
+    let check = () => 'hit-from-another-preview-generation';
+    if (St.displaySaved) snapshot = { outcome: 'stale', reason: 'preview-scene-replaced' };
+    else if (St.context === 'mall' && window.wrlPreview && window.wrlPreview.currentMode() === 'fit') {
+      snapshot = { outcome: 'unsupported', reason: 'preview-is-not-the-document' };
+    } else if (!St.editedIsPrimary) snapshot = { outcome: 'external', reason: 'preview-root-is-another-document' };
+    else if (!t || t.element !== canvasEl) snapshot = { outcome: 'stale', reason: 'preview-shows-last-valid-scene' };
+    else {
+      snapshot = t.adapter.pick(e.clientX, e.clientY);
+      check = t.currentCheck;
+    }
+    St.pickDown = { snapshot, check, x: e.clientX, y: e.clientY, pointerId: e.pointerId };
+  }
+
+  function onPickUp(e) {
+    const down = St.pickDown;
+    St.pickDown = null;
+    if (!down || e.pointerId !== down.pointerId || !St.pickArmed || !St.pickHandlers) return;
+    // A drag is navigation, never a pick.
+    if (Math.abs(e.clientX - down.x) > PICK_SLOP_PX || Math.abs(e.clientY - down.y) > PICK_SLOP_PX) return;
+    St.pickHandlers.onPick(down.snapshot, down.check);
+  }
+
+  function onPickCancel() { St.pickDown = null; }
+
+  function listenForPicks(on) {
+    const col = document.querySelector('.preview-col');
+    if (!col || on === St.pickListening) return;
+    const m = on ? 'addEventListener' : 'removeEventListener';
+    col[m]('pointerdown', onPickDown, true);
+    col[m]('pointerup', onPickUp, true);
+    col[m]('pointercancel', onPickCancel, true);
+    St.pickListening = on;
+  }
+
+  // Model workspace on/off. Off (Code) is inert: no listener, no touch(), no
+  // provenance requested, and any capture/map is released.
+  function armPicking(on, handlers) {
+    const next = !!on;
+    if (handlers) St.pickHandlers = handlers;
+    if (!next) {
+      St.pickDown = null;
+      if (St.pickArmed) retirePicking('preview-scene-replaced');
+      St.pickArmed = false;
+      St.renderedArmed = false; // re-arming renders once with provenance
+      listenForPicks(false);
+      return;
+    }
+    St.pickArmed = true;
+    listenForPicks(true);
+    reportPickCompatibility();
+    // The displayed scene was rendered while picking was off (Code workspace,
+    // Show saved): render the buffer once so picking can prove identities.
+    if (St.active && !St.inFlight && St.sm.displayedGeneration > 0 && !St.renderedArmed && !St.displaySaved) {
+      manualUpdate();
+    }
+  }
+
+  function reportPickCompatibility() {
+    if (!St.pickArmed || !St.pickHandlers || typeof St.pickHandlers.onCompatibility !== 'function') return;
+    const t = activeTarget();
+    St.pickHandlers.onCompatibility(t ? t.adapter.compatibility() : null);
+  }
+
   // --- lifecycle -------------------------------------------------------------
   // Called by editor.js once the editor has an open Mall or World document.
   // Idempotent per session; a different session first tears down the previous
@@ -371,6 +486,8 @@
     St.sizeTier = 'auto';
     St.newRefs = 0;
     St.lastRenderMs = null;
+    St.editedIsPrimary = true;
+    St.renderedArmed = false;
     applyProfileBody();
     paintChip();
     // Render the initial buffer immediately (unless the preview pane is hidden).
@@ -391,6 +508,9 @@
   // Tear down: stop timers, forget the scene, tell main to drop the overlay.
   function stop() {
     if (St.timer) { clearTimeout(St.timer); St.timer = null; }
+    retirePicking('preview-scene-replaced');
+    St.pickDown = null;
+    St.renderedArmed = false;
     if (St._dividerCleanup) St._dividerCleanup();
     const sid = St.sessionId;
     if (sid != null) {
@@ -427,13 +547,18 @@
     window.addEventListener('beforeunload', () => {
       if (St.sessionId != null) { try { bridge.previewClose(St.sessionId); } catch (e) { /* ignore */ } }
     });
+    // WD2-D page teardown: release every pick adapter (hook, owner, maps).
+    window.addEventListener('pagehide', () => {
+      listenForPicks(false);
+      for (const t of pickTargets()) t.adapter.dispose();
+    });
   }
 
   // Public surface for editor.js + the serialized QA harness. No capability beyond
   // what the page already does through its own controls.
   window.wrlEditorPreview = {
     start, stop, onEdit, manualUpdate, showSaved, findNewFiles,
-    setLayout, toggleMaximize, stepSplit,
+    setLayout, toggleMaximize, stepSplit, armPicking,
     // QA / introspection (no buffer text exposed).
     _state: () => ({
       state: St.sm.state, failureCategory: St.sm.failureCategory,
@@ -442,6 +567,10 @@
       context: St.context, newRefs: St.newRefs, lastRenderMs: St.lastRenderMs,
       layout: St.layout, split: St.split, chip: (el('previewChip') || {}).textContent,
       world: (St.context === 'world' && window.wrlWorldPreview) ? window.wrlWorldPreview._debug() : null,
+      picking: {
+        armed: St.pickArmed, listening: St.pickListening, renderedArmed: St.renderedArmed,
+        compatibility: activeTarget() ? activeTarget().adapter.compatibility() : null,
+      },
     }),
     _leak: () => bridge.previewLeak(),
   };
