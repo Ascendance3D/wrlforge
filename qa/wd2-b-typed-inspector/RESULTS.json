@@ -1,0 +1,1486 @@
+{
+  "launches": 1,
+  "pids": [
+    2904140
+  ],
+  "runError": null,
+  "survivors": [],
+  "assertions": {
+    "total": 32,
+    "passed": 32,
+    "failed": 0
+  },
+  "checks": [
+    {
+      "name": "1 fixture opened in the native editor",
+      "ok": true,
+      "detail": {
+        "file": "primary.wrl",
+        "format": "Plain",
+        "dirty": false,
+        "save": "Saved",
+        "diag": "0",
+        "adv": "0",
+        "outlineRows": 3
+      }
+    },
+    {
+      "name": "2 Transform selected in the scene tree (row in sync)",
+      "ok": true,
+      "detail": {
+        "id": "node-16-118",
+        "kind": "Node",
+        "nodeType": "Transform",
+        "def": null,
+        "ordinal": 0,
+        "rowId": "node-16-118",
+        "rowCount": 4
+      }
+    },
+    {
+      "name": "3 Inspector shows translation as editable SFVec3f",
+      "ok": true,
+      "detail": {
+        "name": "translation",
+        "type": "SFVec3f",
+        "state": "editable",
+        "values": [
+          "0",
+          "0",
+          "0"
+        ],
+        "invalid": [
+          false,
+          false,
+          false
+        ],
+        "names": [
+          "translation X SFVec3f",
+          "translation Y SFVec3f",
+          "translation Z SFVec3f"
+        ],
+        "message": "",
+        "reason": null
+      }
+    },
+    {
+      "name": "3a accessible names carry field, component and type",
+      "ok": true,
+      "detail": [
+        "translation X SFVec3f",
+        "translation Y SFVec3f",
+        "translation Z SFVec3f"
+      ]
+    },
+    {
+      "name": "5/6 Apply (Enter) -> CodeMirror source is exactly \"translation 3 0 0\", all other bytes unchanged",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "7 the same Transform remains selected (tree row in sync)",
+      "ok": true,
+      "detail": {
+        "id": "node-16-118",
+        "kind": "Node",
+        "nodeType": "Transform",
+        "def": null,
+        "ordinal": 0,
+        "rowId": "node-16-118",
+        "rowCount": 4
+      }
+    },
+    {
+      "name": "8 Inspector reads 3 / 0 / 0",
+      "ok": true,
+      "detail": {
+        "name": "translation",
+        "type": "SFVec3f",
+        "state": "editable",
+        "values": [
+          "3",
+          "0",
+          "0"
+        ],
+        "invalid": [
+          false,
+          false,
+          false
+        ],
+        "names": [
+          "translation X SFVec3f",
+          "translation Y SFVec3f",
+          "translation Z SFVec3f"
+        ],
+        "message": "Applied.",
+        "reason": null
+      }
+    },
+    {
+      "name": "8a \"Applied.\" announced; focus back in translation X",
+      "ok": true,
+      "detail": {
+        "tag": "INPUT",
+        "field": "translation",
+        "component": 0,
+        "focusVisibleOutline": "solid"
+      }
+    },
+    {
+      "name": "9 X_ITE unsaved preview moved the Box +3 on X (authoritative world bounds)",
+      "ok": true,
+      "detail": {
+        "before": {
+          "min": [
+            -1,
+            -1,
+            -1
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        },
+        "after": {
+          "min": [
+            2,
+            -1,
+            -1
+          ],
+          "max": [
+            4,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "10 editor is dirty",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "11 Undo restores the exact original source",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "11a Undo keeps the Transform selected; Inspector 0/0/0",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "12 preview returns to the original position after Undo",
+      "ok": true,
+      "detail": {
+        "min": [
+          -1,
+          -1,
+          -1
+        ],
+        "max": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "12a Undo of the only edit clears dirty",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "13 Redo restores the edited source",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "13a preview moves again after Redo",
+      "ok": true,
+      "detail": {
+        "min": [
+          2,
+          -1,
+          -1
+        ],
+        "max": [
+          4,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "invalid input refused: source unchanged",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "invalid input: aria-invalid on Y only, message text, typed text kept, focus on Y",
+      "ok": true,
+      "detail": {
+        "fi": {
+          "name": "translation",
+          "type": "SFVec3f",
+          "state": "editable",
+          "values": [
+            "3",
+            "abc",
+            "0"
+          ],
+          "invalid": [
+            false,
+            true,
+            false
+          ],
+          "names": [
+            "translation X SFVec3f",
+            "translation Y SFVec3f",
+            "translation Z SFVec3f"
+          ],
+          "message": "Invalid: \"abc\" is not a number.",
+          "reason": null
+        },
+        "focus": {
+          "tag": "INPUT",
+          "field": "translation",
+          "component": 1,
+          "focusVisibleOutline": "solid"
+        }
+      }
+    },
+    {
+      "name": "Escape restores the document value and keeps focus",
+      "ok": true,
+      "detail": {
+        "name": "translation",
+        "type": "SFVec3f",
+        "state": "editable",
+        "values": [
+          "3",
+          "0",
+          "0"
+        ],
+        "invalid": [
+          false,
+          false,
+          false
+        ],
+        "names": [
+          "translation X SFVec3f",
+          "translation Y SFVec3f",
+          "translation Z SFVec3f"
+        ],
+        "message": "Restored the document value.",
+        "reason": null
+      }
+    },
+    {
+      "name": "multi-component Apply (Apply button) patches Y and Z together",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "one Undo reverses the whole multi-component Apply",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "14 Save persists \"translation 3 0 0\" through the existing safe-save path",
+      "ok": true,
+      "detail": {
+        "savedMatches": true,
+        "status": {
+          "file": "primary.wrl",
+          "format": "Plain",
+          "dirty": false,
+          "save": "Saved",
+          "diag": "0",
+          "adv": "0",
+          "outlineRows": 3
+        }
+      }
+    },
+    {
+      "name": "diagnostics functional on the valid document (0 syntax diagnostics)",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "twin: editing the SECOND identical sibling keeps the SECOND selected",
+      "ok": true,
+      "detail": {
+        "id": "node-122-207",
+        "kind": "Node",
+        "nodeType": "Transform",
+        "def": null,
+        "ordinal": 1,
+        "rowId": "node-122-207",
+        "rowCount": 8
+      }
+    },
+    {
+      "name": "twin: Inspector reads -4.5 / 0 / 0",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "a whole-document replacement LOSES the selection visibly (no wrong anchor)",
+      "ok": true,
+      "detail": {
+        "notice": "Note: Selection cleared: the previously selected item could not be proven to be the same item after this change.",
+        "fields": []
+      }
+    },
+    {
+      "name": "diagnostics functional: the damaged document reports syntax diagnostics",
+      "ok": true,
+      "detail": {
+        "file": "twins.wrl",
+        "format": "Plain",
+        "dirty": true,
+        "save": "Unsaved changes",
+        "diag": "3",
+        "adv": "0",
+        "outlineRows": 2
+      }
+    },
+    {
+      "name": "a damaged document makes every field read-only",
+      "ok": true,
+      "detail": {
+        "notice": null,
+        "fields": [
+          {
+            "name": "translation",
+            "type": "SFVec3f",
+            "state": "read-only",
+            "values": [],
+            "invalid": [],
+            "names": [],
+            "message": "",
+            "reason": "Read-only: the document has syntax errors."
+          },
+          {
+            "name": "children",
+            "type": "MFNode",
+            "state": "read-only",
+            "values": [],
+            "invalid": [],
+            "names": [],
+            "message": "",
+            "reason": "Read-only: the document has syntax errors."
+          }
+        ]
+      }
+    },
+    {
+      "name": "High Contrast + zoom: Inspector controls render",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "no unexpected console error or warning",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "zero surviving Electron processes",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "all jobs completed",
+      "ok": true,
+      "detail": null
+    }
+  ],
+  "console": [],
+  "jobs": [
+    {
+      "id": "primary",
+      "editor": {
+        "file": "primary.wrl",
+        "format": "Plain",
+        "dirty": false,
+        "save": "Saved",
+        "diag": "0",
+        "adv": "0",
+        "outlineRows": 3
+      },
+      "preview": {
+        "state": "current",
+        "failureCategory": null,
+        "displayedGeneration": 6,
+        "requestedGeneration": 6,
+        "haveLastValid": true,
+        "saved": false,
+        "sizeTier": "auto",
+        "context": "mall",
+        "newRefs": 0,
+        "lastRenderMs": 447,
+        "layout": "split",
+        "split": 0.2,
+        "chip": "Live",
+        "world": null
+      },
+      "steps": [
+        {
+          "call": "sceneSelectFirst",
+          "args": [
+            "Transform",
+            0
+          ],
+          "label": "select",
+          "result": "node-16-118"
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-before",
+          "result": {
+            "id": "node-16-118",
+            "kind": "Node",
+            "nodeType": "Transform",
+            "def": null,
+            "ordinal": 0,
+            "rowId": "node-16-118",
+            "rowCount": 4
+          }
+        },
+        {
+          "call": "inspectorFields",
+          "args": [],
+          "label": "fields-before",
+          "result": {
+            "notice": null,
+            "fields": [
+              {
+                "name": "translation",
+                "type": "SFVec3f",
+                "state": "editable",
+                "values": [
+                  "0",
+                  "0",
+                  "0"
+                ],
+                "invalid": [
+                  false,
+                  false,
+                  false
+                ],
+                "names": [
+                  "translation X SFVec3f",
+                  "translation Y SFVec3f",
+                  "translation Z SFVec3f"
+                ],
+                "message": "",
+                "reason": null
+              },
+              {
+                "name": "children",
+                "type": "MFNode",
+                "state": "read-only",
+                "values": [],
+                "invalid": [],
+                "names": [],
+                "message": "",
+                "reason": "Read-only: type not editable yet."
+              }
+            ]
+          }
+        },
+        {
+          "call": "previewBBox",
+          "args": [],
+          "label": "bbox-before",
+          "result": {
+            "min": [
+              -1,
+              -1,
+              -1
+            ],
+            "max": [
+              1,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "call": "status",
+          "args": [],
+          "label": "status-before",
+          "result": {
+            "file": "primary.wrl",
+            "format": "Plain",
+            "dirty": false,
+            "save": "No changes",
+            "diag": "0",
+            "adv": "0",
+            "outlineRows": 3
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-b-typed-inspector/qa/wd2-b-typed-inspector/screenshots/01-before-apply.png"
+        },
+        {
+          "call": "inspectorSet",
+          "args": [
+            "translation",
+            0,
+            "3"
+          ],
+          "label": "type-x",
+          "result": true
+        },
+        {
+          "call": "inspectorKey",
+          "args": [
+            "translation",
+            0,
+            "Enter"
+          ],
+          "label": "enter",
+          "result": true
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\nTransform {\n  translation 3 0 0\n  children [\n    Shape {\n      geometry Box { size 2 2 2 }\n    }\n  ]\n}\n"
+          ],
+          "label": "buf-edited",
+          "result": true
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-after",
+          "result": {
+            "id": "node-16-118",
+            "kind": "Node",
+            "nodeType": "Transform",
+            "def": null,
+            "ordinal": 0,
+            "rowId": "node-16-118",
+            "rowCount": 4
+          }
+        },
+        {
+          "call": "inspectorFields",
+          "args": [],
+          "label": "fields-after",
+          "result": {
+            "notice": null,
+            "fields": [
+              {
+                "name": "translation",
+                "type": "SFVec3f",
+                "state": "editable",
+                "values": [
+                  "3",
+                  "0",
+                  "0"
+                ],
+                "invalid": [
+                  false,
+                  false,
+                  false
+                ],
+                "names": [
+                  "translation X SFVec3f",
+                  "translation Y SFVec3f",
+                  "translation Z SFVec3f"
+                ],
+                "message": "Applied.",
+                "reason": null
+              },
+              {
+                "name": "children",
+                "type": "MFNode",
+                "state": "read-only",
+                "values": [],
+                "invalid": [],
+                "names": [],
+                "message": "",
+                "reason": "Read-only: type not editable yet."
+              }
+            ]
+          }
+        },
+        {
+          "call": "activeInfo",
+          "args": [],
+          "label": "focus-after",
+          "result": {
+            "tag": "INPUT",
+            "field": "translation",
+            "component": 0,
+            "focusVisibleOutline": "solid"
+          }
+        },
+        {
+          "call": "status",
+          "args": [],
+          "label": "status-after",
+          "result": {
+            "file": "primary.wrl",
+            "format": "Plain",
+            "dirty": true,
+            "save": "Unsaved changes",
+            "diag": "0",
+            "adv": "0",
+            "outlineRows": 3
+          }
+        },
+        {
+          "call": "previewState",
+          "args": [],
+          "label": "preview-after",
+          "result": {
+            "state": "current",
+            "failureCategory": null,
+            "displayedGeneration": 2,
+            "requestedGeneration": 2,
+            "haveLastValid": true,
+            "saved": false,
+            "sizeTier": "auto",
+            "context": "mall",
+            "newRefs": 0,
+            "lastRenderMs": 456,
+            "layout": "split",
+            "split": 0.2,
+            "chip": "Live",
+            "world": null
+          }
+        },
+        {
+          "call": "previewBBox",
+          "args": [],
+          "label": "bbox-after",
+          "result": {
+            "min": [
+              2,
+              -1,
+              -1
+            ],
+            "max": [
+              4,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-b-typed-inspector/qa/wd2-b-typed-inspector/screenshots/02-after-apply-x3.png"
+        },
+        {
+          "call": "click",
+          "args": [
+            "undoBtn"
+          ],
+          "label": "undo",
+          "result": null
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\nTransform {\n  translation 0 0 0\n  children [\n    Shape {\n      geometry Box { size 2 2 2 }\n    }\n  ]\n}\n"
+          ],
+          "label": "buf-undo",
+          "result": true
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-undo",
+          "result": {
+            "id": "node-16-118",
+            "kind": "Node",
+            "nodeType": "Transform",
+            "def": null,
+            "ordinal": 0,
+            "rowId": "node-16-118",
+            "rowCount": 4
+          }
+        },
+        {
+          "call": "inspectorFields",
+          "args": [],
+          "label": "fields-undo",
+          "result": {
+            "notice": null,
+            "fields": [
+              {
+                "name": "translation",
+                "type": "SFVec3f",
+                "state": "editable",
+                "values": [
+                  "0",
+                  "0",
+                  "0"
+                ],
+                "invalid": [
+                  false,
+                  false,
+                  false
+                ],
+                "names": [
+                  "translation X SFVec3f",
+                  "translation Y SFVec3f",
+                  "translation Z SFVec3f"
+                ],
+                "message": "",
+                "reason": null
+              },
+              {
+                "name": "children",
+                "type": "MFNode",
+                "state": "read-only",
+                "values": [],
+                "invalid": [],
+                "names": [],
+                "message": "",
+                "reason": "Read-only: type not editable yet."
+              }
+            ]
+          }
+        },
+        {
+          "call": "previewBBox",
+          "args": [],
+          "label": "bbox-undo",
+          "result": {
+            "min": [
+              -1,
+              -1,
+              -1
+            ],
+            "max": [
+              1,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "call": "status",
+          "args": [],
+          "label": "status-undo",
+          "result": {
+            "file": "primary.wrl",
+            "format": "Plain",
+            "dirty": false,
+            "save": "No changes",
+            "diag": "0",
+            "adv": "0",
+            "outlineRows": 3
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-b-typed-inspector/qa/wd2-b-typed-inspector/screenshots/03-after-undo.png"
+        },
+        {
+          "call": "click",
+          "args": [
+            "redoBtn"
+          ],
+          "label": "redo",
+          "result": null
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\nTransform {\n  translation 3 0 0\n  children [\n    Shape {\n      geometry Box { size 2 2 2 }\n    }\n  ]\n}\n"
+          ],
+          "label": "buf-redo",
+          "result": true
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-redo",
+          "result": {
+            "id": "node-16-118",
+            "kind": "Node",
+            "nodeType": "Transform",
+            "def": null,
+            "ordinal": 0,
+            "rowId": "node-16-118",
+            "rowCount": 4
+          }
+        },
+        {
+          "call": "inspectorFields",
+          "args": [],
+          "label": "fields-redo",
+          "result": {
+            "notice": null,
+            "fields": [
+              {
+                "name": "translation",
+                "type": "SFVec3f",
+                "state": "editable",
+                "values": [
+                  "3",
+                  "0",
+                  "0"
+                ],
+                "invalid": [
+                  false,
+                  false,
+                  false
+                ],
+                "names": [
+                  "translation X SFVec3f",
+                  "translation Y SFVec3f",
+                  "translation Z SFVec3f"
+                ],
+                "message": "",
+                "reason": null
+              },
+              {
+                "name": "children",
+                "type": "MFNode",
+                "state": "read-only",
+                "values": [],
+                "invalid": [],
+                "names": [],
+                "message": "",
+                "reason": "Read-only: type not editable yet."
+              }
+            ]
+          }
+        },
+        {
+          "call": "previewBBox",
+          "args": [],
+          "label": "bbox-redo",
+          "result": {
+            "min": [
+              2,
+              -1,
+              -1
+            ],
+            "max": [
+              4,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-b-typed-inspector/qa/wd2-b-typed-inspector/screenshots/04-after-redo.png"
+        },
+        {
+          "call": "inspectorSet",
+          "args": [
+            "translation",
+            1,
+            "abc"
+          ],
+          "label": "type-invalid",
+          "result": true
+        },
+        {
+          "call": "inspectorKey",
+          "args": [
+            "translation",
+            1,
+            "Enter"
+          ],
+          "label": "enter-invalid",
+          "result": true
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\nTransform {\n  translation 3 0 0\n  children [\n    Shape {\n      geometry Box { size 2 2 2 }\n    }\n  ]\n}\n"
+          ],
+          "label": "buf-invalid",
+          "result": true
+        },
+        {
+          "call": "inspectorFields",
+          "args": [],
+          "label": "fields-invalid",
+          "result": {
+            "notice": null,
+            "fields": [
+              {
+                "name": "translation",
+                "type": "SFVec3f",
+                "state": "editable",
+                "values": [
+                  "3",
+                  "abc",
+                  "0"
+                ],
+                "invalid": [
+                  false,
+                  true,
+                  false
+                ],
+                "names": [
+                  "translation X SFVec3f",
+                  "translation Y SFVec3f",
+                  "translation Z SFVec3f"
+                ],
+                "message": "Invalid: \"abc\" is not a number.",
+                "reason": null
+              },
+              {
+                "name": "children",
+                "type": "MFNode",
+                "state": "read-only",
+                "values": [],
+                "invalid": [],
+                "names": [],
+                "message": "",
+                "reason": "Read-only: type not editable yet."
+              }
+            ]
+          }
+        },
+        {
+          "call": "activeInfo",
+          "args": [],
+          "label": "focus-invalid",
+          "result": {
+            "tag": "INPUT",
+            "field": "translation",
+            "component": 1,
+            "focusVisibleOutline": "solid"
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-b-typed-inspector/qa/wd2-b-typed-inspector/screenshots/05-invalid-input.png"
+        },
+        {
+          "call": "inspectorKey",
+          "args": [
+            "translation",
+            1,
+            "Escape"
+          ],
+          "label": "escape",
+          "result": true
+        },
+        {
+          "call": "inspectorFields",
+          "args": [],
+          "label": "fields-escape",
+          "result": {
+            "notice": null,
+            "fields": [
+              {
+                "name": "translation",
+                "type": "SFVec3f",
+                "state": "editable",
+                "values": [
+                  "3",
+                  "0",
+                  "0"
+                ],
+                "invalid": [
+                  false,
+                  false,
+                  false
+                ],
+                "names": [
+                  "translation X SFVec3f",
+                  "translation Y SFVec3f",
+                  "translation Z SFVec3f"
+                ],
+                "message": "Restored the document value.",
+                "reason": null
+              },
+              {
+                "name": "children",
+                "type": "MFNode",
+                "state": "read-only",
+                "values": [],
+                "invalid": [],
+                "names": [],
+                "message": "",
+                "reason": "Read-only: type not editable yet."
+              }
+            ]
+          }
+        },
+        {
+          "call": "activeInfo",
+          "args": [],
+          "label": "focus-escape",
+          "result": {
+            "tag": "INPUT",
+            "field": "translation",
+            "component": 1,
+            "focusVisibleOutline": "solid"
+          }
+        },
+        {
+          "call": "inspectorSet",
+          "args": [
+            "translation",
+            1,
+            "1"
+          ],
+          "label": "type-y",
+          "result": true
+        },
+        {
+          "call": "inspectorSet",
+          "args": [
+            "translation",
+            2,
+            "-2"
+          ],
+          "label": "type-z",
+          "result": true
+        },
+        {
+          "call": "inspectorClick",
+          "args": [
+            "translation",
+            "apply"
+          ],
+          "label": "apply-multi",
+          "result": true
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\nTransform {\n  translation 3 1 -2\n  children [\n    Shape {\n      geometry Box { size 2 2 2 }\n    }\n  ]\n}\n"
+          ],
+          "label": "buf-multi",
+          "result": true
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-multi",
+          "result": {
+            "id": "node-16-119",
+            "kind": "Node",
+            "nodeType": "Transform",
+            "def": null,
+            "ordinal": 0,
+            "rowId": "node-16-119",
+            "rowCount": 4
+          }
+        },
+        {
+          "call": "click",
+          "args": [
+            "undoBtn"
+          ],
+          "label": "undo-multi",
+          "result": null
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\nTransform {\n  translation 3 0 0\n  children [\n    Shape {\n      geometry Box { size 2 2 2 }\n    }\n  ]\n}\n"
+          ],
+          "label": "buf-multi-undo",
+          "result": true
+        },
+        {
+          "call": "previewBBox",
+          "args": [],
+          "label": "bbox-multi-undo",
+          "result": {
+            "min": [
+              2,
+              -1,
+              -1
+            ],
+            "max": [
+              4,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "call": "click",
+          "args": [
+            "saveBtn"
+          ],
+          "label": "save",
+          "result": null
+        },
+        {
+          "call": "status",
+          "args": [],
+          "label": "status-saved",
+          "result": {
+            "file": "primary.wrl",
+            "format": "Plain",
+            "dirty": false,
+            "save": "Saved",
+            "diag": "0",
+            "adv": "0",
+            "outlineRows": 3
+          }
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-saved",
+          "result": {
+            "id": "node-16-118",
+            "kind": "Node",
+            "nodeType": "Transform",
+            "def": null,
+            "ordinal": 0,
+            "rowId": "node-16-118",
+            "rowCount": 4
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-b-typed-inspector/qa/wd2-b-typed-inspector/screenshots/06-saved.png"
+        }
+      ]
+    },
+    {
+      "id": "twins",
+      "editor": {
+        "file": "twins.wrl",
+        "format": "Plain",
+        "dirty": true,
+        "save": "Unsaved changes",
+        "diag": "3",
+        "adv": "0",
+        "outlineRows": 2
+      },
+      "preview": {
+        "state": "showing-last-valid",
+        "failureCategory": "scene-load",
+        "displayedGeneration": 3,
+        "requestedGeneration": 4,
+        "haveLastValid": true,
+        "saved": false,
+        "sizeTier": "auto",
+        "context": "mall",
+        "newRefs": 0,
+        "lastRenderMs": 6,
+        "layout": "split",
+        "split": 0.2,
+        "chip": "Showing last good version",
+        "world": null
+      },
+      "steps": [
+        {
+          "call": "sceneSelectFirst",
+          "args": [
+            "Transform",
+            1
+          ],
+          "label": "select-second",
+          "result": "node-122-204"
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-before",
+          "result": {
+            "id": "node-122-204",
+            "kind": "Node",
+            "nodeType": "Transform",
+            "def": null,
+            "ordinal": 1,
+            "rowId": "node-122-204",
+            "rowCount": 8
+          }
+        },
+        {
+          "call": "inspectorSet",
+          "args": [
+            "translation",
+            0,
+            "-4.5"
+          ],
+          "label": "type",
+          "result": true
+        },
+        {
+          "call": "inspectorKey",
+          "args": [
+            "translation",
+            0,
+            "Enter"
+          ],
+          "label": "enter",
+          "result": true
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\nGroup { children [\n  Transform { translation 0 0 0 children [ Shape { geometry Box { size 1 1 1 } } ] }\n  Transform { translation -4.5 0 0 children [ Shape { geometry Box { size 1 1 1 } } ] }\n] }\n"
+          ],
+          "label": "buf-edited",
+          "result": true
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-after",
+          "result": {
+            "id": "node-122-207",
+            "kind": "Node",
+            "nodeType": "Transform",
+            "def": null,
+            "ordinal": 1,
+            "rowId": "node-122-207",
+            "rowCount": 8
+          }
+        },
+        {
+          "call": "inspectorFields",
+          "args": [],
+          "label": "fields-after",
+          "result": {
+            "notice": null,
+            "fields": [
+              {
+                "name": "translation",
+                "type": "SFVec3f",
+                "state": "editable",
+                "values": [
+                  "-4.5",
+                  "0",
+                  "0"
+                ],
+                "invalid": [
+                  false,
+                  false,
+                  false
+                ],
+                "names": [
+                  "translation X SFVec3f",
+                  "translation Y SFVec3f",
+                  "translation Z SFVec3f"
+                ],
+                "message": "Applied.",
+                "reason": null
+              },
+              {
+                "name": "children",
+                "type": "MFNode",
+                "state": "read-only",
+                "values": [],
+                "invalid": [],
+                "names": [],
+                "message": "",
+                "reason": "Read-only: type not editable yet."
+              }
+            ]
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-b-typed-inspector/qa/wd2-b-typed-inspector/screenshots/07-twin-second-edited.png"
+        },
+        {
+          "call": "setText",
+          "args": [
+            "#VRML V2.0 utf8\nTransform { translation 0 0 0 children [ Shape { geometry Sphere { } } ] }\n"
+          ],
+          "label": "replace",
+          "result": true
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-lost",
+          "result": null
+        },
+        {
+          "call": "inspectorFields",
+          "args": [],
+          "label": "fields-lost",
+          "result": {
+            "notice": "Note: Selection cleared: the previously selected item could not be proven to be the same item after this change.",
+            "fields": []
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-b-typed-inspector/qa/wd2-b-typed-inspector/screenshots/08-selection-lost-notice.png"
+        },
+        {
+          "call": "setText",
+          "args": [
+            "#VRML V2.0 utf8\nTransform { translation 0 0 0 children [ Shape {\n"
+          ],
+          "label": "break",
+          "result": true
+        },
+        {
+          "call": "status",
+          "args": [],
+          "label": "status-broken",
+          "result": {
+            "file": "twins.wrl",
+            "format": "Plain",
+            "dirty": true,
+            "save": "Unsaved changes",
+            "diag": "3",
+            "adv": "0",
+            "outlineRows": 2
+          }
+        },
+        {
+          "call": "sceneSelectFirst",
+          "args": [
+            "Transform",
+            0
+          ],
+          "label": "select-broken",
+          "result": "node-16-64"
+        },
+        {
+          "call": "inspectorFields",
+          "args": [],
+          "label": "fields-broken",
+          "result": {
+            "notice": null,
+            "fields": [
+              {
+                "name": "translation",
+                "type": "SFVec3f",
+                "state": "read-only",
+                "values": [],
+                "invalid": [],
+                "names": [],
+                "message": "",
+                "reason": "Read-only: the document has syntax errors."
+              },
+              {
+                "name": "children",
+                "type": "MFNode",
+                "state": "read-only",
+                "values": [],
+                "invalid": [],
+                "names": [],
+                "message": "",
+                "reason": "Read-only: the document has syntax errors."
+              }
+            ]
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-b-typed-inspector/qa/wd2-b-typed-inspector/screenshots/09-damaged-read-only.png"
+        }
+      ]
+    },
+    {
+      "id": "contrast-zoom",
+      "editor": {
+        "file": "contrast.wrl",
+        "format": "Plain",
+        "dirty": false,
+        "save": "No changes",
+        "diag": "0",
+        "adv": "0",
+        "outlineRows": 3
+      },
+      "preview": {
+        "state": "current",
+        "failureCategory": null,
+        "displayedGeneration": 1,
+        "requestedGeneration": 1,
+        "haveLastValid": true,
+        "saved": false,
+        "sizeTier": "auto",
+        "context": "mall",
+        "newRefs": 0,
+        "lastRenderMs": 476,
+        "layout": "split",
+        "split": 0.2,
+        "chip": "Live",
+        "world": null
+      },
+      "steps": [
+        {
+          "call": "sceneSelectFirst",
+          "args": [
+            "Transform",
+            0
+          ],
+          "label": "select",
+          "result": "node-16-118"
+        },
+        {
+          "call": "inspectorFields",
+          "args": [],
+          "label": "fields",
+          "result": {
+            "notice": null,
+            "fields": [
+              {
+                "name": "translation",
+                "type": "SFVec3f",
+                "state": "editable",
+                "values": [
+                  "0",
+                  "0",
+                  "0"
+                ],
+                "invalid": [
+                  false,
+                  false,
+                  false
+                ],
+                "names": [
+                  "translation X SFVec3f",
+                  "translation Y SFVec3f",
+                  "translation Z SFVec3f"
+                ],
+                "message": "",
+                "reason": null
+              },
+              {
+                "name": "children",
+                "type": "MFNode",
+                "state": "read-only",
+                "values": [],
+                "invalid": [],
+                "names": [],
+                "message": "",
+                "reason": "Read-only: type not editable yet."
+              }
+            ]
+          }
+        },
+        {
+          "call": "inspectorKey",
+          "args": [
+            "translation",
+            0,
+            "Tab"
+          ],
+          "label": "focus-x",
+          "result": true
+        },
+        {
+          "call": "activeInfo",
+          "args": [],
+          "label": "focus",
+          "result": {
+            "tag": "INPUT",
+            "field": "translation",
+            "component": 0,
+            "focusVisibleOutline": "solid"
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-b-typed-inspector/qa/wd2-b-typed-inspector/screenshots/10-contrast-zoom-inspector.png"
+        }
+      ]
+    }
+  ]
+}

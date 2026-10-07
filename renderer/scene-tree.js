@@ -102,8 +102,19 @@
 
     const label = document.createElement('span');
     label.className = 'scene-label';
-    label.textContent = labelFor(item);
+    // WD2-C: a recognised simple object reads as "Box" / "Sphere" first, with
+    // the real node label kept visible beside it. DISPLAY ONLY -- derived from
+    // the current parse by the renderer, never written to the source and never
+    // used for identity.
+    const friendly = opts && typeof opts.displayLabelFor === 'function' ? opts.displayLabelFor(item) : null;
+    label.textContent = friendly || labelFor(item);
     row.appendChild(label);
+    if (friendly) {
+      const type = document.createElement('span');
+      type.className = 'scene-type';
+      type.textContent = labelFor(item);
+      row.appendChild(type);
+    }
 
     // Optional: a small inline status indicator for USE / ROUTE
     // resolution, derived from the read model only.
@@ -146,7 +157,10 @@
         return;
       }
       rootEl.setAttribute('aria-label', 'Scene tree of document');
-      const dom = buildSceneTreeDom(currentTree, { onSelect: (id) => selection.setSelection(id) });
+      const dom = buildSceneTreeDom(currentTree, {
+        onSelect: (id) => selection.setSelection(id),
+        displayLabelFor: deps && typeof deps.displayLabelFor === 'function' ? deps.displayLabelFor : null,
+      });
       for (const r of dom) {
         rootEl.appendChild(r);
         rowById.set(r.dataset.id, r);

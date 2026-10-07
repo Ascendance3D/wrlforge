@@ -28,8 +28,17 @@ copyright assignment — see `CONTRIBUTING.md`.
    (Phase 7A/7B/7C, built). No external editor required.
 2. **Model editing** — visual authoring over the same document: scene tree,
    typed field inspector, viewport manipulation, PROTO/ROUTE tooling. The
-   document core (WD1.1–WD1.5) is built and gated; the authoring UI (**WD2**) is
-   **not started** and needs its own approved lane.
+   document core (WD1.1–WD1.5) is built and gated. **WD2-A** (read-only scene
+   tree + Inspector) is built and closed. **WD2-B** (typed Inspector editing of
+   existing VRML97 field values through verified source patches) awaits
+   independent QA. **WD2-C "First Object"** (Model workspace; Add Box/Sphere at
+   the origin as anonymous generated VRML97; beginner Position / Rotation /
+   Size|Radius / Color over the same schema + field edits; absent-field
+   insertion; exact-span Duplicate / Delete with conservative refusals) is the
+   current candidate, awaiting owner review / independent QA — see
+   `src/vrml/structure-edit.js` and `docs/white-dune-2026/WD2_C_FIRST_OBJECT.md`.
+   Viewport picking, gizmos, hierarchy editing, MF arrays and ROUTE/PROTO
+   editing are future lanes, each needing its own approval.
 
 Both halves edit **one** document. Neither owns a private copy of it.
 

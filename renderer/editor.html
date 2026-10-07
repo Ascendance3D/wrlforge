@@ -52,6 +52,7 @@
 <script defer src="../src/editor/scene-selection.js"></script>
 <script defer src="scene-tree.js"></script>
 <script defer src="scene-inspector.js"></script>
+<script defer src="model-workspace.js"></script>
 <script defer src="preview.js"></script>
 <script defer src="world-preview.js"></script>
 <script defer src="recovery-prompt.js"></script>
@@ -235,6 +236,56 @@
   .editor-msg { background: #3a2f10; color: #ffce6a; padding: 0.46rem 0.92rem; font-size: 0.92rem; }
   .editor-msg.err { background: #401414; color: #ff9b9b; }
 
+  /* WD2-C: Model workspace. The 3D view is the work area; Source is one
+     click away (collapsed, never removed); the sidebar keeps the Object
+     panel, scene tree and Inspector. Overrides the preview layout classes. */
+  .workspace-mode { display: inline-flex; gap: 0.15rem; }
+  .workspace-mode button[aria-pressed="true"] { background: #3a78ee; color: #fff; }
+  .model-bar {
+    display: flex; flex-wrap: wrap; gap: 0.62rem; align-items: center;
+    padding: 0.38rem 0.62rem; background: #1a1a1a; border-bottom: 1px solid #2a2a2a;
+  }
+  .model-bar .spacer { flex: 1 1 auto; }
+  .model-bar .mb-group { display: inline-flex; gap: 0.31rem; align-items: center; }
+  .model-bar .mb-label { color: #9a9a9a; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; margin-right: 0.15rem; }
+  .model-bar .mb-selected { color: #cbd; font-size: 0.92rem; }
+  .model-bar button[aria-pressed="true"] { background: #3a78ee; color: #fff; }
+  .model-status { padding: 0 0.92rem; font-size: 0.92rem; color: #cbd; }
+  .model-status:not(:empty) { padding: 0.31rem 0.92rem; background: #10314a; }
+  .model-status.err:not(:empty) { background: #401414; color: #ff9b9b; }
+  .main.workspace-model .editor-col { display: none; }
+  .main.workspace-model.source-open .editor-col { display: flex; flex: 0 0 34%; }
+  .main.workspace-model .preview-divider { display: none !important; }
+  .main.workspace-model .preview-col { display: flex; flex: 1 1 auto; }
+  .main.workspace-model .sidebar { display: flex; }
+  .main.workspace-model x3d-canvas#preview, .main.workspace-model x3d-canvas#wpCanvas { height: 62vh; }
+  .object-section { border-bottom: 1px solid #262626; }
+  .object-props { padding: 0 0.92rem 0.62rem; }
+  .prop-title { font-weight: 700; color: #e6e6e6; padding: 0.15rem 0 0.4rem; }
+  .prop-row { padding: 0.38rem 0; border-top: 1px solid #222; }
+  .prop-head { display: flex; gap: 0.46rem; align-items: baseline; flex-wrap: wrap; }
+  .prop-label { font-weight: 700; color: #e6e6e6; }
+  .prop-tech { color: #8a8fa0; font-family: monospace; font-size: 0.8rem; }
+  .prop-state { color: #8a8fa0; font-size: 0.8rem; }
+  .prop-inputs { display: flex; flex-wrap: wrap; gap: 0.31rem 0.46rem; align-items: flex-end; margin-top: 0.25rem; }
+  .prop-inputs .prop-field { display: inline-flex; flex-direction: column; gap: 0.1rem; }
+  .prop-inputs label.prop-comp { color: #9ab; font-size: 0.78rem; }
+  .prop-inputs button.prop-apply { align-self: flex-end; }
+  /* The Outline is a source-navigation aid; in Model the scene tree (same
+     structure, plus selection) takes its place. Code mode keeps it. */
+  .main.workspace-model .sidebar .outline { display: none; }
+  .prop-inputs input.prop-num {
+    width: 4.6rem; background: #222; color: #eee; border: 1px solid #444; border-radius: 4px;
+    padding: 0.2rem 0.35rem; font-size: 0.85rem; font-family: monospace;
+  }
+  .prop-inputs input[aria-invalid="true"] { border-color: #ff6161; }
+  .prop-inputs input.prop-color { width: 3rem; height: 1.9rem; padding: 0; border: 1px solid #444; background: #222; }
+  .prop-inputs button.prop-apply { padding: 0.2rem 0.6rem; font-size: 0.82rem; }
+  .prop-value { font-family: monospace; color: #cbd; font-size: 0.85rem; }
+  .prop-hint { color: #8a8fa0; font-size: 0.8rem; margin-top: 0.2rem; }
+  .prop-msg { font-size: 0.82rem; color: #cbd; min-height: 0; }
+  .prop-msg:not(:empty) { margin-top: 0.2rem; }
+
   /* WD2-A: scene tree + inspector. Read-only. The styling is intentionally
      neutral; only severity chips carry color (severity itself is P4-A's
      decision). Scrollbars stay inside the sidebar column at large heights. */
@@ -251,6 +302,7 @@
   .scene-row:focus-visible { outline: 2px solid #7db3ff; outline-offset: -2px; }
   .scene-row[aria-selected="true"] { background: #2a3a5a; border-left-color: #7db3ff; }
   .scene-row .scene-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .scene-row .scene-type { flex: none; color: #8a8fa0; font-family: monospace; font-size: 0.78rem; }
   .scene-tag {
     flex: none; padding: 0 0.4rem; border-radius: 8px; font-size: 0.7rem;
     font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
@@ -303,6 +355,35 @@
   .inspector-row-title  { font-size: 0.85rem; font-weight: 600; color: #f0f0f0; }
   .inspector-row-summary { font-size: 0.82rem; color: #d0d0d0; margin-top: 0.15rem; }
   .inspector-row-detail  { font-size: 0.78rem; color: #b0b0b0; margin-top: 0.2rem; white-space: pre-wrap; }
+  /* WD2-B: typed field editing. rem units so the --wrl-ui-scale chrome zoom
+     scales every control; state is always spelled out in text (editable /
+     read-only / Invalid: / Applied.) so nothing relies on colour alone. */
+  .inspector-notice { font-size: 0.82rem; color: #ffd49a; border-left: 3px solid #ffb648; padding: 0.3rem 0.5rem; margin-bottom: 0.4rem; }
+  .inspector-fields { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.6rem; }
+  .field-row { border-left: 3px solid #3a3f4a; padding: 0.3rem 0.4rem; font-size: 0.82rem; }
+  .field-row.field-editable { border-left-color: #7db3ff; }
+  .field-row.field-invalid { border-left-color: #ff6161; }
+  .field-head { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; }
+  .field-name { font-weight: 700; color: #f0f0f0; }
+  .field-type { color: #b8c0cc; }
+  .field-state { color: #9aa0a6; font-style: italic; }
+  .field-value { color: #cbd; white-space: pre-wrap; word-break: break-word; margin-top: 0.15rem; }
+  .field-reason { color: #b0b0b0; margin-top: 0.1rem; }
+  .field-controls { display: flex; flex-wrap: wrap; gap: 0.3rem 0.5rem; align-items: center; margin-top: 0.25rem; }
+  .field-comp { display: inline-flex; gap: 0.5rem; align-items: center; }
+  .field-comp-label { color: #d0d0d0; }
+  .field-controls input[type="text"] {
+    background: #14161a; color: #f0f0f0; border: 1px solid #555; border-radius: 3px;
+    font-family: monospace; font-size: 0.85rem; padding: 0.15rem 0.3rem;
+  }
+  .field-controls input.field-num { width: 5.5rem; }
+  .field-controls input.field-text { width: 14rem; max-width: 100%; }
+  .field-controls input[aria-invalid="true"] { border: 2px solid #ff6161; }
+  .field-controls input[type="checkbox"] { width: 1rem; height: 1rem; }
+  .field-controls button { padding: 0.2rem 0.6rem; font-size: 0.82rem; }
+  .field-controls button.field-cancel { background: #333; }
+  .field-msg { min-height: 1em; margin-top: 0.15rem; color: #e0e0e0; }
+  .field-row.field-invalid .field-msg { color: #ff9b9b; font-weight: 600; }
 
   /* In-DOM modal (unsaved confirm / external-change conflict / go-to-line) -- no
      native alert()/confirm()/prompt(), which are discouraged in Electron. */
@@ -337,6 +418,10 @@
     <button id="replaceBtn" class="secondary" disabled>Replace</button>
     <button id="gotoBtn" class="secondary" disabled>Go to line…</button>
     <button id="externalBtn" class="secondary" disabled title="Open the same file in your external editor">External editor</button>
+    <span class="workspace-mode" role="group" aria-label="Workspace">
+      <button id="modeModelBtn" class="secondary" aria-pressed="false" title="Model workspace: the 3D view first, Source one click away">Model</button>
+      <button id="modeCodeBtn" class="secondary" aria-pressed="true" title="Code workspace: the VRML source first">Code</button>
+    </span>
     <span class="spacer"></span>
     <span class="zoom" role="group" aria-label="Editor size">
       <button id="zoomOutBtn" class="secondary" title="Decrease size (Ctrl -)" aria-label="Decrease size">−</button>
@@ -351,8 +436,26 @@
 
   <div id="editorMsg" class="editor-msg" style="display:none" role="status" aria-live="polite"></div>
 
+  <!-- WD2-C: First Object. Creation verbs stay visible (Spazz3D's lesson);
+       every action is an exact, verified source edit -- one Undo each. -->
+  <div id="modelBar" class="model-bar" role="toolbar" aria-label="Model tools">
+    <span class="mb-group" role="group" aria-labelledby="addLabel">
+      <span id="addLabel" class="mb-label">Add</span>
+      <button id="addBoxBtn" aria-label="Add Box" title="Add a Box at the origin (0 0 0)" disabled>Box</button>
+      <button id="addSphereBtn" aria-label="Add Sphere" title="Add a Sphere at the origin (0 0 0)" disabled>Sphere</button>
+    </span>
+    <span class="mb-group" role="group" aria-label="Selected object">
+      <button id="duplicateBtn" class="secondary" title="Copy the selected object, exactly as written" disabled>Duplicate</button>
+      <button id="deleteBtn" class="secondary" title="Remove the selected object" disabled>Delete</button>
+    </span>
+    <span id="modelSelected" class="mb-selected">Nothing selected</span>
+    <span class="spacer"></span>
+    <button id="sourceToggleBtn" class="secondary" aria-pressed="false" aria-controls="editorCol" hidden>Show Source</button>
+  </div>
+  <div id="modelStatus" class="model-status" role="status" aria-live="polite"></div>
+
   <div class="main layout-split" id="editorMain">
-    <div class="editor-col">
+    <div class="editor-col" id="editorCol">
       <div id="editor" aria-label="VRML97 source editor"></div>
     </div>
 
@@ -457,6 +560,12 @@
     </section>
 
     <aside class="sidebar" aria-label="Document panels">
+      <!-- WD2-C: beginner properties of the selected simple object. A view
+           over the same parse + schema the Inspector below uses. -->
+      <section class="object-section">
+        <h2 id="objectHeading">Object</h2>
+        <div id="objectProps" class="object-props" role="region" aria-labelledby="objectHeading"><div class="empty-note">No document.</div></div>
+      </section>
       <section class="outline">
         <h2>Outline</h2>
         <div id="outlineList" class="list"><div class="empty-note">No document.</div></div>

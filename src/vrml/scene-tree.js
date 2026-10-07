@@ -170,6 +170,21 @@ function readOnlyMap(map, label) {
   });
 }
 
+// WD2-B: the private link between a built tree's items and the AST objects
+// they project. Keyed by the frozen tree object, so it is released with the
+// tree and can never answer for a different parse. It is NOT a lookup by
+// range: an item id is mapped to the exact AST object it was emitted from
+// during the single build walk, and back. The editor needs both directions
+// to hand the WD1.4 identity layer a real node from the selected item and to
+// find the item that projects a node identity re-anchored after an edit.
+// Nothing here is exposed as a mutable Map.
+const AST_LINKS = new WeakMap();
+
+function link(ctx, id, astNode) {
+  ctx.astByItemId.set(id, astNode);
+  ctx.itemIdByAst.set(astNode, id);
+}
+
 // Map every PROTO/EXTERNPROTO declaration name (in document order) so a Node
 // whose `nodeType` matches a PROTO name can be marked as a PROTO instance.
 function collectProtoNames(tree) {
@@ -231,6 +246,7 @@ function emitNode(node, parentId, fieldName, depth, ctx) {
   });
   ctx.items.push(item);
   ctx.byId.set(id, item);
+  link(ctx, id, node);
   if (parentId != null) ctx.byId.get(parentId).childIds.push(id);
   for (const f of node.fields || []) {
     if (!f || !f.name) continue;
@@ -281,6 +297,7 @@ function emitUse(use, parentId, fieldName, depth, ctx) {
   });
   ctx.items.push(item);
   ctx.byId.set(id, item);
+  link(ctx, id, use);
   if (parentId != null) ctx.byId.get(parentId).childIds.push(id);
   return id;
 }
@@ -301,6 +318,7 @@ function emitProto(proto, parentId, depth, ctx) {
   });
   ctx.items.push(item);
   ctx.byId.set(id, item);
+  link(ctx, id, proto);
   if (parentId != null) ctx.byId.get(parentId).childIds.push(id);
   // PROTO body is descended: top-level statements there are their own
   // inspectable scene items.
@@ -332,6 +350,7 @@ function emitExternProto(ext, parentId, depth, ctx) {
   });
   ctx.items.push(item);
   ctx.byId.set(id, item);
+  link(ctx, id, ext);
   if (parentId != null) ctx.byId.get(parentId).childIds.push(id);
   return id;
 }
@@ -360,6 +379,7 @@ function emitRoute(route, parentId, depth, ctx) {
   });
   ctx.items.push(item);
   ctx.byId.set(id, item);
+  link(ctx, id, route);
   if (parentId != null) ctx.byId.get(parentId).childIds.push(id);
   return id;
 }
@@ -395,6 +415,8 @@ function buildSceneTree(parseResult, opts) {
     defsByName,
     protoNames: collectProtoNames(tree),
     useResolver: opts && typeof opts.useResolver === 'function' ? opts.useResolver : null,
+    astByItemId: new Map(),
+    itemIdByAst: new Map(),
   };
 
   // Root item -- always present, even for an empty document.
@@ -411,6 +433,7 @@ function buildSceneTree(parseResult, opts) {
   });
   ctx.items.push(rootItem);
   ctx.byId.set(rootId, rootItem);
+  if (tree) link(ctx, rootId, tree);
 
   // Top-level statements.
   if (tree && Array.isArray(tree.statements)) {
@@ -443,13 +466,15 @@ function buildSceneTree(parseResult, opts) {
     byKind: Object.freeze(byKind),
   });
 
-  return Object.freeze({
+  const result = Object.freeze({
     root: ctx.byId.get(rootId),
     items,
     byId: readOnlyMap(ctx.byId, 'SCENE_TREE_BYID_READ_ONLY'),
     totals,
     defsByName: readOnlyMap(defsByName, 'SCENE_TREE_DEFS_READ_ONLY'),
   });
+  AST_LINKS.set(result, { astByItemId: ctx.astByItemId, itemIdByAst: ctx.itemIdByAst });
+  return result;
 }
 
 // Look up the smallest scene item whose range contains the given offset.
@@ -482,10 +507,29 @@ function itemById(sceneTreeResult, id) {
   return item || null;
 }
 
+// WD2-B: the exact AST object an item was emitted from, or null. Only a tree
+// returned by buildSceneTree answers; the object belongs to that tree's parse.
+function astNodeForItem(sceneTreeResult, id) {
+  const links = sceneTreeResult && typeof sceneTreeResult === 'object' ? AST_LINKS.get(sceneTreeResult) : null;
+  if (!links || id == null) return null;
+  return links.astByItemId.get(id) || null;
+}
+
+// WD2-B: the item that projects exactly this AST object, or null. Object
+// identity only -- an AST object from another parse never matches.
+function itemForAstNode(sceneTreeResult, astNode) {
+  const links = sceneTreeResult && typeof sceneTreeResult === 'object' ? AST_LINKS.get(sceneTreeResult) : null;
+  if (!links || !astNode || typeof astNode !== 'object') return null;
+  const id = links.itemIdByAst.get(astNode);
+  return id == null ? null : itemById(sceneTreeResult, id);
+}
+
 module.exports = {
   KIND,
   USE_TARGET,
   buildSceneTree,
   itemContainingOffset,
   itemById,
+  astNodeForItem,
+  itemForAstNode,
 };

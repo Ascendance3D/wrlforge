@@ -1030,6 +1030,64 @@ as-built record. WD2 editing lanes (field editing, node creation / deletion,
 drag-and-drop, reparenting, rename, PROTO/ROUTE editing, auto-fix) and all
 WD2-deferred work remain in the deferred list below.
 
+### Phase WD2-B — Typed Inspector Field Editing (first visual mutation)
+
+**IMPLEMENTED — AWAITING INDEPENDENT QA.** Not closed. The Inspector becomes
+write-capable for existing, explicitly authored built-in VRML97 field values
+of nine schema types (`SFBool`, `SFInt32`, `SFFloat`, `SFTime`, `SFVec2f`,
+`SFVec3f`, `SFColor`, `SFRotation`, `SFString`). The source text stays the
+document: an Inspector Apply becomes a verified WD1.2 span patch of the
+narrowest token/component span, dispatched as ONE isolated CodeMirror history
+event on the same buffer the code editor uses, so dirty tracking, recovery,
+the live X_ITE preview, Save / Save As, diagnostics, Undo and Redo all follow
+from the existing pipeline. The selected node survives an edit only through
+WD1.4 Tier 1 identity (a transaction anchor resolved through a verified
+receipt); anything unproven is cleared visibly — zero wrong re-anchors.
+
+- Pure model `src/vrml/field-edit.js` (schema-typed, fail-closed gates,
+  numeric/string validation, round-trip verification) and
+  `src/editor/inspector-edit.js` (apply planning + selection survival),
+  published on `vrml.fieldEdit` and the bundled `WRLForgeSceneBridge`.
+- Read-only for everything else: absent/default fields, MF* values,
+  SFNode/MFNode, IS-bound and X3D-only fields, PROTO-named and vendor node
+  types, USE/ROUTE/PROTO/EXTERNPROTO/Document, and any document with a
+  structural syntax error.
+- Runtime QA: `npm run qa:wd2b` (real Electron, unsaved-buffer X_ITE bounds
+  move +3 on X and back through Undo/Redo, Save persists).
+
+See `docs/white-dune-2026/WD2_B_TYPED_INSPECTOR_EDITING.md`. Node creation /
+deletion, MF array editing, ROUTE/PROTO editing, gizmos, colour pickers and
+every other structural or viewport authoring capability remain future lanes.
+
+### Phase WD2-C — First Object (beginner visual creation + safe structural editing)
+
+**IMPLEMENTED — AWAITING OWNER REVIEW / INDEPENDENT QA.** Not closed. Built on
+the WD2-B candidate. A beginner can create a Box or Sphere, change its
+Position, Rotation, Size (Box) / Radius (Sphere) and Color, Duplicate it,
+Delete it, Undo/Redo each step and Save valid VRML97 — without opening Source
+or knowing VRML terms. Every action is an exact, verified source-text patch
+dispatched as one isolated CodeMirror history event; the X_ITE preview follows
+the buffer through the existing unsaved-buffer path.
+
+- `src/vrml/node-templates.js` (new anonymous `Transform → Shape →
+  Appearance/Material → Box|Sphere`, no DEF, no defaults, no metadata),
+  `src/vrml/structure-edit.js` (root insertion, absent-field insertion,
+  exact-byte Duplicate, owned-span Delete, inserted-node identity; token-stream
+  and round-trip verified), `src/vrml/simple-object.js` (beginner facade over
+  the parse + schema), `src/editor/first-object.js`, `renderer/model-workspace.js`.
+- Model workspace: new/empty documents open in Model (preview first, Add /
+  Duplicate / Delete always visible, Object panel, Source one click away);
+  existing documents use the remembered `workspaceMode` preference.
+- Conservative refusals with plain sentences: syntax errors, missing / non-VRML97
+  header, PROTO bodies, SFNode values, DEF/USE/ROUTE/PROTO inside a duplicate,
+  deleting a DEF that a USE/ROUTE elsewhere references.
+- Runtime QA: `npm run qa:wd2c` (real Electron, literal source oracle per step,
+  one undo per action, live X_ITE checks, Save + reopen).
+
+See `docs/white-dune-2026/WD2_C_FIRST_OBJECT.md`. Picking (WD2-C0/WD2-D),
+gizmos (WD2-E), hierarchy editing (WD2-F), presets, textures, ROUTE/animation
+and PROTO editing remain future lanes.
+
 ## Deferred ⛔
 
 Not scheduled into any phase above; requires explicit future direction before any design work begins:

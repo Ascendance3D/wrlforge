@@ -24,6 +24,8 @@
     "qa:mall-preview": "node qa/phase-7c-mall-preview/orchestrate.js",
     "qa:world-preview": "node qa/phase-7c-world-preview/orchestrate.js",
     "qa:windows": "node qa/phase-7c-windows/orchestrate.js",
+    "qa:wd2b": "node qa/wd2-b-typed-inspector/orchestrate.js",
+    "qa:wd2c": "node qa/wd2-c-first-object/orchestrate.js",
     "recon:world": "node qa/world-recon/cli.js",
     "build:icons": "node scripts/build-icons.js",
     "build:win": "node qa/visual-qa/workspace-preflight.js --label=build:win && npm run build:editor && node scripts/build-win.js --win",
