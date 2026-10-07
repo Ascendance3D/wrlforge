@@ -1,0 +1,94 @@
+name: Roadmap lane
+description: Propose or define a WRL Forge roadmap lane (maintainers). Filing this does not authorize implementation.
+title: "[LANE-ID] "
+labels: [lane, roadmap]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Roadmap lane
+
+        Lanes are tracked in the **WRL Forge Development** GitHub Project.
+
+        **Submitting this form does not authorize implementation.** A lane starts only on an explicit owner GO,
+        and multi-phase lanes run one phase at a time with a STOP + report between phases.
+
+        Break the lane into native sub-issues (research/design, implementation, independent QA, closeout)
+        and record real technical blocks as native "blocked by" dependencies — not as text.
+  - type: input
+    id: lane-id
+    attributes:
+      label: Lane ID
+      description: Short identifier used in the title, e.g. `WD2-D`, `UI-0`, `SEC-SCRIPT-1`.
+      placeholder: WD2-X
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What this lane must achieve, in one or two sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: user-visible
+    attributes:
+      label: User-visible result
+      description: What a user can do or see when the lane is done. Write "None — research gate" if applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: In scope
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Architecture constraints
+      description: Which permanent rules apply (see `WD.md` and `CLAUDE.md`).
+      value: |
+        - Exact source text remains canonical; edits are WD1.2 span patches
+        - No second editable document model
+        - No hidden source instrumentation / synthetic identity
+        - Unsupported or ambiguous identity fails closed
+        - One user-visible action = one coherent undo transaction
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Real technical blocks only. Also add them as native "blocked by" relationships after filing.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Checklist of verifiable criteria.
+      placeholder: "- [ ] ..."
+    validations:
+      required: true
+  - type: textarea
+    id: qa
+    attributes:
+      label: Required QA
+      description: Focused tests, Electron/visual QA, independent QA — and what is explicitly not required.
+    validations:
+      required: true
+  - type: textarea
+    id: deferred
+    attributes:
+      label: Deferred work
+      description: Scope intentionally left for later. Each item needs its own issue before this lane closes.
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional evidence / context
+      description: Prior spikes, QA reports, docs, corpus findings.
