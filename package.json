@@ -52,7 +52,7 @@
   "private": true,
   "type": "commonjs",
   "dependencies": {
-    "x_ite": "^15.1.10"
+    "x_ite": "15.1.10"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.10.4",

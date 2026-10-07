@@ -114,6 +114,12 @@ const S = {
   sourceOpen: false,
   displayLabels: new Map(),
   damaged: false,
+  // WD2-D -- the #modelStatus text viewport picking last wrote (so only that
+  // text is ever cleared), and the last pick result (QA introspection only).
+  pickStatusText: null,
+  pickStatusPersistent: false,
+  lastViewportPick: null,
+  pickReasonsLogged: new Set(), // compatibility reasons already logged (once each)
 };
 
 // WD2-A -- one selection authority shared by the scene-tree view and the
@@ -785,7 +791,82 @@ function applyWorkspace() {
   // hid it ("Editor only"): ask once for the current buffer.
   const st = EP() ? EP()._state() : null;
   if (model && st && st.layout === 'editor-only' && st.displayedGeneration === 0 && S.handle) EP().manualUpdate();
+  // WD2-D: viewport picking is armed ONLY in Model; Code is inert.
+  if (EP() && EP().armPicking) EP().armPicking(model, viewportPickHandlers);
+  if (!model) clearPickStatus();
 }
+
+// WD2-D -- viewport selection. A proven click selects through the ONE
+// selection authority, exactly like a Scene Tree click: no caret movement, no
+// source scrolling, no second selection state. Every refusal leaves the
+// selection unchanged and says why on the existing #modelStatus line.
+function showPickStatus(text, isError, persistent) {
+  if (!modelWorkspace || !text) return;
+  modelWorkspace.setStatus(text, !!isError);
+  S.pickStatusText = text;
+  S.pickStatusPersistent = !!persistent;
+}
+
+function clearPickStatus() {
+  if (S.pickStatusText != null && els.modelStatus && els.modelStatus.textContent === S.pickStatusText && modelWorkspace) {
+    modelWorkspace.setStatus('', false);
+  }
+  S.pickStatusText = null;
+  S.pickStatusPersistent = false;
+}
+
+function onViewportPick(snapshot, currentCheck) {
+  const VPk = sceneBridge && sceneBridge.viewportPick;
+  if (!VPk || S.workspaceMode !== 'model') return;
+  const analysis = S.analysisSession && S.sceneTree
+    ? { text: S.analysisSession.text, parse: S.analysisSession.parse, sceneTree: S.sceneTree }
+    : null;
+  const res = VPk.resolvePick({
+    snapshot,
+    currentCheck: snapshot && snapshot.generation ? currentCheck(snapshot.generation) : null,
+    analysis,
+    currentText: currentText(),
+  });
+  S.lastViewportPick = {
+    seq: (S.lastViewportPick ? S.lastViewportPick.seq : 0) + 1,
+    status: res.status, reason: res.reason, generation: res.generation, sceneTreeItemId: res.sceneTreeItemId, source: res.source,
+  };
+  if (res.status === VPk.STATUS.PROVEN) {
+    clearPickStatus();
+    sceneSelection.setSelection(res.sceneTreeItemId);
+    return;
+  }
+  if (res.status === VPk.STATUS.NO_HIT) { clearPickStatus(); return; }
+  const disabled = res.status === VPk.STATUS.COMPATIBILITY_DISABLED;
+  if (disabled) logPickCompatibility(res.reason);
+  showPickStatus(VPk.refusalText(res), disabled, disabled);
+}
+
+// The disable reason is logged ONCE to the console with its contract P-row.
+function logPickCompatibility(reason) {
+  const VPk = sceneBridge && sceneBridge.viewportPick;
+  if (!VPk || !reason || S.pickReasonsLogged.has(reason)) return;
+  S.pickReasonsLogged.add(reason);
+  console.warn(`[WD2-D] viewport picking disabled: ${reason} (${VPk.compatibilityRow(reason)})`);
+}
+
+// Persistent while picking is unavailable for this page (a structural X_ITE
+// compatibility failure is sticky); it survives selection changes and is
+// cleared only on leaving Model.
+function onPickCompatibility(c) {
+  const VPk = sceneBridge && sceneBridge.viewportPick;
+  if (!VPk || S.workspaceMode !== 'model' || !c) return;
+  if (!c.ok && c.reason !== 'compatibility-unproven') {
+    logPickCompatibility(c.reason);
+    showPickStatus(VPk.compatibilityText(c.reason), true, true);
+  }
+}
+
+const viewportPickHandlers = Object.freeze({ onPick: onViewportPick, onCompatibility: onPickCompatibility });
+
+// A contextual refusal line clears on the next selection change; the
+// persistent compatibility line stays while in Model.
+sceneSelection.subscribe(() => { if (!S.pickStatusPersistent) clearPickStatus(); });
 
 function setWorkspaceMode(mode, persist) {
   S.workspaceMode = mode === 'model' ? 'model' : 'code';
@@ -1149,6 +1230,21 @@ window.__wrlEditor = {
       focusVisibleOutline: a ? getComputedStyle(a).outlineStyle : null };
   },
   bufferEquals: (t) => !!S.handle && S.handle.getText() === t,
+  // WD2-D QA: the last viewport pick result (status / reason / item / spans)
+  // and the CodeMirror selection head, to prove a pick never moves the caret.
+  lastViewportPick: () => S.lastViewportPick,
+  caretHead: () => (S.handle && S.handle.view ? S.handle.view.state.selection.main.head : null),
+  // The active preview canvas's client rect + X_ITE version, for real-pointer QA.
+  previewCanvasRect: () => {
+    const c = document.getElementById(S.context === 'world' ? 'wpCanvas' : 'preview');
+    if (!c) return null;
+    const r = c.getBoundingClientRect();
+    return { left: r.left, top: r.top, width: r.width, height: r.height, version: c.browser ? c.browser.version : null };
+  },
+  pickState: () => {
+    const st = EP() ? EP()._state() : null;
+    return { picking: st ? st.picking : null, mode: S.workspaceMode };
+  },
   // WD2-C QA hooks: drive / read the Model workspace's own DOM (Add, Duplicate,
   // Delete, the Object panel, the colour picker), CodeMirror's history depth,
   // and a READ-ONLY walk of the live X_ITE scene (types, Transform

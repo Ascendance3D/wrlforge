@@ -40,6 +40,9 @@ const EDITOR_PAGE_SCRIPTS = [
   'src/preview/preview-state.js',
   'src/preview/preview-scheduler.js',
   'src/preview/viewpoint-preserve.js',
+  // WD2-D: the private X_ITE pick adapter (window.WrlXitePickAdapter), read by
+  // preview.js / world-preview.js when they acquire a browser.
+  'src/preview/xite-pick-adapter.js',
   'src/editor/scene-selection.js',
   'renderer/scene-tree.js',
   'renderer/scene-inspector.js',
