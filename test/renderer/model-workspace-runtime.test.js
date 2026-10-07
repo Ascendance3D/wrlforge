@@ -83,23 +83,19 @@ function analyse(text) {
 function setup(text) {
   const doc = makeDom();
   const MW = loadView(doc);
-  const ids = ['modelBtn', 'codeBtn', 'sourceBtn', 'addBox', 'addSphere', 'duplicate', 'remove', 'selected', 'status', 'props'];
+  // UI-0 (#35): the Model-bar buttons are data-command controls bound by the
+  // command registry; the view receives only what it still paints.
+  const ids = ['sourceBtn', 'selected', 'status', 'props'];
   const els = Object.fromEntries(ids.map((k) => [k, doc.createElement(k === 'props' || k === 'status' || k === 'selected' ? 'div' : 'button')]));
   const selection = sceneSelectionMod.createSelectionController();
   const state = { mode: 'model', source: false, analysis: analyse(text), version: 1, calls: [], next: { status: 'ready' } };
   const view = MW.createModelWorkspace({
     els, selection,
-    isOpen: () => true,
     getMode: () => state.mode,
-    setMode: (m) => { state.mode = m; },
     isSourceOpen: () => state.source,
-    setSourceOpen: (o) => { state.source = o; },
     describeSelection: (id) => { const it = sceneTree.itemById(state.analysis.tree, id); return it ? { label: it.nodeType || it.kind, isNode: it.kind === 'Node' } : null; },
     objectFor: (id) => firstObject.objectForItem({ session: state.analysis.session, tree: state.analysis.tree, currentText: state.analysis.text, itemId: id }),
     analysisToken: () => state.version,
-    add: (p) => { state.calls.push(['add', p]); return { ok: true, message: `${p} created at origin.` }; },
-    duplicate: (id) => { state.calls.push(['duplicate', id]); return { ok: false, message: 'Cannot duplicate this object because it contains a DEF name that would conflict.' }; },
-    remove: (id) => { state.calls.push(['remove', id]); return { ok: true, message: 'Box deleted.' }; },
     applyProperty: (id, key, comps) => { state.calls.push(['apply', key, comps]); return state.next; },
     refusalText: (plan) => firstObject.refusalText(plan),
   });
@@ -124,39 +120,34 @@ test('colour conversion: every 8-bit channel round-trips; bounded stable spellin
   assert.equal(MW.colorComponentsToHex(['0.8', '0.8', '0.8']), '#cccccc');
 });
 
-test('the Model bar: mode pressed states, Source toggle only in Model, Duplicate/Delete need a node selection', () => {
+test('the Model bar view paints layout + text only: Source toggle visible only in Model, its label, the selection line', () => {
   const { els, view, state, selectTransform } = setup(`${H}${templates.simpleObjectTemplate('Box').text}\n`);
   view.refresh();
-  assert.equal(els.modelBtn.getAttribute('aria-pressed'), 'true');
-  assert.equal(els.codeBtn.getAttribute('aria-pressed'), 'false');
   assert.equal(els.sourceBtn.hidden, false);
   assert.equal(els.sourceBtn.textContent, 'Show Source');
-  assert.equal(els.duplicate.disabled, true);
   assert.equal(els.selected.textContent, 'Nothing selected');
   selectTransform();
-  assert.equal(els.duplicate.disabled, false);
-  assert.equal(els.remove.disabled, false);
   assert.equal(els.selected.textContent, 'Selected: Transform');
-  els.sourceBtn.click();
-  assert.equal(state.source, true);
-  assert.equal(els.sourceBtn.getAttribute('aria-pressed'), 'true');
+  state.source = true;
+  view.refresh();
   assert.equal(els.sourceBtn.textContent, 'Hide Source');
-  els.codeBtn.click();
-  assert.equal(state.mode, 'code');
+  state.mode = 'code';
+  view.refresh();
   assert.equal(els.sourceBtn.hidden, true);
+  // Enabled / pressed state belongs to the command registry (UI-0): the view
+  // never writes it, and binds no click listener of its own.
+  assert.equal(els.sourceBtn.getAttribute('aria-pressed'), null);
+  assert.equal(els.sourceBtn.disabled, false);
+  assert.equal((els.sourceBtn.listeners.click || []).length, 0);
 });
 
-test('Add / Duplicate / Delete report their outcome as TEXT (errors flagged, not colour-only)', () => {
-  const { els, view, state, selectTransform } = setup(`${H}${templates.simpleObjectTemplate('Box').text}\n`);
-  view.refresh();
-  els.addBox.click();
+test('setStatus reports an outcome as TEXT (errors flagged, not colour-only)', () => {
+  const { els, view } = setup(`${H}${templates.simpleObjectTemplate('Box').text}\n`);
+  view.setStatus('Box created at origin.', false);
   assert.equal(els.status.textContent, 'Box created at origin.');
   assert.equal(els.status.classList.contains('err'), false);
-  selectTransform();
-  els.duplicate.click();
-  assert.match(els.status.textContent, /^Cannot duplicate/);
+  view.setStatus('Cannot duplicate this object.', true);
   assert.equal(els.status.classList.contains('err'), true);
-  assert.deepEqual(state.calls.map((c) => c[0]), ['add', 'duplicate']);
 });
 
 test('the Object panel: beginner labels, technical secondary text, labelled inputs, defaults shown', () => {

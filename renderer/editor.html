@@ -63,6 +63,12 @@
      handlers can subscribe to the shared model in the same module pass. -->
 <script defer src="../src/settings/preferences.js"></script>
 <script defer src="preferences.js"></script>
+<!-- UI-0: the command/panel registries, workspace presets and the DOM
+     command binder. Loaded BEFORE editor.js, which registers the commands. -->
+<script defer src="../src/editor/workspace-presets.js"></script>
+<script defer src="../src/editor/command-registry.js"></script>
+<script defer src="../src/editor/panel-registry.js"></script>
+<script defer src="command-bindings.js"></script>
 <script defer src="editor.js"></script>
 <script defer src="editor-preview.js"></script>
 <style>
@@ -410,30 +416,30 @@
 </head>
 <body>
   <div class="toolbar" role="toolbar" aria-label="Editor actions">
-    <button id="backBtn" class="secondary" title="Return to the originating workspace">← Back</button>
-    <button id="saveBtn" disabled>Save</button>
-    <button id="saveAsBtn" class="secondary" disabled>Save As…</button>
-    <button id="reloadBtn" class="secondary" disabled title="Discard edits and re-read from disk">Reload</button>
-    <button id="undoBtn" class="secondary" disabled>Undo</button>
-    <button id="redoBtn" class="secondary" disabled>Redo</button>
-    <button id="findBtn" class="secondary" disabled>Find</button>
-    <button id="replaceBtn" class="secondary" disabled>Replace</button>
-    <button id="gotoBtn" class="secondary" disabled>Go to line…</button>
-    <button id="externalBtn" class="secondary" disabled title="Open the same file in your external editor">External editor</button>
+    <button id="backBtn" data-command="file.back" class="secondary" title="Return to the originating workspace">← Back</button>
+    <button id="saveBtn" data-command="file.save" disabled>Save</button>
+    <button id="saveAsBtn" data-command="file.saveAs" class="secondary" disabled>Save As…</button>
+    <button id="reloadBtn" data-command="file.reload" class="secondary" disabled title="Discard edits and re-read from disk">Reload</button>
+    <button id="undoBtn" data-command="edit.undo" class="secondary" disabled>Undo</button>
+    <button id="redoBtn" data-command="edit.redo" class="secondary" disabled>Redo</button>
+    <button id="findBtn" data-command="edit.find" class="secondary" disabled>Find</button>
+    <button id="replaceBtn" data-command="edit.replace" class="secondary" disabled>Replace</button>
+    <button id="gotoBtn" data-command="edit.gotoLine" class="secondary" disabled>Go to line…</button>
+    <button id="externalBtn" data-command="file.openExternal" class="secondary" disabled title="Open the same file in your external editor">External editor</button>
     <span class="workspace-mode" role="group" aria-label="Workspace">
-      <button id="modeModelBtn" class="secondary" aria-pressed="false" title="Model workspace: the 3D view first, Source one click away">Model</button>
-      <button id="modeCodeBtn" class="secondary" aria-pressed="true" title="Code workspace: the VRML source first">Code</button>
+      <button id="modeModelBtn" data-command="workspace.model" class="secondary" aria-pressed="false" title="Model workspace: the 3D view first, Source one click away">Model</button>
+      <button id="modeCodeBtn" data-command="workspace.code" class="secondary" aria-pressed="true" title="Code workspace: the VRML source first">Code</button>
     </span>
     <span class="spacer"></span>
     <span class="zoom" role="group" aria-label="Editor size">
-      <button id="zoomOutBtn" class="secondary" title="Decrease size (Ctrl -)" aria-label="Decrease size">−</button>
+      <button id="zoomOutBtn" data-command="view.zoomOut" class="secondary" title="Decrease size (Ctrl -)" aria-label="Decrease size">−</button>
       <span id="zoomLabel" aria-live="polite" aria-label="Editor size 100%">100%</span>
-      <button id="zoomInBtn" class="secondary" title="Increase size (Ctrl +)" aria-label="Increase size">+</button>
-      <button id="zoomResetBtn" class="secondary" title="Reset size (Ctrl 0)" aria-label="Reset size">Reset</button>
+      <button id="zoomInBtn" data-command="view.zoomIn" class="secondary" title="Increase size (Ctrl +)" aria-label="Increase size">+</button>
+      <button id="zoomResetBtn" data-command="view.zoomReset" class="secondary" title="Reset size (Ctrl 0)" aria-label="Reset size">Reset</button>
     </span>
     <label class="theme">Theme <select id="themeSelect" aria-label="Editor color theme"></select></label>
-    <button id="prefsBtn" class="secondary" title="Preferences & Settings">Preferences</button>
-    <button id="closeBtn" class="secondary" disabled>Close</button>
+    <button id="prefsBtn" data-command="view.preferences" class="secondary" title="Preferences & Settings">Preferences</button>
+    <button id="closeBtn" data-command="file.close" class="secondary" disabled>Close</button>
   </div>
 
   <div id="editorMsg" class="editor-msg" style="display:none" role="status" aria-live="polite"></div>
@@ -443,16 +449,16 @@
   <div id="modelBar" class="model-bar" role="toolbar" aria-label="Model tools">
     <span class="mb-group" role="group" aria-labelledby="addLabel">
       <span id="addLabel" class="mb-label">Add</span>
-      <button id="addBoxBtn" aria-label="Add Box" title="Add a Box at the origin (0 0 0)" disabled>Box</button>
-      <button id="addSphereBtn" aria-label="Add Sphere" title="Add a Sphere at the origin (0 0 0)" disabled>Sphere</button>
+      <button id="addBoxBtn" data-command="model.addBox" aria-label="Add Box" title="Add a Box at the origin (0 0 0)" disabled>Box</button>
+      <button id="addSphereBtn" data-command="model.addSphere" aria-label="Add Sphere" title="Add a Sphere at the origin (0 0 0)" disabled>Sphere</button>
     </span>
     <span class="mb-group" role="group" aria-label="Selected object">
-      <button id="duplicateBtn" class="secondary" title="Copy the selected object, exactly as written" disabled>Duplicate</button>
-      <button id="deleteBtn" class="secondary" title="Remove the selected object" disabled>Delete</button>
+      <button id="duplicateBtn" data-command="model.duplicate" class="secondary" title="Copy the selected object, exactly as written" disabled>Duplicate</button>
+      <button id="deleteBtn" data-command="model.delete" class="secondary" title="Remove the selected object" disabled>Delete</button>
     </span>
     <span id="modelSelected" class="mb-selected">Nothing selected</span>
     <span class="spacer"></span>
-    <button id="sourceToggleBtn" class="secondary" aria-pressed="false" aria-controls="editorCol" hidden>Show Source</button>
+    <button id="sourceToggleBtn" data-command="workspace.toggleSource" class="secondary" aria-pressed="false" aria-controls="editorCol" hidden>Show Source</button>
   </div>
   <div id="modelStatus" class="model-status" role="status" aria-live="polite"></div>
 
@@ -473,14 +479,14 @@
         <h2>Preview</h2>
         <span id="previewChip" class="preview-chip tone-muted" role="status" aria-live="polite">Preview</span>
         <span class="spacer"></span>
-        <button id="previewUpdateBtn" title="Update the preview (Ctrl+Enter)">Update</button>
-        <button id="previewSavedBtn" class="secondary" title="Show the last-saved version from disk">Show saved version</button>
-        <button id="previewMaxBtn" class="secondary" title="Maximize the preview (Ctrl+Shift+Enter)" aria-pressed="false">Maximize</button>
+        <button id="previewUpdateBtn" data-command="preview.update" title="Update the preview (Ctrl+Enter)">Update</button>
+        <button id="previewSavedBtn" data-command="preview.showSaved" class="secondary" title="Show the last-saved version from disk">Show saved version</button>
+        <button id="previewMaxBtn" data-command="preview.toggleMaximize" class="secondary" title="Maximize the preview (Ctrl+Shift+Enter)" aria-pressed="false">Maximize</button>
         <label class="theme">Layout
-          <select id="previewLayoutSelect" aria-label="Preview layout">
-            <option value="split">Split</option>
-            <option value="preview-max">Preview maximized</option>
-            <option value="editor-only">Editor only</option>
+          <select id="previewLayoutSelect" data-command-select aria-label="Preview layout">
+            <option value="split" data-command="preview.layout.split">Split</option>
+            <option value="preview-max" data-command="preview.layout.previewMax">Preview maximized</option>
+            <option value="editor-only" data-command="preview.layout.editorOnly">Editor only</option>
           </select>
         </label>
       </div>
@@ -550,7 +556,7 @@
                 <option value="NONE">None</option>
               </select>
             </label>
-            <button id="previewFindNewBtn" class="secondary" title="Rescan the project so newly added files can load">Find new files</button>
+            <button id="previewFindNewBtn" data-command="preview.findNewFiles" class="secondary" title="Rescan the project so newly added files can load">Find new files</button>
           </div>
           <div class="preview-hint" id="epEditedLine">Full World Project preview.</div>
           <div class="preview-hint">Renders the whole world with your unsaved edits substituted in memory. Nothing here is written to your project.</div>
