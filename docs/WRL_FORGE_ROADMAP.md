@@ -12,18 +12,16 @@ here does not authorize work on it.
 
 ## Now
 
-### [GOV-0](https://github.com/Ascendance3D/wrlforge/issues/23) — GitHub roadmap and governance reset
-Project tracking, issue hierarchy, templates and main protection.
-
 ### [WD2-C0](https://github.com/Ascendance3D/wrlforge/issues/24) — X_ITE picking provenance
-Independent QA passed with conditions.
-Closeout remains pending.
+Completed research, accepted with required compatibility guards
+([closeout record](white-dune-2026/WD2_C0_XITE_PICKING_CLOSEOUT.md)).
+No product lane has started.
 
 ## Next
 
 ### [WD2-D](https://github.com/Ascendance3D/wrlforge/issues/28) — Viewport selection
-Blocked by WD2-C0 closeout.
-Production source-proven picking with mandatory compatibility guards.
+Backlog. Requires separate owner authorization.
+Production source-proven picking with the 12 mandatory compatibility guards.
 
 ### [UI-0](https://github.com/Ascendance3D/wrlforge/issues/33) — Workspace architecture
 Command, panel, toolbar, workspace and Model/Play architecture.

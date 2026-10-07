@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<!-- Spike-only page. Same posture as the production previews: no remote
+     origin, X_ITE loaded locally from the spike's own privileged scheme. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' wd2c0:; script-src 'self' wd2c0: 'wasm-unsafe-eval'; style-src 'self' wd2c0: 'unsafe-inline'; img-src 'self' wd2c0: data: blob:; connect-src 'self' wd2c0: data: blob:; worker-src 'self' wd2c0: blob:" />
+<title>WD2-C0 X_ITE picking spike</title>
+<script src="wd2c0://app/x_ite/x_ite.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: #202024; overflow: hidden; }
+  #frame { position: absolute; left: 0; top: 0; }
+  #canvas { display: block; width: 800px; height: 800px; }
+</style>
+</head>
+<body>
+  <div id="frame"><x3d-canvas id="canvas" splashScreen="false" notifications="false" contextMenu="false" timings="false"></x3d-canvas></div>
+  <script src="harness.js"></script>
+</body>
+</html>
