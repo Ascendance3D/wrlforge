@@ -82,6 +82,10 @@ supersedes this file:
 
 ## 3. Status at a glance
 
+Current lane and QA status lives in the **WRL Forge Development** GitHub Project
+(see `docs/WRL_FORGE_ROADMAP.md`). This table records the document-core lanes
+and their landing commits; it is not a tracker.
+
 | lane | what it is | state |
 |---|---|---|
 | WD0 | discovery + GPL boundary | committed |
@@ -93,11 +97,11 @@ supersedes this file:
 | WD1.5-P1 | DEF/USE scope graph (`symbols.js`, `scope-graph.js`) | committed `66783c1` |
 | WD1.5-P2A | PROTO/EXTERNPROTO type-name resolution | committed `5176d28` |
 | WD1.5-P2B | interface members + `IS` (§8.1) | committed `51ff283` |
-| WD1.5-P2C | ROUTE endpoints (§8.2) | **implemented, uncommitted** |
+| WD1.5-P2C | ROUTE endpoints (§8.2) | committed `5751a10` |
 | WD2-A | read-only scene tree + Inspector | closed (see `WD2_A_SCENE_TREE_INSPECTOR_FOUNDATION.md`) |
-| WD2-B | typed Inspector field editing (verified span patches, Tier 1 re-selection) | **implemented, awaiting independent QA** |
-| WD2-C | First Object: Add Box/Sphere, absent-field insert, Duplicate, Delete, beginner properties, Model workspace (`docs/white-dune-2026/WD2_C_FIRST_OBJECT.md`) | **implemented — awaiting owner review / independent QA** |
-| WD2 (later) | picking, gizmos, hierarchy, appearance, behaviours | not started |
+| WD2-B | typed Inspector field editing (verified span patches, Tier 1 re-selection) | merged (PR #22) |
+| WD2-C | First Object: Add Box/Sphere, absent-field insert, Duplicate, Delete, beginner properties, Model workspace (`docs/white-dune-2026/WD2_C_FIRST_OBJECT.md`) | merged (PR #22) |
+| WD2 (later) | picking, gizmos, hierarchy, appearance, behaviours | tracked in the GitHub Project |
 
 ## 4. WD1.1 — source mapping
 

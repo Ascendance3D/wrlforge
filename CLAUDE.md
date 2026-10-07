@@ -30,15 +30,16 @@ copyright assignment — see `CONTRIBUTING.md`.
    typed field inspector, viewport manipulation, PROTO/ROUTE tooling. The
    document core (WD1.1–WD1.5) is built and gated. **WD2-A** (read-only scene
    tree + Inspector) is built and closed. **WD2-B** (typed Inspector editing of
-   existing VRML97 field values through verified source patches) awaits
-   independent QA. **WD2-C "First Object"** (Model workspace; Add Box/Sphere at
-   the origin as anonymous generated VRML97; beginner Position / Rotation /
-   Size|Radius / Color over the same schema + field edits; absent-field
-   insertion; exact-span Duplicate / Delete with conservative refusals) is the
-   current candidate, awaiting owner review / independent QA — see
+   existing VRML97 field values through verified source patches) and **WD2-C
+   "First Object"** (Model workspace; Add Box/Sphere at the origin as anonymous
+   generated VRML97; beginner Position / Rotation / Size|Radius / Color over the
+   same schema + field edits; absent-field insertion; exact-span Duplicate /
+   Delete with conservative refusals) are merged (PR #22) — see
    `src/vrml/structure-edit.js` and `docs/white-dune-2026/WD2_C_FIRST_OBJECT.md`.
    Viewport picking, gizmos, hierarchy editing, MF arrays and ROUTE/PROTO
    editing are future lanes, each needing its own approval.
+   Current lane and QA status lives in the **WRL Forge Development** GitHub
+   Project, not in this file.
 
 Both halves edit **one** document. Neither owns a private copy of it.
 
@@ -63,7 +64,8 @@ genuinely generic infrastructure (gzip handling, file I/O, parsing primitives).
 The project was previously named `vrmlpad` and scoped narrowly to Cybertown Mall
 items. That narrow tool is the working foundation this expansion builds on — it is
 kept and grown into one profile of a larger editor, never rewritten away. See
-`docs/WRL_FORGE_ROADMAP.md` for the phased plan.
+`docs/WRL_FORGE_ROADMAP.md` for current direction (a short projection of the
+GitHub Project) and `docs/roadmap/archive/` for the historical phased plan.
 
 ### The two things a generic editor cannot do for Cybertown
 
