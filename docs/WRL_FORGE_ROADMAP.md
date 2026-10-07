@@ -12,9 +12,6 @@ here does not authorize work on it.
 
 ## Now
 
-### [GOV-0](https://github.com/Ascendance3D/wrlforge/issues/23) — GitHub roadmap and governance reset
-Project tracking, issue hierarchy, templates and main protection.
-
 ### [WD2-C0](https://github.com/Ascendance3D/wrlforge/issues/24) — X_ITE picking provenance
 Completed research, accepted with required compatibility guards
 ([closeout record](white-dune-2026/WD2_C0_XITE_PICKING_CLOSEOUT.md)).
