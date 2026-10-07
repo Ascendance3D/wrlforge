@@ -31,6 +31,7 @@ const EXPLICIT = [
   'test/portability.test.js',
   'test/product-posture.test.js',
   'test/release-workflow.test.js',
+  'test/ci-workflow.test.js',
 ];
 
 // Directories whose *.test.js files are all included (excludes test/visual/).
