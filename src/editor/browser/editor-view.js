@@ -8,12 +8,12 @@
 // real tokenizer/parser; stale results are dropped by a monotonic doc version so
 // a late parse can never apply diagnostics from an older buffer.
 
-import { EditorState, StateField, StateEffect, Compartment } from '@codemirror/state';
+import { EditorState, StateField, StateEffect, Compartment, Transaction } from '@codemirror/state';
 import {
   EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter,
   drawSelection, dropCursor, rectangularSelection, crosshairCursor, Decoration,
 } from '@codemirror/view';
-import { history, historyKeymap, defaultKeymap, indentWithTab, undo, redo } from '@codemirror/commands';
+import { history, historyKeymap, defaultKeymap, indentWithTab, undo, redo, isolateHistory, undoDepth, redoDepth } from '@codemirror/commands';
 import { search, searchKeymap, highlightSelectionMatches, openSearchPanel } from '@codemirror/search';
 import { bracketMatching } from '@codemirror/language';
 import { lintGutter, setDiagnostics } from '@codemirror/lint';
@@ -175,6 +175,13 @@ function create(parent, opts = {}) {
 
   let version = 0; // monotonic; bumps on every doc change and every re-analyze
   let pending = null; // debounce timer
+  // WD2-B: the change chain since the last DELIVERED analysis. `chainBase` is
+  // the exact text that analysis parsed; `chainChanges` is CodeMirror's own
+  // composed ChangeSet from that text to the current buffer. Both reset on
+  // setDoc (a reload is not a transaction), so a broken chain is reported as
+  // null and the renderer can never re-anchor a selection through it.
+  let chainBase = null;
+  let chainChanges = null;
 
   const listener = EditorView.updateListener.of((update) => {
     if (update.docChanged && typeof options.onChange === 'function') {
@@ -185,7 +192,10 @@ function create(parent, opts = {}) {
       const line = update.state.doc.lineAt(head);
       options.onCursor({ line: line.number, column: head - line.from + 1 });
     }
-    if (update.docChanged) scheduleAnalyze();
+    if (update.docChanged) {
+      chainChanges = chainChanges ? chainChanges.compose(update.changes) : update.changes;
+      scheduleAnalyze();
+    }
   });
 
   // A builder (not a hoisted const) so setDoc can rebuild a fresh EditorState
@@ -235,6 +245,12 @@ function create(parent, opts = {}) {
       return;
     }
     if (forVersion !== version) return; // moved on during analyze
+    // WD2-B: the WD1.2 edit set (offsets against `chainBase`) CodeMirror applied
+    // since the previous delivered analysis. The renderer VERIFIES it before
+    // trusting it; this is evidence, not authority.
+    const transaction = chainBase === null ? null : { previousText: chainBase, edits: inspectorEdit.changesToEdits(chainChanges) };
+    chainBase = text;
+    chainChanges = null;
     view.dispatch({ effects: setHighlights.of(result.highlights) });
     view.dispatch(setDiagnostics(view.state, result.diagnostics.map((d) => ({
       from: d.from, to: d.to, severity: d.severity, message: d.message, source: d.code,
@@ -251,6 +267,10 @@ function create(parent, opts = {}) {
         // diagnostics came from. The renderer is the only consumer; the
         // editor surface itself does not consume this field.
         parseResult: result.parseResult,
+        // WD2-B: the exact text parsed (binds a parse session to this parse)
+        // and the change chain from the previously delivered analysis.
+        text,
+        transaction,
       });
     }
   }
@@ -264,6 +284,8 @@ function create(parent, opts = {}) {
       // Fresh state -> resets undo history (a reload/open is not undoable back
       // into the previous file), carrying the current theme, then re-analyze.
       view.setState(EditorState.create({ doc: text, extensions: buildExtensions() }));
+      chainBase = null;
+      chainChanges = null;
       runAnalyze(++version);
     },
     setTheme(name) {
@@ -295,10 +317,40 @@ function create(parent, opts = {}) {
       view.focus();
     },
     reanalyzeNow() { runAnalyze(++version); },
+    isReadOnly() { return !view.state.facet(EditorView.editable); },
+    // WD2-B: dispatch one VERIFIED Inspector edit set as ONE CodeMirror
+    // transaction on the same document the code editor edits. Refuses unless
+    // the buffer is still exactly the text the edits were verified against; the
+    // whole set is one isolated history event, so one Undo reverses one Apply.
+    // WD2-C: structural First Object actions use the same dispatch, tagged
+    // 'input.model' instead of 'input.inspector' (a closed list -- no caller
+    // can smuggle another event type in).
+    applyVerifiedEdits({ oldText, edits, newText, userEvent } = {}) {
+      if (!view.state.facet(EditorView.editable)) return { ok: false, reason: 'editor-read-only' };
+      if (typeof oldText !== 'string' || typeof newText !== 'string' || !Array.isArray(edits) || edits.length === 0) {
+        return { ok: false, reason: 'malformed-edit-set' };
+      }
+      if (view.state.doc.toString() !== oldText) return { ok: false, reason: 'buffer-changed' };
+      view.dispatch({
+        changes: edits.map((e) => ({ from: e.from, to: e.to, insert: e.insert })),
+        annotations: [isolateHistory.of('full'), Transaction.userEvent.of(userEvent === 'input.model' ? 'input.model' : 'input.inspector')],
+      });
+      if (view.state.doc.toString() !== newText) {
+        // Unreachable for a verified set; if it ever happens, take it back.
+        undo(view);
+        return { ok: false, reason: 'post-dispatch-mismatch' };
+      }
+      return { ok: true };
+    },
     // Toolbar-driven equivalents of the built-in keymap commands, so the app's
     // buttons and CodeMirror's own shortcuts route through the same commands.
-    undo() { undo(view); view.focus(); },
-    redo() { redo(view); view.focus(); },
+    // WD2-C QA/evidence: CodeMirror's own history depths (one visual action
+    // must add exactly one undo step).
+    historyDepth() { return { undo: undoDepth(view.state), redo: redoDepth(view.state) }; },
+    // Focus follows into the code area only when it is visible (WD2-C: the
+    // Model workspace may collapse Source; a keyboard user keeps their place).
+    undo() { undo(view); if (view.dom.offsetParent) view.focus(); },
+    redo() { redo(view); if (view.dom.offsetParent) view.focus(); },
     openSearch() { openSearchPanel(view); },
     destroy() { if (pending) clearTimeout(pending); view.destroy(); },
   };
@@ -318,12 +370,19 @@ import * as vrmlPresentation from '../../vrml/presentation.js';
 import * as vrmlMessages from '../../vrml/messages.js';
 import * as vrmlSemanticFindings from '../../vrml/semantic-findings.js';
 import * as vrmlScopeGraph from '../../vrml/scope-graph.js';
+import * as vrmlDocumentTransaction from '../../vrml/document-transaction.js';
+import * as vrmlFieldEdit from '../../vrml/field-edit.js';
+import * as inspectorEdit from '../inspector-edit.js';
+import * as firstObject from '../first-object.js';
 
 window.WRLForgeSceneBridge = Object.freeze({
   sceneTree: Object.freeze({
     buildSceneTree: vrmlSceneTree.buildSceneTree,
     itemContainingOffset: vrmlSceneTree.itemContainingOffset,
     itemById: vrmlSceneTree.itemById,
+    // WD2-B: item <-> exact AST object of the same build (object identity).
+    astNodeForItem: vrmlSceneTree.astNodeForItem,
+    itemForAstNode: vrmlSceneTree.itemForAstNode,
     KIND: vrmlSceneTree.KIND,
     USE_TARGET: vrmlSceneTree.USE_TARGET,
   }),
@@ -348,5 +407,34 @@ window.WRLForgeSceneBridge = Object.freeze({
     resolve: vrmlScopeGraph.resolve,
     STATUS: vrmlScopeGraph.STATUS,
     isResolved: vrmlScopeGraph.isResolved,
+  }),
+  // WD2-B: binds each analysed text to its parse (WD1.4 session) so a
+  // selection can be re-anchored through a verified transaction.
+  identity: Object.freeze({
+    createParseSession: vrmlDocumentTransaction.createParseSession,
+  }),
+  // WD2-B: the pure field-edit planning + selection-survival decisions. The
+  // renderer never computes an offset or picks a re-anchored node itself.
+  inspectorEdit: Object.freeze({
+    fieldsForItem: inspectorEdit.fieldsForItem,
+    prepareInspectorApply: inspectorEdit.prepareInspectorApply,
+    reanchorSelection: inspectorEdit.reanchorSelection,
+    OUTCOME: inspectorEdit.OUTCOME,
+  }),
+  fieldEdit: Object.freeze({
+    FIELD_EDIT_REASON: vrmlFieldEdit.FIELD_EDIT_REASON,
+    PLAN_STATUS: vrmlFieldEdit.PLAN_STATUS,
+  }),
+  // WD2-C: First Object -- Add / Duplicate / Delete / beginner properties as
+  // VERIFIED edit sets, identity of an inserted node, display-only labels.
+  firstObject: Object.freeze({
+    prepareAdd: firstObject.prepareAdd,
+    prepareDuplicate: firstObject.prepareDuplicate,
+    prepareDelete: firstObject.prepareDelete,
+    preparePropertySet: firstObject.preparePropertySet,
+    objectForItem: firstObject.objectForItem,
+    displayLabels: firstObject.displayLabels,
+    selectInserted: firstObject.selectInserted,
+    refusalText: firstObject.refusalText,
   }),
 });

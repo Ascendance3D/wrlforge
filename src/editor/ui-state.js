@@ -278,6 +278,22 @@ function isFreshAnalysis(resultVersion, appliedVersion) {
   return typeof resultVersion === 'number' && resultVersion >= (appliedVersion || 0);
 }
 
+// --- WD2-C workspace mode -----------------------------------------------------
+// 'model' = visual-primary (large preview, Add/Properties visible, Source
+// collapsible); 'code' = the source-primary layout. A document whose every
+// line is blank or a comment (empty, whitespace-only, header-only) holds no
+// scene yet, so it opens in Model whatever was remembered; any other document
+// opens in the remembered mode. Text-level only: no parsing here.
+const UI_WORKSPACE_MODES = Object.freeze(['code', 'model']);
+function isEmptyScene(text) {
+  if (typeof text !== 'string') return false;
+  return text.split(/\r\n|\n|\r/).every((line) => /^[ \t,]*(#.*)?$/.test(line));
+}
+function initialWorkspaceMode({ text, remembered } = {}) {
+  if (isEmptyScene(text)) return 'model';
+  return UI_WORKSPACE_MODES.includes(remembered) ? remembered : 'code';
+}
+
 const API = {
   DIAG_CAP, SAVE_STATE, CONFLICT_ACTION, THEMES, DEFAULT_THEME,
   ZOOM_MIN, ZOOM_MAX, ZOOM_DEFAULT,
@@ -289,6 +305,8 @@ const API = {
   PREVIEW_LAYOUTS, PREVIEW_LAYOUT_DEFAULT, SPLIT_MIN, SPLIT_MAX, SPLIT_DEFAULT,
   resolvePreviewLayout, clampSplit, splitStep, previewLayoutModel,
   togglePreviewMaximize, previewStatusModel,
+  // WD2-C workspace mode.
+  WORKSPACE_MODES: UI_WORKSPACE_MODES, isEmptyScene, initialWorkspaceMode,
 };
 
 // Dual use: CommonJS for Node unit tests, a window global for the renderer (this

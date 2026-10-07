@@ -94,7 +94,10 @@ supersedes this file:
 | WD1.5-P2A | PROTO/EXTERNPROTO type-name resolution | committed `5176d28` |
 | WD1.5-P2B | interface members + `IS` (§8.1) | committed `51ff283` |
 | WD1.5-P2C | ROUTE endpoints (§8.2) | **implemented, uncommitted** |
-| WD2 | scene tree / inspector / viewport | **not started** |
+| WD2-A | read-only scene tree + Inspector | closed (see `WD2_A_SCENE_TREE_INSPECTOR_FOUNDATION.md`) |
+| WD2-B | typed Inspector field editing (verified span patches, Tier 1 re-selection) | **implemented, awaiting independent QA** |
+| WD2-C | First Object: Add Box/Sphere, absent-field insert, Duplicate, Delete, beginner properties, Model workspace (`docs/white-dune-2026/WD2_C_FIRST_OBJECT.md`) | **implemented — awaiting owner review / independent QA** |
+| WD2 (later) | picking, gizmos, hierarchy, appearance, behaviours | not started |
 
 ## 4. WD1.1 — source mapping
 

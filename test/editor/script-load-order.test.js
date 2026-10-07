@@ -43,6 +43,8 @@ const EDITOR_PAGE_SCRIPTS = [
   'src/editor/scene-selection.js',
   'renderer/scene-tree.js',
   'renderer/scene-inspector.js',
+  // WD2-C: the Model workspace view (Add / Duplicate / Delete / Object panel).
+  'renderer/model-workspace.js',
   'renderer/preview.js',
   'renderer/world-preview.js',
   'renderer/recovery-prompt.js',

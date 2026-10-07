@@ -11,6 +11,7 @@ const bridge = window.vrmlpad.editor;
 const SceneSelection = window.WRLForgeSceneSelection;
 const SceneTreeView = window.WRLForgeSceneTree;
 const InspectorView = window.WRLForgeInspector;
+const ModelWorkspace = window.WRLForgeModelWorkspace;
 const sceneBridge = window.WRLForgeSceneBridge; // from the bundled editor view
 
 const el = (id) => document.getElementById(id);
@@ -27,6 +28,12 @@ const els = {
   themeSelect: el('themeSelect'),
   zoomOut: el('zoomOutBtn'), zoomIn: el('zoomInBtn'), zoomReset: el('zoomResetBtn'),
   zoomLabel: el('zoomLabel'),
+  // WD2-C: Model workspace.
+  main: el('editorMain'),
+  modelBtn: el('modeModelBtn'), codeBtn: el('modeCodeBtn'), sourceBtn: el('sourceToggleBtn'),
+  addBox: el('addBoxBtn'), addSphere: el('addSphereBtn'),
+  duplicate: el('duplicateBtn'), remove: el('deleteBtn'),
+  modelSelected: el('modelSelected'), modelStatus: el('modelStatus'), objectProps: el('objectProps'),
 };
 
 // Phase: Preferences & Settings -- the theme, zoom, and preview layout
@@ -92,6 +99,21 @@ const S = {
   // filters them by the selected item's range.
   sceneTree: null,
   findings: [],
+  // WD2-B -- the parse session (WD1.4) binding the analysed text to the parse
+  // the scene tree was built from, and the verified receipt of an Inspector
+  // Apply dispatched since that analysis. Both are ephemeral and never leave
+  // the renderer; selection survival re-anchors only through them.
+  analysisSession: null,
+  pendingApply: null,
+  // WD2-C -- the workspace for THIS document ('model' | 'code'; the remembered
+  // preference is only written when the user switches), whether Source is
+  // expanded in Model, display-only friendly labels for the current tree, and
+  // whether the damaged-document notice has been shown for the current error
+  // state (so Source opens once, not on every analysis).
+  workspaceMode: 'code',
+  sourceOpen: false,
+  displayLabels: new Map(),
+  damaged: false,
 };
 
 // WD2-A -- one selection authority shared by the scene-tree view and the
@@ -100,6 +122,7 @@ const sceneSelection = SceneSelection.createSelectionController();
 
 let sceneTreeView = null;
 let inspectorView = null;
+let modelWorkspace = null;
 
 function currentText() { return S.handle ? S.handle.getText() : S.baseline; }
 function isDirty() { return UI.isDirty(currentText(), S.baseline); }
@@ -193,6 +216,7 @@ function render() {
   renderOutline();
   renderDiagnostics();
   renderSceneTree();
+  if (modelWorkspace) modelWorkspace.refresh();
 }
 
 // WD2-A: scene-tree + inspector re-render. Both consume S.sceneTree and
@@ -544,6 +568,10 @@ function mountEditor(text, profile) {
     onAnalysis: (a) => {
       if (!UI.isFreshAnalysis(a.version, S.appliedAnalysisVersion)) return;
       S.appliedAnalysisVersion = a.version;
+      // WD2-B -- the analysis the current selection was made against.
+      const previousAnalysis = S.analysisSession && S.sceneTree
+        ? { session: S.analysisSession, tree: S.sceneTree }
+        : null;
       S.diagnostics = a.diagnostics; S.advisories = a.advisories; S.outline = a.outline;
       // WD2-A -- build the scene tree + structured findings from the SAME
       // parse the diagnostics come from (a.parseResult). The renderer never
@@ -611,17 +639,253 @@ function mountEditor(text, profile) {
           console.error('[WD2-A] presentDocumentFindings failed:', e && (e.message || e));
           S.findings = [];
         }
-        // If the previously selected id no longer exists in the new tree,
-        // clear the selection so the inspector renders an empty state.
-        if (sceneSelection.getSelection() && S.sceneTree && !sceneBridge.sceneTree.itemById(S.sceneTree, sceneSelection.getSelection())) {
-          sceneSelection.clearSelection();
-        }
+        // WD2-B -- selection survival. The selected item is re-anchored ONLY
+        // through WD1.4 identity and a verified transaction (the Inspector's
+        // own receipt, or the editor's verified change chain); an unproven
+        // selection is cleared visibly. Never by id, label, DEF or offset.
+        reanchorAfterAnalysis(previousAnalysis, a);
+        S.displayLabels = sceneBridge.firstObject ? sceneBridge.firstObject.displayLabels(S.sceneTree) : new Map();
+        noteDamage();
       } else {
         S.sceneTree = null;
         S.findings = [];
+        S.analysisSession = null;
+        S.pendingApply = null;
+        S.displayLabels = new Map();
+        if (sceneSelection.getSelection()) {
+          sceneSelection.clearSelection();
+          if (inspectorView) inspectorView.setNotice('Selection cleared: the document could not be analysed.');
+        }
       }
       render();
     },
+  });
+}
+
+// WD2-B -- decide the selection for a fresh analysis (see onAnalysis).
+function reanchorAfterAnalysis(previousAnalysis, a) {
+  const pendingApply = S.pendingApply;
+  S.pendingApply = null;
+  let nextSession = null;
+  if (typeof a.text === 'string' && sceneBridge.identity) {
+    try {
+      nextSession = sceneBridge.identity.createParseSession(a.text, a.parseResult);
+    } catch (e) {
+      console.error('[WD2-B] createParseSession failed:', e && (e.message || e));
+    }
+  }
+  S.analysisSession = nextSession;
+  // WD2-C -- a dispatched Add / Duplicate selects exactly the node its verified
+  // insertion created; a Delete clears the selection (the node is gone). Both
+  // only when this analysis is exactly that transaction.
+  if (pendingApply && (pendingApply.select || pendingApply.cleared) && pendingApply.newText === a.text) {
+    if (pendingApply.cleared) { sceneSelection.clearSelection(); return; }
+    let id = null;
+    if (nextSession && S.sceneTree && sceneBridge.firstObject) {
+      try {
+        id = sceneBridge.firstObject.selectInserted({ next: { session: nextSession, tree: S.sceneTree }, pendingApply });
+      } catch (e) {
+        console.error('[WD2-C] selectInserted failed:', e && (e.message || e));
+      }
+    }
+    if (id) { sceneSelection.setSelection(id); return; }
+    sceneSelection.clearSelection();
+    if (inspectorView) inspectorView.setNotice('Selection cleared: the new object could not be proven to be the inserted one.');
+    return;
+  }
+  const selectedId = sceneSelection.getSelection();
+  if (selectedId == null) return;
+  let decision = null;
+  if (nextSession && S.sceneTree && sceneBridge.inspectorEdit) {
+    try {
+      decision = sceneBridge.inspectorEdit.reanchorSelection({
+        previous: previousAnalysis,
+        next: { session: nextSession, tree: S.sceneTree },
+        selectedId,
+        chain: a.transaction || null,
+        pendingApply,
+      });
+    } catch (e) {
+      console.error('[WD2-B] reanchorSelection failed:', e && (e.message || e));
+    }
+  }
+  if (decision && decision.id) {
+    if (decision.id !== selectedId) sceneSelection.setSelection(decision.id);
+    return;
+  }
+  sceneSelection.clearSelection();
+  if (inspectorView) {
+    inspectorView.setNotice('Selection cleared: the previously selected item could not be proven to be the same item after this change.');
+  }
+}
+
+// WD2-B -- the Inspector's field list for the selected item, from the SAME
+// analysis the scene tree came from. Null for non-Node items.
+function inspectorFieldsFor(item) {
+  if (!item || !S.analysisSession || !S.sceneTree || !sceneBridge.inspectorEdit) return null;
+  try {
+    return sceneBridge.inspectorEdit.fieldsForItem({
+      session: S.analysisSession, tree: S.sceneTree, currentText: currentText(), itemId: item.id,
+    });
+  } catch (e) {
+    console.error('[WD2-B] fieldsForItem failed:', e && (e.message || e));
+    return null;
+  }
+}
+
+// WD2-B -- one Inspector Apply: plan + verify (pure), then ONE CodeMirror
+// transaction on the shared buffer, then an immediate analysis so the scene
+// tree, the re-anchored selection and the Inspector refresh together. Dirty
+// tracking, recovery, live preview and diagnostics all follow from the normal
+// onChange/onAnalysis path -- nothing here duplicates them.
+function applyInspectorField(item, field, components) {
+  const refused = (reason) => ({ status: 'refused', reason });
+  if (!S.handle || !item || !field) return refused('stale');
+  if (S.handle.isReadOnly && S.handle.isReadOnly()) return refused('editor-read-only');
+  const plan = sceneBridge.inspectorEdit.prepareInspectorApply({
+    session: S.analysisSession,
+    tree: S.sceneTree,
+    currentText: currentText(),
+    itemId: item.id,
+    fieldIndex: field.index,
+    fieldName: field.name,
+    components,
+  });
+  if (plan.status !== 'ready') return plan;
+  const sent = S.handle.applyVerifiedEdits({ oldText: plan.oldText, edits: plan.edits, newText: plan.newText });
+  if (!sent || !sent.ok) return refused((sent && sent.reason) || 'dispatch-failed');
+  S.pendingApply = { oldText: plan.oldText, newText: plan.newText, receipt: plan.receipt };
+  S.handle.reanalyzeNow();
+  return plan;
+}
+
+// --- WD2-C: Model workspace ----------------------------------------------------
+
+// A blocking syntax error (anything but the header line) pauses every visual
+// edit; in Model the Source pane opens ONCE per damaged state so the user can
+// see why, and the status line says so in words.
+function noteDamage() {
+  const damaged = (S.diagnostics || []).some((d) => d && d.severity === 'error' && d.code !== 'VRML001' && d.code !== 'VRML002');
+  if (damaged && !S.damaged && S.workspaceMode === 'model') {
+    S.sourceOpen = true;
+    applyWorkspace();
+    if (modelWorkspace) modelWorkspace.setStatus('The document has syntax errors, so visual editing is paused. Fix them in Source.', true);
+  } else if (!damaged && S.damaged && modelWorkspace) {
+    modelWorkspace.setStatus('', false);
+  }
+  S.damaged = damaged;
+}
+
+function applyWorkspace() {
+  if (!els.main) return;
+  const model = S.workspaceMode === 'model';
+  els.main.classList.toggle('workspace-model', model);
+  els.main.classList.toggle('source-open', model && S.sourceOpen);
+  // The preview must render in Model even when the remembered preview layout
+  // hid it ("Editor only"): ask once for the current buffer.
+  const st = EP() ? EP()._state() : null;
+  if (model && st && st.layout === 'editor-only' && st.displayedGeneration === 0 && S.handle) EP().manualUpdate();
+}
+
+function setWorkspaceMode(mode, persist) {
+  S.workspaceMode = mode === 'model' ? 'model' : 'code';
+  if (persist && window.WrlPreferences) window.WrlPreferences.set('workspaceMode', S.workspaceMode);
+  applyWorkspace();
+}
+
+function rememberedWorkspaceMode() {
+  return window.WrlPreferences ? window.WrlPreferences.get('workspaceMode') : 'code';
+}
+
+// Dispatch one VERIFIED structural plan as ONE CodeMirror transaction, then
+// analyse immediately so the tree, the selection (inserted node / cleared) and
+// the panels refresh together. Never mutates on a refusal.
+function dispatchModelPlan(plan, okMessage) {
+  const FO = sceneBridge.firstObject;
+  if (!plan || plan.status !== 'ready') {
+    return { ok: false, plan, message: plan && plan.status === 'unchanged' ? 'No change.' : FO.refusalText(plan) };
+  }
+  if (S.handle.isReadOnly && S.handle.isReadOnly()) return { ok: false, plan, message: 'The editor is read-only.' };
+  const sent = S.handle.applyVerifiedEdits({ oldText: plan.oldText, edits: plan.edits, newText: plan.newText, userEvent: 'input.model' });
+  if (!sent || !sent.ok) return { ok: false, plan, message: 'The document changed before the edit could be applied; try again.' };
+  S.pendingApply = {
+    oldText: plan.oldText, newText: plan.newText, receipt: plan.receipt,
+    select: plan.select || null, cleared: plan.operation === 'delete',
+  };
+  S.handle.reanalyzeNow();
+  return { ok: true, plan, message: okMessage };
+}
+
+function modelSnapshot(itemId) {
+  return { session: S.analysisSession, tree: S.sceneTree, currentText: currentText(), itemId };
+}
+
+function friendlyLabel(item) {
+  if (!item) return null;
+  const friendly = S.displayLabels.get(item.id);
+  return friendly || (SceneTreeView && SceneTreeView.labelFor ? SceneTreeView.labelFor(item) : item.kind);
+}
+
+function addObject(primitive) {
+  if (!S.handle || !S.analysisSession) return { ok: false, message: 'Open a document first.' };
+  const plan = sceneBridge.firstObject.prepareAdd({ session: S.analysisSession, currentText: currentText(), primitive });
+  return dispatchModelPlan(plan, `${primitive} created at origin.`);
+}
+
+function duplicateSelected(itemId) {
+  if (!S.handle || itemId == null) return { ok: false, message: 'Select an object first.' };
+  const label = friendlyLabel(sceneBridge.sceneTree.itemById(S.sceneTree, itemId));
+  const plan = sceneBridge.firstObject.prepareDuplicate(modelSnapshot(itemId));
+  return dispatchModelPlan(plan, `${label} duplicated. The copy is selected.`);
+}
+
+function deleteSelected(itemId) {
+  if (!S.handle || itemId == null) return { ok: false, message: 'Select an object first.' };
+  const label = friendlyLabel(sceneBridge.sceneTree.itemById(S.sceneTree, itemId));
+  const plan = sceneBridge.firstObject.prepareDelete(modelSnapshot(itemId));
+  return dispatchModelPlan(plan, `${label} deleted.`);
+}
+
+function applyObjectProperty(itemId, key, components) {
+  if (!S.handle) return { status: 'refused', reason: 'stale' };
+  const plan = sceneBridge.firstObject.preparePropertySet({ ...modelSnapshot(itemId), key, components });
+  if (plan.status !== 'ready') return plan;
+  const res = dispatchModelPlan(plan, null);
+  return res.ok ? plan : { status: 'refused', reason: 'dispatch-failed', message: res.message };
+}
+
+function initModelWorkspace() {
+  if (modelWorkspace || !ModelWorkspace || !els.modelBtn) return;
+  modelWorkspace = ModelWorkspace.createModelWorkspace({
+    els: {
+      modelBtn: els.modelBtn, codeBtn: els.codeBtn, sourceBtn: els.sourceBtn,
+      addBox: els.addBox, addSphere: els.addSphere, duplicate: els.duplicate, remove: els.remove,
+      selected: els.modelSelected, status: els.modelStatus, props: els.objectProps,
+    },
+    selection: sceneSelection,
+    isOpen: () => !!S.handle,
+    getMode: () => S.workspaceMode,
+    setMode: (m) => setWorkspaceMode(m, true),
+    isSourceOpen: () => S.sourceOpen,
+    setSourceOpen: (open) => { S.sourceOpen = !!open; applyWorkspace(); },
+    describeSelection: (id) => {
+      const item = S.sceneTree ? sceneBridge.sceneTree.itemById(S.sceneTree, id) : null;
+      return item ? { label: friendlyLabel(item), isNode: item.kind === 'Node' } : null;
+    },
+    objectFor: (id) => {
+      if (!S.analysisSession || !S.sceneTree) return null;
+      try { return sceneBridge.firstObject.objectForItem(modelSnapshot(id)); } catch (e) {
+        console.error('[WD2-C] objectForItem failed:', e && (e.message || e));
+        return null;
+      }
+    },
+    // The panel re-renders only when the selection or the analysed parse changes.
+    analysisToken: () => S.appliedAnalysisVersion,
+    add: addObject,
+    duplicate: duplicateSelected,
+    remove: deleteSelected,
+    applyProperty: applyObjectProperty,
+    refusalText: (plan) => sceneBridge.firstObject.refusalText(plan),
   });
 }
 
@@ -631,6 +895,8 @@ function initSceneViews() {
   if (sceneTreeView || inspectorView) return;
   sceneTreeView = SceneTreeView.createSceneTreeView(els.sceneTree, sceneSelection, {
     itemContainingOffset: sceneBridge.sceneTree.itemContainingOffset,
+    // WD2-C: display-only "Box" / "Sphere" for recognised simple objects.
+    displayLabelFor: (item) => S.displayLabels.get(item.id) || null,
   });
   inspectorView = InspectorView.createInspector(els.sceneInspector, sceneSelection, {
     presentation: sceneBridge.presentation,
@@ -648,6 +914,10 @@ function initSceneViews() {
     // presentation}`), ordered by P4-A. The inspector consumes them
     // directly -- it must NOT call presentDocumentFindings a second time.
     findingsForDocument: () => S.findings,
+    // WD2-B: typed field editing. The Inspector asks; the pure model and the
+    // verified-transaction gate decide; the DOM never computes an offset.
+    fieldsFor: inspectorFieldsFor,
+    applyField: applyInspectorField,
   });
 }
 
@@ -685,6 +955,7 @@ async function init() {
   // WD2-A: bind the scene-tree view + inspector to the shared selection
   // authority BEFORE the editor mounts, so the first analysis paints them.
   initSceneViews();
+  initModelWorkspace();
 
   // Phase Beta 2 -- run the shared recovery prompt BEFORE we mount anything.
   // The prompt is the single authority for "Restore / Start Fresh"; on the
@@ -721,6 +992,7 @@ async function init() {
             S.gzip = !!d.gzip;
             S.baseline = d.baseline != null ? d.baseline : d.text;
             const profile = d.profile || (S.context === 'world' ? 'world' : S.context === 'mall' ? 'mall-item' : 'generic');
+            setWorkspaceMode(UI.initialWorkspaceMode({ text: d.text, remembered: rememberedWorkspaceMode() }), false);
             mountEditor(d.text, profile);
             render();
             S.handle.focus();
@@ -748,9 +1020,12 @@ async function init() {
   S.gzip = !!d.gzip;
   S.baseline = d.baseline != null ? d.baseline : d.text;
   const profile = d.profile || (S.context === 'world' ? 'world' : S.context === 'mall' ? 'mall-item' : 'generic');
+  // WD2-C: a new/empty document opens in Model; anything else in the
+  // remembered workspace. Not persisted here -- only a user switch is.
+  setWorkspaceMode(UI.initialWorkspaceMode({ text: d.text, remembered: rememberedWorkspaceMode() }), false);
   mountEditor(d.text, profile);
   render();
-  S.handle.focus();
+  if (S.workspaceMode === 'model' && els.addBox) els.addBox.focus(); else S.handle.focus();
 
   // Live preview covers both profiles: Mall (Phase 7C2) and World (Phase 7C3).
   // The orchestrator sends only text+version to main; the document's context
@@ -762,6 +1037,7 @@ async function init() {
       getVersion: () => S.bufferVersion,
       context: S.context,
     });
+    applyWorkspace(); // WD2-C: Model shows the preview even under "Editor only"
   }
 }
 
@@ -803,6 +1079,171 @@ window.__wrlEditor = {
   previewState: () => (window.wrlEditorPreview ? window.wrlEditorPreview._state() : null),
   previewLeak: () => (window.wrlEditorPreview ? window.wrlEditorPreview._leak() : null),
   fitMode: (m) => { const n = el(m === 'fit' ? 'modeFit' : 'modeOriginal'); if (n) { n.checked = true; n.dispatchEvent(new Event('change')); } },
+  // WD2-B QA hooks: each drives or reads the page's own scene tree / Inspector
+  // DOM exactly as a user would (selection, typing into a field control, Enter /
+  // Escape / Apply / Cancel). `bufferEquals` answers a yes/no comparison so no
+  // buffer text is exposed.
+  sceneSelectFirst: (nodeType, nth) => {
+    const items = S.sceneTree ? S.sceneTree.items.filter((it) => it.kind === 'Node' && it.nodeType === nodeType) : [];
+    const item = items[nth | 0];
+    if (!item) return null;
+    sceneSelection.setSelection(item.id);
+    return item.id;
+  },
+  sceneSelection: () => {
+    const id = sceneSelection.getSelection();
+    const item = id && S.sceneTree ? sceneBridge.sceneTree.itemById(S.sceneTree, id) : null;
+    if (!item) return null;
+    const same = S.sceneTree.items.filter((it) => it.kind === item.kind && it.nodeType === item.nodeType);
+    const row = document.querySelector('#sceneTree .scene-row[aria-selected="true"]');
+    return { id, kind: item.kind, nodeType: item.nodeType || null, def: item.def || null,
+      ordinal: same.indexOf(item), rowId: row ? row.dataset.id : null, rowCount: document.querySelectorAll('#sceneTree .scene-row').length };
+  },
+  inspectorFields: () => {
+    const notice = document.querySelector('#sceneInspector .inspector-notice');
+    return {
+      notice: notice ? notice.textContent : null,
+      fields: Array.from(document.querySelectorAll('#sceneInspector .field-row')).map((r) => ({
+        name: r.dataset.fieldName,
+        type: (r.querySelector('.field-type') || {}).textContent || null,
+        state: (r.querySelector('.field-state') || {}).textContent || null,
+        values: Array.from(r.querySelectorAll('input')).map((i) => (i.type === 'checkbox' ? i.checked : i.value)),
+        invalid: Array.from(r.querySelectorAll('input')).map((i) => i.getAttribute('aria-invalid') === 'true'),
+        names: Array.from(r.querySelectorAll('input')).map((i) => (i.getAttribute('aria-labelledby') || '').split(' ')
+          .map((ref) => { const n = document.getElementById(ref); return n ? n.textContent : '?'; }).join(' ')),
+        message: (r.querySelector('.field-msg') || {}).textContent || '',
+        reason: (r.querySelector('.field-reason') || {}).textContent || null,
+      })),
+    };
+  },
+  inspectorSet: (fieldName, comp, value) => {
+    const r = document.querySelector(`#sceneInspector .field-row[data-field-name="${CSS.escape(fieldName)}"]`);
+    const input = r ? r.querySelectorAll('input')[comp | 0] : null;
+    if (!input) return false;
+    input.focus();
+    if (input.type === 'checkbox') { input.checked = !!value; input.dispatchEvent(new Event('change', { bubbles: true })); }
+    else { input.value = String(value); input.dispatchEvent(new Event('input', { bubbles: true })); }
+    return true;
+  },
+  inspectorKey: (fieldName, comp, key) => {
+    const r = document.querySelector(`#sceneInspector .field-row[data-field-name="${CSS.escape(fieldName)}"]`);
+    const input = r ? r.querySelectorAll('input')[comp | 0] : null;
+    if (!input) return false;
+    input.focus();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    return true;
+  },
+  inspectorClick: (fieldName, which) => {
+    const r = document.querySelector(`#sceneInspector .field-row[data-field-name="${CSS.escape(fieldName)}"]`);
+    const b = r ? r.querySelector(which === 'cancel' ? '.field-cancel' : '.field-apply') : null;
+    if (!b) return false;
+    b.focus();
+    b.click();
+    return true;
+  },
+  activeInfo: () => {
+    const a = document.activeElement;
+    const r = a && a.closest ? a.closest('.field-row') : null;
+    return { tag: a ? a.tagName : null, field: r ? r.dataset.fieldName : null,
+      component: a && a.dataset && a.dataset.component != null ? Number(a.dataset.component) : null,
+      focusVisibleOutline: a ? getComputedStyle(a).outlineStyle : null };
+  },
+  bufferEquals: (t) => !!S.handle && S.handle.getText() === t,
+  // WD2-C QA hooks: drive / read the Model workspace's own DOM (Add, Duplicate,
+  // Delete, the Object panel, the colour picker), CodeMirror's history depth,
+  // and a READ-ONLY walk of the live X_ITE scene (types, Transform
+  // translations, Box sizes, Sphere radii, Material colours). No buffer text.
+  modelState: () => {
+    const props = Array.from(document.querySelectorAll('#objectProps .prop-row')).map((r) => ({
+      key: r.dataset.prop,
+      label: (r.querySelector('.prop-label') || {}).textContent || null,
+      tech: (r.querySelector('.prop-tech') || {}).textContent || null,
+      state: (r.querySelector('.prop-state') || {}).textContent || '',
+      values: Array.from(r.querySelectorAll('input.prop-num')).map((i) => i.value),
+      color: (r.querySelector('input.prop-color') || {}).value || null,
+      names: Array.from(r.querySelectorAll('input')).map((i) => (i.getAttribute('aria-labelledby') || '').split(' ')
+        .map((ref) => { const n = document.getElementById(ref); return n ? n.textContent : '?'; }).join(' ')),
+      message: (r.querySelector('.prop-msg') || {}).textContent || '',
+    }));
+    const title = document.getElementById('objectTitle');
+    const empty = document.querySelector('#objectProps .empty-note');
+    return {
+      mode: S.workspaceMode, sourceOpen: S.sourceOpen,
+      mainClass: els.main ? els.main.className : null,
+      editorVisible: !!(els.editor && els.editor.offsetParent),
+      previewVisible: !!(document.getElementById('preview') && document.getElementById('preview').offsetParent),
+      selected: els.modelSelected ? els.modelSelected.textContent : null,
+      status: els.modelStatus ? els.modelStatus.textContent : null,
+      statusError: !!(els.modelStatus && els.modelStatus.classList.contains('err')),
+      buttons: ['addBoxBtn', 'addSphereBtn', 'duplicateBtn', 'deleteBtn', 'modeModelBtn', 'modeCodeBtn', 'sourceToggleBtn']
+        .map((id) => { const b = el(id); return { id, disabled: !!(b && b.disabled), hidden: !!(b && b.hidden), pressed: b ? b.getAttribute('aria-pressed') : null, name: b ? (b.getAttribute('aria-label') || b.textContent) : null }; }),
+      title: title ? title.textContent : null,
+      empty: empty ? empty.textContent : null,
+      props,
+      treeRows: Array.from(document.querySelectorAll('#sceneTree .scene-row')).map((r) => r.textContent),
+      remembered: window.WrlPreferences ? window.WrlPreferences.get('workspaceMode') : null,
+    };
+  },
+  propSet: (key, comp, value) => {
+    const input = document.querySelectorAll(`#objectProps .prop-row[data-prop="${CSS.escape(key)}"] input.prop-num`)[comp | 0];
+    if (!input) return false;
+    input.focus(); input.value = String(value); input.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  },
+  propKey: (key, comp, k) => {
+    const input = document.querySelectorAll(`#objectProps .prop-row[data-prop="${CSS.escape(key)}"] input.prop-num`)[comp | 0];
+    if (!input) return false;
+    input.focus(); input.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+    return true;
+  },
+  propColor: (hex) => {
+    const input = document.querySelector('#objectProps .prop-row[data-prop="color"] input.prop-color');
+    if (!input) return false;
+    const before = S.handle ? S.handle.getText() : null;
+    input.focus(); input.value = hex;
+    input.dispatchEvent(new Event('input', { bubbles: true })); // dragging: must NOT commit
+    const committedOnInput = !!S.handle && S.handle.getText() !== before;
+    input.dispatchEvent(new Event('change', { bubbles: true })); // the user's pick
+    return { committedOnInput };
+  },
+  historyDepth: () => (S.handle && S.handle.historyDepth ? S.handle.historyDepth() : null),
+  focusInfo: () => {
+    const a = document.activeElement;
+    const r = a && a.closest ? a.closest('.prop-row') : null;
+    return { id: a ? a.id : null, tag: a ? a.tagName : null, prop: r ? r.dataset.prop : null };
+  },
+  previewScene: () => {
+    const c = document.getElementById('preview');
+    const b = c && c.browser;
+    const scene = b && b.currentScene;
+    if (!scene) return null;
+    const out = { counts: {}, translations: [], boxes: [], spheres: [], colors: [] };
+    const seen = new Set();
+    const n3 = (v) => [v.x, v.y, v.z].map((x) => Math.round(x * 1e6) / 1e6);
+    const visit = (n) => {
+      if (!n || seen.has(n)) return;
+      seen.add(n);
+      const t = n.getNodeTypeName();
+      out.counts[t] = (out.counts[t] || 0) + 1;
+      if (t === 'Transform') out.translations.push(n3(n.translation));
+      if (t === 'Box') out.boxes.push(n3(n.size));
+      if (t === 'Sphere') out.spheres.push(Math.round(n.radius * 1e6) / 1e6);
+      if (t === 'Material') out.colors.push([n.diffuseColor.r, n.diffuseColor.g, n.diffuseColor.b].map((x) => Math.round(x * 1e3) / 1e3));
+      for (const f of ['children', 'appearance', 'material', 'geometry']) {
+        let v;
+        try { v = n[f]; } catch (e) { v = undefined; }
+        if (!v) continue;
+        if (typeof v.length === 'number' && typeof v.getNodeTypeName !== 'function') { for (let i = 0; i < v.length; i += 1) visit(v[i]); }
+        else visit(v);
+      }
+    };
+    for (let i = 0; i < scene.rootNodes.length; i += 1) visit(scene.rootNodes[i]);
+    return out;
+  },
+  previewBBox: () => {
+    const d = window.wrlPreview && window.wrlPreview._debug ? window.wrlPreview._debug() : null;
+    return d && d.bbox ? { min: Array.from(d.bbox.min || []), max: Array.from(d.bbox.max || []) } : null;
+  },
   status: () => ({
     file: els.stFile.textContent, format: els.stFormat.textContent, dirty: isDirty(),
     save: els.stSave.textContent, diag: els.stDiag.textContent, adv: els.stAdv.textContent,
