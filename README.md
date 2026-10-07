@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/generated/icons/runtime/about-logo.png" width="120" alt="WRL Forge logo" />
+  <img src="assets/wrl-forge-yellow-transparent.png" width="240" alt="WRL Forge logo" />
 <br>
 </p>
 
