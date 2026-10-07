@@ -25,12 +25,26 @@ const vm = require('node:vm');
 
 const ROOT = path.join(__dirname, '..', '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
-// Source without comments, so prose never trips (or satisfies) a scan.
-const code = (rel) => read(rel).replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`\\])\/\/.*$/gm, '$1');
+// Source without comments, so prose never trips (or satisfies) a scan. Line
+// endings are normalized to LF first (scan-only; source bytes are untouched)
+// so the structural regexes hold on a CRLF checkout (Windows CI).
+const scanText = (text) => text
+  .replace(/\r\n?/g, '\n')
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/(^|[^:'"`\\])\/\/.*$/gm, '$1');
+const code = (rel) => scanText(read(rel));
 
 const ADAPTER = 'src/preview/xite-pick-adapter.js';
 const RESOLVER = 'src/editor/viewport-pick.js';
 const PIN = '15.1.10';
+
+test('source scans are line-ending independent (LF / CRLF / CR scan identically)', () => {
+  const lf = read(ADAPTER).replace(/\r\n?/g, '\n');
+  const want = scanText(lf);
+  assert.ok(!want.includes('\r'));
+  assert.equal(scanText(lf.replace(/\n/g, '\r\n')), want, 'CRLF');
+  assert.equal(scanText(lf.replace(/\n/g, '\r')), want, 'CR');
+});
 
 test('G1: x_ite is pinned exactly (no range) in package.json and the lockfile', () => {
   const pkg = JSON.parse(read('package.json'));
