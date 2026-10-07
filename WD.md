@@ -101,7 +101,8 @@ and their landing commits; it is not a tracker.
 | WD2-A | read-only scene tree + Inspector | closed (see `WD2_A_SCENE_TREE_INSPECTOR_FOUNDATION.md`) |
 | WD2-B | typed Inspector field editing (verified span patches, Tier 1 re-selection) | merged (PR #22) |
 | WD2-C | First Object: Add Box/Sphere, absent-field insert, Duplicate, Delete, beginner properties, Model workspace (`docs/white-dune-2026/WD2_C_FIRST_OBJECT.md`) | merged (PR #22) |
-| WD2 (later) | picking, gizmos, hierarchy, appearance, behaviours | tracked in the GitHub Project |
+| WD2-D | source-proven Model-workspace viewport selection; fail-closed on unprovable identity | merged (PR #117; see `docs/white-dune-2026/WD2_D_XITE_PICKING_CLOSEOUT.md`) |
+| WD2 (later) | gizmos, hierarchy, appearance, behaviours and other later visual-authoring lanes | tracked in the GitHub Project |
 
 ## 4. WD1.1 — source mapping
 

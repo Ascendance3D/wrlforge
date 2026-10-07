@@ -36,8 +36,12 @@ copyright assignment — see `CONTRIBUTING.md`.
    same schema + field edits; absent-field insertion; exact-span Duplicate /
    Delete with conservative refusals) are merged (PR #22) — see
    `src/vrml/structure-edit.js` and `docs/white-dune-2026/WD2_C_FIRST_OBJECT.md`.
-   Viewport picking, gizmos, hierarchy editing, MF arrays and ROUTE/PROTO
-   editing are future lanes, each needing its own approval.
+   **WD2-D** source-proven viewport picking is merged (PR #117): in the Model
+   workspace a preview click selects through the existing selection authority
+   only when exact source identity is proven; ambiguous or unsupported identity
+   fails closed — see `docs/white-dune-2026/WD2_D_XITE_PICKING_CLOSEOUT.md`.
+   Gizmos, hierarchy editing, MF arrays and ROUTE/PROTO editing remain future
+   lanes, each needing separate owner approval.
    Current lane and QA status lives in the **WRL Forge Development** GitHub
    Project, not in this file.
 

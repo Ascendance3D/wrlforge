@@ -12,16 +12,9 @@ here does not authorize work on it.
 
 ## Now
 
-### [WD2-C0](https://github.com/Ascendance3D/wrlforge/issues/24) — X_ITE picking provenance
-Completed research, accepted with required compatibility guards
-([closeout record](white-dune-2026/WD2_C0_XITE_PICKING_CLOSEOUT.md)).
-No product lane has started.
+No product lane is currently owner-authorized.
 
 ## Next
-
-### [WD2-D](https://github.com/Ascendance3D/wrlforge/issues/28) — Viewport selection
-Backlog. Requires separate owner authorization.
-Production source-proven picking with the 12 mandatory compatibility guards.
 
 ### [UI-0](https://github.com/Ascendance3D/wrlforge/issues/33) — Workspace architecture
 Command, panel, toolbar, workspace and Model/Play architecture.
@@ -35,13 +28,13 @@ Translate, rotate, scale and snapping.
 ### [WD2-F](https://github.com/Ascendance3D/wrlforge/issues/60) — Hierarchy authoring
 Grouping and source-safe reparenting.
 
+### [SEC-SCRIPT-1](https://github.com/Ascendance3D/wrlforge/issues/75) — Protected-preview Script diagnostics
+
 ## Later
 
 ### [WD2-G](https://github.com/Ascendance3D/wrlforge/issues/65) — Appearance
 
 ### [WD2-H](https://github.com/Ascendance3D/wrlforge/issues/70) — Behavior
-
-### [SEC-SCRIPT-1](https://github.com/Ascendance3D/wrlforge/issues/75) — Protected-preview Script diagnostics
 
 ### [WD2-I](https://github.com/Ascendance3D/wrlforge/issues/81) — Animation
 
@@ -54,6 +47,15 @@ Grouping and source-safe reparenting.
 See the [Product Completion parent issue](https://github.com/Ascendance3D/wrlforge/issues/96) in GitHub.
 
 ## Completed history
+
+### [WD2-D](https://github.com/Ascendance3D/wrlforge/issues/28) — Source-proven viewport selection
+Merged in PR #117. A Model-workspace click selects the exact authored node when
+source identity is proven, and refuses otherwise
+([closeout record](white-dune-2026/WD2_D_XITE_PICKING_CLOSEOUT.md)).
+
+### [WD2-C0](https://github.com/Ascendance3D/wrlforge/issues/24) — X_ITE picking provenance
+Completed research, accepted with required compatibility guards
+([closeout record](white-dune-2026/WD2_C0_XITE_PICKING_CLOSEOUT.md)).
 
 Historical roadmap material lives in [`docs/roadmap/archive/`](roadmap/archive/).
 The pre-Project roadmap is preserved byte-for-byte as
