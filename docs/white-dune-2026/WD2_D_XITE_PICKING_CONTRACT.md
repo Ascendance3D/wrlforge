@@ -1,15 +1,32 @@
 # WD2-D X_ITE Picking Compatibility Contract
 
 Lane: [#28 WD2-D](https://github.com/Ascendance3D/wrlforge/issues/28) ·
-research sub-lane [#29 WD2-D-R](https://github.com/Ascendance3D/wrlforge/issues/29).
-Implementation is [#30 WD2-D-I](https://github.com/Ascendance3D/wrlforge/issues/30)
-and has **not** started.
+research sub-lane [#29 WD2-D-R](https://github.com/Ascendance3D/wrlforge/issues/29) ·
+implementation [#30 WD2-D-I](https://github.com/Ascendance3D/wrlforge/issues/30) ·
+independent QA [#31 WD2-D-Q](https://github.com/Ascendance3D/wrlforge/issues/31).
 
-## Status
+## Current status
 
-**OWNER-APPROVED FOR WD2-D-I AFTER MERGE.** Research and contract design only.
-No production file, dependency, test or workflow changed. WD2-D-I (#30) has not
-started and needs its own owner authorization.
+**IMPLEMENTED AND MERGED.**
+
+- Implementation #30: complete.
+- Independent QA #31: complete, `WRLFORGE_WD2_D_INDEPENDENT_QA_RETEST_PASS`.
+- [PR #117](https://github.com/Ascendance3D/wrlforge/pull/117) merged at
+  `f39c62612d79d217c795562787d6d92764508e48`.
+- X_ITE production pin: exactly `15.1.10`.
+
+Final result, QA evidence, refusal model and known limitations:
+[`WD2_D_XITE_PICKING_CLOSEOUT.md`](WD2_D_XITE_PICKING_CLOSEOUT.md).
+
+## Design basis (pre-implementation)
+
+The rest of this document is the architecture contract as approved before #30
+began. It remains the specification #30 implemented. Statements about what
+"this lane" changed, what #30 "must" do, and integration points marked "not
+implemented" describe the research lane (#29) at the time of writing.
+
+Approved by the owner for WD2-D-I. The research lane itself was contract
+design only and changed no production file, dependency, test or workflow.
 
 Owner decisions applied (2026-10-07): viewport selection does not move the
 source caret; picking is armed only in the Model workspace; parser-hook
