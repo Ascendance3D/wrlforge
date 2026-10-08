@@ -13,7 +13,11 @@
 //     the current document's profile is in the list -- folded into the
 //     record's own `enabled`, so registry.isEnabled / execute / the toolbar
 //     painter / the future menu all see the same answer. Profile containment is
-//     DATA here; no profile's RULES live in this module.
+//     DATA here; no profile's RULES live in this module. Adding `profiles`
+//     never weakens the registry's validation: a record's `enabled` must still
+//     be undefined or a function, and anything else is rejected exactly as the
+//     registry rejects it for a profile-neutral command -- never reinterpreted
+//     as "always enabled".
 //   * `profilesOf(id)` so a menu or toolbar can ask which profiles a command
 //     belongs to without re-reading the record.
 //
@@ -50,9 +54,17 @@
       const inProfile = () => profiles.includes(getProfile());
       const { profiles: _omit, ...rest } = record;
       void _omit;
+      if (own !== undefined && typeof own !== 'function') {
+        // Not ours to reinterpret: the registry's own validation decides, on
+        // the record exactly as written (it rejects with ECOMMAND_INVALID).
+        // Should it ever accept the value, refuse rather than register a
+        // command with no profile gate.
+        registry.register(rest)();
+        throw commandServiceError('ECOMMAND_SERVICE_INVALID', `${record.id}: enabled must be undefined or a function`);
+      }
       const unregister = registry.register({
         ...rest,
-        enabled: () => inProfile() && (typeof own === 'function' ? !!own() : true),
+        enabled: own === undefined ? inProfile : () => inProfile() && !!own(),
       });
       profilesById.set(record.id, profiles);
       return function unregisterProfiled() {

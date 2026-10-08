@@ -313,3 +313,192 @@ test('contextual panels: dispose() disposes every editor even when several throw
   assert.deepEqual(host.mounted(), []);
   assert.deepEqual(released, ['two', 'good', 'one']);
 });
+
+// RF1 (PR #129 independent QA): the HOST callbacks -- createHost, releaseHost,
+// resolveContext -- are isolated exactly like the records.
+function faultyWorld() {
+  const selection = createSelectionController();
+  const items = new Map([
+    ['t1', { id: 't1', type: 'Transform', proven: true }],
+    ['e1', { id: 'e1', type: 'Extrusion', proven: true }],
+  ]);
+  const faults = { context: false, create: new Set(), release: new Set() };
+  const created = [];
+  const released = [];
+  const host = createContextualPanelHost({
+    resolveContext: () => {
+      if (faults.context) throw new Error('context');
+      const id = selection.getSelection();
+      return { selection: id ? items.get(id) || null : null, analysis: {} };
+    },
+    createHost: (id) => { if (faults.create.has(id)) throw new Error(`create:${id}`); created.push(id); return { id }; },
+    releaseHost: (id) => { released.push(id); if (faults.release.has(id)) throw new Error(`release:${id}`); },
+  });
+  return { selection, host, faults, created, released };
+}
+
+function quietly(fn) {
+  const orig = console.error; console.error = () => {};
+  try { return fn(); } finally { console.error = orig; }
+}
+
+const errorsOf = (r) => r.errors.map((e) => `${e.id}:${e.phase}:${e.error.message}`);
+
+test('contextual panels RF1-A: a throwing createHost neither freezes nor leaves stale UI', () => quietly(() => {
+  const { selection, host, faults } = faultyWorld();
+  const log = [];
+  host.register(editor('alpha', 'Extrusion', log));
+  host.register(editor('beta', 'Transform', log));
+  host.register(editor('gamma', 'Extrusion', log));
+  selection.setSelection('t1');
+  host.reconcile();
+  assert.deepEqual(host.mounted(), ['beta']);
+  faults.create.add('alpha');
+  selection.setSelection('e1');
+  const r = host.reconcile();
+  assert.deepEqual(r.failed, ['alpha']);
+  assert.deepEqual(errorsOf(r), ['alpha:createHost:create:alpha']);
+  assert.deepEqual(r.disposed, ['beta'], 'beta no longer applies and is not left stale');
+  assert.deepEqual(r.mounted, ['gamma'], 'later records still reconcile');
+  assert.deepEqual(host.mounted(), ['gamma'], 'alpha never became active');
+  assert.deepEqual(log, ['mount:beta:t1', 'dispose:beta', 'mount:gamma:e1']);
+}));
+
+test('contextual panels RF1-B: a throwing releaseHost never stops later records', () => quietly(() => {
+  const { selection, host, faults, released } = faultyWorld();
+  const log = [];
+  host.register(editor('first', 'Transform', log));
+  host.register(editor('second', 'Transform', log));
+  host.register(editor('third', 'Extrusion', log));
+  selection.setSelection('t1');
+  host.reconcile();
+  faults.release.add('first');
+  selection.setSelection('e1');
+  const r = host.reconcile();
+  assert.deepEqual(errorsOf(r), ['first:unmount:release:first']);
+  assert.deepEqual(r.failed, ['first']);
+  assert.deepEqual(r.disposed, ['second']);
+  assert.deepEqual(r.mounted, ['third']);
+  assert.deepEqual(host.mounted(), ['third'], 'the failed release left no active state');
+  assert.deepEqual(released, ['first', 'second']);
+  assert.deepEqual(log, ['mount:first:t1', 'mount:second:t1', 'dispose:first', 'dispose:second', 'mount:third:e1']);
+}));
+
+test('contextual panels RF1-B: releaseHost failing after a failed mount is reported; the next record still mounts', () => quietly(() => {
+  const { selection, host, faults, released } = faultyWorld();
+  const log = [];
+  host.register({ id: 'badMount', title: 'M', appliesTo: () => true, mount() { throw new Error('mount'); }, dispose() { log.push('never'); } });
+  host.register(editor('good', 'Transform', log));
+  faults.release.add('badMount');
+  selection.setSelection('t1');
+  const r = host.reconcile();
+  assert.deepEqual(errorsOf(r), ['badMount:mount:mount', 'badMount:releaseHost:release:badMount']);
+  assert.deepEqual(r.failed, ['badMount']);
+  assert.deepEqual(r.mounted, ['good']);
+  assert.deepEqual(host.mounted(), ['good']);
+  assert.deepEqual(released, ['badMount']);
+  assert.deepEqual(log, ['mount:good:t1']);
+}));
+
+test('contextual panels RF1-C: dispose AND releaseHost both failing keeps both errors observable', () => quietly(() => {
+  const { selection, host, faults, released } = faultyWorld();
+  const log = [];
+  const both = { id: 'both', title: 'B', appliesTo: (s) => s.type === 'Transform', mount() {}, dispose() { throw new Error('dispose:both'); } };
+  host.register(both);
+  host.register(editor('after', 'Transform', log));
+  selection.setSelection('t1');
+  host.reconcile();
+  faults.release.add('both');
+  selection.setSelection('e1');
+  const r = host.reconcile();
+  assert.equal(r.errors.length, 1);
+  const agg = r.errors[0].error;
+  assert.ok(agg instanceof AggregateError);
+  assert.equal(agg.code, 'ECONTEXTUAL_CLEANUP_FAILED');
+  assert.deepEqual(agg.errors.map((e) => e.message), ['dispose:both', 'release:both'], 'dispose error first, release error second -- neither replaces the other');
+  assert.deepEqual(r.disposed, ['after']);
+  assert.deepEqual(host.mounted(), []);
+  assert.deepEqual(released, ['both', 'after']);
+
+  // the same holds for update-failure teardown and for host dispose()
+  const w = faultyWorld();
+  w.host.register({ id: 'u', title: 'U', appliesTo: () => true, mount() {}, update() { throw new Error('update'); }, dispose() { throw new Error('dispose:u'); } });
+  w.host.register({ id: 'd', title: 'D', appliesTo: () => true, mount() {}, dispose() { throw new Error('dispose:d'); } });
+  w.selection.setSelection('t1');
+  w.host.reconcile();
+  w.faults.release.add('u'); w.faults.release.add('d');
+  const ru = w.host.reconcile();
+  assert.deepEqual(ru.errors.map((e) => e.phase), ['update', 'unmount']);
+  assert.deepEqual(ru.errors[1].error.errors.map((e) => e.message), ['dispose:u', 'release:u']);
+  assert.throws(() => w.host.dispose(), (e) => e.code === 'ECONTEXTUAL_CLEANUP_FAILED'
+    && e.errors.map((x) => x.message).join() === 'dispose:d,release:d');
+  assert.deepEqual(w.host.mounted(), []);
+  assert.deepEqual(w.released, ['u', 'd']);
+}));
+
+test('contextual panels RF1-C: unregister and host dispose() attempt every cleanup despite release failures', () => quietly(() => {
+  const { selection, host, faults, released } = faultyWorld();
+  const log = [];
+  const offA = host.register(editor('a', 'Transform', log));
+  host.register(editor('b', 'Transform', log));
+  host.register(editor('c', 'Transform', log));
+  selection.setSelection('t1');
+  host.reconcile();
+  faults.release.add('a'); faults.release.add('c');
+  assert.throws(() => offA(), /release:a/);
+  assert.deepEqual(host.mounted(), ['b', 'c']);
+  assert.throws(() => host.dispose(), (e) => e.message === 'release:c'); // c failed, b still released
+  assert.deepEqual(host.mounted(), []);
+  assert.deepEqual(released, ['a', 'c', 'b']);
+  assert.deepEqual(log, ['mount:a:t1', 'mount:b:t1', 'mount:c:t1', 'dispose:a', 'dispose:c', 'dispose:b']);
+}));
+
+test('contextual panels RF1-D: a throwing resolveContext fails closed', () => quietly(() => {
+  const { selection, host, faults, created } = faultyWorld();
+  const log = [];
+  host.register(editor('transformEditor', 'Transform', log));
+  host.register(editor('alwaysOn', 'Transform', log));
+  selection.setSelection('t1');
+  host.reconcile();
+  assert.deepEqual(host.mounted(), ['transformEditor', 'alwaysOn']);
+  faults.context = true;
+  const r = host.reconcile();
+  assert.equal(r.contextFailed, true);
+  assert.deepEqual(errorsOf(r), ['null:resolveContext:context']);
+  assert.deepEqual(r.failed, [], 'no record failed; the context did');
+  assert.deepEqual(r.disposed, ['transformEditor', 'alwaysOn'], 'no editor keeps presenting a stale context');
+  assert.deepEqual(r.mounted, []);
+  assert.deepEqual(r.updated, [], 'update() is never handed a guessed context');
+  assert.deepEqual(host.mounted(), []);
+  assert.equal(created.length, 2, 'no new host was created');
+  assert.deepEqual(log, ['mount:transformEditor:t1', 'mount:alwaysOn:t1', 'dispose:transformEditor', 'dispose:alwaysOn']);
+}));
+
+test('contextual panels RF1-E: after a callback failure is removed, the next reconcile is normal', () => quietly(() => {
+  const { selection, host, faults } = faultyWorld();
+  const log = [];
+  host.register(editor('alpha', 'Transform', log));
+  host.register(editor('beta', 'Transform', log));
+  faults.context = true;
+  faults.create.add('alpha');
+  faults.release.add('beta');
+  selection.setSelection('t1');
+  assert.equal(host.reconcile().contextFailed, true);
+  faults.context = false;
+  const r1 = host.reconcile();
+  assert.deepEqual(r1.failed, ['alpha']);
+  assert.deepEqual(r1.mounted, ['beta']);
+  faults.create.clear();
+  faults.release.clear();
+  const r2 = host.reconcile();
+  assert.deepEqual(r2.errors, []);
+  assert.equal(r2.contextFailed, false);
+  assert.deepEqual(r2.mounted, ['alpha'], 'a fresh, clean mount');
+  assert.deepEqual(r2.updated, ['beta']);
+  selection.setSelection('e1');
+  const r3 = host.reconcile();
+  assert.deepEqual(r3.errors, []);
+  assert.deepEqual(r3.disposed, ['alpha', 'beta']);
+  assert.deepEqual(host.mounted(), []);
+  host.dispose();
+}));

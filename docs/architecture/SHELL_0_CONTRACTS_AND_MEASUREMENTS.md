@@ -205,7 +205,15 @@ executes and paints through the **one** UI-0 registry and adds only:
   profile-neutral. A listed one is folded into the record's own `enabled`, so
   `isEnabled`, `execute`, the toolbar painter and the future menu all see the
   same answer. With no document (`getProfile() === null`) a profile-limited
-  command is disabled.
+  command is disabled. The record's own `enabled` is consulted only inside
+  its profiles (`profileAllowed && originalEnabled()`).
+- **`profiles` never weakens registry validation.** `enabled` must still be
+  `undefined` or a function. Any other value (`false`, `true`, a string,
+  `null` …) is rejected with the registry's own `ECOMMAND_INVALID`, the same
+  message a profile-neutral record gets; it is never reinterpreted as
+  "always enabled", and nothing — command or `profilesOf` entry — is left
+  registered. Duplicates remain the registry's `ECOMMAND_DUPLICATE` and never
+  replace the first record's profiles.
 - **`profilesOf(id)`** for menu/toolbar presentation.
 
 Profile **containment** is data; no profile **rule** is in shared code
@@ -300,7 +308,28 @@ pure planner → `applyVerifiedEdits` (APP-ARCH-0 §18).
   reported in `failed`, its host is released and no active state remains; a
   throwing `update` disposes that editor rather than leave it showing stale
   state; a throwing `dispose` still clears the active state and releases the
-  host. One record's failure never stops the others from reconciling.
+  host.
+- **Host callbacks are isolated like records.** A throwing `createHost(id)`
+  leaves that record inactive (nothing to clean: no host was handed out) and
+  reconciliation continues. A throwing `releaseHost` — after an unmount, a
+  failed mount, a failed update, a failed dispose, `unregister` or host
+  `dispose()` — never stops the remaining cleanup. A throwing
+  `resolveContext()` is treated as **no context**: every mounted editor is
+  disposed, nothing is mounted, `update` is never called, and the result
+  carries `contextFailed: true`. A context exception is never turned into a
+  guessed or stale context.
+- **No failure is discarded.** `reconcile()` returns `{ mounted, updated,
+  disposed, failed, errors, contextFailed }`; `errors` lists every failure as
+  `{ id, phase, error }` (`id` null for `resolveContext`; phases
+  `resolveContext`, `createHost`, `mount`, `releaseHost`, `update`,
+  `unmount`) in registration order, then the order they happened. When an
+  editor's `dispose` **and** its `releaseHost` both throw, both are attempted
+  and both are kept in one `AggregateError` (`code`
+  `ECONTEXTUAL_CLEANUP_FAILED`, dispose error first) — the
+  `EDISPOSABLE_FAILED` shape, not a second error system.
+- One record's (or one callback's) failure never stops the others from
+  reconciling, and a later reconcile after the fault is removed is a normal,
+  fresh one.
 - **Re-activation is a fresh mount.** After a dispose, the next applicable
   proven selection gets a new `createHost(id)` and a new `mount(host, ctx)`;
   nothing from the previous activation is handed back.
@@ -514,7 +543,7 @@ Native ESM is reliable in Electron 41 under the product's constraints.
 | Debugging | original files in stacks | original files in DevTools via the map |
 | Failure diagnosis | missing import silent in the console | missing import is a **build error** |
 | Testability | pure modules unchanged; ESM files need `import()` in tests | pure modules unchanged; add "each entry builds, no Node built-in reachable" (APP-ARCH-0 §23) |
-| Determinism | no build output | byte-identical across three builds |
+| Determinism | no build output | byte-identical across three builds **from the same build root** (emitted path comments depend on the working directory) |
 | Packaging | many files in `asar` | one file per entry in `asar`; already built in release CI |
 | Load time, 42-file / ~330 KB graph | 33.5 ms (p10–p90 30.8–34.3) | **11.6 ms** (10.9–13.5); classic tags today 32.4 ms |
 | Build overhead | none | 15 ms for the graph; `npm run build:editor` already runs before start and in CI |
@@ -547,7 +576,16 @@ per editor-sized load; the larger win is removing reloads (Shell-4).
    files (11.6 vs 33.5 ms). Supporting evidence for the choice, not a product
    speedup claim (§17.1).
 4. **No new tool.** esbuild is an existing devDependency, its output is
-   deterministic, and the build already runs before start and in release CI.
+   deterministic for a fixed build root (`absWorkingDir`), and the build
+   already runs before start and in release CI.
+
+**Determinism scope.** The bundle is byte-identical across builds for a
+**fixed build root / `absWorkingDir`**. It is not byte-identical regardless of
+invocation directory: esbuild's emitted path comments are relative to the
+working directory, so launching the spike's `build.js` from a different
+directory changes the bytes (found in independent QA of PR #129). A build
+script that wants reproducible output passes an explicit `absWorkingDir` (the
+repository root) rather than inheriting `process.cwd()`.
 
 Native ESM remains a technically valid fallback; nothing in the contracts
 depends on the choice (the contract modules are classic-script safe today and
@@ -571,7 +609,9 @@ the SHELL-0 evidence folded in):
 > linked source maps, built by an npm script and not committed. No other
 > bundler, no CDN, no runtime dependency added by bundling, no Node built-in
 > reachable from a renderer bundle, and no transform that requires loosening
-> the CSP. Bundle output must be deterministic. Shared `src/` modules stay
+> the CSP. Bundle output must be deterministic for a fixed build root: the
+> build script passes an explicit esbuild `absWorkingDir` (the repository
+> root) rather than inheriting the invocation directory. Shared `src/` modules stay
 > CommonJS so main and `node:test` keep requiring them directly. Vendor
 > runtimes (X_ITE) stay classic script tags.
 
@@ -692,6 +732,22 @@ The contracts are **layout-neutral**: nothing in `src/shell/` assumes a
 quad-view, a left toolbar, a right Inspector, a bottom-docked Source panel, or
 any one concept as final. Panels are ids with a mount lifecycle; tools are
 grouped records; placement belongs to the later docking/UI lanes.
+
+## 21c. Independent-QA notes deferred to later work
+
+Independent QA of PR #129 required two fixes (RF1 host-callback isolation,
+§9; RF2 profiled `enabled` validation, §6), both made. It also recorded
+non-blocking notes that are **deliberately not addressed in SHELL-0** and are
+left for the lane that first exercises each contract:
+
+- contribution-service assumptions about the cleanup handles a service
+  returns;
+- error reporting when a contribution's rollback cleanup itself throws;
+- the breadth of the scoped service API handed to a contribution;
+- nested `reconcile()` reentrancy (a reconcile triggered from inside a
+  `mount`/`update`/`dispose` callback);
+- wording differences between surface tables in this document;
+- the visual-QA findings in §21a (unchanged).
 
 ## 22. Deferred (not started)
 

@@ -25,7 +25,16 @@
 //     dispose() is NOT called -- mount must not leave partial resources behind
 //     when it throws). An update that throws is disposed (fail closed). A
 //     throwing dispose still clears the active state and releases the host.
-//     One record's failure never stops the others from reconciling.
+//   * The HOST callbacks are isolated exactly like the records. A throwing
+//     createHost(id) leaves that record inactive; a throwing releaseHost never
+//     stops the remaining cleanup; a throwing resolveContext() is treated as
+//     "no context" -- every mounted editor is disposed, nothing is mounted and
+//     no guessed or stale context is presented as current.
+//   * One record's (or one callback's) failure never stops the others from
+//     reconciling, and no failure is discarded: reconcile() reports every one
+//     in `errors` (registration order, then the order they happened), and a
+//     record whose dispose AND releaseHost both throw yields one
+//     AggregateError (ECONTEXTUAL_CLEANUP_FAILED) holding both.
 //   * Re-activation is a NEW mount: after a dispose, the next applicable
 //     selection gets a fresh createHost(id) and a fresh mount(host, ctx).
 //     Nothing from the previous activation is handed back.
@@ -59,11 +68,26 @@
       if (r.update !== undefined && typeof r.update !== 'function') bad(`${r.id}: update must be a function`);
     }
 
+    // One error, one AggregateError, or nothing -- the EDISPOSABLE_FAILED shape.
+    function throwCollected(errors, message) {
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) {
+        const agg = new AggregateError(errors, `ECONTEXTUAL_CLEANUP_FAILED: ${message}`);
+        agg.code = 'ECONTEXTUAL_CLEANUP_FAILED';
+        throw agg;
+      }
+    }
+
+    // The active state is dropped FIRST, then dispose() and releaseHost are
+    // each attempted regardless of the other; neither error hides the other.
     function unmountOne(id) {
+      if (!mountedHosts.has(id)) return false;
       const host = mountedHosts.get(id);
-      if (host === undefined) return false;
       mountedHosts.delete(id);
-      try { records.get(id).dispose(); } finally { release(id, host); }
+      const errors = [];
+      try { records.get(id).dispose(); } catch (err) { errors.push(err); }
+      try { release(id, host); } catch (err) { errors.push(err); }
+      throwCollected(errors, `${id} dispose/releaseHost failed`);
       return true;
     }
 
@@ -85,10 +109,23 @@
       }
     }
 
-    // One record's failure never stops the others from being reconciled.
+    // One record's (or host callback's) failure never stops the others from
+    // being reconciled. Every failure is returned in `errors` as
+    // { id, phase, error } (id null for resolveContext) and logged.
     function reconcile() {
-      const ctx = resolveContext();
-      const out = { mounted: [], updated: [], disposed: [], failed: [] };
+      const out = { mounted: [], updated: [], disposed: [], failed: [], errors: [], contextFailed: false };
+      const fail = (id, phase, error) => {
+        console.error(`[contextual-panels] ${id === null ? 'resolveContext' : `${id} ${phase}`} failed:`, error);
+        out.errors.push({ id, phase, error });
+        if (id !== null && !out.failed.includes(id)) out.failed.push(id);
+      };
+      let ctx = null;
+      try { ctx = resolveContext(); } catch (err) {
+        // fail closed: no context, so nothing applies and every mounted
+        // editor is torn down below -- never a guessed or stale context
+        out.contextFailed = true;
+        fail(null, 'resolveContext', err);
+      }
       for (const [id, record] of records) {
         const want = applies(record, ctx);
         const have = mountedHosts.has(id);
@@ -97,20 +134,23 @@
             unmountOne(id);
             out.disposed.push(id);
           } catch (err) {
-            // unmountOne already dropped the active state and released the host
-            console.error(`[contextual-panels] ${id} dispose failed:`, err);
-            out.failed.push(id);
+            // unmountOne already dropped the active state and attempted both
+            // dispose and releaseHost
+            fail(id, 'unmount', err);
           }
         } else if (want && !have) {
-          const host = createHost(id);
+          let host;
+          try { host = createHost(id); } catch (err) {
+            fail(id, 'createHost', err); // nothing was created; the record stays inactive
+            continue;
+          }
           try {
             record.mount(host, ctx);
             mountedHosts.set(id, host);
             out.mounted.push(id);
           } catch (err) {
-            release(id, host);
-            console.error(`[contextual-panels] ${id} mount failed:`, err);
-            out.failed.push(id);
+            fail(id, 'mount', err);
+            try { release(id, host); } catch (err2) { fail(id, 'releaseHost', err2); }
           }
         } else if (want && have && record.update) {
           try {
@@ -119,9 +159,8 @@
           } catch (err) {
             // fail closed: an editor that could not take the new context is
             // torn down rather than left showing stale state
-            console.error(`[contextual-panels] ${id} update failed:`, err);
-            try { unmountOne(id); } catch (err2) { console.error(`[contextual-panels] ${id} dispose failed:`, err2); }
-            out.failed.push(id);
+            fail(id, 'update', err);
+            try { unmountOne(id); } catch (err2) { fail(id, 'unmount', err2); }
           }
         }
       }

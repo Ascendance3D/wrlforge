@@ -255,3 +255,62 @@ test('panels: a failed mount can be retried', () => {
   panels.unmount('context');
   assert.equal(disposed, 1);
 });
+
+// RF2 (PR #129 independent QA): `profiles` adds a gate; it never weakens the
+// registry's own record validation.
+test('commands RF2: an invalid `enabled` is rejected identically with or without `profiles`', () => {
+  for (const enabled of [false, true, 0, 1, 'yes', null, {}, []]) {
+    const { commands, commandRegistry } = realServices({ profile: 'world' });
+    let neutral;
+    assert.throws(() => commands.register(cmd('model.box', { enabled })), (e) => { neutral = e; return e.code === 'ECOMMAND_INVALID'; });
+    let profiled;
+    assert.throws(() => commands.register(cmd('model.box', { enabled, profiles: ['world'] })), (e) => { profiled = e; return e.code === 'ECOMMAND_INVALID'; });
+    assert.equal(profiled.message, neutral.message, `same registry rejection for enabled=${JSON.stringify(enabled)}`);
+    assert.equal(commandRegistry.has('model.box'), false, 'nothing registered');
+    assert.equal(commands.profilesOf('model.box'), null, 'no profile record left behind');
+  }
+});
+
+test('commands RF2: a valid profiled enabled callback is ANDed with the profile gate', () => {
+  const s = realServices({ profile: 'world' });
+  const { commands } = s;
+  let own = true;
+  let calls = 0;
+  const un = commands.register(cmd('model.box', { profiles: ['world'], enabled: () => { calls++; return own; } }));
+  assert.equal(commands.isEnabled('model.box'), true); // in profile, own true
+  own = false;
+  assert.equal(commands.isEnabled('model.box'), false); // in profile, own false
+  assert.equal(commands.execute('model.box').ok, false);
+  own = true;
+  s.ctx.profile = 'mall'; // wrong active profile
+  const before = calls;
+  assert.equal(commands.isEnabled('model.box'), false);
+  assert.equal(calls, before, 'the record\'s own enabled is not consulted outside its profiles');
+  s.ctx.profile = null; // no document / no profile
+  assert.equal(commands.isEnabled('model.box'), false);
+  assert.equal(commands.execute('model.box').ok, false);
+  s.ctx.profile = 'world';
+  assert.equal(commands.execute('model.box').ok, true);
+  un();
+  assert.equal(commands.has('model.box'), false);
+  assert.equal(commands.profilesOf('model.box'), null, 'unregister cleans the profile record');
+});
+
+test('commands RF2: profiled with no enabled is gated only by profile; duplicates keep the first record', () => {
+  const s = realServices({ profile: 'generic' });
+  const { commands } = s;
+  const un = commands.register(cmd('model.box', { profiles: ['world', 'generic'] }));
+  assert.equal(commands.isEnabled('model.box'), true);
+  s.ctx.profile = 'mall';
+  assert.equal(commands.isEnabled('model.box'), false);
+  // a duplicate -- profiled or neutral, valid or invalid enabled -- never replaces the first
+  code(() => commands.register(cmd('model.box', { profiles: ['mall'] })), 'ECOMMAND_DUPLICATE');
+  code(() => commands.register(cmd('model.box', {})), 'ECOMMAND_DUPLICATE');
+  code(() => commands.register(cmd('model.box', { profiles: ['mall'], enabled: false })), 'ECOMMAND_INVALID');
+  assert.deepEqual(commands.profilesOf('model.box'), ['world', 'generic']);
+  assert.equal(commands.isEnabled('model.box'), false, 'still gated by the FIRST record\'s profiles');
+  un();
+  assert.equal(commands.profilesOf('model.box'), null);
+  commands.register(cmd('model.box', { profiles: ['mall'] })); // re-registration after cleanup works
+  assert.equal(commands.isEnabled('model.box'), true);
+});
