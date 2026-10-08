@@ -13,7 +13,10 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..', '..');
 const SHELL = path.join(ROOT, 'src', 'shell');
 const modules = fs.readdirSync(SHELL).filter((f) => f.endsWith('.js')).sort();
-const read = (p) => fs.readFileSync(p, 'utf8');
+// Line endings are not architecture: a Windows checkout has CRLF, so every
+// structural check runs on LF-normalized text.
+const lf = (src) => src.replace(/\r\n?/g, '\n');
+const read = (p) => lf(fs.readFileSync(p, 'utf8'));
 const code = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 // code() minus string/template literal bodies (prose in error messages is not a dependency).
 const bare = (src) => code(src).replace(/'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g, "''");
@@ -69,11 +72,39 @@ test('no shared shell module imports profile rules, fs, Electron, the parser or 
   }
 });
 
+// The structure every shell module must have. Returns the missing pieces.
+function structureProblems(rawSrc) {
+  const src = lf(rawSrc);
+  const out = [];
+  if (!/\n\(function \(\) \{\n/.test(src)) out.push('is not wrapped in an IIFE');
+  if (!/module\.exports = WRL_SHELL_[A-Z_]+_API;/.test(src)) out.push('has no CommonJS export');
+  if (!/window\.WrlShell[A-Za-z]+ = WRL_SHELL_[A-Z_]+_API;/.test(src)) out.push('has no browser export');
+  return out;
+}
+
 test('dual export + IIFE in every module (safe as a classic <script> later)', () => {
   for (const f of modules) {
-    const src = read(path.join(SHELL, f));
-    assert.match(src, /\n\(function \(\) \{\n/, `${f} is not wrapped in an IIFE`);
-    assert.match(src, /module\.exports = WRL_SHELL_[A-Z_]+_API;/, `${f} has no CommonJS export`);
-    assert.match(src, /window\.WrlShell[A-Za-z]+ = WRL_SHELL_[A-Z_]+_API;/, `${f} has no browser export`);
+    assert.deepEqual(structureProblems(fs.readFileSync(path.join(SHELL, f), 'utf8')), [], f);
+  }
+});
+
+test('the structural check is line-ending safe and still rejects an unwrapped module', () => {
+  const wrapped = [
+    "'use strict';", '', '(function () {', '  const WRL_SHELL_X_API = Object.freeze({});',
+    "  if (typeof module !== 'undefined' && module.exports) {", '    module.exports = WRL_SHELL_X_API;',
+    '  } else {', '    window.WrlShellX = WRL_SHELL_X_API;', '  }', '})();', '',
+  ];
+  const unwrapped = wrapped.filter((l) => l !== '(function () {' && l !== '})();');
+  for (const eol of ['\n', '\r\n']) {
+    assert.deepEqual(structureProblems(wrapped.join(eol)), [], JSON.stringify(eol));
+    assert.deepEqual(structureProblems(unwrapped.join(eol)), ['is not wrapped in an IIFE'], JSON.stringify(eol));
+    const noExports = wrapped.filter((l) => !l.includes('= WRL_SHELL_X_API;')).join(eol);
+    assert.deepEqual(structureProblems(noExports), ['has no CommonJS export', 'has no browser export'], JSON.stringify(eol));
+  }
+  // every real module also passes when checked out with CRLF (as on Windows)
+  for (const f of modules) {
+    const crlf = fs.readFileSync(path.join(SHELL, f), 'utf8').replace(/\r?\n/g, '\r\n');
+    assert.ok(crlf.includes('\r\n'));
+    assert.deepEqual(structureProblems(crlf), [], `${f} (CRLF)`);
   }
 });
