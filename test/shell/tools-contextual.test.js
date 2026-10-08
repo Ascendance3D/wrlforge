@@ -269,6 +269,10 @@ test('contextual panels: appliesTo failure after mount tears down; mount failure
     assert.deepEqual(host.reconcile().disposed, ['transformEditor']);
     assert.deepEqual(host.mounted(), []);
     assert.deepEqual(log, ['mount', 'dispose']);
+    // a later record still reconciles in the same pass as the throwing appliesTo
+    host.register({ id: 'later', title: 'Later', appliesTo: (sel) => sel.type === 'Transform', mount() { log.push('mount:later'); }, dispose() {} });
+    assert.deepEqual(host.reconcile().mounted, ['later']);
+    assert.deepEqual(host.mounted(), ['later']);
   } finally { console.error = orig; }
 });
 

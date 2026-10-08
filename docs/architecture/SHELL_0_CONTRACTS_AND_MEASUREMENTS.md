@@ -318,15 +318,19 @@ pure planner → `applyVerifiedEdits` (APP-ARCH-0 §18).
   disposed, nothing is mounted, `update` is never called, and the result
   carries `contextFailed: true`. A context exception is never turned into a
   guessed or stale context.
-- **No failure is discarded.** `reconcile()` returns `{ mounted, updated,
-  disposed, failed, errors, contextFailed }`; `errors` lists every failure as
+- **`appliesTo` exceptions are logged and treated as not applicable.** They
+  fail closed (a mounted editor is disposed), do not stop reconciliation, and
+  are **not** entered in `reconcile().errors`.
+- **Lifecycle and host-callback failures are reported.** `reconcile()`
+  returns `{ mounted, updated, disposed, failed, errors, contextFailed }`;
+  `errors` records the reconciliation lifecycle and host-callback failures as
   `{ id, phase, error }` (`id` null for `resolveContext`; phases
   `resolveContext`, `createHost`, `mount`, `releaseHost`, `update`,
-  `unmount`) in registration order, then the order they happened. When an
-  editor's `dispose` **and** its `releaseHost` both throw, both are attempted
-  and both are kept in one `AggregateError` (`code`
-  `ECONTEXTUAL_CLEANUP_FAILED`, dispose error first) — the
-  `EDISPOSABLE_FAILED` shape, not a second error system.
+  `unmount`) in registration order, then the order they happened. Cleanup
+  attempts continue after a failure: when an editor's `dispose` **and** its
+  `releaseHost` both throw, both are attempted and both remain observable in
+  one `AggregateError` (`code` `ECONTEXTUAL_CLEANUP_FAILED`, dispose error
+  first) — the `EDISPOSABLE_FAILED` shape, not a second error system.
 - One record's (or one callback's) failure never stops the others from
   reconciling, and a later reconcile after the fault is removed is a normal,
   fresh one.

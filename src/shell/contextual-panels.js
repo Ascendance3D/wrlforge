@@ -18,7 +18,9 @@
 //     never builds a scene tree and never keeps its own selection.
 //   * Fail closed (WD.md §7): no context, no selection, or a selection whose
 //     identity is not proven (`selection.proven !== true`) applies NOTHING, and
-//     every mounted editor is disposed. A throwing appliesTo does not apply.
+//     every mounted editor is disposed. A throwing appliesTo is logged and
+//     treated as false (not applicable; a mounted editor is disposed); it does
+//     not stop reconciliation and is NOT entered in reconcile().errors.
 //   * Newly applicable -> createHost(id) + mount(host, ctx). Still applicable ->
 //     update(ctx) if provided. No longer applicable -> dispose() + releaseHost.
 //     A mount that throws leaves the editor unmounted (its host is released;
@@ -31,10 +33,12 @@
 //     "no context" -- every mounted editor is disposed, nothing is mounted and
 //     no guessed or stale context is presented as current.
 //   * One record's (or one callback's) failure never stops the others from
-//     reconciling, and no failure is discarded: reconcile() reports every one
-//     in `errors` (registration order, then the order they happened), and a
-//     record whose dispose AND releaseHost both throw yields one
-//     AggregateError (ECONTEXTUAL_CLEANUP_FAILED) holding both.
+//     reconciling. reconcile() returns the lifecycle and host-callback
+//     failures -- resolveContext, createHost, mount, releaseHost, update,
+//     unmount -- in `errors` (registration order, then the order they
+//     happened). Cleanup continues after a failure, and a record whose
+//     dispose AND releaseHost both throw yields one AggregateError
+//     (ECONTEXTUAL_CLEANUP_FAILED) holding both.
 //   * Re-activation is a NEW mount: after a dispose, the next applicable
 //     selection gets a fresh createHost(id) and a fresh mount(host, ctx).
 //     Nothing from the previous activation is handed back.
@@ -110,8 +114,9 @@
     }
 
     // One record's (or host callback's) failure never stops the others from
-    // being reconciled. Every failure is returned in `errors` as
-    // { id, phase, error } (id null for resolveContext) and logged.
+    // being reconciled. Every lifecycle/host-callback failure is returned in
+    // `errors` as { id, phase, error } (id null for resolveContext) and
+    // logged; an appliesTo exception is only logged (see applies()).
     function reconcile() {
       const out = { mounted: [], updated: [], disposed: [], failed: [], errors: [], contextFailed: false };
       const fail = (id, phase, error) => {
