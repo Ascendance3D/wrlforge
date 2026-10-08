@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# RUST-1 isolated Rust workspace. It is NOT part of the production build:
+# package.json scripts, esbuild, electron-builder and CI do not reference it.
+# No production module loads anything built from here.
+[workspace]
+resolver = "2"
+members = ["wrlforge-text", "wrlforge-wasm"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+publish = false
+rust-version = "1.95"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+debug = false
+strip = true
