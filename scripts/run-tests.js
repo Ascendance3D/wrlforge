@@ -50,6 +50,7 @@ const DIRS = [
   'test/proto-resolution',
   'test/proto-enrichment',
   'test/phase-7c-windows',
+  'test/shell',
 ];
 
 const files = [...EXPLICIT];
