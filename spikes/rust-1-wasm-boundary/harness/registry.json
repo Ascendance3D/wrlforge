@@ -1,0 +1,59 @@
+{
+  "_comment": [
+    "RUST-1 approved-difference registry for the Rust-vs-JavaScript differential harness.",
+    "Entry ids are harness classification ids. They are NOT the owner-decision ids D1-D9 of",
+    "RUST_0_CORE_FEASIBILITY.md section 16. RUST-0's README called its two entries 'D1' and 'D2';",
+    "those internal labels are kept in `rust0Label` only, to avoid confusion with owner decisions.",
+    "An entry approves an EXPERIMENTAL difference for this harness. It never approves a production",
+    "behaviour change; that needs its own lane and owner decision.",
+    "Adding, removing or widening an entry changes registrySha256 in every summary. Do it only",
+    "with owner review, and record it in docs/architecture/RUST_1_WASM_QA.md."
+  ],
+  "entries": [
+    {
+      "id": "RUST0-BOUNDARY",
+      "rust0Label": "D1",
+      "stage": "edit-algebra",
+      "candidateCode": "EEDITBOUNDARY",
+      "inputCondition": "JavaScript applied the edit set (OK), and at least one edit endpoint lies strictly between the two halves of a surrogate pair in the ORIGINAL text.",
+      "independentCheck": "endpointInsideSurrogatePair",
+      "justification": "src/vrml/edit.js applies such a set and can emit a lone surrogate; the save path (Buffer.from(text,'utf8')) then writes U+FFFD. Rust refuses instead. Checked only after every JavaScript check has passed. Pre-existing defect T4.",
+      "ownerApproval": {
+        "status": "approved-experimental",
+        "scope": "differential harness only",
+        "reference": "RUST-0 accepted by owner 2026-10-08 (RUST-1 authorization). Production alignment of edit.js is TEXT-1 scope.",
+        "productionChangeApproved": false
+      }
+    },
+    {
+      "id": "RUST0-ENCODING",
+      "rust0Label": "D2",
+      "stage": "edit-algebra",
+      "candidateCode": "EENCODING",
+      "inputCondition": "The text or at least one insert is not well-formed UTF-16 (contains an unpaired surrogate).",
+      "independentCheck": "someInputIllFormed",
+      "justification": "UTF-8 cannot represent an unpaired surrogate; the wasm-bindgen default conversion would replace it with U+FFFD. The boundary refuses before conversion. The refusal may pre-empt a later JavaScript error (bounds/overlap) because encoding must be proven before any text reaches Rust; shape errors still match because the facade checks them first.",
+      "ownerApproval": {
+        "status": "approved-experimental",
+        "scope": "differential harness only",
+        "reference": "RUST-0 accepted by owner 2026-10-08 (RUST-1 authorization); RUST-1 brief section 4 (never substitute U+FFFD).",
+        "productionChangeApproved": false
+      }
+    },
+    {
+      "id": "RUST1-PRECISION",
+      "rust0Label": null,
+      "stage": "edit-algebra",
+      "candidateCode": "EOFFSETPRECISION",
+      "inputCondition": "A text-free mapping (mapOffset/mapRange) receives an offset that is not a safe integer, or its exact JavaScript result is not a safe integer.",
+      "independentCheck": "unsafeIntegerInvolved",
+      "justification": "src/vrml/edit.js accepts any Number.isInteger offset, so above Number.MAX_SAFE_INTEGER its arithmetic can round silently. Rust computes exactly and refuses a value it cannot return exactly. No real document reaches this range (V8 strings are below 2^30 units).",
+      "ownerApproval": {
+        "status": "proposed-pending-owner",
+        "scope": "differential harness only",
+        "reference": "New in RUST-1. Reported as a separate bucket; never counted as approved until the owner decides.",
+        "productionChangeApproved": false
+      }
+    }
+  ]
+}

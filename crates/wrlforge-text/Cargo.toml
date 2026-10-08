@@ -1,0 +1,18 @@
+[package]
+name = "wrlforge-text"
+description = "WRL Forge pure source-text core: UTF-16 offsets, WD1.2 span-patch edit algebra, line index. No I/O."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+# Standard library only. Adding any dependency here needs owner approval.
+[dependencies]
+
+[features]
+# NEGATIVE CONTROLS ONLY -- see wrlforge-wasm/Cargo.toml. Never enabled in a
+# release artifact.
+negative-control-utf8-tiebreak = []
+negative-control-no-ambiguity = []
+negative-control-no-boundary = []
