@@ -8,8 +8,12 @@
 //   * proves a session or snapshot by MODULE-PRIVATE WeakMap membership, never
 //     by a number -- revision numbers are informational only;
 //   * refuses stale, disposed and foreign handles before any raw call;
-//   * poisons the engine after any uncoded failure (a wasm trap), so a damaged
-//     instance cannot keep answering.
+//   * poisons the wasm INSTANCE after any uncoded failure (a wasm trap), so a
+//     damaged instance cannot keep answering through any engine (RUST-1A).
+//
+// Trust boundary (RUST-1A): session isolation holds for a caller that holds
+// only the engine. Code that holds the glue module can forge raw handles
+// (`__wbg_ptr`) and read linear memory, so it is inside the boundary.
 //
 // Environment-neutral: the caller supplies an INITIALIZED wasm-bindgen module
 // namespace (see spikes/rust-1-wasm-boundary/loaders/). No fs, no fetch here.
@@ -124,6 +128,12 @@ function checkPosition(value, label) {
 
 // --- engine -----------------------------------------------------------------
 
+// RUST-1A: poison belongs to the wasm INSTANCE, not to one engine. Every
+// engine over the same instance shares that instance's RawSession class, so it
+// is the key. Before this, a trap seen by one engine left a second engine on
+// the same trapped instance still answering (reproduced with a real OOM trap).
+const INSTANCE_POISON = new WeakMap(); // glue.RawSession -> { error }
+
 export function createTextEngine(glue) {
   for (const name of RAW_EXPORTS) {
     if (!glue || typeof glue[name] !== 'function') {
@@ -135,16 +145,20 @@ export function createTextEngine(glue) {
     throw fail('EENGINE', 'String.prototype.isWellFormed is unavailable');
   }
 
-  let poisoned = null;
+  let instance = INSTANCE_POISON.get(glue.RawSession);
+  if (!instance) {
+    instance = { error: null };
+    INSTANCE_POISON.set(glue.RawSession, instance);
+  }
   // Every raw call goes through here. A coded error is a refusal and passes
-  // through unchanged. Anything else (a wasm trap) poisons the engine.
+  // through unchanged. Anything else (a wasm trap) poisons the instance.
   function raw(fn) {
-    if (poisoned) throw fail('EENGINE', 'engine is poisoned by an earlier failure', { cause: poisoned });
+    if (instance.error) throw fail('EENGINE', 'engine is poisoned by an earlier failure', { cause: instance.error });
     try {
       return fn();
     } catch (e) {
       if (e && typeof e.code === 'string') throw e;
-      poisoned = e;
+      instance.error = e;
       throw fail('EENGINE', `wrlforge-wasm failed: ${e && e.message}`, { cause: e });
     }
   }
@@ -277,7 +291,7 @@ export function createTextEngine(glue) {
 
   const engine = {
     get info() { return raw(() => glue.engine_info()); },
-    get poisoned() { return poisoned !== null; },
+    get poisoned() { return instance.error !== null; },
 
     // true, or throws EENCODING with `unit` = first unpaired surrogate.
     checkText(text) {

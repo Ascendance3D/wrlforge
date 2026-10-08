@@ -4,15 +4,17 @@
 //! These raw exports are NOT the public API. JavaScript callers use the facade
 //! in `js/wrlforge-text.mjs`, which owns shape validation, session branding and
 //! error compatibility. The raw layer still re-checks every value it receives
-//! and fails closed, so a direct caller cannot bypass the safety gates below.
+//! and fails closed, so a direct caller cannot bypass the UTF-16 gate or the
+//! numeric checks. It is NOT a session-isolation boundary (RUST-1A): code that
+//! holds this module can forge `__wbg_ptr` and read linear memory.
 //!
 //! UTF-16 SAFETY GATE. wasm-bindgen converts a JS string to a Rust `String`
 //! through `TextEncoder`, which replaces an unpaired surrogate with U+FFFD. That
 //! would silently change source text. So every JS string is received as a
-//! `JsString`, checked with the engine's native `String.prototype.isWellFormed`
-//! FIRST, refused with `EENCODING` when it is not well formed, and only then
-//! converted. For a well-formed string `TextEncoder` is lossless by definition
-//! (WHATWG Encoding: only lone surrogates are replaced). No path substitutes.
+//! `JsString` and passes `take_text`, which refuses with `EENCODING` instead of
+//! replacing. RUST-1A: the gate checks the converted text against the source
+//! code units and does not trust `String.prototype.isWellFormed`, which a caller
+//! can replace. No path substitutes.
 //!
 //! Rust -> JS strings are always valid UTF-8, which `TextDecoder` maps to the
 //! exact same UTF-16 sequence.
@@ -103,14 +105,62 @@ fn argument(what: &str) -> JsValue {
 // arguments
 // ---------------------------------------------------------------------------
 
+/// The UTF-16 index of the first U+FFFD in `text` that is NOT a genuine
+/// 0xFFFD code unit of `s`, i.e. a substitution, and that unit's value.
+#[cfg(not(feature = "negative-control-lossy-utf16"))]
+fn first_substitution(s: &JsString, text: &str) -> Option<(usize, f64)> {
+    let mut value = 0.0;
+    let unit = wrlforge_text::offsets::first_unconfirmed_replacement(text, |u| {
+        value = u32::try_from(u).map_or(f64::NAN, |u| s.char_code_at(u));
+        value == f64::from(0xFFFD_u16)
+    })?;
+    Some((unit, value))
+}
+
 /// The UTF-16 gate. `field` names the argument; `index` is the edit index.
+///
+/// RUST-1A: the gate never rests on `String.prototype.isWellFormed` alone. A
+/// caller can replace that method at any time; RUST-1A reproduced 144 silent
+/// substitutions per lying mode (8 malformed inputs x 18 entry points).
+///
+/// 1. `isWellFormed` must exist and answer. A missing or throwing method is
+///    `EENGINE`. Its answer is a claim, never proof.
+/// 2. Independent of (1), the converted text is checked against the source
+///    code units. `TextEncoder` replaces one unpaired surrogate with one U+FFFD
+///    and copies everything else (WHATWG Encoding), so UTF-16 positions are
+///    preserved. Each U+FFFD in the converted text must sit over a genuine
+///    0xFFFD source unit. Text without U+FFFD needs no unit reads; text with k
+///    of them needs k reads, not one per unit.
+/// 3. A substituted surrogate is `EENCODING` with `unit` = its index (the
+///    first unpaired surrogate). A `false` claim about text that (2) proves
+///    well formed means the method lied: `EENGINE`.
+///
+/// Trust root (documented, not checkable from inside the realm): the
+/// intrinsics that the wasm-bindgen glue itself uses to move a string
+/// (`TextEncoder.prototype.encodeInto`, `String.prototype.charCodeAt`).
 fn take_text(s: &JsString, field: &str, index: Option<usize>) -> Result<String, JsValue> {
     #[cfg(not(feature = "negative-control-lossy-utf16"))]
-    match s.unchecked_ref::<WellFormedProbe>().is_well_formed() {
-        Ok(true) => {}
-        Ok(false) => {
-            let units: Vec<u16> = s.iter().collect();
-            let unit = wrlforge_text::offsets::first_unpaired_surrogate(&units).unwrap_or(0);
+    let claimed = match s.unchecked_ref::<WellFormedProbe>().is_well_formed() {
+        Ok(claimed) => claimed,
+        Err(_) => {
+            return Err(error(
+                "EENGINE",
+                "String.prototype.isWellFormed is unavailable; refusing to convert text",
+                &[],
+            ))
+        }
+    };
+    let text = s.as_string().ok_or_else(|| argument("expected a string"))?;
+    #[cfg(not(feature = "negative-control-lossy-utf16"))]
+    {
+        if let Some((unit, value)) = first_substitution(s, &text) {
+            if !(f64::from(0xD800_u16)..=f64::from(0xDFFF_u16)).contains(&value) {
+                return Err(error(
+                    "EENGINE",
+                    "string conversion changed a non-surrogate code unit; refused",
+                    &[],
+                ));
+            }
             let mut fields = vec![
                 ("field", JsValue::from_str(field)),
                 ("unit", num(unit as u64)),
@@ -124,17 +174,17 @@ fn take_text(s: &JsString, field: &str, index: Option<usize>) -> Result<String, 
                 &fields,
             ));
         }
-        Err(_) => {
+        if !claimed {
             return Err(error(
                 "EENGINE",
-                "String.prototype.isWellFormed is unavailable; refusing to convert text",
+                "String.prototype.isWellFormed reported a well-formed string as malformed; refusing to convert text",
                 &[],
-            ))
+            ));
         }
     }
     #[cfg(feature = "negative-control-lossy-utf16")]
     let _ = (field, index);
-    s.as_string().ok_or_else(|| argument("expected a string"))
+    Ok(text)
 }
 
 /// A non-negative integer from a JS number. Values above 2^64 saturate, which

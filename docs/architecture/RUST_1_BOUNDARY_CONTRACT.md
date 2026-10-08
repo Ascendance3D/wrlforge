@@ -58,18 +58,29 @@ replaces an unpaired surrogate with U+FFFD. RUST-1 **proved** this by
 experiment: the `negative-control-lossy-utf16` artifact turns input
 `"\uDC00"` into `"�"` with no error (1,108 differential regressions).
 
-The gate, in `wrlforge-wasm/src/lib.rs` `take_text`:
+The gate, in `wrlforge-wasm/src/lib.rs` `take_text` (**amended by RUST-1A**;
+see `RUST_1A_BOUNDARY_HARDENING.md` §3 for the defect and the original design):
 
 1. Every JS string arrives as a `JsString` (no automatic conversion).
-2. Rust calls the engine's native `String.prototype.isWellFormed()` — one
-   call, bound with `catch`.
-3. `false` → `EENCODING`, with `field` (`text`/`insert`/`after`), `unit` (index
-   of the first unpaired surrogate, computed independently by
-   `first_unpaired_surrogate`) and `index` (edit index, for inserts).
-4. Method missing or throwing → `EENGINE`. The facade also refuses to start
-   without it. Fail closed; never convert unchecked.
-5. Only a well-formed string is converted. For a well-formed string
-   `TextEncoder` is lossless by specification.
+2. Rust calls `String.prototype.isWellFormed()`, bound with `catch`. Missing
+   or throwing → `EENGINE`. The facade also refuses to start without it. Its
+   answer is a **claim, never proof**: RUST-1A reproduced 144 silent
+   substitutions per lying mode when the gate trusted it.
+3. The string is converted, then checked **independently of step 2**:
+   `TextEncoder` replaces one unpaired surrogate with one U+FFFD and copies
+   every other scalar, so UTF-16 positions are preserved. Each U+FFFD in the
+   converted text must sit over a genuine `0xFFFD` source unit
+   (`String.prototype.charCodeAt` at that index). No U+FFFD → no unit reads.
+4. A U+FFFD over a surrogate unit → `EENCODING`, with `field`
+   (`text`/`insert`/`after`), `unit` (index of the first unpaired surrogate)
+   and `index` (edit index, for inserts). A U+FFFD over any other unit →
+   `EENGINE`.
+5. A `false` claim in step 2 for text that step 3 proves well formed → `EENGINE`
+   (the method lied). Fail closed; never accept a substitution.
+
+Trust root: the intrinsics the wasm-bindgen glue itself uses to move a string
+(`TextEncoder.prototype.encodeInto`, `String.prototype.charCodeAt`). Code that
+replaces those already controls every byte the glue writes.
 
 Rejected alternatives: `JsString::is_valid_utf16` (one `charCodeAt` call per
 code unit — measured 1.3–11× slower than the native gate, see performance doc); a `Uint16Array` copy
@@ -101,15 +112,17 @@ uses keep its meaning, its `index` (caller array position) and `otherIndex`.
 | `ESESSIONFOREIGN` `ESESSIONSTALE` `ESESSIONDISPOSED` `ESESSIONREVISION` `ESESSIONEXHAUSTED` | session | §5 |
 | `EVERIFYMISMATCH` | session | with `firstDivergence` (UTF-16 index) |
 | `EARGUMENT` | facade/raw | wrong argument type for a non-`edit.js` call |
-| `EENGINE` | facade | missing export, missing `isWellFormed`, or a poisoned engine |
+| `EENGINE` | facade/raw | missing export, missing or lying `isWellFormed`, a conversion that changed a non-surrogate unit, or a poisoned instance |
 
 Check order for edit calls: facade shape checks in caller order (as
 `edit.js`) → UTF-16 gate → bounds → set conflicts (canonical order) →
 surrogate boundary. Therefore `EENCODING` can pre-empt a later `EEDITBOUNDS`
 or `EEDITOVERLAP`; it never pre-empts a shape error.
 
-An error **without** a `code` (a wasm trap) **poisons** the engine: every later
-call refuses with `EENGINE`. A trapped instance is never trusted again.
+An error **without** a `code` (a wasm trap) **poisons** the wasm **instance**
+(RUST-1A; RUST-1 poisoned only the engine that saw the trap): every later call
+through **any** engine on that instance refuses with `EENGINE`. A trapped
+instance is never trusted again. A separately loaded instance is unaffected.
 
 ## 5. Session ownership and revisions
 
@@ -135,6 +148,24 @@ call refuses with `EENGINE`. A trapped instance is never trusted again.
 - Two separately loaded wasm instances have independent counters, so their
   numbers can coincide. This is safe: the numbers are not authority, and a
   facade never routes a handle to another instance.
+- **Trust boundary (RUST-1A).** Session isolation holds for a caller that
+  holds only an engine. The raw layer is not an isolation boundary: wasm-bindgen
+  trusts `__wbg_ptr`, so code that holds the glue module can forge a raw handle
+  and read another session's text (reproduced), or read linear memory directly.
+  The renderer must not expose the glue module to untrusted code.
+
+  The facade enforces session ownership for callers using the public facade
+  API. Raw generated WebAssembly exports are trusted internal implementation
+  details and do not independently enforce equivalent ownership. Before
+  production integration, the application must prevent untrusted code from
+  obtaining or invoking raw handles, or must strengthen the raw boundary.
+- **Revision record (RUST-1A, measured).** `SessionCore.issued` keeps one `u64`
+  per revision so a stale number is told apart from a never-issued one: about
+  21.6 B of retained metadata per issued revision (200,000 revisions → 4.3 MB),
+  released on `dispose`. This is live session state, not the wasm memory
+  high-water mark (linear memory never shrinks, but freed memory is reused).
+  It is bounded by session lifetime only. Before production integration, a
+  bounded-history or equivalent memory strategy is required.
 - No persistent document IDs; nothing is written into VRML source; WD1.4
   object-identity design is untouched.
 

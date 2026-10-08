@@ -157,6 +157,33 @@ async function main() {
       && code(() => s.verifyTransaction(base, [{ from: 0, to: 1, insert: 'A' }], 'Ab\n\r')) === 'EVERIFYMISMATCH';
   });
 
+  // RUST-1A: the gate must not rest on a replaceable isWellFormed.
+  check('RUST-1A: hostile isWellFormed cannot cause a substitution (facade + raw)', () => {
+    const native = Object.getOwnPropertyDescriptor(String.prototype, 'isWellFormed');
+    const bad = [];
+    try {
+      for (const lie of [() => true, () => 1, function inverted() { return !native.value.call(this); }]) {
+        Object.defineProperty(String.prototype, 'isWellFormed', { ...native, value: lie });
+        for (const t of ['a\uD83Db', '\uDE00', '�\uD83D', 'x�y\uDC00']) {
+          for (const [where, fn] of [['openSession', () => engine.openSession(t).current().text()],
+            ['applyEdits', () => engine.applyEdits('', [{ from: 0, to: 0, insert: t }])],
+            ['raw.apply_edits', () => glue.apply_edits(t, new Float64Array(0), new Float64Array(0), [])]]) {
+            // Malformed text must be refused with a code. Under `inverted` the
+            // valid base text '' is itself refused first (EENGINE): also safe.
+            const c = code(fn);
+            const ok = lie.name === 'inverted' ? (c === 'EENCODING' || c === 'EENGINE') : c === 'EENCODING';
+            if (!ok) bad.push(`${lie.name || 'lie'} ${where} ${units(t)} -> ${c}`);
+          }
+        }
+        // A genuine U+FFFD is still ordinary text under a method that says true.
+        if (lie.name !== 'inverted' && units(engine.applyEdits('a�', [])) !== units('a�')) bad.push('genuine FFFD');
+      }
+    } finally {
+      Object.defineProperty(String.prototype, 'isWellFormed', native);
+    }
+    return bad.length === 0 || bad.slice(0, 4).join('; ');
+  });
+
   // Performance, in the renderer main thread (where the editor runs today).
   const { INPUTS } = await import('../out/electron/perf-inputs.mjs');
   const wasmExports = glue.initSync({ module: new Uint8Array(0) });

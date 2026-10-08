@@ -65,6 +65,32 @@ pub fn decode_utf16_strict(units: &[u16]) -> Result<String, EncodingError> {
     Ok(out)
 }
 
+/// RUST-1A UTF-16 gate helper. Calls `genuine(unit)` with the UTF-16 index of
+/// every U+FFFD in `text`, in order, and returns the first index for which it
+/// answers `false`. `None` means every U+FFFD was confirmed (or there is none).
+///
+/// Why positions are enough: the WHATWG UTF-8 encoder replaces ONE unpaired
+/// surrogate (one code unit) with ONE U+FFFD (one code unit) and copies every
+/// other scalar unchanged. So UTF-16 indexes are preserved, and a converted
+/// text holds a substitution exactly where its U+FFFD sits over a source unit
+/// that is not 0xFFFD.
+pub fn first_unconfirmed_replacement(
+    text: &str,
+    mut genuine: impl FnMut(usize) -> bool,
+) -> Option<usize> {
+    let mut unit = 0;
+    let mut last = 0;
+    for (byte, _) in text.match_indices('\u{FFFD}') {
+        unit += utf16_len(&text[last..byte]);
+        if !genuine(unit) {
+            return Some(unit);
+        }
+        unit += 1;
+        last = byte + '\u{FFFD}'.len_utf8();
+    }
+    None
+}
+
 /// Length of `text` in UTF-16 code units (the JavaScript `string.length`).
 pub fn utf16_len(text: &str) -> usize {
     text.chars().map(char::len_utf16).sum()
@@ -137,6 +163,40 @@ impl<'a> Utf16Cursor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replacement_positions_are_utf16_indexes() {
+        // "a" U+1F600 (2 units) U+FFFD "é" U+FFFD: FFFDs at units 3 and 5.
+        let text = "a\u{1F600}\u{FFFD}\u{E9}\u{FFFD}";
+        let mut seen = Vec::new();
+        assert_eq!(
+            first_unconfirmed_replacement(text, |u| {
+                seen.push(u);
+                true
+            }),
+            None
+        );
+        assert_eq!(seen, vec![3, 5]);
+        // The first unconfirmed one is reported; later ones are not visited.
+        let mut seen = Vec::new();
+        assert_eq!(
+            first_unconfirmed_replacement(text, |u| {
+                seen.push(u);
+                u != 3
+            }),
+            Some(3)
+        );
+        assert_eq!(seen, vec![3]);
+        assert_eq!(
+            first_unconfirmed_replacement("plain ascii", |_| false),
+            None
+        );
+        assert_eq!(first_unconfirmed_replacement("", |_| false), None);
+        assert_eq!(
+            first_unconfirmed_replacement("\u{FFFD}", |u| u != 0),
+            Some(0)
+        );
+    }
 
     // Expected values below are hand-derived from the Unicode encodings, not
     // produced by either implementation.

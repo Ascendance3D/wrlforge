@@ -3,7 +3,7 @@
 //   ~6 KB    test/fixtures/world/valid70/world.wrl              (6,929 B)
 //   ~327 KB  test/fixtures/oversized.wrl                         (326,887 B)
 //   ~1.6 MB  oversized.wrl x5, in memory only                    (1,634,435 B)
-// plus a two-byte 1.6 MB variant (see below).
+// plus a two-byte 1.6 MB variant and (RUST-1A) a U+FFFD 1.6 MB variant.
 // (perf.js names the last one "~1.3MB corpus"; ceil(1.3 MiB / 326,887) = 5
 // repeats = 1.6 MB, the size RUST-0 quoted.)
 import { readFileSync } from 'node:fs';
@@ -20,5 +20,8 @@ export function loadInputs(root) {
     // per copy, so V8 stores a two-byte string and isWellFormed must scan it
     // (an all-ASCII one-byte string is well formed by construction).
     { name: '~1.6MB two-byte variant', text: `${big}# \u{1F600}\n`.repeat(Math.ceil((1.3 * 1024 * 1024) / big.length)) },
+    // RUST-1A: the gate's slow path. One GENUINE U+FFFD per copy (what a
+    // Latin-1 file read as UTF-8 contains); each one costs a code-unit read.
+    { name: '~1.6MB with genuine U+FFFD', text: `${big}# \uFFFD\n`.repeat(Math.ceil((1.3 * 1024 * 1024) / big.length)) },
   ];
 }
