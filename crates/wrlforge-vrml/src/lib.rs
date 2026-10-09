@@ -13,6 +13,7 @@
 pub mod ast;
 pub mod diagnostics;
 pub mod field_edit;
+pub mod highlight;
 pub mod node_schema;
 pub mod parser;
 pub mod scene;
