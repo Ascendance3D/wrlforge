@@ -88,7 +88,8 @@ pub(super) async fn previewed(rev: u64, roots: usize, ms: u32) -> Option<String>
     let want = format!("rev {rev} · loaded: {roots} root node(s)");
     wait_ms(ms, || {
         let s = ui().preview_status.get_untracked();
-        (s == want).then_some(s)
+        // VISUAL-3A1 may append " · view reset (reason)".
+        (s == want || s.starts_with(&format!("{want} · "))).then_some(s)
     })
     .await
 }

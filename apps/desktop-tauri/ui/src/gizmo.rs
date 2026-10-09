@@ -3,8 +3,11 @@
 //!
 //! The UI holds no authority here either. Rust decides WHAT may move
 //! (`doc_translate_target`: a top-level Transform with an explicit
-//! translation and a unique DEF) and writes the result (`doc_translate`: one
-//! token, one undo step). This module only:
+//! translation; a DEF, if any, unique and unshared), WHICH rendered object it
+//! is (`doc_translate_prove`, VISUAL-3A1: the runtime node X_ITE's parser
+//! recorded for the Transform's exact source span, its runtime chain proven
+//! link by link -- never a root index, name, value or position) and writes
+//! the result (`doc_translate`: one token, one undo step). This module only:
 //!
 //! * draws three axis handles (SVG over the viewport) at the Transform's
 //!   origin, from the renderer's REAL camera (`protocol::gizmo::layout`);
@@ -97,6 +100,13 @@ pub struct GizmoState {
     pub refused: u64,
     pub unchanged: u64,
     pub binds: u64,
+    /// Targets Rust accepted whose runtime node could not be proven/bound.
+    pub unproven: u64,
+    pub last_unproven: Option<String>,
+    /// Per bind: locate + Rust proof round trip (ms).
+    pub prove_ms: Vec<f64>,
+    /// Per bind: the adapter bind with its consistency assertions (ms).
+    pub bind_ms: Vec<f64>,
     pub last_cancel: Option<String>,
     pub last_refusal: Option<String>,
     /// Per pointer move: math + temporary translation (ms).
@@ -225,12 +235,34 @@ fn request_target(key: Key) {
                 item: it,
                 def_name,
                 root_index,
+                preview_from,
+                preview_to,
                 translation,
                 origin,
             }) if rev == revision && it == item => {
                 let name = def_name.as_deref().unwrap_or("");
                 let def_name = def_name.clone().unwrap_or_else(|| "the Transform".into());
-                match ipc::gizmo_bind(gen_seq, root_index, name, translation) {
+                let span = (preview_from, preview_to);
+                let t0 = now();
+                let proof = prove(session, revision, gen_seq, &item, span).await;
+                let prove_ms = now() - t0;
+                // The world may have moved on while Rust proved it.
+                let current =
+                    GIZMO.with_borrow(|g| g.req_seq == seq && g.key.as_ref() == Some(&key));
+                if !current || !ready() || current_key().as_ref() != Some(&key) {
+                    return;
+                }
+                let t1 = now();
+                let bound = match proof {
+                    Ok(()) => ipc::gizmo_bind(gen_seq, span, root_index, name, translation),
+                    Err(why) => Err(why),
+                };
+                let bind_ms = now() - t1;
+                GIZMO.with_borrow_mut(|g| {
+                    g.prove_ms.push(prove_ms);
+                    g.bind_ms.push(bind_ms);
+                });
+                match bound {
                     Ok(()) => {
                         let t = Target {
                             session,
@@ -263,7 +295,11 @@ fn request_target(key: Key) {
                         );
                     }
                     Err(why) => {
-                        GIZMO.with_borrow_mut(|g| g.ghost = None);
+                        GIZMO.with_borrow_mut(|g| {
+                            g.ghost = None;
+                            g.unproven += 1;
+                            g.last_unproven = Some(why.clone());
+                        });
                         msg(
                             "refused",
                             format!("The preview cannot show {def_name} for moving ({why}). Use the Inspector."),
@@ -283,6 +319,49 @@ fn request_target(key: Key) {
             Err(e) => msg("refused", format!("Move unavailable: {e}")),
         }
     });
+}
+
+/// VISUAL-3A1: locate the runtime node the generation on screen recorded for
+/// `span` and have Rust prove it is the authored Transform `item`. `Err` is
+/// the refusal reason; nothing binds then.
+async fn prove(
+    session: u64,
+    revision: u64,
+    gen_seq: u64,
+    item: &str,
+    span: (u64, u64),
+) -> Result<(), String> {
+    let Some(gen) = crate::pick::active().filter(|g| g.seq == gen_seq) else {
+        return Err("preview-scene-replaced".into());
+    };
+    let snapshot = ipc::gizmo_locate(gen_seq, span.0, span.1)?;
+    #[derive(serde::Serialize)]
+    struct A {
+        request: p::TranslateProveRequest,
+    }
+    let r = call::<p::TranslateProveOutcome>(
+        "doc_translate_prove",
+        A {
+            request: p::TranslateProveRequest {
+                session,
+                revision,
+                preview_hash: gen.hash,
+                generation: gen_seq,
+                item: item.to_string(),
+                snapshot,
+            },
+        },
+    )
+    .await?;
+    match r {
+        p::TranslateProveOutcome::Proven {
+            revision: rev,
+            item: it,
+        } if rev == revision && it == item => Ok(()),
+        p::TranslateProveOutcome::Proven { .. } => Err("proof-for-another-node".into()),
+        p::TranslateProveOutcome::Refused { reason, .. } => Err(reason),
+        p::TranslateProveOutcome::Stale { .. } => Err("source-changed-since-preview".into()),
+    }
 }
 
 /// Whether the active drag still belongs to what is on screen. Returns the

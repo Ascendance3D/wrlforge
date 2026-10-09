@@ -511,15 +511,22 @@ pub async fn preview(force: bool) {
                 hash: src.hash,
                 seq,
             };
-            let status = ipc::preview_load(&src.text, Some(&gen)).await;
+            // VISUAL-3A1: keep the user's camera only onto a PROVEN same
+            // viewpoint (crate::camera); otherwise X_ITE's own binding stands.
+            let (camera, why) = crate::camera::want(session, src.revision).await;
+            let t0 = crate::editor::now();
+            let status = ipc::preview_load(&src.text, Some(&gen), camera).await;
+            let load_ms = crate::editor::now() - t0;
+            crate::camera::LOAD_MS.with_borrow_mut(|v| v.push(load_ms));
             u.preview_loads.update(|n| *n += 1);
             if newest() {
                 // Only the newest successful load is the picking generation.
                 if status.starts_with("loaded") {
                     crate::pick::loaded(gen);
                 }
+                let note = crate::camera::note(why);
                 u.preview_status
-                    .set(format!("rev {} · {status}", src.revision));
+                    .set(format!("rev {} · {status}{note}", src.revision));
             }
         }
         Err(e) if newest() => u.preview_status.set(format!("error: {e}")),
@@ -703,7 +710,7 @@ pub fn close() {
         crate::gizmo::reset("the document was closed");
         crate::pick::retire("preview-scene-replaced");
         // No document: the viewport shows an empty world, not the old one.
-        let status = ipc::preview_load("#VRML V2.0 utf8\n", None).await;
+        let status = ipc::preview_load("#VRML V2.0 utf8\n", None, None).await;
         u.preview_loads.update(|n| *n += 1);
         u.preview_status.set(format!("no document · {status}"));
         flash("Closed.");

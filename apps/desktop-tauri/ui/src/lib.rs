@@ -4,6 +4,7 @@
 //! The UI holds NO document authority: it renders projections the Rust
 //! backend computes and sends view edits back. See `editor.rs`.
 
+mod camera;
 mod create;
 mod editor;
 mod gizmo;

@@ -7,6 +7,13 @@
 //! pointer event at the gizmo. Mid-drag, the run proves that the RENDERED
 //! object moved (pixel probes of the real frame) while the source, revision,
 //! dirty flag and undo history did not.
+//!
+//! VISUAL-3A1: every commit is also a CAMERA test -- the view matrix of the
+//! bound viewpoint is recorded on every animation frame from the release
+//! until the reloaded scene is bound again, and must stay within
+//! [`CAM_TOL`] of the view at release (no reset, no transition). Binding is
+//! a RUNTIME-IDENTITY test: twin Transforms with equal translation, geometry
+//! and material must each move alone (`WRONG_RUNTIME_MANIPULATIONS = 0`).
 
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
@@ -36,7 +43,114 @@ struct Perf {
     commit_ms: Vec<f64>,
     inspector_ms: Vec<f64>,
     preview_ms: Vec<f64>,
+    /// Camera carry: SHUTDOWN read → restore written (ms).
+    camera_ms: Vec<f64>,
     drags: u32,
+}
+
+/// Max |element| difference of the bound viewpoint's view matrix that still
+/// counts as "the same camera". The carry writes back the exact offsets
+/// (double precision); anything visible would be orders of magnitude larger.
+const CAM_TOL: f64 = 1e-5;
+
+thread_local! {
+    /// Commits that changed an object other than the selected one.
+    static WRONG: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+fn view_delta(a: &[f64; 16], b: &[f64; 16]) -> f64 {
+    a.iter()
+        .zip(b)
+        .map(|(x, y)| (x - y).abs())
+        .fold(0.0, f64::max)
+}
+
+fn trace_ok(t: &Option<ipc::CameraTrace>) -> bool {
+    t.as_ref()
+        .is_some_and(|t| t.had_ref && t.frames >= 3 && t.missing == 0 && t.max_delta <= CAM_TOL)
+}
+
+/// The newest load restored the camera onto a proven viewpoint, exactly.
+fn carried(res: &Option<ipc::CameraResult>) -> bool {
+    let seq = crate::pick::active().map(|g| g.seq);
+    res.as_ref().is_some_and(|r| {
+        r.status == "restored" && r.delta.is_some_and(|d| d <= CAM_TOL) && r.seq == seq
+    })
+}
+
+fn cam_detail(t: &Option<ipc::CameraTrace>, res: &Option<ipc::CameraResult>) -> String {
+    format!(
+        "trace {} · carry {}",
+        t.as_ref().map_or("none".into(), |t| format!(
+            "{} frames, max Δ {:.2e} (frame {}), missing {}",
+            t.frames, t.max_delta, t.worst_frame, t.missing
+        )),
+        res.as_ref().map_or("none".into(), |r| format!(
+            "{} {} {} Δ {:?} {:.2?} ms",
+            r.status,
+            r.kind.as_deref().unwrap_or(""),
+            r.reason.as_deref().unwrap_or(""),
+            r.delta,
+            r.ms
+        )),
+    )
+}
+
+/// An empty viewport point (no object, no handle) for navigation input.
+fn empty_point() -> Option<(f64, f64)> {
+    let vp = viewport()?.get_bounding_client_rect();
+    Some((vp.left() + vp.width() * 0.15, vp.top() + vp.height() * 0.2))
+}
+
+/// Pan with a REAL middle-button drag on empty space (X_ITE Examine).
+async fn pan() -> Option<(gz::Camera, gz::Camera)> {
+    ipc::sleep(REAL_CLICK_GAP_MS).await;
+    still_camera().await?;
+    let cam0 = ipc::gizmo_camera()?;
+    let (sx, sy) = empty_point()?;
+    real("down2", sx, sy).await.ok()?;
+    for k in 1..=6 {
+        real("move", sx + 9.0 * k as f64, sy + 5.0 * k as f64)
+            .await
+            .ok()?;
+        ipc::sleep(40).await;
+    }
+    ipc::sleep(300).await;
+    real("up2", sx + 54.0, sy + 30.0).await.ok()?;
+    still_camera().await?;
+    Some((cam0, ipc::gizmo_camera()?))
+}
+
+/// Zoom with `notches` REAL wheel notches on empty space.
+async fn zoom(notches: u32) -> Option<(gz::Camera, gz::Camera)> {
+    ipc::sleep(REAL_CLICK_GAP_MS).await;
+    still_camera().await?;
+    let cam0 = ipc::gizmo_camera()?;
+    let (sx, sy) = empty_point()?;
+    for _ in 0..notches {
+        real("wheeldown", sx, sy).await.ok()?;
+        ipc::sleep(60).await;
+    }
+    still_camera().await?;
+    Some((cam0, ipc::gizmo_camera()?))
+}
+
+/// Resize OUR window with real X input; waits for the canvas to follow.
+async fn resize(w: i32, h: i32) -> Option<()> {
+    #[derive(serde::Serialize)]
+    struct A {
+        w: i32,
+        h: i32,
+    }
+    call::<String>("smoke_real_resize", A { w, h }).await.ok()?;
+    let want = w as f64;
+    wait_ms(3000, || {
+        let iw = web_sys::window()?.inner_width().ok()?.as_f64()?;
+        ((iw - want).abs() < 2.0).then_some(())
+    })
+    .await?;
+    ipc::sleep(300).await;
+    Some(())
 }
 
 /// One REAL X input action at client point (`x`, `y`), calibrated.
@@ -322,6 +436,7 @@ async fn drag_commit(
         ),
     );
     let at = at?;
+    ipc::camera_trace_start();
     real("up", at.0, at.1).await.ok()?;
     let committed = wait_ms(5000, || {
         (GIZMO.with_borrow(|g| g.commits) > commits
@@ -337,6 +452,18 @@ async fn drag_commit(
         .any(|l| l.contains("translation ") && l.contains(&new));
     let want = mid_rend.unwrap_or(t.translation);
     let st = source_translation(name);
+    let mine = st.is_some_and(|s| {
+        (0..3).all(|k| {
+            if k == i {
+                (s[k] - want[k]).abs() < 0.05
+            } else {
+                s[k] == t.translation[k]
+            }
+        })
+    });
+    if after.text != before.text && !mine {
+        WRONG.set(WRONG.get() + 1);
+    }
     r.step(
         &format!(
             "{tag}: release commits ONE {} token edit as ONE undo step",
@@ -347,15 +474,7 @@ async fn drag_commit(
             && after.dirty
             && after.can_undo
             && line_ok
-            && st.is_some_and(|s| {
-                (0..3).all(|k| {
-                    if k == i {
-                        (s[k] - want[k]).abs() < 0.05
-                    } else {
-                        s[k] == t.translation[k]
-                    }
-                })
-            }),
+            && mine,
         format!(
             "rev {} → {} · @{from} {old:?} → {new:?} · source {st:?}",
             before.revision, after.revision
@@ -398,6 +517,16 @@ async fn drag_commit(
     );
     let reb = gz_ready(10_000).await;
     still_camera().await;
+    let tr = ipc::camera_trace_stop();
+    let res = ipc::camera_result();
+    r.step(
+        &format!("{tag}: the {} commit keeps the user's camera: every frame's view matrix within {CAM_TOL:e} of the view at release; the carry restored it onto the proven same viewpoint", axis.label()),
+        trace_ok(&tr) && carried(&res),
+        cam_detail(&tr, &res),
+    );
+    if let Some(ms) = res.as_ref().and_then(|r| r.ms) {
+        perf.camera_ms.push(ms);
+    }
     let fin = layout().map(|l| l.origin);
     let px_fin = match fin {
         Some(o) => pixel(o.0, o.1).await,
@@ -714,15 +843,36 @@ async fn main_theme(c: &p::GizmoSmoke, perf: &mut Perf, r: &mut R) -> Option<()>
     );
     let t3 = drag_commit(&format!("{tag} oblique"), "Box_1", Axis::Z, 100.0, perf, r).await?;
     history.push(text());
-    // The reload after a commit re-binds the default viewpoint (known
-    // limit): orbit again for the second oblique drag.
-    let o2 = orbit().await;
+    // VISUAL-3A1: the reload kept the orbited view -- no re-orbit.
+    let cam2 = ipc::gizmo_camera();
     r.step(
-        &format!("{tag}: orbit again after the reload re-bound the default view"),
-        o2.is_some_and(|(a, b)| a.view != b.view) && layout().is_some_and(|l| l.handles[0].enabled),
-        "",
+        &format!("{tag} oblique: after the Z commit the camera is still the orbited view (not the default viewpoint)"),
+        cam2.as_ref().is_some_and(|c| view_delta(&c.view, &cam1.view) <= CAM_TOL && view_delta(&c.view, &cam0.view) > 0.01)
+            && layout().is_some_and(|l| l.handles.iter().all(|h| h.enabled)),
+        format!("Δ to orbited {:?}", cam2.as_ref().map(|c| view_delta(&c.view, &cam1.view))),
     );
-    let t4 = drag_commit(&format!("{tag} oblique"), "Box_1", Axis::X, -45.0, perf, r).await?;
+    // Pan (middle button) and zoom (wheel), both REAL input.
+    let before = source().await?;
+    let pz = match pan().await {
+        Some(pn) => zoom(3).await.map(|z| (pn, z)),
+        None => None,
+    };
+    let after = source().await?;
+    r.step(
+        &format!("{tag}: a real middle-button drag pans and real wheel notches zoom the camera; the source is untouched"),
+        pz.as_ref().is_some_and(|((a, b), (c, d))| view_delta(&a.view, &b.view) > 1e-3 && (view_delta(&c.view, &d.view) > 1e-3 || c.proj != d.proj))
+            && after == before,
+        format!("{:?}", pz.as_ref().map(|((a, b), (c, d))| (view_delta(&a.view, &b.view), view_delta(&c.view, &d.view)))),
+    );
+    let t4 = drag_commit(
+        &format!("{tag} oblique panned zoomed"),
+        "Box_1",
+        Axis::X,
+        -45.0,
+        perf,
+        r,
+    )
+    .await?;
     history.push(text());
     r.step(
         &format!("{tag} oblique: Z then X moved only their own components"),
@@ -734,8 +884,11 @@ async fn main_theme(c: &p::GizmoSmoke, perf: &mut Perf, r: &mut R) -> Option<()>
         format!("{t3:?} → {t4:?}"),
     );
 
-    // Undo / Redo: one step per drag, exact text each time.
+    // Undo / Redo: one step per drag, exact text each time; every reload
+    // keeps the camera.
     let n = history.len() - 1;
+    still_camera().await;
+    ipc::camera_trace_start();
     let mut ok = true;
     for k in (0..n).rev() {
         editor::history(true).await;
@@ -749,11 +902,23 @@ async fn main_theme(c: &p::GizmoSmoke, perf: &mut Perf, r: &mut R) -> Option<()>
         ok &= text() == *want;
     }
     let g = gz_ready(10_000).await;
+    still_camera().await;
+    let tr = ipc::camera_trace_stop();
+    let res = ipc::camera_result();
     r.step(
         &format!("{tag}: Undo restores each drag exactly ({n} steps); Redo re-applies each; the gizmo follows the source"),
         undone && ok && g.is_some_and(|g| Some(g.translation) == source_translation("Box_1")),
         format!("undo {undone} · redo {ok}"),
     );
+    r.step(
+        &format!(
+            "{tag}: across all {} Undo / Redo reloads the camera never moves",
+            2 * n
+        ),
+        trace_ok(&tr) && carried(&res),
+        cam_detail(&tr, &res),
+    );
+    camera_cases(&tag, perf, r).await;
 
     // Picking still selects the right object: add a Sphere, move it, then
     // click each object where it is drawn now.
@@ -845,12 +1010,190 @@ async fn main_theme(c: &p::GizmoSmoke, perf: &mut Perf, r: &mut R) -> Option<()>
     Some(())
 }
 
+/// The preview has finished loading the current revision (not "updating").
+async fn settled(ms: u32) -> Option<()> {
+    wait_ms(ms, || {
+        let rev = CORE.with_borrow(|c| c.revision);
+        let s = ui().preview_status.get_untracked();
+        s.starts_with(&format!("rev {rev} · ")).then_some(())
+    })
+    .await
+}
+
+/// VISUAL-3A1 camera cases beyond a commit: a forced reload of the same
+/// revision, overlapping (late) reloads, a failed load, and window resizes
+/// after and during a movement. The camera is the orbited, panned and zoomed
+/// view left by the main run.
+async fn camera_cases(tag: &str, perf: &mut Perf, r: &mut R) -> Option<()> {
+    let u = ui();
+    // 1. Forced reload, same revision.
+    gz_ready(10_000).await?;
+    still_camera().await?;
+    ipc::camera_trace_start();
+    crate::ui::preview(true).await;
+    let g = gz_ready(10_000).await;
+    still_camera().await;
+    let tr = ipc::camera_trace_stop();
+    let res = ipc::camera_result();
+    r.step(
+        &format!("{tag}: a forced preview reload of the same revision keeps the camera"),
+        g.is_some() && trace_ok(&tr) && carried(&res),
+        cam_detail(&tr, &res),
+    );
+
+    // 2. Three overlapping reloads: the older ones are superseded; only the
+    //    newest restores, so no older camera can land over a newer one.
+    still_camera().await?;
+    ipc::camera_trace_start();
+    leptos::task::spawn_local(crate::ui::preview(true));
+    leptos::task::spawn_local(crate::ui::preview(true));
+    crate::ui::preview(true).await;
+    settled(10_000).await;
+    let g = gz_ready(10_000).await;
+    still_camera().await;
+    let tr = ipc::camera_trace_stop();
+    let res = ipc::camera_result();
+    r.step(
+        &format!("{tag}: three overlapping reloads: only the newest generation restores (late requests are superseded); the camera never moves; the newest generation is pickable and the gizmo re-binds"),
+        g.is_some() && trace_ok(&tr) && carried(&res),
+        format!(
+            "gizmo {} · active {:?} · {}",
+            g.is_some(),
+            crate::pick::active().map(|g| g.seq),
+            cam_detail(&tr, &res)
+        ),
+    );
+
+    // 3. A failed load keeps the last valid scene AND the camera; the next
+    //    good load (Undo) restores it.
+    let before = source().await?;
+    ipc::camera_trace_start();
+    let ta = textarea()?;
+    let end = ta.value().encode_utf16().count() as u32;
+    ta.set_range_text_with_start_and_end("Transform { children [ \n", end, end)
+        .ok()?;
+    let ev = web_sys::InputEvent::new("input").ok()?;
+    ta.dispatch_event(&ev).ok()?;
+    let failed = wait_ms(20_000, || {
+        let s = u.preview_status.get_untracked();
+        s.starts_with(&format!(
+            "rev {} · error (last valid scene kept)",
+            before.revision + 1
+        ))
+        .then_some(s)
+    })
+    .await;
+    let kept = ipc::gizmo_camera();
+    editor::history(true).await;
+    editor::idle().await;
+    let back = text() == before.text;
+    let g = gz_ready(10_000).await;
+    still_camera().await;
+    let tr = ipc::camera_trace_stop();
+    let res = ipc::camera_result();
+    r.step(
+        &format!("{tag}: a failed preview load keeps the last scene and the camera; the next good load (Undo) restores the same view"),
+        failed.is_some() && kept.is_some() && back && g.is_some() && trace_ok(&tr) && carried(&res),
+        format!("{failed:?} · {}", cam_detail(&tr, &res)),
+    );
+
+    // 4. Window resize after a movement, then during one.
+    let w0 = web_sys::window()?.inner_width().ok()?.as_f64()? as i32;
+    let h0 = web_sys::window()?.inner_height().ok()?.as_f64()? as i32;
+    still_camera().await?;
+    let cam_a = ipc::gizmo_camera()?;
+    resize(w0 - 240, h0 - 140).await?;
+    let g = gz_ready(8000).await;
+    let cam_b = ipc::gizmo_camera()?;
+    r.step(
+        &format!("{tag}: a window resize keeps the view matrix (only the projection and viewport follow the new size); the gizmo re-lays out"),
+        g.is_some() && view_delta(&cam_a.view, &cam_b.view) <= CAM_TOL && cam_a.size != cam_b.size,
+        format!("size {:?} → {:?}", cam_a.size, cam_b.size),
+    );
+    drag_commit(&format!("{tag} resized"), "Box_1", Axis::Y, 60.0, perf, r).await?;
+    // During: resize back while the drag is held, then release.
+    gz_ready(8000).await?;
+    still_camera().await?;
+    let before = source().await?;
+    let commits = GIZMO.with_borrow(|g| g.commits);
+    // Towards the viewer's left: the Box must stay in the default view the
+    // reopened document shows later.
+    let at = press_and_move(Axis::X, -50.0, 4).await?;
+    ipc::camera_trace_start();
+    resize(w0, h0).await?;
+    real("up", at.0, at.1).await.ok()?;
+    let done = wait_ms(5000, || {
+        GIZMO
+            .with_borrow(|g| g.drag.is_none() && !g.committing)
+            .then_some(())
+    })
+    .await;
+    editor::idle().await;
+    let g = gz_ready(10_000).await;
+    still_camera().await;
+    let tr = ipc::camera_trace_stop();
+    let res = ipc::camera_result();
+    let after = source().await?;
+    let committed = GIZMO.with_borrow(|g| g.commits) > commits;
+    // A resize mid-drag may commit (one step) or cancel (no change); either
+    // way the camera stays and nothing else changes.
+    let exact = if committed {
+        after.revision == before.revision + 1
+            && source_translation("Box_1")
+                .is_some_and(|s| only_axis_changed(&before.text, s, Axis::X))
+    } else {
+        after == before
+    };
+    r.step(
+        &format!("{tag}: a window resize DURING a drag: the release commits one X step or cancels cleanly; the camera never moves"),
+        done.is_some() && g.is_some() && exact && trace_ok(&tr) && (!committed || carried(&res)),
+        format!("committed {committed} · {}", cam_detail(&tr, &res)),
+    );
+    Some(())
+}
+
+/// `now` differs from Box_1's translation in `before_text` exactly on `axis`.
+fn only_axis_changed(before_text: &str, now: [f64; 3], axis: Axis) -> bool {
+    let old: Option<[f64; 3]> = before_text.find("DEF Box_1 Transform").and_then(|at| {
+        let line = before_text[at..]
+            .lines()
+            .find(|l| l.trim_start().starts_with("translation "))?;
+        let v: Vec<f64> = line
+            .split_whitespace()
+            .skip(1)
+            .take(3)
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        (v.len() == 3).then(|| [v[0], v[1], v[2]])
+    });
+    old.is_some_and(|o| (0..3).all(|k| (k == axis.index()) != (o[k] == now[k])))
+}
+
 async fn other_theme(theme: &str, perf: &mut Perf, r: &mut R) -> Option<()> {
     let tag = format!("[{theme}]");
     let sel = crate::element_by_id::<web_sys::HtmlSelectElement>("theme-select")?;
     choose(&sel, theme)?;
+    // The document on screen gets a non-default view first.
+    let orbited = orbit()
+        .await
+        .is_some_and(|(a, b)| view_delta(&a.view, &b.view) > 0.01);
     ui().move_mode.set(false);
     new_world_with_box(&tag, r).await?;
+    still_camera().await;
+    let st = ipc::camera_state();
+    let res = ipc::camera_result();
+    let zero = st.as_ref().is_some_and(|c| {
+        c.is_default
+            && c.position_offset.iter().all(|v| v.abs() < 1e-9)
+            && c.orientation_offset[3].abs() < 1e-9
+            && c.center_of_rotation_offset.iter().all(|v| v.abs() < 1e-9)
+            && (c.field_of_view_scale - 1.0).abs() < 1e-9
+    });
+    r.step(
+        &format!("{tag}: document switch: the new document opens at its OWN default view; the previous document's camera is never carried"),
+        orbited && zero && res.as_ref().is_some_and(|r| r.status == "not-requested"),
+        format!("{st:?} · {res:?}"),
+    );
     select_then_move(&tag, "Box_1", [0.0; 3], r).await?;
     let a = drag_commit(&tag, "Box_1", Axis::X, -130.0, perf, r).await?;
     let b = drag_commit(&tag, "Box_1", Axis::Y, 100.0, perf, r).await?;
@@ -878,13 +1221,21 @@ async fn fixtures(c: &p::GizmoSmoke, perf: &mut Perf, r: &mut R) -> Option<()> {
             .ok()?;
         crate::ui::apply_open(o, "Opened").await;
         let rev = CORE.with_borrow(|c| c.revision);
-        let roots = if i == 0 { 3 } else { 2 };
+        let twins = label.starts_with("twin");
+        let roots = if i == 0 || twins { 3 } else { 2 };
         let shown = previewed(rev, roots, 20_000).await;
         r.step(
             &format!("{tag}: opened and previewed"),
             shown.is_some(),
             u.preview_status.get_untracked(),
         );
+        if twins {
+            twins_and_viewpoint(&tag, r).await?;
+            click("btn-save")?;
+            wait_ms(5000, || (!u.dirty.get_untracked()).then_some(())).await?;
+            r.step(&format!("{tag}: saved"), !u.dirty.get_untracked(), "");
+            continue;
+        }
         let name = if text().contains("DEF Box_ü") {
             "Box_ü"
         } else {
@@ -941,6 +1292,205 @@ async fn fixtures(c: &p::GizmoSmoke, perf: &mut Perf, r: &mut R) -> Option<()> {
     Some(())
 }
 
+/// `node-<from>-<to>` → (from, to).
+fn item_span(id: &str) -> Option<(u64, u64)> {
+    let mut it = id.strip_prefix("node-")?.split('-');
+    Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?))
+}
+
+/// The anonymous top-level Transform items of the current analysis, in
+/// source order.
+fn twin_items() -> Vec<String> {
+    let mut v: Vec<(u64, String)> = ui().analysis.with_untracked(|a| {
+        a.as_ref()
+            .map(|a| {
+                a.items
+                    .iter()
+                    .filter(|i| i.label == "Transform")
+                    .filter_map(|i| item_span(&i.id).map(|s| (s.0, i.id.clone())))
+                    .collect()
+            })
+            .unwrap_or_default()
+    });
+    v.sort();
+    v.into_iter().map(|(_, id)| id).collect()
+}
+
+/// A REAL viewport click at world `p` (Select tool): the proven item.
+async fn real_select_at(p: [f64; 3]) -> Option<p::PickOutcome> {
+    let u = ui();
+    u.move_mode.set(false);
+    if !u.pick_mode.get_untracked() {
+        click("btn-select")?;
+    }
+    ready(10_000).await?;
+    ipc::sleep(REAL_CLICK_GAP_MS).await;
+    let cam = ipc::gizmo_camera()?;
+    let (x, y) = gz::project(&cam, p)?;
+    gesture(x, y).await
+}
+
+/// One drag of the gizmo's CURRENT target (an anonymous twin) along `axis`
+/// with the live, commit and camera proofs. The other twin is `other` (its
+/// world position now): it must stay drawn there and its source must not
+/// change. Returns (item before, the committed text).
+#[allow(clippy::too_many_arguments)]
+async fn twin_drag(tag: &str, axis: Axis, dist: f64, other: [f64; 3], r: &mut R) -> Option<String> {
+    let t = gz_ready(10_000).await?;
+    still_camera().await?;
+    let t = gz_ready(2000).await.unwrap_or(t);
+    let (a0, a1) = item_span(&t.item)?;
+    let before = source().await?;
+    let bg = background().await?;
+    let cam = ipc::gizmo_camera()?;
+    let other_px = gz::project(&cam, other)?;
+    let commits = GIZMO.with_borrow(|g| g.commits);
+    let at = press_and_move(axis, dist, 6).await?;
+    let mid = source().await?;
+    let rend = rendered();
+    let new_px = match layout().map(|l| l.origin) {
+        Some(o) => pixel(o.0, o.1).await,
+        None => None,
+    };
+    let other_still = pixel(other_px.0, other_px.1).await;
+    let i = axis.index();
+    r.step(
+        &format!("{tag}: during the {} drag ONLY the bound twin moves: it is drawn at its new place, the other twin is still drawn where it was; the source is unchanged", axis.label()),
+        mid == before
+            && rend.is_some_and(|v| (0..3).all(|k| (k == i) == ((v[k] - t.translation[k]).abs() > 0.3)))
+            && new_px.is_some_and(|p| differs(p, bg))
+            && other_still.is_some_and(|p| differs(p, bg)),
+        format!("rendered {rend:?} · new px {new_px:?} · other px {other_still:?} · bg {bg:?}"),
+    );
+    ipc::camera_trace_start();
+    real("up", at.0, at.1).await.ok()?;
+    wait_ms(5000, || {
+        (GIZMO.with_borrow(|g| g.commits) > commits).then_some(())
+    })
+    .await;
+    editor::idle().await;
+    let after = source().await?;
+    let (from, old, new) = super::change(&before.text, &after.text);
+    // LF, no BOM: view offsets are canonical offsets.
+    let inside = (a0..a1).contains(&from);
+    if after.text != before.text && !inside {
+        WRONG.set(WRONG.get() + 1);
+    }
+    let g = gz_ready(10_000).await;
+    still_camera().await;
+    let tr = ipc::camera_trace_stop();
+    let res = ipc::camera_result();
+    r.step(
+        &format!("{tag}: the release changes ONE {} token INSIDE the bound twin's own span; the other twin's source is untouched", axis.label()),
+        after.revision == before.revision + 1 && inside && old != new && !old.contains(char::is_whitespace),
+        format!("@{from} in [{a0}, {a1}) · {old:?} → {new:?}"),
+    );
+    r.step(
+        &format!("{tag}: the {} commit keeps the user's camera on the AUTHORED Viewpoint (proven by its provenance span, carried through the exact change)", axis.label()),
+        g.is_some()
+            && trace_ok(&tr)
+            && carried(&res)
+            && res.as_ref().and_then(|r| r.kind.as_deref()) == Some("authored"),
+        cam_detail(&tr, &res),
+    );
+    Some(after.text)
+}
+
+/// VISUAL-3A1: twin anonymous Transforms with EQUAL translation, geometry
+/// and material, plus an authored Viewpoint. Each twin binds to its OWN
+/// runtime node; moving one leaves the other in place (rendered and
+/// source); the authored-viewpoint camera survives every reload.
+async fn twins_and_viewpoint(tag: &str, r: &mut R) -> Option<()> {
+    let both = [1.5, 0.0, 0.0];
+    let items = twin_items();
+    // Select one twin by a REAL click where both are drawn.
+    let out = real_select_at(both).await;
+    let a = out
+        .as_ref()
+        .filter(|o| o.is_proven())
+        .and_then(|o| o.item.clone());
+    r.step(
+        &format!(
+            "{tag}: a real click on the coincident twins selects exactly ONE of them (proven)"
+        ),
+        items.len() == 2 && a.as_ref().is_some_and(|a| items.contains(a)),
+        format!("{items:?} · {:?}", out.map(|o| (o.status, o.item))),
+    );
+    let a = a?;
+    click("btn-move")?;
+    let t = gz_ready(10_000).await;
+    r.step(
+        &format!("{tag}: Move binds the selected twin (no DEF, equal twin present) by provenance"),
+        t.as_ref()
+            .is_some_and(|t| t.item == a && t.def == "the Transform" && t.origin == both),
+        format!("{:?}", t.as_ref().map(|t| (&t.item, t.origin))),
+    );
+    // A non-default view of the AUTHORED Viewpoint.
+    let nav = match orbit().await {
+        Some(_) => match pan().await {
+            Some(_) => zoom(2).await,
+            None => None,
+        },
+        None => None,
+    };
+    let st = ipc::camera_state();
+    r.step(
+        &format!("{tag}: real orbit, pan and zoom of the authored Viewpoint"),
+        nav.is_some()
+            && st
+                .as_ref()
+                .is_some_and(|c| !c.is_default && c.position_offset.iter().any(|v| v.abs() > 1e-3)),
+        format!("{st:?}"),
+    );
+    let first = text();
+    let after_a = twin_drag(tag, Axis::X, 90.0, both, r).await?;
+    // Now select the OTHER twin -- the one still at the shared place.
+    let moved = GIZMO.with_borrow(|g| g.target.as_ref().map(|t| t.translation))?;
+    let items2 = twin_items();
+    let a2 = GIZMO.with_borrow(|g| g.target.as_ref().map(|t| t.item.clone()))?;
+    let out = real_select_at(both).await;
+    let b = out
+        .as_ref()
+        .filter(|o| o.is_proven())
+        .and_then(|o| o.item.clone());
+    r.step(
+        &format!("{tag}: a real click where the twins WERE now selects the OTHER twin, never the moved one"),
+        b.as_ref().is_some_and(|b| *b != a2 && items2.contains(b)),
+        format!("moved {a2} · picked {b:?}"),
+    );
+    b?;
+    click("btn-move")?;
+    let after_b = twin_drag(tag, Axis::Y, -70.0, moved, r).await?;
+    // The first twin's moved line is intact after the second twin's move.
+    let a_line = |t: &str| {
+        t.lines()
+            .filter(|l| l.trim_start().starts_with("translation "))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    let (la, lb) = (a_line(&after_a), a_line(&after_b));
+    r.step(
+        &format!("{tag}: each twin moved alone: first X, then the other Y; neither move touched the other twin"),
+        la.len() == 2 && lb.len() == 2 && la != a_line(&first) && (la[0] == lb[0]) != (la[1] == lb[1]),
+        format!("{:?} → {la:?} → {lb:?}", a_line(&first)),
+    );
+    // Undo the second move: the saved file differs by ONE token (Rust
+    // checks the bytes on disk).
+    editor::history(true).await;
+    editor::idle().await;
+    r.step(
+        &format!("{tag}: Undo removes exactly the second twin's move"),
+        text() == after_a,
+        "",
+    );
+    r.step(
+        "WRONG_RUNTIME_MANIPULATIONS (commits that changed another object than the bound one)",
+        WRONG.get() == 0,
+        format!("{}", WRONG.get()),
+    );
+    Some(())
+}
+
 /// Click the Scene Tree item `label` of the CURRENT analysis (tree_select
 /// refuses an outdated one), retrying while the tree catches up.
 async fn tree_click(label: &str, until: impl Fn() -> bool) -> bool {
@@ -964,7 +1514,7 @@ async fn tree_click(label: &str, until: impl Fn() -> bool) -> bool {
     false
 }
 
-/// A top-level Transform WITHOUT a DEF is bound by its root index: select it
+/// A top-level Transform WITHOUT a DEF is bound by provenance: select it
 /// in the Scene Tree, drag it, check the one-token commit, then Undo it.
 async fn undefined_transform(tag: &str, r: &mut R) -> Option<()> {
     let u = ui();
@@ -977,7 +1527,7 @@ async fn undefined_transform(tag: &str, r: &mut R) -> Option<()> {
     .await;
     let t = gz_ready(8000).await.filter(|t| t.def == "the Transform");
     r.step(
-        &format!("{tag}: a top-level Transform with NO DEF gets handles (bound by its root index)"),
+        &format!("{tag}: a top-level Transform with NO DEF gets handles (bound by its provenance span, proven by Rust)"),
         picked && t.as_ref().is_some_and(|t| t.origin == [0.0, -2.5, 0.0]),
         format!("{:?}", t.as_ref().map(|t| t.origin)),
     );
@@ -1038,8 +1588,37 @@ pub(super) async fn run(c: &p::GizmoSmoke, r: &mut R) -> Option<()> {
         other_theme(th, &mut perf, r).await;
     }
     fixtures(c, &mut perf, r).await;
-    let (mv, fr, lat) =
-        GIZMO.with_borrow(|g| (g.move_ms.clone(), g.frame_ms.clone(), g.latency_ms.clone()));
+    let (mv, fr, lat, prove, bind) = GIZMO.with_borrow(|g| {
+        (
+            g.move_ms.clone(),
+            g.frame_ms.clone(),
+            g.latency_ms.clone(),
+            g.prove_ms.clone(),
+            g.bind_ms.clone(),
+        )
+    });
+    let loads = crate::camera::LOAD_MS.with_borrow(|v| v.clone());
+    r.step(
+        "WRONG_RUNTIME_MANIPULATIONS = 0 over the whole run",
+        WRONG.get() == 0,
+        format!(
+            "{} wrong · {} unproven binds ({:?})",
+            WRONG.get(),
+            GIZMO.with_borrow(|g| g.unproven),
+            GIZMO.with_borrow(|g| g.last_unproven.clone())
+        ),
+    );
+    r.step(
+        "performance VISUAL-3A1 (ms, median / p95 / n)",
+        true,
+        format!(
+            "provenance locate + Rust proof {:.1}/{:.1}/{} · gizmo bind {:.2}/{:.2}/{} · scene replacement (parse + replaceWorld) {:.1}/{:.1}/{} · camera carry {:.2}/{:.2}/{}",
+            pct(&prove, 0.5), pct(&prove, 0.95), prove.len(),
+            pct(&bind, 0.5), pct(&bind, 0.95), bind.len(),
+            pct(&loads, 0.5), pct(&loads, 0.95), loads.len(),
+            pct(&perf.camera_ms, 0.5), pct(&perf.camera_ms, 0.95), perf.camera_ms.len(),
+        ),
+    );
     r.step(
         "performance (ms, median / p95 / n)",
         true,
