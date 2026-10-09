@@ -228,6 +228,26 @@ pub async fn doc_translate_target(
     svc.translate_target(&request)
 }
 
+/// VISUAL-3A1: prove the runtime node the preview located for a Move target.
+/// Read-only.
+#[tauri::command]
+pub async fn doc_translate_prove(
+    svc: State<'_, Service>,
+    request: p::TranslateProveRequest,
+) -> Result<p::TranslateProveOutcome, String> {
+    svc.translate_prove(&request)
+}
+
+/// VISUAL-3A1: carry a preview span (the bound Viewpoint) to the current
+/// revision through the exact logged changes. Read-only.
+#[tauri::command]
+pub async fn doc_preview_carry(
+    svc: State<'_, Service>,
+    request: p::PreviewCarryRequest,
+) -> Result<p::PreviewCarryOutcome, String> {
+    svc.preview_carry(&request)
+}
+
 /// VISUAL-3A: commit one gizmo drag. Synchronous for the same ordering
 /// reason as `doc_edit`.
 #[tauri::command]
@@ -300,6 +320,13 @@ pub async fn smoke_real_pointer(
     let rx = (pos.x as f64 + x * scale).round() as i32;
     let ry = (pos.y as f64 + y * scale).round() as i32;
     app.state::<SmokeState>().real_pointer(&action, rx, ry)
+}
+
+/// Smoke only (VISUAL-3A1): resize OUR window to `w` x `h` px with real X
+/// input, under the same guards as `smoke_real_pointer`.
+#[tauri::command]
+pub async fn smoke_real_resize(app: AppHandle, w: i32, h: i32) -> Result<String, String> {
+    app.state::<SmokeState>().real_pointer("resize", w, h)
 }
 
 #[tauri::command]

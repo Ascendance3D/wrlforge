@@ -82,6 +82,38 @@ impl ViewMap {
 
 /// The UTF-16 source span named by a Scene Tree NODE item id
 /// (`node-<from>-<to>`). Any other kind is not a node instance.
+/// A plain-data adapter snapshot (`pick` or `snapshotSpan`) as the resolver's
+/// hit, rooted at the runtime node labelled `shape`.
+fn hit_of(shape: &str, snap: &p::PickSnapshot) -> wrlforge_vrml::pick::Hit {
+    use wrlforge_vrml::pick as pk;
+    pk::Hit {
+        shape: shape.to_string(),
+        ctx: pk::Ctx::parse(snap.ctx_kind.as_deref().unwrap_or("")),
+        sensors: snap.sensors.clone(),
+        graph: snap
+            .graph
+            .iter()
+            .map(|(k, g)| {
+                (
+                    k.clone(),
+                    pk::GraphNode {
+                        type_name: g.type_name.clone(),
+                        ctx: pk::Ctx::parse(&g.ctx_kind),
+                        occurrences: g.occurrences.iter().map(|o| (o.start, o.end)).collect(),
+                        parents: g.parents.iter().map(|q| pk::Parent::parse(q)).collect(),
+                    },
+                )
+            })
+            .collect(),
+    }
+}
+
+/// UTF-16 units the canonical text has before its preview text: 1 for a
+/// leading U+FEFF (the preview omits it), else 0.
+fn preview_offset(text: &str) -> u64 {
+    u64::from(text.starts_with('\u{FEFF}'))
+}
+
 pub fn node_span(item: &str) -> Option<(u64, u64)> {
     let rest = item.strip_prefix("node-")?;
     let (a, b) = rest.split_once('-')?;
@@ -727,6 +759,8 @@ impl Service {
                 item: r.item.clone(),
                 def_name: t.def,
                 root_index: t.root_index as u32,
+                preview_from: from - preview_offset(&text),
+                preview_to: to - preview_offset(&text),
                 translation: t.translation,
                 origin: t.origin,
             },
@@ -734,6 +768,95 @@ impl Service {
                 reason: e.reason.into(),
                 message: e.message,
             },
+        })
+    }
+
+    /// VISUAL-3A1: prove that the runtime node the preview located for
+    /// `item` IS that authored, movable, top-level Transform. Read-only.
+    ///
+    /// The generation must have rendered exactly the text held now
+    /// (revision + preview hash); the item must still be a movable target;
+    /// the snapshot must be a span lookup whose runtime chain proves, link by
+    /// link (`pick::resolve_node`, the VISUAL-2 proof), the exact authored
+    /// node at the item's span, directly under the scene. Root index, DEF
+    /// name and translation value play no part in this proof.
+    pub fn translate_prove(
+        &self,
+        r: &p::TranslateProveRequest,
+    ) -> Result<p::TranslateProveOutcome, String> {
+        use wrlforge_vrml::pick as pk;
+        let (text, current) = self.text_at(r.session)?;
+        let refused = |reason: &str, message: &str| p::TranslateProveOutcome::Refused {
+            reason: reason.into(),
+            message: message.into(),
+        };
+        let preview = text.strip_prefix('\u{FEFF}').unwrap_or(&text);
+        if r.revision != current || p::preview_hash(preview) != r.preview_hash {
+            return Ok(p::TranslateProveOutcome::Stale { current });
+        }
+        let Some((from, to)) = node_span(&r.item) else {
+            return Ok(refused(field_edit::reason::NOT_A_NODE, "Not an object."));
+        };
+        if let Err(e) = manipulate::translate_target(&text, from, to) {
+            return Ok(refused(e.reason, &e.message));
+        }
+        let unprovable = "The preview cannot prove which rendered object is this Transform, so it cannot be moved here. Use the Inspector.";
+        let snap = &r.snapshot;
+        let (Some(shape), "found", 1..=MAX_PICK_GRAPH) = (
+            snap.shape.as_deref(),
+            snap.outcome.as_str(),
+            snap.graph.len(),
+        ) else {
+            let why = snap
+                .reason
+                .clone()
+                .unwrap_or_else(|| pk::reason::BIND_NOT_UNIQUE.to_string());
+            return Ok(refused(&why, unprovable));
+        };
+        let parsed = wrlforge_vrml::parse(&text);
+        let hit = hit_of(shape, snap);
+        Ok(
+            match pk::resolve_node(&hit, &parsed, preview_offset(&text), from, to) {
+                Ok(chain) if chain.len() == 1 && chain[0].node_type == "Transform" => {
+                    p::TranslateProveOutcome::Proven {
+                        revision: current,
+                        item: r.item.clone(),
+                    }
+                }
+                Ok(_) => refused(manipulate::reason::NOT_TOP_LEVEL, unprovable),
+                Err(res) => refused(res.reason(), unprovable),
+            },
+        )
+    }
+
+    /// VISUAL-3A1 camera carry: the preview span `[from, to)` of
+    /// `from_revision`, mapped through the exact logged changes to the
+    /// current revision, or `Lost`. Never a search. A change at offset 0 may
+    /// add or remove a BOM (which shifts the preview projection), so it
+    /// loses the span too.
+    pub fn preview_carry(
+        &self,
+        r: &p::PreviewCarryRequest,
+    ) -> Result<p::PreviewCarryOutcome, String> {
+        let lost = |why: &str| p::PreviewCarryOutcome::Lost { reason: why.into() };
+        self.with(r.session, |s| {
+            if r.to_revision != s.doc.revision() {
+                return lost("not-the-current-revision");
+            }
+            let Some(changes) = s.doc.changes_since(r.from_revision) else {
+                return lost("revision-not-in-change-log");
+            };
+            if changes.iter().any(|c| c.from == 0) {
+                return lost("change-at-document-start");
+            }
+            let bom = preview_offset(s.doc.text());
+            match map_span(r.from + bom, r.to + bom, &changes) {
+                Some((f, t)) => p::PreviewCarryOutcome::Mapped {
+                    from: f - bom,
+                    to: t - bom,
+                },
+                None => lost("change-touches-span"),
+            }
         })
     }
 
@@ -891,34 +1014,7 @@ impl Service {
             "no-hit" => pk::refuse(Status::NoHit, why(reason::NO_GEOMETRY)),
             "hit" => match (&snap.shape, snap.graph.len()) {
                 (Some(shape), 1..=MAX_PICK_GRAPH) => {
-                    let hit = pk::Hit {
-                        shape: shape.clone(),
-                        ctx: pk::Ctx::parse(snap.ctx_kind.as_deref().unwrap_or("")),
-                        sensors: snap.sensors.clone(),
-                        graph: snap
-                            .graph
-                            .iter()
-                            .map(|(k, g)| {
-                                (
-                                    k.clone(),
-                                    pk::GraphNode {
-                                        type_name: g.type_name.clone(),
-                                        ctx: pk::Ctx::parse(&g.ctx_kind),
-                                        occurrences: g
-                                            .occurrences
-                                            .iter()
-                                            .map(|o| (o.start, o.end))
-                                            .collect(),
-                                        parents: g
-                                            .parents
-                                            .iter()
-                                            .map(|q| pk::Parent::parse(q))
-                                            .collect(),
-                                    },
-                                )
-                            })
-                            .collect(),
-                    };
+                    let hit = hit_of(shape, snap);
                     let parsed = wrlforge_vrml::parse(&text);
                     let tree = scene::build_scene_tree(&parsed.tree, &text);
                     // The preview omits a leading U+FEFF: one UTF-16 unit.
@@ -1916,6 +2012,216 @@ mod tests {
             } => (state, item, text),
             other => panic!("not moved: {other:?}"),
         }
+    }
+
+    /// A plain-data `snapshotSpan` result: one located runtime node.
+    fn located(ty: &str, span: (u64, u64), parents: &[&str]) -> p::PickSnapshot {
+        let mut graph = std::collections::BTreeMap::new();
+        graph.insert(
+            "n1".to_string(),
+            p::PickGraphNode {
+                type_name: Some(ty.into()),
+                ctx_kind: "document".into(),
+                occurrences: vec![p::PickSpan {
+                    start: span.0,
+                    end: span.1,
+                }],
+                parents: parents.iter().map(|s| s.to_string()).collect(),
+            },
+        );
+        p::PickSnapshot {
+            outcome: "found".into(),
+            shape: Some("n1".into()),
+            ctx_kind: Some("document".into()),
+            graph,
+            ..Default::default()
+        }
+    }
+
+    /// VISUAL-3A1: twin anonymous Transforms with EQUAL translations and
+    /// geometry. Each binds only to its own runtime node; the other's node,
+    /// a stale generation, a non-`found` snapshot or a changed text never
+    /// binds. A Viewpoint span carries through a move, undo and redo.
+    #[test]
+    fn gizmo_binding_is_proven_by_provenance_and_viewpoints_carry_exactly() {
+        let dir = tmp("visual3a1");
+        let path = dir.join("twins.wrl");
+        let twin = "Transform { translation 1 2 3 children [ Shape { geometry Box { } } ] }";
+        let vp = "Viewpoint { position 0 0 9 description \"v ✓\" }";
+        let text = format!("\u{FEFF}#VRML V2.0 utf8\r\n# é\r\n{twin}\r\n{twin}\r\n{vp}\r\n");
+        fs::write(&path, &text).unwrap();
+        let (o, svc) = svc_open(&path);
+        let doc = opened(o);
+        let id = doc.session;
+        let rev0 = doc.revision;
+        let u16at = |b: usize| text[..b].encode_utf16().count() as u64;
+        let t1 = text.find(twin).unwrap();
+        let t2 = text.rfind(twin).unwrap();
+        let span = |b: usize, len: usize| (u16at(b), u16at(b + len));
+        let (s1, s2) = (span(t1, twin.len()), span(t2, twin.len()));
+        let preview = text.strip_prefix('\u{FEFF}').unwrap();
+        let hash = p::preview_hash(preview);
+        let prove = |rev: u64, hash: u64, (f, t): (u64, u64), snap: p::PickSnapshot| {
+            svc.translate_prove(&p::TranslateProveRequest {
+                session: id,
+                revision: rev,
+                preview_hash: hash,
+                generation: 1,
+                item: format!("node-{f}-{t}"),
+                snapshot: snap,
+            })
+            .unwrap()
+        };
+        let mut wrong = 0;
+        for (me, other) in [(s1, s2), (s2, s1)] {
+            let item = format!("node-{}-{}", me.0, me.1);
+            let (pf, pt) = match target(&svc, id, rev0, &item) {
+                p::TranslateTargetOutcome::Ready {
+                    def_name,
+                    preview_from,
+                    preview_to,
+                    translation,
+                    ..
+                } => {
+                    assert_eq!(def_name, None);
+                    assert_eq!(translation, [1.0, 2.0, 3.0]);
+                    (preview_from, preview_to)
+                }
+                o => panic!("{o:?}"),
+            };
+            assert_eq!((pf, pt), (me.0 - 1, me.1 - 1), "BOM projection");
+            let own = located("Transform", (pf, pt), &["SCENE"]);
+            assert!(matches!(
+                prove(rev0, hash, me, own.clone()),
+                p::TranslateProveOutcome::Proven { .. }
+            ));
+            // The OTHER twin's runtime node, offered for this item.
+            let theirs = located("Transform", (other.0 - 1, other.1 - 1), &["SCENE"]);
+            match prove(rev0, hash, me, theirs) {
+                p::TranslateProveOutcome::Proven { .. } => wrong += 1,
+                p::TranslateProveOutcome::Refused { reason, .. } => {
+                    assert_eq!(reason, wrlforge_vrml::pick::reason::BIND_SPAN)
+                }
+                o => panic!("{o:?}"),
+            }
+            // Stale text or generation, or no unique runtime node.
+            assert!(matches!(
+                prove(rev0, hash ^ 1, me, own.clone()),
+                p::TranslateProveOutcome::Stale { .. }
+            ));
+            let mut none = own.clone();
+            none.outcome = "unsupported".into();
+            none.reason = Some("runtime-node-for-span-not-unique".into());
+            assert!(matches!(
+                prove(rev0, hash, me, none),
+                p::TranslateProveOutcome::Refused { reason, .. } if reason == "runtime-node-for-span-not-unique"
+            ));
+            // A runtime node that is NOT directly under the scene.
+            let mut nested = located("Transform", (pf, pt), &["n2"]);
+            nested.graph.insert(
+                "n2".into(),
+                p::PickGraphNode {
+                    type_name: Some("Group".into()),
+                    ctx_kind: "document".into(),
+                    occurrences: vec![],
+                    parents: vec!["SCENE".into()],
+                },
+            );
+            assert!(matches!(
+                prove(rev0, hash, me, nested),
+                p::TranslateProveOutcome::Refused { .. }
+            ));
+        }
+        assert_eq!(wrong, 0, "WRONG_RUNTIME_MANIPULATIONS");
+
+        // Camera carry: the Viewpoint's preview span through a move of the
+        // FIRST twin (which grows "1" -> "1.5"), then undo and redo.
+        let v = text.find(vp).unwrap();
+        let pv = (u16at(v) - 1, u16at(v + vp.len()) - 1);
+        let carry = |from_rev: u64, to_rev: u64, (f, t): (u64, u64)| {
+            svc.preview_carry(&p::PreviewCarryRequest {
+                session: id,
+                from_revision: from_rev,
+                to_revision: to_rev,
+                from: f,
+                to: t,
+            })
+            .unwrap()
+        };
+        let preview_slice = |(f, t): (u64, u64)| {
+            let now = svc.text(id).unwrap();
+            let u: Vec<u16> = now
+                .strip_prefix('\u{FEFF}')
+                .unwrap()
+                .encode_utf16()
+                .collect();
+            String::from_utf16(&u[f as usize..t as usize]).unwrap()
+        };
+        assert_eq!(
+            carry(rev0, rev0, pv),
+            p::PreviewCarryOutcome::Mapped {
+                from: pv.0,
+                to: pv.1
+            }
+        );
+        let (st, _, _) = moved(mv(
+            &svc,
+            id,
+            rev0,
+            &format!("node-{}-{}", s1.0, s1.1),
+            p::gizmo::Axis::X,
+            1.5,
+        ));
+        let rev1 = st.revision;
+        let m1 = match carry(rev0, rev1, pv) {
+            p::PreviewCarryOutcome::Mapped { from, to } => (from, to),
+            o => panic!("{o:?}"),
+        };
+        assert_eq!(m1, (pv.0 + 2, pv.1 + 2));
+        assert_eq!(preview_slice(m1), vp);
+        // The moved Transform's own span changed at its inside: carried too;
+        // a span the change crosses is lost, never guessed.
+        assert!(matches!(
+            carry(rev0, rev1, (s1.0 - 1, s1.1 - 1)),
+            p::PreviewCarryOutcome::Mapped { .. }
+        ));
+        assert!(matches!(
+            carry(rev0, rev1, (s1.0 - 1 + 24, s1.0 - 1 + 30)),
+            p::PreviewCarryOutcome::Lost { .. }
+        ));
+        // Only to the CURRENT revision, only from a logged one.
+        assert!(matches!(
+            carry(rev0, rev0, pv),
+            p::PreviewCarryOutcome::Lost { .. }
+        ));
+        assert!(matches!(
+            carry(rev1 + 5, rev1, pv),
+            p::PreviewCarryOutcome::Lost { .. }
+        ));
+        svc.undo(id).unwrap();
+        let rev2 = rev1 + 1;
+        assert_eq!(
+            carry(rev1, rev2, m1),
+            p::PreviewCarryOutcome::Mapped {
+                from: pv.0,
+                to: pv.1
+            }
+        );
+        assert_eq!(preview_slice(pv), vp);
+        svc.redo(id).unwrap();
+        assert_eq!(
+            carry(rev0, rev2 + 1, pv),
+            p::PreviewCarryOutcome::Mapped {
+                from: m1.0,
+                to: m1.1
+            }
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    fn svc_open(path: &Path) -> (p::OpenOutcome, Service) {
+        let svc = Service::new(clock);
+        (svc.open_path(path), svc)
     }
 
     /// New World → Box → X, Y, Z drags (positive and negative) → each is ONE

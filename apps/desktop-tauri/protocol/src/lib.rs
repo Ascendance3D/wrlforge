@@ -367,14 +367,19 @@ pub struct TranslateTargetRequest {
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum TranslateTargetOutcome {
     /// A top-level Transform with an explicit translation; a DEF name, if
-    /// any, is unique, never USEd and never ROUTEd to. The preview binds it
-    /// by `root_index` (its position among the top-level node statements),
-    /// cross-checked against `def_name` when there is one.
+    /// any, is unique, never USEd and never ROUTEd to. The preview LOCATES
+    /// its runtime node by the exact provenance span `[preview_from,
+    /// preview_to)` (UTF-16, preview text), and Rust must then PROVE that
+    /// runtime node (`doc_translate_prove`) before anything binds.
+    /// `root_index` and `def_name` are secondary consistency assertions
+    /// only; neither establishes identity.
     Ready {
         revision: u64,
         item: String,
         def_name: Option<String>,
         root_index: u32,
+        preview_from: u64,
+        preview_to: u64,
         translation: [f64; 3],
         /// World position of the Transform's local origin.
         origin: [f64; 3],
@@ -387,6 +392,62 @@ pub enum TranslateTargetOutcome {
     Stale {
         current: u64,
     },
+}
+
+/// VISUAL-3A1: prove that the runtime node the preview located for `item`
+/// (a plain-data `snapshotSpan` snapshot of the generation that rendered
+/// exactly `revision` / `preview_hash`) IS that authored Transform.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslateProveRequest {
+    pub session: SessionId,
+    pub revision: u64,
+    pub preview_hash: u64,
+    /// The UI's preview generation number (diagnostic).
+    pub generation: u64,
+    pub item: String,
+    pub snapshot: PickSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum TranslateProveOutcome {
+    /// The runtime node is exactly the authored top-level Transform.
+    Proven {
+        revision: u64,
+        item: String,
+    },
+    Refused {
+        reason: String,
+        message: String,
+    },
+    /// The document is no longer the text the generation rendered.
+    Stale {
+        current: u64,
+    },
+}
+
+/// VISUAL-3A1 camera carry: map the UTF-16 PREVIEW span `[from, to)` of
+/// `from_revision` through the exact changes that produced `to_revision`
+/// (which must be the current revision). Read-only.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewCarryRequest {
+    pub session: SessionId,
+    pub from_revision: u64,
+    pub to_revision: u64,
+    pub from: u64,
+    pub to: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum PreviewCarryOutcome {
+    /// The same authored text, at `[from, to)` of `to_revision`'s preview.
+    Mapped { from: u64, to: u64 },
+    /// Not provable (unknown revision, a change touching the span, a
+    /// possible BOM change): nothing is carried.
+    Lost { reason: String },
 }
 
 /// VISUAL-3A: one completed gizmo drag. Rust formats `value` (at most

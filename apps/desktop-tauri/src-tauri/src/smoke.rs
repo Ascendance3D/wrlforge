@@ -109,7 +109,23 @@ pub fn move_fixtures() -> Vec<(&'static str, &'static str, String)> {
             "LF + comments",
             doc("", "\n", "Box_1", "").replace("translation 0 0 0", "translation 0.0 0.0 0.0"),
         ),
+        (TWINS_FILE, TWINS_LABEL, twins_fixture()),
     ]
+}
+
+/// VISUAL-3A1: the twin fixture's file name and label.
+pub const TWINS_FILE: &str = "fx-twins-viewpoint.wrl";
+pub const TWINS_LABEL: &str = "twin Transforms + authored Viewpoint";
+
+/// Two ANONYMOUS top-level Transforms with the SAME translation, geometry
+/// and material (name, type, value and appearance cannot tell them apart),
+/// then an authored Viewpoint whose span shifts when the first twin's
+/// translation token changes length.
+pub fn twins_fixture() -> String {
+    let twin = "Transform {\n  translation 1.5 0 0\n  children [\n    Shape { appearance Appearance { material Material { diffuseColor 0.8 0.3 0.2 } } geometry Box { } }\n  ]\n}\n";
+    format!(
+        "#VRML V2.0 utf8\n# twins ✓ — VISUAL-3A1 fixture\n{twin}{twin}Viewpoint {{ position 1.5 0.5 9 description \"twins ✓\" }}\n# fin ✓\n"
+    )
 }
 
 #[derive(Default)]
@@ -408,7 +424,10 @@ impl SmokeState {
     /// Smoke only (`--smoke-pick` / `--smoke-move` under `smoke.sh
     /// --headless`): one REAL X input action at root coordinates: `click`,
     /// `down` (press at x, y), `move` (to x, y, button state unchanged), `up`
-    /// (release at x, y) or `escape` (the Escape key). Same guards as a click.
+    /// (release at x, y) or `escape` (the Escape key); VISUAL-3A1 camera
+    /// tests add `down2` / `up2` (middle button: X_ITE Examine pan),
+    /// `wheelup` / `wheeldown` (one wheel notch at x, y: zoom) and `resize`
+    /// (OUR window to x by y px). Same guards as a click.
     pub fn real_pointer(&self, action: &str, x: i32, y: i32) -> Result<String, String> {
         let armed = self.2.lock().map_err(|e| e.to_string())?.is_some()
             || self.3.lock().map_err(|e| e.to_string())?.is_some();
@@ -447,6 +466,16 @@ impl SmokeState {
             "move" => xdotool(&["mousemove", &xs, &ys])?,
             "up" => xdotool(&["mousemove", &xs, &ys, "mouseup", "1"])?,
             "escape" => xdotool(&["key", "Escape"])?,
+            "down2" => xdotool(&["mousemove", &xs, &ys, "mousedown", "2"])?,
+            "up2" => xdotool(&["mousemove", &xs, &ys, "mouseup", "2"])?,
+            "wheelup" => xdotool(&["mousemove", &xs, &ys, "click", "4"])?,
+            "wheeldown" => xdotool(&["mousemove", &xs, &ys, "click", "5"])?,
+            "resize" => {
+                if !(320..=1600).contains(&x) || !(240..=1000).contains(&y) {
+                    return Err(format!("resize {x}x{y} outside the harness screen"));
+                }
+                xdotool(&["windowsize", mine[0], &xs, &ys])?
+            }
             other => return Err(format!("unknown real input action {other:?}")),
         };
         Ok(format!(
@@ -931,7 +960,8 @@ mod tests {
                 .iter()
                 .find_map(|s| match s {
                     wrlforge_vrml::ast::Ast::Node(n)
-                        if n.node_type == "Transform" && n.def.is_some() =>
+                        if n.node_type == "Transform"
+                            && (n.def.is_some() || file == TWINS_FILE) =>
                     {
                         Some((n.range.start.offset as u64, n.range.end.offset as u64))
                     }
@@ -962,6 +992,26 @@ mod tests {
     /// VISUAL-3A guard: the private X_ITE camera surfaces the gizmo needs
     /// are read ONLY in `xite-gizmo-adapter.js` (comments excluded), and that
     /// adapter touches none of the WD2-D parser / hit-test surfaces.
+    /// VISUAL-3A1: the rendered Transform is bound by proven provenance. The
+    /// gizmo adapter receives the runtime node; root order is only read to
+    /// REFUSE a disagreement, and the preview adapter takes the node from the
+    /// pick adapter's span lookup of the generation on screen.
+    #[test]
+    fn root_order_is_never_the_binding_identity() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui/static");
+        let gizmo = std::fs::read_to_string(dir.join("xite-gizmo-adapter.js")).unwrap();
+        let preview = std::fs::read_to_string(dir.join("preview-adapter.js")).unwrap();
+        assert!(gizmo.contains("function bind(scene, node, index, name, expected, verify)"));
+        assert!(gizmo.contains("sf.getValue() === node"));
+        // rootNodes appears once, in the refusing assertion.
+        assert_eq!(gizmo.matches("rootNodes").count(), 1);
+        assert!(gizmo.contains("'preview-root-order-disagrees'"));
+        assert!(!gizmo.contains("getNamedNode(String(name)); } catch (e) { named = null; }\n      if (!named) return { ok: true"));
+        assert!(preview.contains("var node = adapter.nodeAt(gen, f, t);"));
+        assert!(preview.contains("adapter.nodeAt(gen, f, t) === node"));
+        assert!(!preview.contains("rootNodes["));
+    }
+
     #[test]
     fn private_xite_camera_access_stays_in_the_gizmo_adapter() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui/static");
@@ -977,6 +1027,10 @@ mod tests {
             "getViewMatrix",
             "getProjectionMatrix",
             "getRectangle",
+            // VISUAL-3A1 camera carry.
+            "'positionOffset'",
+            "_fieldOfViewScale",
+            "defaultViewpoint",
         ];
         let mut seen = 0;
         for e in std::fs::read_dir(&dir).unwrap() {

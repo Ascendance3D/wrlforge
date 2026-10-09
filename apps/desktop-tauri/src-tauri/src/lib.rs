@@ -151,6 +151,8 @@ pub fn run() {
             commands::doc_preview_source,
             commands::doc_pick,
             commands::doc_translate_target,
+            commands::doc_translate_prove,
+            commands::doc_preview_carry,
             commands::doc_translate,
             commands::window_title,
             commands::theme_get,
@@ -159,6 +161,7 @@ pub fn run() {
             commands::smoke_open_fixture,
             commands::smoke_real_click,
             commands::smoke_real_pointer,
+            commands::smoke_real_resize,
             commands::smoke_finish,
         ])
         .run(tauri::generate_context!())
