@@ -12,6 +12,7 @@ use crate::ipc::{self, call, Session};
 use crate::ui::{self, ui};
 
 mod create;
+mod gizmo;
 mod pick;
 mod selection;
 mod syntax;
@@ -73,10 +74,11 @@ async fn settle() {
 
 pub async fn run(plan: p::SmokePlan) {
     let mut r = R(vec![]);
-    let done = match (&plan.create, &plan.pick) {
-        (Some(c), _) => create::run(c, &mut r).await,
-        (None, Some(pk)) => pick::run(pk, &mut r).await,
-        (None, None) => run_steps(&plan, &mut r).await,
+    let done = match (&plan.create, &plan.pick, &plan.gizmo) {
+        (Some(c), _, _) => create::run(c, &mut r).await,
+        (None, Some(pk), _) => pick::run(pk, &mut r).await,
+        (None, None, Some(g)) => gizmo::run(g, &mut r).await,
+        (None, None, None) => run_steps(&plan, &mut r).await,
     };
     if done.is_none() {
         r.step(
@@ -324,7 +326,7 @@ fn click(id: &str) -> Option<()> {
 
 /// The single change between two views, widened to whole tokens:
 /// (from, old token, new token) in UTF-16.
-fn change(a: &str, b: &str) -> (u64, String, String) {
+pub(crate) fn change(a: &str, b: &str) -> (u64, String, String) {
     let delim =
         |u: u16| char::from_u32(u as u32).is_some_and(|c| c.is_whitespace() || ",[]{}".contains(c));
     let (from, to, ins) = editor::diff(a, b);
@@ -573,7 +575,7 @@ async fn inspector_steps(value: &str, expect_preview: bool, r: &mut R) -> Option
 
 // ---- UI-THEME-1 ----------------------------------------------------------
 
-fn computed(el: &web_sys::Element, prop: &str) -> String {
+pub(crate) fn computed(el: &web_sys::Element, prop: &str) -> String {
     web_sys::window()
         .and_then(|w| w.get_computed_style(el).ok().flatten())
         .and_then(|cs| cs.get_property_value(prop).ok())
@@ -582,7 +584,7 @@ fn computed(el: &web_sys::Element, prop: &str) -> String {
         .to_string()
 }
 
-fn token(name: &str) -> String {
+pub(crate) fn token(name: &str) -> String {
     doc_el()
         .and_then(|d| d.document_element())
         .map(|root| computed(&root, name))
@@ -590,7 +592,7 @@ fn token(name: &str) -> String {
 }
 
 /// `#rrggbb` -> the `rgb(r, g, b)` form getComputedStyle reports.
-fn hex_rgb(hex: &str) -> String {
+pub(crate) fn hex_rgb(hex: &str) -> String {
     let h = hex.trim().trim_start_matches('#');
     let c = |i: usize| u8::from_str_radix(h.get(i..i + 2).unwrap_or("zz"), 16).ok();
     match (c(0), c(2), c(4)) {

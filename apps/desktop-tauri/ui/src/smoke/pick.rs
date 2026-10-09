@@ -70,7 +70,7 @@ fn pct(v: &[f64], q: f64) -> f64 {
     s[((s.len() - 1) as f64 * q).round() as usize]
 }
 
-fn viewport() -> Option<HtmlElement> {
+pub(super) fn viewport() -> Option<HtmlElement> {
     crate::element_by_id("viewport")
 }
 
@@ -110,12 +110,12 @@ fn pointer(kind: &str, x: f64, y: f64) {
 thread_local! {
     /// `Some(offset)` once real X pointer input is calibrated: the client
     /// point a real click lands on minus the point requested.
-    static REAL: std::cell::Cell<Option<(f64, f64)>> = const { std::cell::Cell::new(None) };
+    pub(super) static REAL: std::cell::Cell<Option<(f64, f64)>> = const { std::cell::Cell::new(None) };
 }
 
 /// GTK's double-click interval is 400 ms; real clicks are spaced further
 /// apart so X_ITE never sees a double click (which would move the camera).
-const REAL_CLICK_GAP_MS: i32 = 550;
+pub(super) const REAL_CLICK_GAP_MS: i32 = 550;
 
 async fn real_click(x: f64, y: f64) -> Result<String, String> {
     #[derive(serde::Serialize)]
@@ -129,7 +129,7 @@ async fn real_click(x: f64, y: f64) -> Result<String, String> {
 /// Click (x, y) through the production gesture handler: a REAL X click when
 /// calibrated, else a dispatched press + release. The outcome it applied,
 /// or `None` (no pick requested / superseded / timeout).
-async fn gesture(x: f64, y: f64) -> Option<p::PickOutcome> {
+pub(super) async fn gesture(x: f64, y: f64) -> Option<p::PickOutcome> {
     let done = PICK.with_borrow(|p| p.completed);
     match REAL.get() {
         Some((dx, dy)) => {
@@ -153,7 +153,7 @@ async fn gesture(x: f64, y: f64) -> Option<p::PickOutcome> {
 
 /// Calibrate real X input on the viewport: one click at its center, compare
 /// where the page received it. A second click must land within 1 px.
-async fn calibrate(r: &mut R) -> Option<()> {
+pub(super) async fn calibrate(r: &mut R) -> Option<()> {
     let rect = viewport()?.get_bounding_client_rect();
     let (x, y) = (
         rect.left() + rect.width() / 2.0,
@@ -249,7 +249,7 @@ fn pick_text() -> String {
 }
 
 /// The newest preview shows the current revision, and it is pickable.
-async fn ready(ms: u32) -> Option<()> {
+pub(super) async fn ready(ms: u32) -> Option<()> {
     wait_ms(ms, || {
         let (s, r) = CORE.with_borrow(|c| c.session.map(|s| (s, c.revision)))?;
         let a = crate::pick::active()?;

@@ -9,10 +9,12 @@
 // world are never fetched. Relative textures resolve against the app origin
 // and are simply not found (texture serving is not migrated yet).
 //
-// VISUAL-2 picking: every PRIVATE X_ITE access lives in xite-pick-adapter.js
-// (the WD2-D adapter, copied verbatim at build time from
-// src/preview/xite-pick-adapter.js). This file uses only its public surface
-// and returns PLAIN DATA; Rust decides what a pick means.
+// VISUAL-2 picking: every PRIVATE X_ITE picking access lives in
+// xite-pick-adapter.js (the WD2-D adapter, copied verbatim at build time from
+// src/preview/xite-pick-adapter.js). VISUAL-3A manipulation: every X_ITE
+// camera / temporary-translation access lives in xite-gizmo-adapter.js. This
+// file uses only their public surfaces and returns PLAIN DATA; Rust decides
+// what a pick or a drag means.
 (function () {
   'use strict';
   function canvas() { return document.getElementById('viewport'); }
@@ -21,14 +23,24 @@
   // `adapter` belongs to exactly one X_ITE browser; a replaced viewport gets a
   // new one. `active` is the generation on screen: {session, revision, hash,
   // seq} as the UI named it at load time, or null (retired).
-  var pick = { adapter: null, browser: null, active: null, loadSeq: 0 };
+  var pick = { adapter: null, gizmo: null, browser: null, active: null, scene: null, loadSeq: 0 };
 
   function adapterFor(browser) {
     if (pick.browser !== browser) {
       if (pick.adapter) pick.adapter.dispose();
+      if (pick.gizmo) pick.gizmo.unbind();
       pick.adapter = null;
+      pick.gizmo = null;
       pick.active = null;
+      pick.scene = null;
       pick.browser = browser || null;
+      if (browser && window.WrlXiteGizmoAdapter) {
+        try {
+          pick.gizmo = window.WrlXiteGizmoAdapter.createXiteGizmoAdapter({ X3D: window.X3D, browser: browser });
+        } catch (e) {
+          pick.gizmo = null;
+        }
+      }
       if (browser && window.WrlXitePickAdapter) {
         try {
           pick.adapter = window.WrlXitePickAdapter.createXitePickAdapter({ X3D: window.X3D, browser: browser });
@@ -40,13 +52,20 @@
     return pick.adapter;
   }
 
+  // A retired generation can no longer be manipulated: any temporary
+  // translation is put back and the binding dropped.
   function retire(reason) {
     pick.active = null;
+    pick.scene = null;
+    if (pick.gizmo) pick.gizmo.unbind();
     if (pick.adapter) pick.adapter.retire(reason || 'preview-scene-replaced');
   }
 
   window.addEventListener('pagehide', function () {
     pick.active = null;
+    pick.scene = null;
+    if (pick.gizmo) pick.gizmo.unbind();
+    pick.gizmo = null;
     if (pick.adapter) pick.adapter.dispose();
     pick.adapter = null;
   });
@@ -130,6 +149,7 @@
         // Only the newest load may become the picking generation.
         if (mine === pick.loadSeq && a && generation && a.activate(generation, scene)) {
           pick.active = { session: meta.session, revision: meta.revision, hash: meta.hash, seq: meta.seq };
+          pick.scene = scene;
         }
         return 'loaded: ' + scene.rootNodes.length + ' root node(s)';
       } catch (e) {
@@ -161,6 +181,36 @@
         active: pick.active,
         ms: performance.now() - t0,
       });
+    },
+    // ---- VISUAL-3A translation gizmo (plain data in and out) ----------------
+    // The camera as JSON, or '' when it cannot be read.
+    gizmoCamera: function () {
+      var c = canvas();
+      if (c && c.browser) adapterFor(c.browser);
+      var cam = pick.gizmo ? pick.gizmo.camera() : null;
+      return cam ? JSON.stringify(cam) : '';
+    },
+    // Bind root node `index` (DEF `name`, or '') of the generation on
+    // screen, which must be `seq` and show the source translation (x, y, z).
+    // JSON {ok, reason}.
+    gizmoBind: function (seq, index, name, x, y, z) {
+      var c = canvas();
+      if (c && c.browser) adapterFor(c.browser);
+      if (!pick.gizmo) return JSON.stringify({ ok: false, reason: 'adapter-unavailable' });
+      if (!pick.active || pick.active.seq !== seq || !pick.scene) {
+        pick.gizmo.unbind();
+        return JSON.stringify({ ok: false, reason: 'preview-scene-replaced' });
+      }
+      return JSON.stringify(pick.gizmo.bind(pick.scene, Number(index), String(name || ''), [Number(x), Number(y), Number(z)]));
+    },
+    gizmoSet: function (x, y, z) { return !!pick.gizmo && pick.gizmo.set(x, y, z); },
+    gizmoRestore: function () { if (pick.gizmo) pick.gizmo.restore(); },
+    gizmoRelease: function () { if (pick.gizmo) pick.gizmo.release(); },
+    gizmoUnbind: function () { if (pick.gizmo) pick.gizmo.unbind(); },
+    // Tests: the bound node's rendered translation as JSON, or ''.
+    gizmoRendered: function () {
+      var r = pick.gizmo ? pick.gizmo.rendered() : null;
+      return r ? JSON.stringify(r) : '';
     },
     // {ok, reason}: whether picking is available at all (compatibility).
     pickStatus: function () {

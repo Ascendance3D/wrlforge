@@ -13,6 +13,9 @@
   <!-- VISUAL-2: the WD2-D picking adapter (copied from src/preview at build
        time); the ONE file that touches private X_ITE surfaces. -->
   <script src="xite-pick-adapter.js"></script>
+  <!-- VISUAL-3A: the gizmo adapter; the ONE file that reads the X_ITE camera
+       and overrides a rendered translation (plain data out). -->
+  <script src="xite-gizmo-adapter.js"></script>
   <script src="preview-adapter.js"></script>
   <!-- wasm-bindgen generated loader for the Rust UI (generated, not handwritten). -->
   <script type="module" src="boot.js"></script>

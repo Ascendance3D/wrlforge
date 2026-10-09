@@ -40,6 +40,11 @@ pub struct Ui {
     pub pick_mode: RwSignal<bool>,
     /// The last viewport pick result: (`ok` | `none` | `refused`, text).
     pub pick_message: RwSignal<Option<(String, String)>>,
+    /// VISUAL-3A: the viewport Move tool (translation gizmo). One viewport
+    /// tool at a time: Select and Move exclude each other.
+    pub move_mode: RwSignal<bool>,
+    /// The Move tool's status line: (`ok` | `none` | `refused`, text).
+    pub gizmo_message: RwSignal<Option<(String, String)>>,
 }
 
 /// A Scene Tree selection. Item ids are SOURCE spans of one revision, so
@@ -128,6 +133,10 @@ pub fn tree_select(session: u64, revision: u64, id: String, from: u64, to: u64) 
 /// through here. Never shows the previous item's fields under a new one.
 pub fn adopt_selection(sel: Selected) {
     let u = ui();
+    // A selection change never redirects a drag to another node.
+    if u.selected.get_untracked().as_ref() != Some(&sel) {
+        crate::gizmo::cancel("the selection changed");
+    }
     if u.selected.get_untracked().as_ref() != Some(&sel) {
         u.field_error.set(None);
         u.inspection.set(None);
@@ -197,6 +206,8 @@ pub fn ui() -> Ui {
             create_error: RwSignal::new(None),
             pick_mode: RwSignal::new(false),
             pick_message: RwSignal::new(None),
+            move_mode: RwSignal::new(false),
+            gizmo_message: RwSignal::new(None),
         })
     })
 }
@@ -216,6 +227,7 @@ pub fn doc_loaded(doc: &p::DocumentInfo) {
     u.selected.set(None);
     u.inspection.set(None);
     u.pick_message.set(None);
+    crate::gizmo::reset("the document was replaced");
     crate::pick::retire("preview-scene-replaced");
     // The previous document's Scene Tree and diagnostics never show under
     // the new one, not even until its first analysis arrives.
@@ -256,6 +268,13 @@ pub fn state_changed(revision: u64, dirty: bool, can_undo: bool, can_redo: bool)
         }
     }
     crate::pick::document_changed(CORE.with_borrow(|c| c.session), revision);
+    if crate::gizmo::GIZMO.with_borrow(|g| {
+        g.drag
+            .as_ref()
+            .is_some_and(|d| d.target.revision != revision)
+    }) {
+        crate::gizmo::cancel("the source changed");
+    }
     let generation = CORE.with_borrow(|c| c.generation);
     spawn_local(async move {
         ipc::sleep(250).await;
@@ -681,6 +700,7 @@ pub fn close() {
         u.can_undo.set(false);
         u.can_redo.set(false);
         u.pick_message.set(None);
+        crate::gizmo::reset("the document was closed");
         crate::pick::retire("preview-scene-replaced");
         // No document: the viewport shows an empty world, not the old one.
         let status = ipc::preview_load("#VRML V2.0 utf8\n", None).await;

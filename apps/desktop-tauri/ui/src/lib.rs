@@ -6,6 +6,7 @@
 
 mod create;
 mod editor;
+mod gizmo;
 mod ipc;
 mod panels;
 mod pick;
@@ -26,6 +27,7 @@ use crate::ui::ui;
 pub fn start() {
     leptos::mount::mount_to_body(App);
     pick::install();
+    gizmo::install();
     ui::start_external_watch();
     syntax::install();
     // The UI stays hidden (style.css) until `<html data-theme>` is set, so a

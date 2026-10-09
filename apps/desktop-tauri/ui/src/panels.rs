@@ -372,12 +372,50 @@ pub fn Viewport() -> impl IntoView {
                     disabled=move || u.doc.with(|d| d.is_none())
                     on:click=move |_| {
                         u.pick_mode.update(|m| *m = !*m);
+                        if u.pick_mode.get_untracked() { u.move_mode.set(false); }
                         if !u.pick_mode.get_untracked() { u.pick_message.set(None); }
                     }>"Select"</button>
+                // VISUAL-3A: the Move tool. Drag an axis handle to move the
+                // selected top-level Transform; a click still selects, a drag
+                // elsewhere still moves the camera.
+                <button id="btn-move" class="secondary small"
+                    title="Move: drag the X (red), Y (green) or Z (blue) handle of the selected object. Esc cancels a drag; the Inspector takes exact values."
+                    aria-pressed=move || if u.move_mode.get() { "true" } else { "false" }
+                    disabled=move || u.doc.with(|d| d.is_none())
+                    on:click=move |_| {
+                        u.move_mode.update(|m| *m = !*m);
+                        if u.move_mode.get_untracked() {
+                            u.pick_mode.set(false);
+                            crate::gizmo::start();
+                        } else {
+                            u.gizmo_message.set(None);
+                        }
+                    }>"Move"</button>
             </div>
-            <x3d-canvas id="viewport" class:picking=move || u.pick_mode.get() splashScreen="false" contextMenu="false" notifications="false"
-                timings="false" cache="false"></x3d-canvas>
+            <div class="viewport-stage">
+                <x3d-canvas id="viewport" class:picking=move || u.pick_mode.get() || u.move_mode.get() splashScreen="false" contextMenu="false" notifications="false"
+                    timings="false" cache="false"></x3d-canvas>
+                // The gizmo overlay. Drawn from the renderer's camera by
+                // `gizmo.rs`; only the handles take pointer input.
+                <svg id="gizmo" class="gizmo" data-state="hidden" role="group" aria-label="Translation handles">
+                    {[("x", "X"), ("y", "Y"), ("z", "Z")].into_iter().map(|(a, l)| view! {
+                        <g id=format!("gz-{a}") class="gz-handle" data-axis=a role="button" aria-disabled="true"
+                            aria-label=format!("Move along {l}: drag")>
+                            <line id=format!("gz-{a}-hit") class="gz-hit"></line>
+                            <line id=format!("gz-{a}-halo") class="gz-halo"></line>
+                            <line id=format!("gz-{a}-line") class="gz-line"></line>
+                            <circle id=format!("gz-{a}-tip") class="gz-tip" r="7"></circle>
+                        </g>
+                    }).collect_view()}
+                    <circle id="gz-origin" class="gz-origin" r="4"></circle>
+                </svg>
+            </div>
             <div class="preview-status" id="preview-status">{move || format!("Preview: {}", u.preview_status.get())}</div>
+            <div class="pick-status gizmo-status" id="gizmo-status" role="status" aria-live="polite"
+                data-kind=move || u.gizmo_message.with(|m| m.as_ref().map(|m| m.0.clone()).unwrap_or_default())
+                hidden=move || !u.move_mode.get() || u.gizmo_message.with(|m| m.is_none())>
+                {move || u.gizmo_message.with(|m| m.as_ref().map(|m| m.1.clone()).unwrap_or_default())}
+            </div>
             <div class="pick-status" id="pick-status" role="status" aria-live="polite"
                 data-kind=move || u.pick_message.with(|m| m.as_ref().map(|m| m.0.clone()).unwrap_or_default())
                 hidden=move || u.pick_message.with(|m| m.is_none())>

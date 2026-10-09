@@ -148,10 +148,13 @@
   --wf-viewport-status-fg: #8089b3;
   --wf-viewport-border: #101014;
 
-  /* transform-overlay axes — reserved; must stay recognizably X/Y/Z */
+  /* transform-gizmo axes (VISUAL-3A); must stay recognizably X/Y/Z */
   --wf-axis-x: #f7768e;
   --wf-axis-y: #9ece6a;
   --wf-axis-z: #7aa2f7;
+  --wf-gizmo-halo: #16161e;
+  --wf-gizmo-active: #e0af68;
+  --wf-gizmo-disabled: #737aa2;
 
   --wf-shadow: 0 4px 14px #00000080;
 }
@@ -271,6 +274,9 @@
   --wf-axis-x: #f7768e;
   --wf-axis-y: #9ece6a;
   --wf-axis-z: #7aa2f7;
+  --wf-gizmo-halo: #16161e;
+  --wf-gizmo-active: #e0af68;
+  --wf-gizmo-disabled: #737aa2;
 
   --wf-shadow: 0 4px 14px #00000073;
 }
@@ -392,6 +398,9 @@
   --wf-axis-x: #bd4040;
   --wf-axis-y: #385f0d;
   --wf-axis-z: #2959aa;
+  --wf-gizmo-halo: #ffffff;
+  --wf-gizmo-active: #8f5e15;
+  --wf-gizmo-disabled: #8990b3;
 
   --wf-shadow: 0 4px 14px #00000033;
 }

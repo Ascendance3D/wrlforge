@@ -32,6 +32,83 @@ extern "C" {
     fn preview_probe_js() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = coverage, catch)]
     async fn preview_coverage_js() -> Result<JsValue, JsValue>;
+    // VISUAL-3A translation gizmo (xite-gizmo-adapter.js through the adapter).
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = gizmoCamera, catch)]
+    fn gizmo_camera_js() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = gizmoBind, catch)]
+    fn gizmo_bind_js(
+        seq: f64,
+        index: f64,
+        name: &str,
+        x: f64,
+        y: f64,
+        z: f64,
+    ) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = gizmoSet, catch)]
+    fn gizmo_set_js(x: f64, y: f64, z: f64) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = gizmoRestore, catch)]
+    fn gizmo_restore_js() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = gizmoRelease, catch)]
+    fn gizmo_release_js() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = gizmoUnbind, catch)]
+    fn gizmo_unbind_js() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = gizmoRendered, catch)]
+    fn gizmo_rendered_js() -> Result<JsValue, JsValue>;
+}
+
+/// The renderer's camera as last drawn, or `None` when it cannot be read.
+pub fn gizmo_camera() -> Option<wrlforge_desktop_protocol::gizmo::Camera> {
+    let s = gizmo_camera_js().ok()?.as_string()?;
+    serde_json::from_str(&s).ok()
+}
+
+/// Bind root node `index` of preview generation `seq`: a Transform that
+/// must render `t` and, when `name` is not empty, be the node DEF'd `name`.
+/// `Err` is the adapter's reason.
+pub fn gizmo_bind(seq: u64, index: u32, name: &str, t: [f64; 3]) -> Result<(), String> {
+    #[derive(serde::Deserialize)]
+    struct R {
+        ok: bool,
+        reason: Option<String>,
+    }
+    let raw = gizmo_bind_js(seq as f64, index as f64, name, t[0], t[1], t[2])
+        .map_err(js_err)?
+        .as_string()
+        .unwrap_or_default();
+    match serde_json::from_str::<R>(&raw) {
+        Ok(R { ok: true, .. }) => Ok(()),
+        Ok(R { reason, .. }) => Err(reason.unwrap_or_else(|| "unbound".into())),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Temporary rendered translation of the bound node (never the document).
+pub fn gizmo_set(t: [f64; 3]) -> bool {
+    gizmo_set_js(t[0], t[1], t[2])
+        .ok()
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// Put back the bound node's rendered translation.
+pub fn gizmo_restore() {
+    let _ = gizmo_restore_js();
+}
+
+/// Forget the binding, keeping what is drawn (a committed move).
+pub fn gizmo_release() {
+    let _ = gizmo_release_js();
+}
+
+/// Restore and forget the binding.
+pub fn gizmo_unbind() {
+    let _ = gizmo_unbind_js();
+}
+
+/// The bound node's rendered translation (tests).
+pub fn gizmo_rendered() -> Option<[f64; 3]> {
+    let s = gizmo_rendered_js().ok()?.as_string()?;
+    serde_json::from_str(&s).ok()
 }
 
 /// Fraction of viewport pixels that differ from the background after the

@@ -70,6 +70,8 @@ pub fn active() -> Option<Gen> {
 
 /// Retire the generation on screen in both the UI and the adapter.
 pub fn retire(reason: &str) {
+    // A drag belongs to the generation on screen: it ends with it.
+    crate::gizmo::cancel("the preview was reloaded");
     PICK.with_borrow_mut(|p| p.active = None);
     ipc::preview_retire(reason);
 }
@@ -313,7 +315,7 @@ pub fn install() {
         if id != ev.pointer_id()
             || ev.button() != 0
             || (cx - x).hypot(cy - y) > CLICK_SLOP
-            || !ui().pick_mode.get_untracked()
+            || !(ui().pick_mode.get_untracked() || ui().move_mode.get_untracked())
         {
             return;
         }

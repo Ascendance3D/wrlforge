@@ -175,3 +175,35 @@ x3d-canvas.picking { cursor: crosshair; }
 .pick-status { padding: .2rem .6rem; font-size: .85rem; color: var(--wf-text-muted); border-top: 1px solid var(--wf-border-subtle); }
 .pick-status[data-kind="ok"] { color: var(--wf-text-primary); }
 .pick-status[data-kind="refused"] { color: var(--wf-warning-fg); background: var(--wf-warning-bg); }
+
+/* VISUAL-3A translation gizmo. The SVG covers the canvas but takes no
+   pointer input itself; only usable handles do. Axis colors are the theme's
+   --wf-axis-* tokens over a halo, so they read on any rendered background.
+   Disabled = faded, dashed, no pointer input: never looks usable. */
+.viewport-stage { position: relative; flex: 1 1 auto; min-height: 12rem; display: flex; }
+.viewport-stage x3d-canvas#viewport { flex: 1 1 auto; height: auto; }
+.gizmo { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.gizmo[data-state="hidden"] { display: none; }
+.gz-handle { pointer-events: none; }
+.gz-handle .gz-hit { stroke: transparent; stroke-width: 16; stroke-linecap: round; }
+.gz-handle .gz-halo { stroke: var(--wf-gizmo-halo); stroke-width: 7; stroke-linecap: round; }
+.gz-handle .gz-line { stroke-width: 3.5; stroke-linecap: round; }
+.gz-handle .gz-tip { stroke: var(--wf-gizmo-halo); stroke-width: 2.5; }
+#gz-x .gz-line { stroke: var(--wf-axis-x); } #gz-x .gz-tip { fill: var(--wf-axis-x); }
+#gz-y .gz-line { stroke: var(--wf-axis-y); } #gz-y .gz-tip { fill: var(--wf-axis-y); }
+#gz-z .gz-line { stroke: var(--wf-axis-z); } #gz-z .gz-tip { fill: var(--wf-axis-z); }
+.gizmo[data-state="ready"] .gz-handle:not(.disabled),
+.gizmo[data-state="dragging"] .gz-handle.active { pointer-events: stroke; cursor: grab; }
+.gizmo[data-state="ready"] .gz-handle:not(.disabled) .gz-tip { pointer-events: all; }
+.gizmo[data-state="ready"] .gz-handle:not(.disabled):hover .gz-line { stroke-width: 5.5; }
+.gizmo[data-state="ready"] .gz-handle:not(.disabled):hover .gz-halo { stroke-width: 9.5; }
+.gizmo[data-state="ready"] .gz-handle:not(.disabled):hover .gz-tip { r: 9; }
+.gz-handle.active { cursor: grabbing; }
+.gz-handle.active .gz-halo { stroke: var(--wf-gizmo-active); stroke-width: 10; }
+.gz-handle.active .gz-line { stroke-width: 5.5; }
+.gz-handle.active .gz-tip { stroke: var(--wf-gizmo-active); r: 9; }
+.gz-handle.disabled { opacity: .45; }
+.gz-handle.disabled .gz-line { stroke: var(--wf-gizmo-disabled); stroke-dasharray: 4 4; }
+.gz-handle.disabled .gz-tip { fill: none; stroke: var(--wf-gizmo-disabled); }
+.gz-origin { fill: var(--wf-gizmo-halo); stroke: var(--wf-gizmo-active); stroke-width: 2; }
+.gizmo[data-state="disabled"] .gz-origin { stroke: var(--wf-gizmo-disabled); }
