@@ -12,6 +12,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod theme;
+
 pub type SessionId = u64;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

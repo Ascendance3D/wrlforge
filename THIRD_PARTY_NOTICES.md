@@ -102,6 +102,14 @@ application bundle.
 
 ---
 
+## Tokyo Night colour palette (Tauri desktop app)
+
+- **Tokyo Night VS Code theme** — © 2018-present Enkia, **MIT License**. Its colour values
+  are adapted into the built-in Tokyo Night, Tokyo Night Storm and Tokyo Night Light themes
+  of the Rust/Tauri application (`apps/desktop-tauri/ui/static/themes.css`). No extension code
+  is shipped. The license text ships as `LICENSE-tokyo-night.txt` beside the stylesheet.
+  Provenance: [`OPEN_SOURCE_PROVENANCE.md`](OPEN_SOURCE_PROVENANCE.md) §4, entry TN-1.
+
 ## Build-time icon tooling
 
 - **@resvg/resvg-js** — licensed under the **Mozilla Public License, Version 2.0**
@@ -121,6 +129,7 @@ application bundle.
 | Ubuntu Mono (in x_ite) | Ubuntu Font Licence 1.0 | yes (font data) | separately licensed font data, aggregated |
 | esbuild, electron-builder | MIT | build-only | n/a (not distributed) |
 | @resvg/resvg-js | MPL-2.0 | build-only | n/a (not distributed) |
+| Tokyo Night colour values (Tauri app) | MIT | yes (adapted values + license text) | yes — permissive, absorbable |
 
 **On the bundled fonts.** The three font families travel inside the `x_ite` package's own
 `dist/assets/fonts/**`, each accompanied by its own license file, and are redistributed
@@ -132,4 +141,4 @@ license texts must continue to ship with them.
 
 No component listed in this file was authored by WRL Forge, and none may be relabelled as
 such. No third-party implementation code has been copied or adapted into WRL Forge's own
-sources — see [`OPEN_SOURCE_PROVENANCE.md`](OPEN_SOURCE_PROVENANCE.md) §4.
+sources; the Tokyo Night colour values are the one adapted item — see [`OPEN_SOURCE_PROVENANCE.md`](OPEN_SOURCE_PROVENANCE.md) §4.

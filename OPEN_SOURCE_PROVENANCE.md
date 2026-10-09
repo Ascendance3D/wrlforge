@@ -128,9 +128,24 @@ recorded here with:
 
 ### Current entries
 
-**None.** No third-party implementation code has been copied, adapted, or translated
-into WRL Forge's own source. Everything under `src/`, `renderer/`, `main.js`,
-`preload.js`, `validator.js`, and `scripts/` is original work.
+**TN-1 — Tokyo Night colour values (UI-THEME-1)**
+
+| field | value |
+|---|---|
+| Upstream project | Tokyo Night VS Code theme |
+| Source | <https://github.com/tokyo-night/tokyo-night-vscode-theme> |
+| Version | commit `7c0f11eaef322f293621ca7befe462214b7ea468` (package `1.1.2`) |
+| Component | `themes/tokyo-night-color-theme.json`, `themes/tokyo-night-storm-color-theme.json`, `themes/tokyo-night-light-color-theme.json` (colour values only) |
+| Authors | Copyright (c) 2018-present Enkia |
+| License | `MIT` |
+| Destination | `apps/desktop-tauri/ui/static/themes.css` |
+| Mode | `adapted` — colour values, not code. No theme JSON, token-scope rule or extension file is copied or shipped. |
+| Local changes | Upstream workbench roles are mapped onto WRL Forge's own `--wf-*` semantic tokens. Translucent upstream values are pre-blended onto their surface. Some text, selection, border, scrollbar and accent values are adjusted (lightened on dark themes, darkened on Light) to meet WCAG AA 4.5:1 / 3:1; the pairs are asserted by `apps/desktop-tauri/protocol/src/theme/tests.rs`. |
+| Notices | The upstream copyright and commit are in the `themes.css` header. The full MIT text ships as `apps/desktop-tauri/ui/static/LICENSE-tokyo-night.txt`, copied into `dist/` by `build-ui.sh`. Listed in `THIRD_PARTY_NOTICES.md`. |
+
+No third-party implementation **code** has been copied, adapted, or translated into WRL
+Forge's own source. Everything under `src/`, `renderer/`, `main.js`, `preload.js`,
+`validator.js`, and `scripts/` is original work.
 
 Third-party components that WRL Forge **depends on and redistributes unmodified**
 (x_ite, CodeMirror, Electron, and their bundled assets) are not implementation
