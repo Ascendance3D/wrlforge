@@ -20,7 +20,9 @@ pub fn SceneTree() -> impl IntoView {
                     {move || u.analysis.with(|a| a.as_ref().map(|a| format!(" · {} items · {} scope", a.items.len(), a.resolution_scope)).unwrap_or_default())}
                 </span>
             </div>
-            <ul class="tree" role="tree" aria-label="Scene items">
+            // The analysis revision these items (and their offsets) belong to.
+            <ul class="tree" role="tree" aria-label="Scene items"
+                data-revision=move || u.analysis.with(|a| a.as_ref().map(|a| a.revision.to_string()).unwrap_or_default())>
                 {move || u.analysis.with(|a| a.as_ref().map(|a| a.items.iter().map(|it| {
                     let id = it.id.clone();
                     let id_sel = it.id.clone();

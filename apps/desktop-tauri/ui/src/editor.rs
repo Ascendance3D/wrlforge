@@ -32,6 +32,8 @@ pub struct Core {
     /// Last revisions the derived views were computed for (skip repeats).
     pub analyzed: Option<u64>,
     pub previewed: Option<u64>,
+    /// Bumped per preview load; only the newest load reports its status.
+    pub preview_seq: u64,
 }
 
 thread_local! {

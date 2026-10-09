@@ -184,18 +184,44 @@ async fn run_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
         .map(|a| a.diagnostics.len())
         .unwrap_or(0);
     r.step("diagnostics computed", true, format!("{diag} diagnostics"));
+    // UI-SYNTAX-1 regression for the UI-THEME-1 cyclone failure: the
+    // explicit analysis sets the signal, but Leptos re-renders the tree a
+    // tick later. Clicking at once hit items (and offsets) of an OLDER
+    // analysis. Wait until the tree DOM carries the current revision.
+    let want_rev = ui()
+        .analysis
+        .get_untracked()
+        .map(|a| a.revision.to_string());
+    let tree_rev = || {
+        web_sys::window()?
+            .document()?
+            .query_selector("ul.tree")
+            .ok()??
+            .get_attribute("data-revision")
+    };
+    let stale_at_once = tree_rev() != want_rev;
     let mut first = None;
     for _ in 0..100 {
-        first = web_sys::window()?
-            .document()?
-            .query_selector(".tree-item")
-            .ok()
-            .flatten();
+        if tree_rev() == want_rev {
+            first = web_sys::window()?
+                .document()?
+                .query_selector(".tree-item")
+                .ok()
+                .flatten();
+        }
         if first.is_some() {
             break;
         }
         ipc::sleep(20).await;
     }
+    r.step(
+        "Scene Tree DOM shows the current analysis revision before it is clicked",
+        tree_rev() == want_rev,
+        format!(
+            "analysis rev {want_rev:?}, tree DOM rev {:?}; stale immediately after analyze: {stale_at_once}",
+            tree_rev()
+        ),
+    );
     if !r.step("Scene Tree items rendered in the DOM", first.is_some(), "") {
         return None;
     }
@@ -230,6 +256,9 @@ async fn run_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
     r.step("WebView WebGL probe", true, probe.clone());
     if plan.expect_preview {
         ui::preview(true).await;
+        // A newer (debounced) load may still be running; wait for it.
+        wait_for(|| (!ui().preview_status.get_untracked().starts_with("updating")).then_some(()))
+            .await;
         let status = ui().preview_status.get_untracked();
         r.step(
             "X_ITE preview loaded the unsaved buffer",

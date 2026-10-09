@@ -257,16 +257,26 @@ pub async fn preview(force: bool) {
         return;
     }
     let u = ui();
+    // Only the newest load may report: a superseded X_ITE load ends with
+    // "Replacing world aborted" and must not overwrite a newer status.
+    let seq = CORE.with_borrow_mut(|c| {
+        c.preview_seq += 1;
+        c.preview_seq
+    });
+    let newest = move || CORE.with_borrow(|c| c.preview_seq == seq);
     u.preview_status.set("updating…".into());
     match call::<p::PreviewSource>("doc_preview_source", Session { session }).await {
         Ok(src) => {
             CORE.with_borrow_mut(|c| c.previewed = Some(src.revision));
             let status = ipc::preview_load(&src.text).await;
             u.preview_loads.update(|n| *n += 1);
-            u.preview_status
-                .set(format!("rev {} · {status}", src.revision));
+            if newest() {
+                u.preview_status
+                    .set(format!("rev {} · {status}", src.revision));
+            }
         }
-        Err(e) => u.preview_status.set(format!("error: {e}")),
+        Err(e) if newest() => u.preview_status.set(format!("error: {e}")),
+        Err(_) => {}
     }
 }
 
