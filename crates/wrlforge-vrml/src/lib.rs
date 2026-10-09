@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 
 pub mod ast;
+pub mod create;
 pub mod diagnostics;
 pub mod field_edit;
 pub mod highlight;
