@@ -2,7 +2,7 @@
 // WD2-D -- the ONE narrow X_ITE picking adapter (WD2_D_XITE_PICKING_CONTRACT.md).
 //
 // Every private X_ITE surface WD2-D depends on is touched here and nowhere
-// else (a source-scan test enforces it). The adapter does exactly two things:
+// else (a source-scan test enforces it). The adapter does exactly three things:
 //
 //   1. PROVENANCE. While -- and only while -- X_ITE parses one exact preview
 //      string, X3D.VRMLParser.prototype.nodeStatement is wrapped so every node
@@ -14,6 +14,10 @@
 //   2. HIT SNAPSHOT. A click becomes browser.touch() + browser.getHit(), and
 //      the hit Shape's runtime parent chain is copied into PLAIN DATA (labels,
 //      types, occurrences). No runtime object leaves pick().
+//   3. SPAN BINDING (VISUAL-3A1 amendment). The reverse lookup for the Tauri
+//      Move tool: the ONE runtime node a generation recorded for an exact
+//      span (snapshotSpan: plain data for Rust to prove; nodeAt: the node,
+//      for the trusted JS layer only; spansOf: a node's occurrences).
 //
 // Mapping a snapshot to a source occurrence is NOT done here: that is the
 // pure resolver src/editor/viewport-pick.js, which never touches X_ITE.
@@ -292,12 +296,18 @@
       }
       try {
         const occ = new WeakMap();
+        // VISUAL-3A1: exact span -> the runtime node(s) recorded for it.
+        const bySpan = new Map();
         let kept = 0;
         for (const rec of token.capture.records) {
           if (rec.scene !== scene || rec.ctx !== scene || rec.inProto) continue;
           let list = occ.get(rec.node);
           if (!list) { list = []; occ.set(rec.node, list); }
           list.push(Object.freeze({ start: rec.start, end: rec.end }));
+          const key = `${rec.start}:${rec.end}`;
+          let nodes = bySpan.get(key);
+          if (!nodes) { nodes = new Set(); bySpan.set(key, nodes); }
+          nodes.add(rec.node);
           kept += 1;
         }
         const spans = isProbe ? token.capture.records
@@ -309,7 +319,7 @@
           overlayGeneration: meta.generationId == null ? null : meta.generationId,
           text,
         });
-        gens.set(generation, { scene, occ, kept, spans });
+        gens.set(generation, { scene, occ, bySpan, kept, spans });
         if (!isProbe) pending = generation;
         return { scene, generation };
       } catch (e) {
@@ -384,6 +394,65 @@
       try { return fn(node, 'getTypeName') ? node.getTypeName() : null; } catch (e) { return null; }
     }
 
+    // The runtime parent chain of `root` as PLAIN DATA (labels local to one
+    // call): types, execution-context kinds, provenance occurrences and
+    // parents, up to the scene. Shared by pick() and snapshotSpan().
+    // {graph, label, ctxKind} | {disabled: reason} | {graph: null}.
+    function snapshotGraph(g, root) {
+      const world = liveBrowser.getWorld();
+      const layer0 = world && fn(world, 'getLayer0') ? world.getLayer0() : null;
+      if (!layer0 || !layer0.groupNode || !layer0.groupNodes) return { disabled: 'world-infrastructure-missing' };
+      const infra = new Set([layer0, layer0.groupNode, layer0.groupNodes]);
+
+      // Plain-data snapshot. Labels are local to this call.
+      const labels = new Map();
+      const label = (o) => { if (!labels.has(o)) labels.set(o, `n${labels.size + 1}`); return labels.get(o); };
+      const ctxKind = (node) => {
+        let ctx = null;
+        try { ctx = fn(node, 'getExecutionContext') ? node.getExecutionContext() : null; } catch (e) { ctx = null; }
+        if (!ctx) return 'none';
+        if (ctx === g.scene) return 'document';
+        if (ctx instanceof X3D.X3DScene) return 'external-scene';
+        return 'proto-body';
+      };
+      const runtimeParents = (node) => {
+        const nodes = new Set();
+        const ctxs = [];
+        const seen = new Set();
+        const stack = [...node.getParents()];
+        while (stack.length) {
+          const p = stack.pop();
+          if (!p || seen.has(p)) continue;
+          seen.add(p);
+          if (p instanceof X3D.X3DExecutionContext) { ctxs.push(p === g.scene ? 'SCENE' : 'OTHER_CONTEXT'); continue; }
+          if (p instanceof X3D.X3DBaseNode) { nodes.add(p); continue; }
+          if (fn(p, 'getParents')) for (const q of p.getParents()) stack.push(q);
+        }
+        return { nodes: [...nodes], ctxs };
+      };
+      const graph = {};
+      const queue = [root];
+      try {
+        while (queue.length && Object.keys(graph).length < 256) {
+          const n = queue.shift();
+          const l = label(n);
+          if (graph[l]) continue;
+          const isInfra = infra.has(n);
+          const { nodes, ctxs } = isInfra ? { nodes: [], ctxs: [] } : runtimeParents(n);
+          graph[l] = Object.freeze({
+            type: typeOf(n),
+            ctxKind: isInfra ? 'world-infrastructure' : ctxKind(n),
+            occurrences: Object.freeze((g.occ.get(n) || []).slice()),
+            parents: Object.freeze([...nodes.map(label), ...ctxs]),
+          });
+          for (const p of nodes) queue.push(p);
+        }
+      } catch (e) {
+        return { graph: null };
+      }
+      return { graph: Object.freeze(graph), label, ctxKind };
+    }
+
     function pick(clientX, clientY) {
       const c = compatibility();
       if (!c.ok) return snap('disabled', c.reason, null);
@@ -424,70 +493,85 @@
       }
       if (!fn(shape, 'getTypeName')) return snap('unsupported', 'runtime-node-type-unavailable', generation);
 
-      const world = liveBrowser.getWorld();
-      const layer0 = world && fn(world, 'getLayer0') ? world.getLayer0() : null;
-      if (!layer0 || !layer0.groupNode || !layer0.groupNodes) {
-        structuralDisable('world-infrastructure-missing', false);
-        return snap('disabled', 'world-infrastructure-missing', null);
+      const r = snapshotGraph(g, shape);
+      if (r.disabled) {
+        structuralDisable(r.disabled, false);
+        return snap('disabled', r.disabled, null);
       }
-      const infra = new Set([layer0, layer0.groupNode, layer0.groupNodes]);
-
-      // Plain-data snapshot. Labels are local to this call.
-      const labels = new Map();
-      const label = (o) => { if (!labels.has(o)) labels.set(o, `n${labels.size + 1}`); return labels.get(o); };
-      const ctxKind = (node) => {
-        let ctx = null;
-        try { ctx = fn(node, 'getExecutionContext') ? node.getExecutionContext() : null; } catch (e) { ctx = null; }
-        if (!ctx) return 'none';
-        if (ctx === g.scene) return 'document';
-        if (ctx instanceof X3D.X3DScene) return 'external-scene';
-        return 'proto-body';
-      };
-      const runtimeParents = (node) => {
-        const nodes = new Set();
-        const ctxs = [];
-        const seen = new Set();
-        const stack = [...node.getParents()];
-        while (stack.length) {
-          const p = stack.pop();
-          if (!p || seen.has(p)) continue;
-          seen.add(p);
-          if (p instanceof X3D.X3DExecutionContext) { ctxs.push(p === g.scene ? 'SCENE' : 'OTHER_CONTEXT'); continue; }
-          if (p instanceof X3D.X3DBaseNode) { nodes.add(p); continue; }
-          if (fn(p, 'getParents')) for (const q of p.getParents()) stack.push(q);
-        }
-        return { nodes: [...nodes], ctxs };
-      };
-      const graph = {};
-      const queue = [shape];
-      try {
-        while (queue.length && Object.keys(graph).length < 256) {
-          const n = queue.shift();
-          const l = label(n);
-          if (graph[l]) continue;
-          const isInfra = infra.has(n);
-          const { nodes, ctxs } = isInfra ? { nodes: [], ctxs: [] } : runtimeParents(n);
-          graph[l] = Object.freeze({
-            type: typeOf(n),
-            ctxKind: isInfra ? 'world-infrastructure' : ctxKind(n),
-            occurrences: Object.freeze((g.occ.get(n) || []).slice()),
-            parents: Object.freeze([...nodes.map(label), ...ctxs]),
-          });
-          for (const p of nodes) queue.push(p);
-        }
-      } catch (e) {
-        return snap('unsupported', 'runtime-parents-unavailable', generation);
-      }
+      if (!r.graph) return snap('unsupported', 'runtime-parents-unavailable', generation);
+      const { graph, label, ctxKind } = r;
       return snap('hit', null, generation, {
         shape: label(shape),
         ctxKind: ctxKind(shape),
         sensors: Object.freeze([...hit.sensors.keys()].map(typeOf)),
-        graph: Object.freeze(graph),
+        graph,
       });
     }
 
-    // The WHOLE public surface (contract §Private X_ITE adapter).
-    return Object.freeze({ compatibility, parseWithProvenance, activate, retire, pick, abort, dispose });
+    // ---- VISUAL-3A1 runtime binding (span -> runtime node) ----------------------
+    // The reverse of pick(): the Move tool names an AUTHORED node by its exact
+    // provenance span and asks which runtime node X_ITE's parser created for
+    // it. Same generation rules as pick(): the generation must be one this
+    // adapter minted (pending or active) and its scene must be the one on
+    // screen. Nothing is searched: the span must match a recorded statement
+    // exactly, both ends, and be carried by exactly ONE runtime node.
+
+    // The generation's record, or null when it may not be used now.
+    function usable(generation) {
+      if (!compatibility().ok || !generation) return null;
+      const g = gens.get(generation);
+      if (!g || !g.bySpan || liveBrowser.currentScene !== g.scene) return null;
+      return g;
+    }
+
+    function spanNodes(g, start, end) {
+      if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start) return [];
+      const set = g.bySpan.get(`${start}:${end}`);
+      return set ? [...set] : [];
+    }
+
+    // PLAIN DATA for Rust to prove (wrlforge_vrml::pick::resolve_node): the
+    // located node's runtime chain, exactly as pick() snapshots a hit Shape.
+    function snapshotSpan(generation, start, end) {
+      const c = compatibility();
+      if (!c.ok) return snap('disabled', c.reason, null);
+      const g = usable(generation);
+      if (!g) return snap('stale', 'preview-scene-replaced', generation);
+      const nodes = spanNodes(g, start, end);
+      if (nodes.length !== 1) return snap('unsupported', 'runtime-node-for-span-not-unique', generation, { count: nodes.length });
+      const node = nodes[0];
+      if (!fn(node, 'getParents') || !fn(node, 'getExecutionContext')) return snap('unsupported', 'runtime-parents-unavailable', generation);
+      const r = snapshotGraph(g, node);
+      if (r.disabled) {
+        structuralDisable(r.disabled, false);
+        return snap('disabled', r.disabled, null);
+      }
+      if (!r.graph) return snap('unsupported', 'runtime-parents-unavailable', generation);
+      return snap('found', null, generation, {
+        shape: r.label(node), ctxKind: r.ctxKind(node), sensors: Object.freeze([]), graph: r.graph,
+      });
+    }
+
+    // The runtime node for the span -- for the TRUSTED JavaScript layer only
+    // (the gizmo adapter), never across the Rust/Wasm boundary. null unless
+    // exactly one node carries the span in a usable generation.
+    function nodeAt(generation, start, end) {
+      const g = usable(generation);
+      if (!g) return null;
+      const nodes = spanNodes(g, start, end);
+      return nodes.length === 1 ? nodes[0] : null;
+    }
+
+    // The provenance occurrences of a runtime node (plain data), or null.
+    function spansOf(generation, node) {
+      const g = usable(generation);
+      if (!g || !node || typeof node !== 'object') return null;
+      return Object.freeze((g.occ.get(node) || []).map((o) => Object.freeze({ start: o.start, end: o.end })));
+    }
+
+    // The WHOLE public surface (contract §Private X_ITE adapter, plus the
+    // VISUAL-3A1 binding amendment: snapshotSpan, nodeAt, spansOf).
+    return Object.freeze({ compatibility, parseWithProvenance, activate, retire, pick, abort, dispose, snapshotSpan, nodeAt, spansOf });
   }
 
   const pickAdapterApi = Object.freeze({ createXitePickAdapter });
