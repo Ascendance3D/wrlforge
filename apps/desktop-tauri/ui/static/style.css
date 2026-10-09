@@ -1,0 +1,209 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   WRL Forge desktop (Tauri) — component styles. Sizing follows
+   renderer/editor.html. Colors come ONLY from the semantic --wf-* tokens in
+   themes.css; no raw color value belongs in this file (enforced by the
+   protocol crate's theme tests). */
+:root { --ui: 13px; --wf-font-ui: -apple-system, "Segoe UI", "Cantarell", sans-serif;
+  --wf-font-mono: "JetBrains Mono", "DejaVu Sans Mono", monospace; }
+html { font-size: var(--ui); background: var(--wf-bg-app); }
+/* Hidden until the Rust UI sets the persisted theme (or its 1.5 s fallback):
+   no flash of the wrong theme. The html background is the Tokyo Night fallback. */
+html:not([data-theme]) body { visibility: hidden; }
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--wf-bg-app); color: var(--wf-text-primary); font-family: var(--wf-font-ui); }
+.app { height: 100%; display: flex; flex-direction: column; }
+.toolbar { display: flex; gap: .46rem; align-items: center; padding: .5rem .8rem; background: var(--wf-surface-chrome); border-bottom: 1px solid var(--wf-border); }
+.brand { font-weight: 700; color: var(--wf-text-brand); letter-spacing: .02em; margin-right: .6rem; }
+.toolbar .spacer, .statusbar .spacer { flex: 1 1 auto; }
+.sep { width: 1px; height: 1.4rem; background: var(--wf-separator); margin: 0 .3rem; }
+
+/* buttons */
+button { background: var(--wf-btn-primary-bg); color: var(--wf-btn-primary-fg); border: 1px solid transparent; border-radius: 4px; padding: .42rem .9rem; font-size: .96rem; font-family: inherit; cursor: pointer; }
+button:hover { background: var(--wf-btn-primary-hover-bg); }
+button:active { background: var(--wf-btn-primary-pressed-bg); }
+button.secondary { background: var(--wf-btn-secondary-bg); color: var(--wf-btn-secondary-fg); }
+button.secondary:hover { background: var(--wf-btn-secondary-hover-bg); }
+button.secondary:active { background: var(--wf-btn-secondary-pressed-bg); }
+button[aria-pressed="true"] { background: var(--wf-btn-selected-bg); color: var(--wf-btn-selected-fg); border-color: var(--wf-accent); }
+button.small { padding: .18rem .55rem; font-size: .85rem; }
+button:disabled, button:disabled:hover, button:disabled:active { background: var(--wf-btn-disabled-bg); color: var(--wf-btn-disabled-fg); border-color: var(--wf-border-subtle); cursor: not-allowed; }
+
+/* keyboard focus: one visible ring for every focusable control */
+button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 3px solid var(--wf-focus-ring); outline-offset: 2px; }
+
+/* form controls (Inspector fields, theme selector) */
+input, select { background: var(--wf-surface-input); color: var(--wf-text-editor); border: 1px solid var(--wf-border-control); border-radius: 3px; font-family: inherit; }
+input:focus, select:focus { border-color: var(--wf-input-focus-border); }
+input::placeholder, textarea::placeholder { color: var(--wf-text-placeholder); opacity: 1; }
+input[type="checkbox"] { accent-color: var(--wf-accent); }
+option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
+
+.profile { color: var(--wf-text-muted); font-size: .9rem; }
+.theme-picker { display: flex; gap: .35rem; align-items: center; color: var(--wf-text-muted); font-size: .9rem; }
+.theme-picker select { padding: .25rem .4rem; font-size: .9rem; }
+.theme-error { color: var(--wf-error-fg); background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); border-radius: 3px; padding: .1rem .45rem; font-size: .85rem; max-width: 24rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Create control (VISUAL-1): a menu button and a raised menu, tokens only. */
+.create-menu { position: relative; display: inline-flex; }
+.create-list { position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; display: flex; flex-direction: column; min-width: 11rem; padding: .3rem; gap: .15rem; background: var(--wf-surface-raised); border: 1px solid var(--wf-border); border-radius: 4px; box-shadow: var(--wf-shadow); }
+.create-item { display: flex; align-items: center; gap: .55rem; text-align: left; background: transparent; color: var(--wf-text-primary); padding: .35rem .6rem; }
+.create-item:hover, .create-item:focus-visible { background: var(--wf-surface-hover); color: var(--wf-text-primary); }
+.create-item .glyph { display: inline-block; width: .9rem; height: .9rem; border: 2px solid var(--wf-icon-active); flex: none; }
+.create-item .glyph-box { border-radius: 1px; }
+.create-item .glyph-sphere { border-radius: 50%; }
+.create-item .glyph-cylinder { border-radius: 40% / 18%; }
+.create-item .glyph-cone { width: 0; height: 0; border-width: 0 .5rem .9rem .5rem; border-color: transparent transparent var(--wf-icon-active) transparent; }
+.create-error { color: var(--wf-error-fg); background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); border-radius: 3px; padding: .1rem .45rem; font-size: .85rem; max-width: 28rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.banner { display: flex; gap: .6rem; align-items: center; padding: .5rem .8rem; background: var(--wf-warning-bg); border-bottom: 1px solid var(--wf-warning-border); color: var(--wf-warning-fg); }
+.workspace { flex: 1 1 auto; display: flex; min-height: 0; }
+.pane-title { padding: .35rem .6rem; background: var(--wf-surface-header); color: var(--wf-text-primary); border-bottom: 1px solid var(--wf-border); font-weight: 600; font-size: .92rem; display: flex; align-items: center; gap: .4rem; white-space: nowrap; overflow: hidden; }
+.muted { color: var(--wf-text-muted); font-weight: 400; }
+.badge { font-weight: 400; font-size: .78rem; color: var(--wf-badge-fg); background: var(--wf-badge-bg); border: 1px solid var(--wf-badge-border); border-radius: 3px; padding: 0 .35rem; }
+
+/* Scene Tree */
+.tree-col { flex: 0 0 18rem; display: flex; flex-direction: column; border-right: 1px solid var(--wf-border); min-width: 0; background: var(--wf-surface-panel); }
+.tree { list-style: none; margin: 0; padding: .2rem 0; overflow: auto; flex: 1 1 auto; font-size: .92rem; }
+.tree-item { padding: .14rem .4rem; cursor: pointer; white-space: nowrap; display: flex; gap: .4rem; color: var(--wf-text-primary); }
+.tree-item:hover { background: var(--wf-tree-hover-bg); }
+/* Selected is shown by color AND an inset bar, never color alone. */
+.tree-item.selected { background: var(--wf-tree-selected-bg); color: var(--wf-tree-selected-fg); box-shadow: inset 3px 0 0 var(--wf-tree-selected-indicator); }
+.tree-item .kind { color: var(--wf-tree-kind); font-size: .78rem; min-width: 3.6rem; }
+.tree-item.kind-route .label { color: var(--wf-tree-route); }
+.tree-item.kind-use .label { color: var(--wf-tree-use); }
+.tree-item.kind-proto .label, .tree-item.kind-externproto .label { color: var(--wf-tree-proto); }
+.tree-item.unresolved .label { color: var(--wf-tree-unresolved); text-decoration: underline wavy var(--wf-tree-unresolved); }
+.empty { color: var(--wf-text-muted); padding: .6rem; margin: 0; }
+
+/* Source editor */
+.editor-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; background: var(--wf-surface-editor); }
+/* Two layers with IDENTICAL text metrics (UI-SYNTAX-1): the textarea is the
+   only editing control and paints caret + selection; its glyphs are
+   transparent. The aria-hidden layer behind it paints the same text in
+   syntax colors, follows its scroll by transform, and takes no input.
+   Color, underline and nothing else may differ per token: no weight, style
+   or ligature change, so glyph advances never move. */
+.source-wrap { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--wf-surface-editor); }
+.source-metrics { font-family: var(--wf-font-mono); font-size: 13px; line-height: 18px; tab-size: 4;
+  white-space: pre; letter-spacing: normal; word-spacing: normal; font-variant-ligatures: none; font-kerning: none;
+  font-weight: 400; font-style: normal; text-transform: none; padding: .5rem .7rem; margin: 0; border: 0; }
+.source { position: absolute; inset: 0; width: 100%; height: 100%; resize: none; overflow: auto; z-index: 1;
+  background: transparent; color: transparent; -webkit-text-fill-color: transparent; caret-color: var(--wf-editor-caret); }
+.source::selection { background: var(--wf-editor-selection-bg); color: var(--wf-editor-selection-fg); -webkit-text-fill-color: var(--wf-editor-selection-fg); }
+.source::placeholder { -webkit-text-fill-color: var(--wf-text-placeholder); }
+.source:focus-visible { outline-offset: -3px; }
+.source-hl { position: absolute; top: 0; left: 0; min-width: 100%; min-height: 100%; overflow: visible;
+  color: var(--wf-text-editor); pointer-events: none; user-select: none; -webkit-user-select: none; will-change: transform; }
+.source-hl span { font: inherit; }
+.tk-header, .tk-keyword { color: var(--wf-syntax-keyword); }
+.tk-comment { color: var(--wf-syntax-comment); }
+.tk-route { color: var(--wf-syntax-route); }
+.tk-literal, .tk-number { color: var(--wf-syntax-number); }
+.tk-string { color: var(--wf-syntax-string); }
+.tk-node-type, .tk-field-type { color: var(--wf-syntax-node-type); }
+.tk-field { color: var(--wf-syntax-field); }
+.tk-def-name, .tk-def-ref { color: var(--wf-syntax-def-name); }
+.tk-punctuation { color: var(--wf-syntax-punctuation); }
+.tk-invalid { color: var(--wf-syntax-invalid); }
+/* Diagnostics are marked by an underline SHAPE as well as color. */
+.dg-error { text-decoration: underline wavy var(--wf-error-fg); text-decoration-skip-ink: none; }
+.dg-warning { text-decoration: underline dashed var(--wf-warning-fg); text-decoration-skip-ink: none; }
+/* Smoke-only registration check: the textarea's own glyphs are painted over
+   the color layer; any offset shows as doubled glyphs in a screenshot. */
+.source-wrap[data-align-check] .source { -webkit-text-fill-color: var(--wf-syntax-invalid); color: var(--wf-syntax-invalid); }
+.diag-head { color: var(--wf-text-muted); font-size: .8rem; margin-bottom: .15rem; }
+.diagnostics { flex: 0 0 auto; max-height: 8.5rem; overflow: auto; border-top: 1px solid var(--wf-border); background: var(--wf-surface-panel); color: var(--wf-text-secondary); padding: .3rem .6rem; font-size: .88rem; }
+.diagnostics ul { margin: 0; padding: 0; list-style: none; }
+.diag { cursor: pointer; padding: .05rem 0; }
+.diag .sev { font-weight: 700; margin-right: .35rem; }
+.diag.error { color: var(--wf-error-fg); }
+.diag.warning { color: var(--wf-warning-fg); }
+.diag.info { color: var(--wf-info-fg); }
+.ok { color: var(--wf-success-fg); }
+
+/* Right column: viewport + Inspector */
+.right-col { flex: 0 0 34%; min-width: 22rem; display: flex; flex-direction: column; border-left: 1px solid var(--wf-border); }
+.viewport { flex: 1 1 55%; display: flex; flex-direction: column; min-height: 0; background: var(--wf-viewport-bg); }
+.viewport .pane-title { background: var(--wf-viewport-header-bg); border-bottom-color: var(--wf-viewport-border); }
+/* The canvas element's own background shows only before X_ITE paints; the
+   scene's authored Background is never overridden. */
+x3d-canvas#viewport { flex: 1 1 auto; width: 100%; min-height: 12rem; display: block; background: var(--wf-viewport-canvas-bg); }
+.preview-status { font-size: .82rem; color: var(--wf-viewport-status-fg); padding: .2rem .6rem; border-top: 1px solid var(--wf-viewport-border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toggle { font-weight: 400; font-size: .85rem; display: flex; gap: .2rem; align-items: center; margin-left: auto; }
+.inspector { flex: 1 1 45%; overflow: auto; border-top: 1px solid var(--wf-border); background: var(--wf-surface-panel); }
+.inspector h3 { margin: .5rem .6rem; font-size: 1rem; color: var(--wf-text-heading); }
+.fields { border-collapse: collapse; width: 100%; font-size: .88rem; }
+.fields tr { cursor: pointer; }
+.fields tr:hover { background: var(--wf-surface-hover); }
+.fields th { text-align: left; font-weight: 600; color: var(--wf-text-primary); padding: .18rem .6rem; vertical-align: top; white-space: nowrap; }
+.fields td { padding: .18rem .4rem; vertical-align: top; }
+.fields td.kind { color: var(--wf-tree-kind); font-size: .8rem; }
+.fields code { white-space: pre-wrap; word-break: break-all; color: var(--wf-text-editor); font-family: var(--wf-font-mono); font-size: 12px; }
+
+/* Status bar */
+.statusbar { display: flex; gap: 1.1rem; align-items: center; padding: .28rem .8rem; background: var(--wf-surface-chrome); border-top: 1px solid var(--wf-border); font-size: .88rem; color: var(--wf-text-secondary); white-space: nowrap; overflow: hidden; }
+.statusbar .msg { color: var(--wf-warning-fg); overflow: hidden; text-overflow: ellipsis; }
+
+/* Inspector field editing (TAURI-RUST-MIGRATION-2) */
+.fields.editable tr { cursor: default; }
+.fields.editable th { cursor: pointer; }
+.fields.editable tr.ro th { color: var(--wf-text-muted); }
+.fields .controls { display: flex; flex-wrap: wrap; gap: .25rem .4rem; align-items: center; }
+.fields .comp { display: inline-flex; gap: .2rem; align-items: center; color: var(--wf-tree-kind); font-size: .78rem; }
+.fields .comp input.num { width: 5.2rem; }
+.fields .comp input.text { width: 14rem; }
+.fields .comp input, .fields .comp select { padding: .1rem .25rem; font-family: var(--wf-font-mono); font-size: 12px; }
+.fields .reason { margin-left: .4rem; color: var(--wf-warning-fg); font-size: .74rem; }
+.field-error { margin: .4rem .6rem; padding: .3rem .5rem; background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); color: var(--wf-error-fg); border-radius: 3px; font-size: .85rem; }
+.readonly-note { margin: .3rem .6rem; color: var(--wf-warning-fg); font-size: .85rem; }
+
+/* Scrollbars: the standard property (Chromium / WebView2) and the WebKit
+   pseudo-elements (WebKitGTK, WKWebView). */
+* { scrollbar-color: var(--wf-scrollbar-thumb) var(--wf-scrollbar-track); }
+::-webkit-scrollbar { width: 12px; height: 12px; background: var(--wf-scrollbar-track); }
+::-webkit-scrollbar-thumb { background: var(--wf-scrollbar-thumb); border-radius: 6px; border: 3px solid var(--wf-scrollbar-track); }
+::-webkit-scrollbar-thumb:hover { background: var(--wf-scrollbar-thumb-hover); }
+::-webkit-scrollbar-thumb:active { background: var(--wf-scrollbar-thumb-active); }
+::-webkit-scrollbar-corner { background: var(--wf-scrollbar-track); }
+
+/* No theme or hover animation exists; this guards any future one. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
+/* VISUAL-2 viewport selection: Select mode cursor and the pick result line. */
+x3d-canvas.picking { cursor: crosshair; }
+.pick-status { padding: .2rem .6rem; font-size: .85rem; color: var(--wf-text-muted); border-top: 1px solid var(--wf-border-subtle); }
+.pick-status[data-kind="ok"] { color: var(--wf-text-primary); }
+.pick-status[data-kind="refused"] { color: var(--wf-warning-fg); background: var(--wf-warning-bg); }
+
+/* VISUAL-3A translation gizmo. The SVG covers the canvas but takes no
+   pointer input itself; only usable handles do. Axis colors are the theme's
+   --wf-axis-* tokens over a halo, so they read on any rendered background.
+   Disabled = faded, dashed, no pointer input: never looks usable. */
+.viewport-stage { position: relative; flex: 1 1 auto; min-height: 12rem; display: flex; }
+.viewport-stage x3d-canvas#viewport { flex: 1 1 auto; height: auto; }
+.gizmo { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.gizmo[data-state="hidden"] { display: none; }
+.gz-handle { pointer-events: none; }
+.gz-handle .gz-hit { stroke: transparent; stroke-width: 16; stroke-linecap: round; }
+.gz-handle .gz-halo { stroke: var(--wf-gizmo-halo); stroke-width: 7; stroke-linecap: round; }
+.gz-handle .gz-line { stroke-width: 3.5; stroke-linecap: round; }
+.gz-handle .gz-tip { stroke: var(--wf-gizmo-halo); stroke-width: 2.5; }
+#gz-x .gz-line { stroke: var(--wf-axis-x); } #gz-x .gz-tip { fill: var(--wf-axis-x); }
+#gz-y .gz-line { stroke: var(--wf-axis-y); } #gz-y .gz-tip { fill: var(--wf-axis-y); }
+#gz-z .gz-line { stroke: var(--wf-axis-z); } #gz-z .gz-tip { fill: var(--wf-axis-z); }
+.gizmo[data-state="ready"] .gz-handle:not(.disabled),
+.gizmo[data-state="dragging"] .gz-handle.active { pointer-events: stroke; cursor: grab; }
+.gizmo[data-state="ready"] .gz-handle:not(.disabled) .gz-tip { pointer-events: all; }
+.gizmo[data-state="ready"] .gz-handle:not(.disabled):hover .gz-line { stroke-width: 5.5; }
+.gizmo[data-state="ready"] .gz-handle:not(.disabled):hover .gz-halo { stroke-width: 9.5; }
+.gizmo[data-state="ready"] .gz-handle:not(.disabled):hover .gz-tip { r: 9; }
+.gz-handle.active { cursor: grabbing; }
+.gz-handle.active .gz-halo { stroke: var(--wf-gizmo-active); stroke-width: 10; }
+.gz-handle.active .gz-line { stroke-width: 5.5; }
+.gz-handle.active .gz-tip { stroke: var(--wf-gizmo-active); r: 9; }
+.gz-handle.disabled { opacity: .45; }
+.gz-handle.disabled .gz-line { stroke: var(--wf-gizmo-disabled); stroke-dasharray: 4 4; }
+.gz-handle.disabled .gz-tip { fill: none; stroke: var(--wf-gizmo-disabled); }
+.gz-origin { fill: var(--wf-gizmo-halo); stroke: var(--wf-gizmo-active); stroke-width: 2; }
+.gizmo[data-state="disabled"] .gz-origin { stroke: var(--wf-gizmo-disabled); }

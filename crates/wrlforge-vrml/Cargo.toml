@@ -1,0 +1,11 @@
+[package]
+name = "wrlforge-vrml"
+description = "WRL Forge native VRML97 tokenizer, structural parser and scene projection (TAURI-RUST-MIGRATION-1). Pure: text in, tree out. No I/O."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+# Standard library only.
+[dependencies]

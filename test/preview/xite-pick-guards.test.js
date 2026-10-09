@@ -169,7 +169,9 @@ test('the C0 research spike is not a production input', () => {
 });
 
 // ---- contract surface (QA #1 / #2 blocking findings) ---------------------------
-const CONTRACT_METHODS = ['abort', 'activate', 'compatibility', 'dispose', 'parseWithProvenance', 'pick', 'retire'];
+// The seven WD2-D contract methods plus the VISUAL-3A1 binding amendment
+// (snapshotSpan, nodeAt, spansOf); nothing else.
+const CONTRACT_METHODS = ['abort', 'activate', 'compatibility', 'dispose', 'nodeAt', 'parseWithProvenance', 'pick', 'retire', 'snapshotSpan', 'spansOf'];
 
 function freshAdapterModule() {
   const abs = path.join(ROOT, ADAPTER);
@@ -187,7 +189,7 @@ test('surface: the module exports ONLY createXitePickAdapter (CommonJS and brows
   assert.ok(Object.isFrozen(sandbox.window.WrlXitePickAdapter));
 });
 
-test('surface: an adapter has EXACTLY the seven contract methods, frozen', () => {
+test('surface: an adapter has EXACTLY the contract methods (WD2-D seven + VISUAL-3A1 three), frozen', () => {
   const { createFakeX3D, createFakeBrowser } = require('./_fake-xite');
   const A = freshAdapterModule();
   const X3D = createFakeX3D();

@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# TAURI-RUST-MIGRATION-1: the Rust/Tauri 2 desktop application.
+#
+# A separate Cargo workspace from `crates/` on purpose: the Tauri and Leptos
+# dependency trees must not re-resolve the RUST-1 research lockfile
+# (`crates/Cargo.lock`, which pins wasm-bindgen =0.2.129 for the Electron
+# boundary proofs). The pure crates are shared by PATH, not forked.
+[workspace]
+resolver = "2"
+members = ["protocol", "src-tauri", "ui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+publish = false
+rust-version = "1.95"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.release.package.wrlforge-ui]
+opt-level = "z"

@@ -128,9 +128,24 @@ recorded here with:
 
 ### Current entries
 
-**None.** No third-party implementation code has been copied, adapted, or translated
-into WRL Forge's own source. Everything under `src/`, `renderer/`, `main.js`,
-`preload.js`, `validator.js`, and `scripts/` is original work.
+**TN-1 — Tokyo Night colour values (UI-THEME-1)**
+
+| field | value |
+|---|---|
+| Upstream project | Tokyo Night VS Code theme |
+| Source | <https://github.com/tokyo-night/tokyo-night-vscode-theme> |
+| Version | commit `7c0f11eaef322f293621ca7befe462214b7ea468` (package `1.1.2`) |
+| Component | `themes/tokyo-night-color-theme.json`, `themes/tokyo-night-storm-color-theme.json`, `themes/tokyo-night-light-color-theme.json` (colour values only) |
+| Authors | Copyright (c) 2018-present Enkia |
+| License | `MIT` |
+| Destination | `apps/desktop-tauri/ui/static/themes.css` |
+| Mode | `adapted` — colour values, not code. No theme JSON, token-scope rule or extension file is copied or shipped. |
+| Local changes | Upstream workbench roles are mapped onto WRL Forge's own `--wf-*` semantic tokens. Translucent upstream values are pre-blended onto their surface. Some text, selection, border, scrollbar and accent values are adjusted (lightened on dark themes, darkened on Light) to meet WCAG AA 4.5:1 / 3:1; the pairs are asserted by `apps/desktop-tauri/protocol/src/theme/tests.rs`. |
+| Notices | The upstream copyright and commit are in the `themes.css` header. The full MIT text ships as `apps/desktop-tauri/ui/static/LICENSE-tokyo-night.txt`, copied into `dist/` by `build-ui.sh`. Listed in `THIRD_PARTY_NOTICES.md`. |
+
+No third-party implementation **code** has been copied, adapted, or translated into WRL
+Forge's own source. Everything under `src/`, `renderer/`, `main.js`, `preload.js`,
+`validator.js`, and `scripts/` is original work.
 
 Third-party components that WRL Forge **depends on and redistributes unmodified**
 (x_ite, CodeMirror, Electron, and their bundled assets) are not implementation
@@ -194,6 +209,19 @@ WRL Forge's byte-preserving document invariant.
 **If geometry algorithms are ever wanted**, take Poly2Tri (BSD-3-Clause), catmull-clark
 (MIT) and FTGL (MIT) from **their own upstreams**, not through White Dune: better terms,
 cleaner provenance, active maintenance. Those would be `THIRD_PARTY_NOTICES.md` entries.
+
+**VISUAL-3A — White Dune handle architecture (translation gizmo)**
+
+| field | value |
+|---|---|
+| Project | **White Dune** 1.956 |
+| Local source | `~/Projects/cybertown/white_dune` (owner-supplied for VISUAL-3A; its own checkout, outside the WRL Forge repository; opened **read-only**, nothing modified or copied) |
+| Files studied | `src/Node.h` (`getHandle()`, `setHandle()`, `drawHandles()` declarations), `src/TransformNode.cpp` (`getHandle()` / `setHandle()` / `drawHandles()` for `TRANSLATION_X/Y/Z`), `src/Scene3DView.cpp` (handle drag: project / unproject, `constrainLine`) |
+| License verified | each studied file's own header: Copyright (C) 1999 Stephen F. White (`Node.h` also 2005 J. "MUFTI" Scheurich), GNU GPL "version 2 … or (at your option) any later version" — `GPL-2.0-or-later` |
+| Mode | **conceptually informed only.** The idea taken is the split between a handle that REPORTS a position for one field (`getHandle`) and a drag that turns a constrained handle position into a new value for that field (`setHandle`), drawn per node (`drawHandles`). |
+| Not taken | No code, data structure, constant, numeric scene path or source writer. White Dune's handles live in the Transform's rotated local frame and its drag unprojects at the handle's screen depth; WRL Forge's VISUAL-3A gizmo uses **world** axes for top-level Transforms and a closest-point-between-lines axis drag (`apps/desktop-tauri/protocol/src/gizmo.rs`), binds the rendered node by X_ITE parser provenance proven link by link in Rust (VISUAL-3A1; never a White Dune-style numeric scene path, nor a root index, as identity), and writes one source token through the existing field-edit planner (`crates/wrlforge-vrml/src/manipulate.rs`). |
+| Destination files | `crates/wrlforge-vrml/src/manipulate.rs`, `apps/desktop-tauri/protocol/src/gizmo.rs` (each names the design reference in its header) |
+| Status | design reference; §4 register correctly still reads **None** for White Dune |
 
 **WD1.7-E0 — blaxxun compatibility-evidence study**
 

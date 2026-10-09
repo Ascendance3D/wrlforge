@@ -804,6 +804,32 @@ No change: no IPC channel, no preload capability, no main-process code, no CSP
 edit, no network or filesystem access. The adapter wraps a method of X_ITE's
 own parser for the duration of one parse in the existing renderer page.
 
+## VISUAL-3A1 amendment — span binding (Tauri Move tool)
+
+Three methods are added to the adapter's public surface; the seven methods
+above and every rule for them are unchanged.
+
+- `snapshotSpan(generation, start, end)` — the reverse of `pick()`: the ONE
+  runtime node the generation's provenance recorded for the exact span
+  `[start, end)`, as the same plain-data chain snapshot `pick()` returns for
+  a hit Shape (outcome `found`), or `unsupported` /
+  `runtime-node-for-span-not-unique` (with `count`) when zero or several
+  runtime nodes carry it, `stale` for a generation that is not on screen,
+  `disabled` when compatibility is not proven. No search: both span ends
+  must match a recorded statement exactly.
+- `nodeAt(generation, start, end)` — that runtime node, under the same
+  rules, for the trusted JavaScript layer only (it never crosses into
+  Rust); `null` otherwise.
+- `spansOf(generation, node)` — a runtime node's provenance occurrences, as
+  plain data.
+
+A generation is usable while this adapter holds it (pending or active) and
+its scene is the one on screen; a retired, replaced or disposed generation
+answers nothing. The span index is built in the same pass as the occurrence
+map, per generation, never module state. Rust proves the snapshot
+(`wrlforge_vrml::pick::resolve_node`, the chain proof of a pick) before the
+Move tool binds anything.
+
 ## Deferred scope
 
 Model/Play toggle and sensor-dispatch suppression (UI-0), opening Inline

@@ -1,0 +1,36 @@
+[package]
+name = "wrl-forge-desktop"
+description = "WRL Forge desktop application (Tauri 2 / Rust). TAURI-RUST-MIGRATION-1."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+default-run = "wrl-forge"
+
+[lib]
+name = "wrl_forge_desktop"
+path = "src/lib.rs"
+
+[[bin]]
+name = "wrl-forge"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+wrlforge-desktop-protocol = { path = "../protocol" }
+wrlforge-text = { path = "../../../crates/wrlforge-text" }
+wrlforge-vrml = { path = "../../../crates/wrlforge-vrml" }
+wrlforge-document = { path = "../../../crates/wrlforge-document" }
+
+[features]
+# Serve the bundled `dist/` through Tauri's custom protocol (no dev server).
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
