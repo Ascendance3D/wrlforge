@@ -17,6 +17,7 @@ pub mod field_edit;
 pub mod highlight;
 pub mod node_schema;
 pub mod parser;
+pub mod pick;
 pub mod scene;
 pub mod tokenizer;
 
