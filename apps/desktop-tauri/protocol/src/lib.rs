@@ -283,6 +283,22 @@ pub struct SmokePlan {
     /// 2 (G / Y) of the first editable `diffuseColor` (else `translation`)
     /// to this value, through the real Inspector controls.
     pub inspector_value: Option<String>,
+    /// `--smoke-theme`: also drive the toolbar theme selector (UI-THEME-1).
+    #[serde(default)]
+    pub theme: Option<ThemeSmoke>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ThemeSmoke {
+    /// The theme the window must show at startup (from the settings file).
+    pub expect_startup: String,
+    /// A startup notice (corrupt / unknown settings) must be visible.
+    pub expect_notice: bool,
+    /// The theme the run selects last; persisted for the next run.
+    pub final_theme: String,
+    /// The settings directory is unwritable: saves must fail visibly.
+    pub expect_save_failure: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

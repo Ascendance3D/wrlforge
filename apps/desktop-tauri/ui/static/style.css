@@ -6,6 +6,9 @@
 :root { --ui: 13px; --wf-font-ui: -apple-system, "Segoe UI", "Cantarell", sans-serif;
   --wf-font-mono: "JetBrains Mono", "DejaVu Sans Mono", monospace; }
 html { font-size: var(--ui); background: var(--wf-bg-app); }
+/* Hidden until the Rust UI sets the persisted theme (or its 1.5 s fallback):
+   no flash of the wrong theme. The html background is the Tokyo Night fallback. */
+html:not([data-theme]) body { visibility: hidden; }
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body { background: var(--wf-bg-app); color: var(--wf-text-primary); font-family: var(--wf-font-ui); }

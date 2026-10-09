@@ -8,11 +8,13 @@
 pub mod commands;
 pub mod files;
 pub mod service;
+pub mod settings;
 pub mod smoke;
 
 use std::path::PathBuf;
 
 use tauri::Manager;
+use wrlforge_desktop_protocol as p;
 
 struct Args {
     open: Option<PathBuf>,
@@ -20,6 +22,9 @@ struct Args {
     smoke_report: Option<PathBuf>,
     smoke_no_preview: bool,
     smoke_inspector: bool,
+    smoke_theme: Option<p::ThemeSmoke>,
+    /// Override the settings directory (tests only; never the user's).
+    config_dir: Option<PathBuf>,
 }
 
 fn parse_args() -> Args {
@@ -29,7 +34,12 @@ fn parse_args() -> Args {
         smoke_report: None,
         smoke_no_preview: false,
         smoke_inspector: false,
+        smoke_theme: None,
+        config_dir: None,
     };
+    let mut theme_final = None;
+    let mut theme_expect = None;
+    let (mut theme_notice, mut theme_fails) = (false, false);
     let mut it = std::env::args_os().skip(1);
     while let Some(arg) = it.next() {
         match arg.to_str() {
@@ -37,10 +47,23 @@ fn parse_args() -> Args {
             Some("--smoke-report") => a.smoke_report = it.next().map(PathBuf::from),
             Some("--smoke-no-preview") => a.smoke_no_preview = true,
             Some("--smoke-inspector") => a.smoke_inspector = true,
+            Some("--smoke-theme") => theme_final = it.next().and_then(|s| s.into_string().ok()),
+            Some("--smoke-theme-expect") => {
+                theme_expect = it.next().and_then(|s| s.into_string().ok())
+            }
+            Some("--smoke-theme-notice") => theme_notice = true,
+            Some("--smoke-theme-save-fails") => theme_fails = true,
+            Some("--config-dir") => a.config_dir = it.next().map(PathBuf::from),
             _ if a.open.is_none() => a.open = Some(PathBuf::from(arg)),
             _ => {}
         }
     }
+    a.smoke_theme = theme_final.map(|final_theme| p::ThemeSmoke {
+        expect_startup: theme_expect.unwrap_or_else(|| p::theme::DEFAULT_THEME.into()),
+        expect_notice: theme_notice,
+        final_theme,
+        expect_save_failure: theme_fails,
+    });
     a
 }
 
@@ -52,6 +75,16 @@ pub fn run() {
         .manage(commands::Startup::default())
         .manage(smoke::SmokeState::default())
         .setup(move |app| {
+            // Application preferences: Tauri's per-app config directory.
+            let store = match args.config_dir.clone() {
+                Some(d) => settings::SettingsStore::open(d),
+                None => match app.path().app_config_dir() {
+                    Ok(d) => settings::SettingsStore::open(d),
+                    Err(e) => settings::SettingsStore::unavailable(&e.to_string()),
+                },
+            };
+            let settings_path = store.path();
+            app.manage(store);
             let target = args.smoke.clone().or(args.open.clone());
             if let Some(path) = target {
                 let outcome = app.state::<service::Service>().open_path(&path);
@@ -64,6 +97,8 @@ pub fn run() {
                         args.smoke_report.clone(),
                         !args.smoke_no_preview,
                         args.smoke_inspector,
+                        args.smoke_theme.clone(),
+                        settings_path,
                     )
                     .map_err(|e| format!("smoke: {e}"))?;
             }
@@ -86,6 +121,8 @@ pub fn run() {
             commands::doc_edit_field,
             commands::doc_preview_source,
             commands::window_title,
+            commands::theme_get,
+            commands::theme_set,
             commands::smoke_plan,
             commands::smoke_finish,
         ])

@@ -30,6 +30,10 @@ struct Plan {
     report_path: Option<PathBuf>,
     expect_preview: bool,
     inspector: bool,
+    theme: Option<p::ThemeSmoke>,
+    settings_path: Option<PathBuf>,
+    /// The settings file as it was before the run (None = absent).
+    settings_before: Option<Vec<u8>>,
 }
 
 #[derive(Default)]
@@ -42,7 +46,10 @@ impl SmokeState {
         report_path: Option<PathBuf>,
         expect_preview: bool,
         inspector: bool,
+        theme: Option<p::ThemeSmoke>,
+        settings_path: Option<PathBuf>,
     ) -> Result<(), String> {
+        let settings_before = settings_path.as_ref().and_then(|sp| std::fs::read(sp).ok());
         let original_bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
         let (original_text, format) = files::decode(&original_bytes).map_err(|e| e.to_string())?;
         *self.0.lock().unwrap() = Some(Plan {
@@ -53,6 +60,9 @@ impl SmokeState {
             report_path,
             expect_preview,
             inspector,
+            theme,
+            settings_path,
+            settings_before,
         });
         Ok(())
     }
@@ -61,6 +71,7 @@ impl SmokeState {
             insert_text: INSERT.into(),
             expect_preview: pl.expect_preview,
             inspector_value: pl.inspector.then(|| INSPECTOR_VALUE.to_string()),
+            theme: pl.theme.clone(),
         })
     }
 }
@@ -146,6 +157,13 @@ pub fn finish(app: &AppHandle, report: p::SmokeReport) {
             ok: temps == 0,
             detail: format!("{temps}"),
         });
+        if let Some(t) = &pl.theme {
+            steps.push(theme_settings_step(
+                t,
+                &pl.settings_path,
+                &pl.settings_before,
+            ));
+        }
         let all = steps.iter().all(|s| s.ok);
         let json = serde_json::to_string_pretty(&serde_json::json!({ "pass": all, "file": pl.path.file_name().map(|n| n.to_string_lossy().into_owned()), "steps": steps })).unwrap();
         println!("{json}");
@@ -153,6 +171,43 @@ pub fn finish(app: &AppHandle, report: p::SmokeReport) {
             let _ = std::fs::write(rp, &json);
         }
         app.exit(if all { 0 } else { 1 });
+    }
+}
+
+/// Rust's own check of the settings file after a theme run: the final theme
+/// was persisted, or (save-failure run) the file is byte-identical.
+fn theme_settings_step(
+    t: &p::ThemeSmoke,
+    path: &Option<PathBuf>,
+    before: &Option<Vec<u8>>,
+) -> p::SmokeStep {
+    let Some(path) = path else {
+        return p::SmokeStep {
+            name: "rust: theme settings file".into(),
+            ok: false,
+            detail: "no settings path".into(),
+        };
+    };
+    let now = std::fs::read(path).ok();
+    if t.expect_save_failure {
+        return p::SmokeStep {
+            name: "rust: failed theme saves left the settings file byte-identical".into(),
+            ok: &now == before,
+            detail: format!(
+                "{} -> {} bytes",
+                before.as_ref().map_or(0, |b| b.len()),
+                now.as_ref().map_or(0, |b| b.len())
+            ),
+        };
+    }
+    let loaded = now.as_deref().map(crate::settings::parse);
+    let ok = loaded
+        .as_ref()
+        .is_some_and(|l| l.theme_id == t.final_theme && l.notice.is_none());
+    p::SmokeStep {
+        name: "rust: settings file persists the final theme (schemaVersion 1)".into(),
+        ok,
+        detail: format!("{:?}", loaded.map(|l| l.theme_id)),
     }
 }
 

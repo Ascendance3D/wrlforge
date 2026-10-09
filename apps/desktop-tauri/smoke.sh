@@ -1,20 +1,35 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # In-window end-to-end smoke test on DISPOSABLE copies (never a user file).
-# Usage: ./smoke.sh [--headless] [--no-preview] [--inspector] file.wrl...
+# Usage: ./smoke.sh [--headless] [--no-preview] [--inspector]
+#                   [--theme FINAL_ID [--theme-expect ID] [--theme-notice] [--theme-save-fails]]
+#                   [--config-dir DIR] file.wrl...
+# Settings (theme) go to a fresh TEMPORARY config dir per file unless
+# --config-dir is given: a smoke run never touches the user's preferences.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-bin="$here/target/debug/wrl-forge"
-xvfb=(); extra=()
+bin="${WRLFORGE_BIN:-$here/target/debug/wrl-forge}"
+xvfb=(); extra=(); cfg=""
 while [[ "${1:-}" == --* ]]; do
-  case "$1" in --headless) xvfb=(xvfb-run -a -s "-screen 0 1600x1000x24");; --no-preview) extra+=(--smoke-no-preview);; --inspector) extra+=(--smoke-inspector);; esac; shift
+  case "$1" in
+    --headless) xvfb=(xvfb-run -a -s "-screen 0 1600x1000x24");;
+    --no-preview) extra+=(--smoke-no-preview);;
+    --inspector) extra+=(--smoke-inspector);;
+    --theme) extra+=(--smoke-theme "$2"); shift;;
+    --theme-expect) extra+=(--smoke-theme-expect "$2"); shift;;
+    --theme-notice) extra+=(--smoke-theme-notice);;
+    --theme-save-fails) extra+=(--smoke-theme-save-fails);;
+    --config-dir) cfg="$2"; shift;;
+  esac; shift
 done
 work="$(mktemp -d /tmp/wrlforge-tauri-smoke.XXXXXX)"
+case "${cfg:-/tmp/}" in /tmp/*) ;; *) echo "refusing non-/tmp --config-dir: $cfg" >&2; exit 2;; esac
 fail=0
 for src in "$@"; do
   d="$work/$(basename "$src").d"; mkdir -p "$d"; cp "$src" "$d/"
   f="$d/$(basename "$src")"
-  timeout 120 "${xvfb[@]}" "$bin" --smoke "$f" --smoke-report "$d/report.json" "${extra[@]}" >"$d/stdout.txt" 2>"$d/stderr.txt"
+  c="${cfg:-$d/config}"; mkdir -p "$c"
+  timeout 120 "${xvfb[@]}" "$bin" --smoke "$f" --smoke-report "$d/report.json" --config-dir "$c" "${extra[@]}" >"$d/stdout.txt" 2>"$d/stderr.txt"
   code=$?
   pass=$(sed -n 's/.*"pass": *\(true\|false\).*/\1/p' "$d/report.json" 2>/dev/null | head -1)
   echo "$(basename "$src"): exit=$code pass=${pass:-none} report=$d/report.json"

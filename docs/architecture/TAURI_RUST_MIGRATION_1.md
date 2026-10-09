@@ -59,7 +59,7 @@ workspace; `crates/Cargo.lock` gained only their two path entries.
 | `src/editor/session.js`, `session-store.js`, `editor-controller.js`, `path-authorizer.js` | `src-tauri/src/service.rs` + `commands.rs` | PARTIAL | Rust-owned sessions; paths only from native dialogs or the launch argument. No multi-document UI. No World-graph authorization. |
 | `src/editor/language.js` + CodeMirror 6 | `<textarea>` + `ui/src/editor.rs` | PARTIAL | No syntax highlighting, no gutter, no folding. CodeMirror is NOT used. |
 | `src/editor/recovery-store.js`, `recovery-controller.js` | — | PENDING | No crash recovery. |
-| `src/editor/ui-state.js` (zoom, themes) | — | PENDING | One dark theme; no zoom or high-contrast theme. |
+| `src/editor/ui-state.js` (zoom, themes) | `protocol::theme` + `ui/src/theme.rs` + `ui/static/themes.css` | PARTIAL | UI-THEME-1: three built-in Tokyo Night themes (`tokyo-night` default, `tokyo-night-storm`, `tokyo-night-light`), toolbar selector, persisted. No zoom, High Contrast or Follow System yet. |
 | `src/editor/command-registry.js`, `panel-registry.js`, `workspace-presets.js`, `src/shell/*` | — | PENDING | Fixed layout; toolbar and shortcuts only. |
 | `src/editor/scene-selection.js` | `ui/src/panels.rs` (tree → span select) | PARTIAL | Selection goes one way only (tree → source). |
 | `src/editor/viewport-pick.js`, `src/preview/xite-pick-adapter.js` | — | PENDING | No viewport picking. |
@@ -72,7 +72,7 @@ workspace; `crates/Cargo.lock` gained only their two path entries.
 | `validator.js`, `src/mall/*` | — | PENDING | Mall Item profile (80 KiB cap, rules, repack) not ported. `safe_save` already has the `max_bytes` ceiling. |
 | `src/world-project/*` | — | PENDING | Scanner, asset graph, preview scheme, ZIP bundle not ported (`zip-writer` should use `flate2`). |
 | `src/external-proto/*`, `src/proto-resolution/*`, `src/proto-enrichment/*` | — | PENDING | |
-| `src/settings/*` | — | PENDING | No persisted settings or window state. |
+| `src/settings/*` | `src-tauri/src/settings.rs` | PARTIAL | `settings.json` in Tauri's app config dir: `{"schemaVersion":1,"themeId":…}` only. No window state. |
 | `main.js`, `preload.js` | `src-tauri/src/lib.rs`, Tauri capabilities | PARTIAL | Only the editor-lane IPC exists. |
 
 ## JavaScript still in the Tauri application
@@ -89,6 +89,22 @@ CodeMirror, esbuild, the Electron runtime and all `node_modules` application
 code are **not** used by the Tauri application.
 
 ## Notes and findings
+
+* **Themes (UI-THEME-1).** `themes.css` holds every palette value; `style.css`
+  reads only semantic `--wf-*` tokens. `REQUIRED_TOKENS` in
+  `protocol/src/theme.rs` is the contract: each theme must define exactly that
+  set, `style.css` may hold no raw colour, and listed text / control pairs must
+  meet WCAG AA (`cargo test -p wrlforge-desktop-protocol`). `--wf-syntax-*`
+  and `--wf-axis-*` are reserved and unused: there is no syntax highlighting
+  and no transform overlay yet. Switching sets `<html data-theme>` in the same
+  event turn and persists through `theme_set`; it never touches the document,
+  history, selection, Inspector or X_ITE scene. The body stays hidden until the
+  persisted theme is applied (1.5 s fallback), so there is no flash of the
+  wrong theme; the CSS fallback is Tokyo Night. Settings writes are temp +
+  fsync + rename; corrupt, unknown, wrong-version or oversized files fall back
+  to Tokyo Night with a visible notice. Smoke: `./smoke.sh --headless --theme
+  <final-id> [--theme-expect id] [--theme-notice] [--theme-save-fails]`; it
+  always uses a temporary `--config-dir`.
 
 * **BOM (fixed in Rust, Migration-2).** The JS tokenizer reads a leading
   U+FEFF as an identifier (`VRML001` + `VRML020` and a bogus node), which makes

@@ -13,6 +13,7 @@ use tauri_plugin_dialog::DialogExt;
 use wrlforge_desktop_protocol as p;
 
 use crate::service::Service;
+use crate::settings::SettingsStore;
 use crate::smoke::SmokeState;
 
 /// The document opened from the launch argument, handed to the UI once.
@@ -183,4 +184,21 @@ pub fn window_title(app: AppHandle, session: p::SessionId) -> Result<(), String>
         w.set_title(&title).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// The active theme and the built-in choices. Application state, not document
+/// state: no session is involved.
+#[tauri::command]
+pub fn theme_get(settings: State<'_, SettingsStore>) -> p::theme::ThemeState {
+    settings.state()
+}
+
+/// Validate a theme id against the built-in registry and persist it.
+/// Synchronous so selections apply and persist in the order they were made.
+#[tauri::command]
+pub fn theme_set(
+    settings: State<'_, SettingsStore>,
+    theme_id: String,
+) -> p::theme::ThemeSetOutcome {
+    settings.set_theme(&theme_id)
 }

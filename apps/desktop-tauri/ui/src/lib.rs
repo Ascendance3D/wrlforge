@@ -8,6 +8,7 @@ mod editor;
 mod ipc;
 mod panels;
 mod smoke;
+mod theme;
 mod ui;
 
 use leptos::prelude::*;
@@ -22,7 +23,11 @@ use crate::ui::ui;
 pub fn start() {
     leptos::mount::mount_to_body(App);
     ui::start_external_watch();
+    // The UI stays hidden (style.css) until `<html data-theme>` is set, so a
+    // persisted Storm/Light choice never flashes Tokyo Night widgets first.
+    theme::reveal_fallback();
     spawn_local(async {
+        theme::init().await;
         if let Ok(Some(o)) =
             ipc::call::<Option<p::OpenOutcome>>("startup_document", ipc::NoArgs {}).await
         {
@@ -93,6 +98,8 @@ fn App() -> impl IntoView {
                 <button id="btn-redo" class="secondary" disabled=move || !u.can_redo.get()
                     on:click=move |_| spawn_local(editor::history(false))>"Redo"</button>
                 <span class="spacer"></span>
+                <theme::ThemePicker/>
+                <span class="sep"></span>
                 <span class="profile" title="Profiles are not yet migrated to Rust">
                     "Profile: Generic VRML97 · Mall / World profiles not migrated"
                 </span>

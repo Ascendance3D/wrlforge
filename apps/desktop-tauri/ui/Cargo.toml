@@ -25,7 +25,7 @@ wrlforge-desktop-protocol = { path = "../protocol" }
 version = "0.3"
 features = [
   "Window", "Document", "Element", "HtmlElement", "HtmlTextAreaElement",
-  "HtmlInputElement", "HtmlSelectElement",
-  "Event", "EventTarget", "InputEvent", "InputEventInit", "KeyboardEvent", "KeyboardEventInit",
+  "HtmlInputElement", "HtmlSelectElement", "NodeList",
+  "Event", "EventInit", "EventTarget", "InputEvent", "InputEventInit", "KeyboardEvent", "KeyboardEventInit",
   "Performance", "console", "DomRect", "CssStyleDeclaration",
 ]

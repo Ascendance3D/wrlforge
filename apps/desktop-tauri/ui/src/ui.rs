@@ -30,6 +30,9 @@ pub struct Ui {
     pub preview_status: RwSignal<String>,
     pub preview_enabled: RwSignal<bool>,
     pub last_save: RwSignal<Option<String>>,
+    /// X_ITE scene loads this run (lets tests prove a theme switch never
+    /// reloads the preview).
+    pub preview_loads: RwSignal<u64>,
 }
 
 thread_local! {
@@ -54,6 +57,7 @@ pub fn ui() -> Ui {
             preview_status: RwSignal::new("idle".into()),
             preview_enabled: RwSignal::new(true),
             last_save: RwSignal::new(None),
+            preview_loads: RwSignal::new(0),
         })
     })
 }
@@ -241,6 +245,7 @@ pub async fn preview(force: bool) {
         Ok(src) => {
             CORE.with_borrow_mut(|c| c.previewed = Some(src.revision));
             let status = ipc::preview_load(&src.text).await;
+            u.preview_loads.update(|n| *n += 1);
             u.preview_status
                 .set(format!("rev {} · {status}", src.revision));
         }

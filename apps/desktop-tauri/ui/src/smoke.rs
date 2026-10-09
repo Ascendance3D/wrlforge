@@ -136,6 +136,10 @@ async fn run_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
         "",
     );
 
+    if let Some(t) = &plan.theme {
+        theme_steps(t, plan.expect_preview, r).await?;
+    }
+
     if let Some(value) = &plan.inspector_value {
         inspector_steps(value, plan.expect_preview, r).await?;
     }
@@ -499,5 +503,352 @@ async fn inspector_steps(value: &str, expect_preview: bool, r: &mut R) -> Option
             ui().selected.get_untracked()
         ),
     );
+    Some(())
+}
+
+// ---- UI-THEME-1 ----------------------------------------------------------
+
+fn computed(el: &web_sys::Element, prop: &str) -> String {
+    web_sys::window()
+        .and_then(|w| w.get_computed_style(el).ok().flatten())
+        .and_then(|cs| cs.get_property_value(prop).ok())
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+fn token(name: &str) -> String {
+    doc_el()
+        .and_then(|d| d.document_element())
+        .map(|root| computed(&root, name))
+        .unwrap_or_default()
+}
+
+/// `#rrggbb` -> the `rgb(r, g, b)` form getComputedStyle reports.
+fn hex_rgb(hex: &str) -> String {
+    let h = hex.trim().trim_start_matches('#');
+    let c = |i: usize| u8::from_str_radix(h.get(i..i + 2).unwrap_or("zz"), 16).ok();
+    match (c(0), c(2), c(4)) {
+        (Some(r), Some(g), Some(b)) if h.len() == 6 => format!("rgb({r}, {g}, {b})"),
+        _ => format!("<not #rrggbb: {hex}>"),
+    }
+}
+
+/// Every application-owned surface this run checks, with the token that must
+/// paint it: (CSS selector, CSS property, token).
+const SURFACES: &[(&str, &str, &str)] = &[
+    ("body", "background-color", "--wf-bg-app"),
+    (".toolbar", "background-color", "--wf-surface-chrome"),
+    (".brand", "color", "--wf-text-brand"),
+    ("#btn-open", "background-color", "--wf-btn-primary-bg"),
+    ("#btn-open", "color", "--wf-btn-primary-fg"),
+    ("#btn-undo", "background-color", "--wf-btn-secondary-bg"),
+    ("#theme-select", "background-color", "--wf-surface-input"),
+    ("#theme-select", "color", "--wf-text-editor"),
+    (".tree-col", "background-color", "--wf-surface-panel"),
+    (
+        ".tree-col .pane-title",
+        "background-color",
+        "--wf-surface-header",
+    ),
+    (".tree-item:not(.selected)", "color", "--wf-text-primary"),
+    (
+        ".tree-item.selected",
+        "background-color",
+        "--wf-tree-selected-bg",
+    ),
+    ("#source", "background-color", "--wf-surface-editor"),
+    ("#source", "color", "--wf-text-editor"),
+    (".diagnostics", "background-color", "--wf-surface-panel"),
+    (".inspector", "background-color", "--wf-surface-panel"),
+    ("#inspector-title", "color", "--wf-text-heading"),
+    (".viewport", "background-color", "--wf-viewport-bg"),
+    (
+        ".viewport .pane-title",
+        "background-color",
+        "--wf-viewport-header-bg",
+    ),
+    (".viewport .badge", "background-color", "--wf-badge-bg"),
+    ("#preview-status", "color", "--wf-viewport-status-fg"),
+    (".statusbar", "background-color", "--wf-surface-chrome"),
+    (".statusbar", "color", "--wf-text-secondary"),
+];
+
+fn surfaces_match() -> (bool, String) {
+    let Some(d) = doc_el() else {
+        return (false, "no document".into());
+    };
+    let mut bad = vec![];
+    let mut n = 0;
+    for (sel, prop, tok) in SURFACES {
+        let Some(el) = d.query_selector(sel).ok().flatten() else {
+            bad.push(format!("{sel}: missing"));
+            continue;
+        };
+        n += 1;
+        let (got, want) = (computed(&el, prop), hex_rgb(&token(tok)));
+        if got != want {
+            bad.push(format!("{sel} {prop} {got} != {tok} {want}"));
+        }
+    }
+    (
+        bad.is_empty(),
+        if bad.is_empty() {
+            format!("{n} surfaces")
+        } else {
+            bad.join("; ")
+        },
+    )
+}
+
+#[derive(PartialEq, Debug)]
+struct DocState {
+    revision: u64,
+    dirty: bool,
+    view_hash: u64,
+    can_undo: bool,
+    can_redo: bool,
+    textarea_hash: u64,
+    selection: (u32, u32),
+    selected: Option<String>,
+    inspection: Option<p::Inspection>,
+    preview_loads: u64,
+}
+
+async fn doc_state() -> Option<DocState> {
+    let s = snapshot().await?;
+    let ta = textarea()?;
+    Some(DocState {
+        revision: s.revision,
+        dirty: s.dirty,
+        view_hash: p::view_hash(&s.view),
+        can_undo: s.can_undo,
+        can_redo: s.can_redo,
+        textarea_hash: p::view_hash(&ta.value()),
+        selection: (
+            ta.selection_start().ok().flatten().unwrap_or(u32::MAX),
+            ta.selection_end().ok().flatten().unwrap_or(u32::MAX),
+        ),
+        selected: ui().selected.get_untracked(),
+        inspection: ui().inspection.get_untracked(),
+        preview_loads: ui().preview_loads.get_untracked(),
+    })
+}
+
+fn choose(sel: &web_sys::HtmlSelectElement, id: &str) -> Option<()> {
+    sel.set_value(id);
+    let init = web_sys::EventInit::new();
+    init.set_bubbles(true);
+    let ev = web_sys::Event::new_with_event_init_dict("change", &init).ok()?;
+    sel.dispatch_event(&ev).ok()?;
+    Some(())
+}
+
+/// Theme selector through the real toolbar control, on a DIRTY document with
+/// an undo history, a Scene Tree selection and a live Inspector.
+async fn theme_steps(t: &p::ThemeSmoke, expect_preview: bool, r: &mut R) -> Option<()> {
+    use crate::theme::{current_attribute, theme};
+    use wrlforge_desktop_protocol::theme::{ThemeSetOutcome, ThemeState, THEMES};
+
+    let st = call::<ThemeState>("theme_get", ipc::NoArgs {}).await.ok()?;
+    let sel: web_sys::HtmlSelectElement = crate::element_by_id("theme-select")?;
+    r.step(
+        "theme: startup theme is the persisted one, applied before use",
+        current_attribute().as_deref() == Some(t.expect_startup.as_str())
+            && st.theme_id == t.expect_startup
+            && sel.value() == t.expect_startup,
+        format!(
+            "html {:?}, backend {}, select {}",
+            current_attribute(),
+            st.theme_id,
+            sel.value()
+        ),
+    );
+    let notice = doc_el()?
+        .get_element_by_id("theme-error")
+        .and_then(|e| e.text_content());
+    r.step(
+        "theme: startup notice shown only for unusable settings",
+        notice.is_some() == t.expect_notice
+            && (!t.expect_notice
+                || notice
+                    .as_deref()
+                    .is_some_and(|n| n.contains("using Tokyo Night"))),
+        notice.unwrap_or_else(|| "(none)".into()),
+    );
+    let opts: Vec<String> = (0..sel.length())
+        .filter_map(|i| sel.item(i))
+        .filter_map(|o| o.get_attribute("value"))
+        .collect();
+    let labelled = doc_el()?
+        .query_selector("label[for=\"theme-select\"]")
+        .ok()
+        .flatten()
+        .and_then(|l| l.text_content())
+        .is_some_and(|t| t.contains("Theme"));
+    r.step(
+        "theme: labelled selector lists the three built-in themes",
+        labelled && opts == THEMES.iter().map(|d| d.id.to_string()).collect::<Vec<_>>(),
+        opts.join(", "),
+    );
+
+    // Keyboard focus is visible on the selector.
+    let _ = sel.focus();
+    let focused = doc_el()?
+        .active_element()
+        .is_some_and(|a| a.id() == "theme-select");
+    let fv = sel.matches(":focus-visible").unwrap_or(false);
+    let (style, width, color) = (
+        computed(&sel, "outline-style"),
+        computed(&sel, "outline-width"),
+        computed(&sel, "outline-color"),
+    );
+    let ring = hex_rgb(&token("--wf-focus-ring"));
+    r.step(
+        "theme: focused selector shows the focus-ring token",
+        focused && (!fv || (style == "solid" && width == "3px" && color == ring)),
+        format!("focus-visible {fv}, outline {style} {width} {color} (ring {ring})"),
+    );
+
+    // A selection and an Inspector to preserve: the first of the first few
+    // tree items that inspects.
+    ui::analyze().await;
+    wait_for(|| doc_el()?.query_selector(".tree-item").ok().flatten()).await?;
+    let items = doc_el()?.query_selector_all(".tree-item").ok()?;
+    let mut inspected = None;
+    for i in 0..items.length().min(6) {
+        let li: HtmlElement = items.item(i)?.dyn_into().ok()?;
+        li.click();
+        if wait_for(|| ui().inspection.get_untracked().map(|_| ()))
+            .await
+            .is_some()
+        {
+            inspected = Some(i);
+            break;
+        }
+    }
+    if !r.step(
+        "theme: a Scene Tree item was selected and inspected",
+        inspected.is_some(),
+        format!("tree item #{inspected:?}"),
+    ) {
+        return None;
+    }
+    settle().await;
+    if expect_preview {
+        // Let any pending live preview finish so it is not mistaken for a
+        // theme-triggered reload.
+        ipc::sleep(900).await;
+        wait_for(|| (!ui().preview_status.get_untracked().starts_with("updating")).then_some(()))
+            .await;
+    }
+    let before = doc_state().await?;
+    r.step(
+        "theme: baseline is a dirty document with history and a selection",
+        before.dirty && before.can_undo && before.selected.is_some() && before.inspection.is_some(),
+        format!("rev {}, selected {:?}", before.revision, before.selected),
+    );
+
+    let mut order: Vec<&str> = THEMES
+        .iter()
+        .map(|d| d.id)
+        .filter(|id| *id != t.expect_startup)
+        .collect();
+    order.push(t.expect_startup.as_str());
+    if order.last() != Some(&t.final_theme.as_str()) {
+        order.push(t.final_theme.as_str());
+    }
+    let mut editor_bgs = vec![];
+    for id in order {
+        choose(&sel, id)?;
+        let applied = current_attribute().as_deref() == Some(id);
+        let (ok_surfaces, detail) = surfaces_match();
+        let bg = token("--wf-surface-editor");
+        if !editor_bgs.contains(&bg) {
+            editor_bgs.push(bg.clone());
+        }
+        r.step(
+            &format!("theme {id}: applied immediately to every checked surface"),
+            applied && ok_surfaces,
+            format!("html {:?}; {detail}", current_attribute()),
+        );
+        // Wait for Rust's reply (persist or visible failure).
+        let replied = wait_for(|| {
+            let e = theme().error.get_untracked();
+            if t.expect_save_failure {
+                e.filter(|m| m.contains("NOT saved")).map(|_| ())
+            } else {
+                e.is_none().then_some(())
+            }
+        })
+        .await;
+        ipc::sleep(60).await;
+        let backend = call::<ThemeState>("theme_get", ipc::NoArgs {}).await.ok()?;
+        let shown = doc_el()?
+            .get_element_by_id("theme-error")
+            .and_then(|e| e.text_content());
+        r.step(
+            &format!(
+                "theme {id}: {}",
+                if t.expect_save_failure {
+                    "save failure is visible and non-fatal"
+                } else {
+                    "persisted by Rust"
+                }
+            ),
+            replied.is_some()
+                && backend.theme_id == id
+                && current_attribute().as_deref() == Some(id)
+                && (shown.is_some() == t.expect_save_failure),
+            shown.unwrap_or_else(|| "(no error shown)".into()),
+        );
+        let now = doc_state().await?;
+        r.step(
+            &format!("theme {id}: document, history, selection, Inspector and preview unchanged"),
+            now == before,
+            if now == before {
+                format!("rev {}", now.revision)
+            } else {
+                format!("{before:?} -> {now:?}")
+            },
+        );
+    }
+    r.step(
+        "theme: the three themes paint distinct editor surfaces",
+        editor_bgs.len() == THEMES.len(),
+        editor_bgs.join(" "),
+    );
+    if expect_preview {
+        ipc::sleep(900).await; // past the live-preview debounce
+        let now = doc_state().await?;
+        r.step(
+            "theme: switching never reloaded the X_ITE scene",
+            now.preview_loads == before.preview_loads,
+            format!("{} loads", now.preview_loads),
+        );
+    }
+
+    // Rust refuses ids outside the registry, through the real IPC.
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        theme_id: String,
+    }
+    let out = call::<ThemeSetOutcome>(
+        "theme_set",
+        Args {
+            theme_id: "solarized".into(),
+        },
+    )
+    .await;
+    let after = call::<ThemeState>("theme_get", ipc::NoArgs {}).await.ok()?;
+    r.step(
+        "theme: backend rejects an unknown theme id and keeps the current one",
+        matches!(out, Ok(ThemeSetOutcome::Rejected { .. })) && after.theme_id == t.final_theme,
+        format!("{out:?}"),
+    );
+    if !t.expect_save_failure {
+        theme().error.set(None);
+    }
     Some(())
 }

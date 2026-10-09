@@ -35,9 +35,11 @@ cargo test -p wrl-forge-desktop                       # file + session services
 (cd ../../crates && cargo test -p wrlforge-vrml -p wrlforge-document)
 ./smoke.sh --headless file.wrl...                     # in-window end-to-end, on temp copies
 ./smoke.sh --headless --inspector file.wrl...         # also drives a real Inspector field edit
+./smoke.sh --headless --theme tokyo-night-light file.wrl...   # drives the theme selector (UI-THEME-1)
 (cd ../.. && node scripts/check-rust-node-schema-parity.js)  # Rust/JS node schema equality
 ../../spikes/tauri-rust-migration-1/parity.sh <dir>   # JS-vs-Rust parser parity (needs node)
 ```
 
 `smoke.sh` always copies its inputs to a fresh `/tmp` directory first. It never
-touches the original files.
+touches the original files. Settings go to a temporary `--config-dir` per file,
+never to the user's real preferences (`<app config dir>/settings.json`).

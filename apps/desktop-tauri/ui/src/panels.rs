@@ -20,7 +20,7 @@ pub fn SceneTree() -> impl IntoView {
                     {move || u.analysis.with(|a| a.as_ref().map(|a| format!(" · {} items · {} scope", a.items.len(), a.resolution_scope)).unwrap_or_default())}
                 </span>
             </div>
-            <ul class="tree" role="tree">
+            <ul class="tree" role="tree" aria-label="Scene items">
                 {move || u.analysis.with(|a| a.as_ref().map(|a| a.items.iter().map(|it| {
                     let id = it.id.clone();
                     let id_sel = it.id.clone();
@@ -31,7 +31,8 @@ pub fn SceneTree() -> impl IntoView {
                     let title = it.use_status.clone().map(|s| format!("USE {s} (flat scope, non-authoritative)")).unwrap_or_default();
                     view! {
                         <li role="treeitem" class=class style=pad title=title data-id=id.clone()
-                            class:selected=move || u.selected.get().as_deref() == Some(id_sel.as_str())
+                            class:selected={let id_sel = id_sel.clone(); move || u.selected.get().as_deref() == Some(id_sel.as_str())}
+                            aria-selected=move || if u.selected.get().as_deref() == Some(id_sel.as_str()) { "true" } else { "false" }
                             on:click=move |_| {
                                 editor::select(from, to);
                                 let id = id.clone();
@@ -243,6 +244,8 @@ pub fn Diagnostics() -> impl IntoView {
                             let (f, t) = (d.view_from, d.view_to);
                             view! {
                                 <li class=format!("diag {}", d.severity) on:click=move |_| editor::select(f, t)>
+                                    // Severity in words too: never colour alone.
+                                    <span class="sev">{severity_label(&d.severity)}</span>
                                     {format!("{}:{} {} {}", d.line, d.column, d.code, d.message)}
                                 </li>
                             }
@@ -251,6 +254,15 @@ pub fn Diagnostics() -> impl IntoView {
                 }.into_any(),
             })}
         </div>
+    }
+}
+
+fn severity_label(s: &str) -> String {
+    match s {
+        "error" => "Error".into(),
+        "warning" => "Warning".into(),
+        "info" => "Info".into(),
+        other => other.to_string(),
     }
 }
 
