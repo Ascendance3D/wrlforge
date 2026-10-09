@@ -40,17 +40,18 @@ workspace; `crates/Cargo.lock` gained only their two path entries.
 
 | existing JS module | Rust replacement | status | remaining dependency / gap |
 |---|---|---|---|
-| `src/vrml/tokenizer.js` | `wrlforge-vrml::tokenizer` | MIGRATED | Trivia arrays not kept (no consumer). Positions are `u32`. |
+| `src/vrml/tokenizer.js` | `wrlforge-vrml::tokenizer` | MIGRATED | Trivia arrays not kept (no consumer). Positions are `u32`. A leading U+FEFF is signature trivia (Migration-2; deliberate difference, see notes). |
 | `src/vrml/parser.js`, `ast.js`, `diagnostics.js` (syntax codes) | `wrlforge-vrml::{parser, ast, diagnostics}` | MIGRATED | Parity: 673/673 files identical (65 fixtures + 608 `new-items/item-categories`). |
 | `src/vrml/scene-tree.js` | `wrlforge-vrml::scene::build_scene_tree` | PARTIAL | Same inclusion rules and id format; no PROTO-instance flags, no read-only map API, flat USE scope only. |
-| inspector read side (`presentation.js`, `interface-query.js`) | `wrlforge-vrml::scene::inspect` | PARTIAL | Shows exact source text per field; no schema types, no messages catalog. |
+| inspector read side (`presentation.js`, `interface-query.js`) | `wrlforge-vrml::scene::inspect` + `field_edit::inspect_node_fields` | PARTIAL | Node items show schema-typed field descriptors; no messages catalog. |
 | `src/vrml/analyze.js` (VRML040–044) | — | PENDING | Advisory semantic diagnostics not ported. |
 | `src/vrml/symbols.js`, `scope-graph.js` (WD1.5) | — | PENDING | Largest remaining port (~4,600 lines). |
 | `src/vrml/edit.js` (WD1.2) | `wrlforge-text::edit` (RUST-1) | MIGRATED | Used by `wrlforge-document` for every edit. |
 | `src/vrml/source-map.js` | `wrlforge-text` offsets + `ViewMap` | PARTIAL | Offset↔token lookup not exposed. |
-| `src/vrml/node-identity.js`, `document-transaction.js` (WD1.4) | — | PENDING | Selections are by span id only; no Tier-1/Tier-2 identity. |
-| `src/vrml/node-schema.js` | — | PENDING | Generate a Rust table from the same two inputs. |
-| `field-edit.js`, `structure-edit.js`, `inspector-edit.js`, `first-object.js`, `simple-object.js`, `node-templates.js` | — | PENDING | No visual editing commands yet. |
+| `src/vrml/node-identity.js`, `document-transaction.js` (WD1.4) | span proof in `field_edit` + `wrlforge-document::{apply_source_transaction, map_span}` | PARTIAL | Edits require exactly one node at the exact span of the current revision, re-proved after re-parse. Selections survive undo/redo only through exact change mapping. No Tier-2 DEF identity. |
+| `src/vrml/node-schema.js` | `wrlforge-vrml::node_schema` | MIGRATED | Generated field-for-field from the committed JS schema (`scripts/build-rust-node-schema.js`, `--check`); `scripts/check-rust-node-schema-parity.js` proves value equality (54 nodes, 544 fields, 10 classes). |
+| `src/vrml/field-edit.js` (WD2-B) | `wrlforge-vrml::field_edit` | MIGRATED | Same nine types, reason ids, lexical gates and round-trip proof. Stricter: nodes in PROTO/EXTERNPROTO/interface scope refuse; SFString line breaks refuse. |
+| `structure-edit.js`, `inspector-edit.js`, `first-object.js`, `simple-object.js`, `node-templates.js` | — | PENDING | No structural editing yet. |
 | `compatibility.js`, `semantic-findings.js`, `messages.js`, `containment.js`, `proto-*.js`, `asset-refs.js` | — | PENDING | |
 | `src/editor/wrl-document.js` | `wrlforge-document::Document` | MIGRATED | One canonical buffer; dirty, revision, undo/redo are Rust-owned. |
 | `src/editor/file-io.js` | `src-tauri/src/files.rs` | MIGRATED | Same 7-step order. Stricter: refuses invalid UTF-8; exact byte stamp instead of SHA-1. |
@@ -89,10 +90,20 @@ code are **not** used by the Tauri application.
 
 ## Notes and findings
 
-* **BOM parity defect (pre-existing).** A leading U+FEFF is tokenized as an
-  identifier by both the JS and the Rust parser (`VRML001` + `VRML020` and a
-  bogus node). The Rust port keeps parity; fix both together. The preview strips
-  a leading BOM only from the text it hands to X_ITE, because X_ITE rejects it.
+* **BOM (fixed in Rust, Migration-2).** The JS tokenizer reads a leading
+  U+FEFF as an identifier (`VRML001` + `VRML020` and a bogus node), which makes
+  every BOM file read-only for field editing. The Rust tokenizer now skips it as
+  signature trivia while every span still counts it, so BOM files parse cleanly
+  and stay byte-exact. The JS tokenizer is unchanged. The preview still strips a
+  leading BOM only from the text it hands to X_ITE.
+* **Writable Inspector (Migration-2).** `doc_edit_field` names the node by its
+  Scene Tree id and the revision the Inspector was built from. Rust refuses a
+  stale revision, re-finds exactly one node at that span, plans token-span
+  edits, re-parses to prove the same node and value, and applies the set as one
+  undo step whose result must equal the planned text. The UI sends raw text and
+  adopts only Rust's reply. Verified headless (Xvfb) on
+  `new-items/item-categories/decorative/velvet-thornwing.wrl` copies in gzip,
+  LF, BOM + CRLF and lone-CR forms: `./smoke.sh --headless --inspector`.
 * **Editor view.** A `<textarea>` normalizes line breaks, so the UI edits a
   `\n`-only view projection and `wrlforge-document` maps it back to source.
   CRLF, lone CR, mixed endings, BOM and non-ASCII text are preserved exactly

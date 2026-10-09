@@ -24,6 +24,8 @@ pub struct Ui {
     pub analysis: RwSignal<Option<p::Analysis>>,
     pub selected: RwSignal<Option<String>>,
     pub inspection: RwSignal<Option<p::Inspection>>,
+    /// The last Inspector refusal, shown until the next selection or edit.
+    pub field_error: RwSignal<Option<String>>,
     pub conflict: RwSignal<Option<String>>,
     pub preview_status: RwSignal<String>,
     pub preview_enabled: RwSignal<bool>,
@@ -47,6 +49,7 @@ pub fn ui() -> Ui {
             analysis: RwSignal::new(None),
             selected: RwSignal::new(None),
             inspection: RwSignal::new(None),
+            field_error: RwSignal::new(None),
             conflict: RwSignal::new(None),
             preview_status: RwSignal::new("idle".into()),
             preview_enabled: RwSignal::new(true),
@@ -151,10 +154,74 @@ pub async fn inspect(id: String) {
     .await
     {
         Ok(i) => {
-            ui().selected.set(Some(id));
-            ui().inspection.set(i);
+            let u = ui();
+            if u.selected.get_untracked().as_deref() != Some(id.as_str()) {
+                u.field_error.set(None);
+            }
+            u.selected.set(Some(id));
+            u.inspection.set(i);
         }
         Err(e) => flash(&format!("Inspector failed: {e}")),
+    }
+}
+
+/// Send one Inspector field edit to Rust. The request names the node by the
+/// item id of the revision the Inspector was built from; Rust refuses it if
+/// the document moved on. The UI adopts nothing until Rust applies it.
+pub async fn edit_field(field_index: u32, field_name: String, components: Vec<p::FieldInput>) {
+    editor::idle().await;
+    let u = ui();
+    let (Some(session), Some(insp)) = (
+        CORE.with_borrow(|c| c.session),
+        u.inspection.get_untracked(),
+    ) else {
+        return;
+    };
+    #[derive(serde::Serialize)]
+    struct A {
+        request: p::FieldEditRequest,
+    }
+    let request = p::FieldEditRequest {
+        session,
+        base_revision: insp.revision,
+        item: insp.id.clone(),
+        field_index,
+        field_name: field_name.clone(),
+        components,
+    };
+    match call::<p::FieldEditOutcome>("doc_edit_field", A { request }).await {
+        Ok(p::FieldEditOutcome::Applied {
+            state, view, item, ..
+        }) => {
+            u.field_error.set(None);
+            editor::adopt_change(&state, view);
+            u.selected.set(Some(item.clone()));
+            inspect(item).await;
+            flash(&format!(
+                "{field_name} changed (revision {}).",
+                state.revision
+            ));
+        }
+        Ok(p::FieldEditOutcome::Unchanged) => flash(&format!("{field_name}: no change.")),
+        Ok(p::FieldEditOutcome::Refused {
+            reason,
+            message,
+            component_index,
+        }) => {
+            let at = component_index
+                .map(|i| format!(" (component {})", i + 1))
+                .unwrap_or_default();
+            let m = format!(
+                "Not changed — {field_name}{at}: {}",
+                message.unwrap_or_else(|| reason.clone())
+            );
+            u.field_error.set(Some(format!("{m} [{reason}]")));
+            flash(&m);
+        }
+        Err(e) => {
+            u.field_error.set(Some(format!("Field edit failed: {e}")));
+            flash(&format!("Field edit failed: {e}"));
+        }
     }
 }
 

@@ -72,16 +72,18 @@ pub fn doc_edit(
 pub fn doc_undo(
     svc: State<'_, Service>,
     session: p::SessionId,
+    item: Option<String>,
 ) -> Result<p::HistoryOutcome, String> {
-    svc.undo(session)
+    svc.history_with_item(session, true, item.as_deref())
 }
 
 #[tauri::command]
 pub fn doc_redo(
     svc: State<'_, Service>,
     session: p::SessionId,
+    item: Option<String>,
 ) -> Result<p::HistoryOutcome, String> {
-    svc.redo(session)
+    svc.history_with_item(session, false, item.as_deref())
 }
 
 #[tauri::command]
@@ -139,6 +141,15 @@ pub fn doc_inspect(
     item: String,
 ) -> Result<Option<p::Inspection>, String> {
     svc.inspect(session, &item)
+}
+
+/// Synchronous for the same ordering reason as `doc_edit`.
+#[tauri::command]
+pub fn doc_edit_field(
+    svc: State<'_, Service>,
+    request: p::FieldEditRequest,
+) -> Result<p::FieldEditOutcome, String> {
+    svc.edit_field(&request)
 }
 
 #[tauri::command]

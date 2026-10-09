@@ -19,6 +19,7 @@ struct Args {
     smoke: Option<PathBuf>,
     smoke_report: Option<PathBuf>,
     smoke_no_preview: bool,
+    smoke_inspector: bool,
 }
 
 fn parse_args() -> Args {
@@ -27,6 +28,7 @@ fn parse_args() -> Args {
         smoke: None,
         smoke_report: None,
         smoke_no_preview: false,
+        smoke_inspector: false,
     };
     let mut it = std::env::args_os().skip(1);
     while let Some(arg) = it.next() {
@@ -34,6 +36,7 @@ fn parse_args() -> Args {
             Some("--smoke") => a.smoke = it.next().map(PathBuf::from),
             Some("--smoke-report") => a.smoke_report = it.next().map(PathBuf::from),
             Some("--smoke-no-preview") => a.smoke_no_preview = true,
+            Some("--smoke-inspector") => a.smoke_inspector = true,
             _ if a.open.is_none() => a.open = Some(PathBuf::from(arg)),
             _ => {}
         }
@@ -56,7 +59,12 @@ pub fn run() {
             }
             if let Some(path) = args.smoke.clone() {
                 app.state::<smoke::SmokeState>()
-                    .arm(path, args.smoke_report.clone(), !args.smoke_no_preview)
+                    .arm(
+                        path,
+                        args.smoke_report.clone(),
+                        !args.smoke_no_preview,
+                        args.smoke_inspector,
+                    )
                     .map_err(|e| format!("smoke: {e}"))?;
             }
             Ok(())
@@ -75,6 +83,7 @@ pub fn run() {
             commands::doc_reload,
             commands::doc_analyze,
             commands::doc_inspect,
+            commands::doc_edit_field,
             commands::doc_preview_source,
             commands::window_title,
             commands::smoke_plan,

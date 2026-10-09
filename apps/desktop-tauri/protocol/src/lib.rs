@@ -79,7 +79,13 @@ pub enum EditOutcome {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum HistoryOutcome {
-    Applied { state: DocState, view: String },
+    Applied {
+        state: DocState,
+        view: String,
+        /// The selected node's item id carried through the exact change, or
+        /// `None` when it cannot be proven (or nothing was selected).
+        item: Option<String>,
+    },
     Nothing,
 }
 
@@ -168,6 +174,92 @@ pub struct Inspection {
     pub id: String,
     pub title: String,
     pub rows: Vec<InspectorRow>,
+    /// Typed field descriptors when the item is a node; `None` otherwise.
+    pub node: Option<NodeFields>,
+}
+
+/// One component of an editable value, as Rust read it from the source.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldComponent {
+    pub label: String,
+    /// Bool: `TRUE`/`FALSE`; number: the exact source lexeme; string: decoded.
+    pub text: String,
+    pub bool_value: Option<bool>,
+}
+
+/// One explicitly authored field of a node (`wrlforge_vrml::field_edit`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EditableField {
+    /// Index into the node's body statements; sent back with an edit.
+    pub index: u32,
+    pub name: String,
+    pub field_type: Option<String>,
+    pub declaration: Option<String>,
+    /// "bool" | "number" | "string" when the type is editable.
+    pub kind: Option<String>,
+    pub editable: bool,
+    /// A stable reason id (`ok` when editable).
+    pub reason: String,
+    pub components: Vec<FieldComponent>,
+    /// Human text of the schema's numeric bounds, if any.
+    pub bounds: Option<String>,
+    pub constraint_note: Option<String>,
+    pub value_excerpt: String,
+    pub view_from: u64,
+    pub view_to: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeFields {
+    pub editable: bool,
+    pub reason: String,
+    pub node_type: Option<String>,
+    pub fields: Vec<EditableField>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum FieldInput {
+    Bool { value: bool },
+    Text { value: String },
+}
+
+/// An Inspector edit. The node is named by the Scene Tree item id of the
+/// SAME revision; Rust re-proves the node and field before any change.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldEditRequest {
+    pub session: SessionId,
+    pub base_revision: u64,
+    pub item: String,
+    pub field_index: u32,
+    pub field_name: String,
+    pub components: Vec<FieldInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum FieldEditOutcome {
+    /// Applied as one undo step. `view` is the new editor view.
+    Applied {
+        state: DocState,
+        view: String,
+        changed: Vec<u32>,
+        /// The same node's Scene Tree item id in the NEW revision (its end
+        /// moved by the edit; its start did not).
+        item: String,
+    },
+    /// The value already holds exactly this text; nothing changed.
+    Unchanged,
+    /// Refused; the buffer and revision are unchanged.
+    Refused {
+        reason: String,
+        message: Option<String>,
+        component_index: Option<u32>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -185,6 +277,10 @@ pub struct PreviewSource {
 pub struct SmokePlan {
     pub insert_text: String,
     pub expect_preview: bool,
+    /// `--smoke-inspector`: also drive an Inspector edit that sets component
+    /// 2 (G / Y) of the first editable `diffuseColor` (else `translation`)
+    /// to this value, through the real Inspector controls.
+    pub inspector_value: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

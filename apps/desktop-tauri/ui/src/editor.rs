@@ -11,6 +11,7 @@
 
 use std::cell::RefCell;
 
+use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::JsCast;
 use web_sys::HtmlTextAreaElement;
@@ -200,19 +201,26 @@ pub async fn history(undo: bool) {
         return;
     };
     let cmd = if undo { "doc_undo" } else { "doc_redo" };
-    match call::<p::HistoryOutcome>(cmd, Session { session }).await {
-        Ok(p::HistoryOutcome::Applied { state, view }) => {
-            CORE.with_borrow_mut(|c| {
-                c.shown = view.clone();
-                c.revision = state.revision;
-                c.generation += 1;
-            });
-            if let Some(ta) = textarea() {
-                ta.set_value(&view);
-                let caret = state.caret as u32;
-                let _ = ta.set_selection_range(caret, caret);
+    #[derive(serde::Serialize)]
+    struct A {
+        session: u64,
+        item: Option<String>,
+    }
+    let item = ui::ui().selected.get_untracked();
+    let had = item.is_some();
+    match call::<p::HistoryOutcome>(cmd, A { session, item }).await {
+        Ok(p::HistoryOutcome::Applied { state, view, item }) => {
+            adopt_change(&state, view);
+            // Rust mapped the selection through the exact change; a lost one
+            // is cleared, never guessed.
+            match item {
+                Some(id) => ui::inspect(id).await,
+                None if had => {
+                    ui::ui().selected.set(None);
+                    ui::ui().inspection.set(None);
+                }
+                None => {}
             }
-            ui::state_changed(state.revision, state.dirty, state.can_undo, state.can_redo);
         }
         Ok(p::HistoryOutcome::Nothing) => ui::flash(if undo {
             "Nothing to undo"
@@ -221,6 +229,24 @@ pub async fn history(undo: bool) {
         }),
         Err(e) => ui::flash(&format!("{cmd} failed: {e}")),
     }
+}
+
+/// Adopt a change Rust made and acknowledged (undo, redo, an Inspector field
+/// edit): the widget shows exactly the returned view, never a local guess.
+pub fn adopt_change(state: &p::DocState, view: String) {
+    CORE.with_borrow_mut(|c| {
+        c.shown = view.clone();
+        c.revision = state.revision;
+        c.generation += 1;
+    });
+    if let Some(ta) = textarea() {
+        let top = ta.scroll_top();
+        ta.set_value(&view);
+        let caret = state.caret as u32;
+        let _ = ta.set_selection_range(caret, caret);
+        ta.set_scroll_top(top);
+    }
+    ui::state_changed(state.revision, state.dirty, state.can_undo, state.can_redo);
 }
 
 /// Select a view span in the editor and scroll it into view.

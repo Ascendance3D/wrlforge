@@ -61,3 +61,16 @@ x3d-canvas#viewport { flex: 1 1 auto; width: 100%; min-height: 12rem; display: b
 .fields code { white-space: pre-wrap; word-break: break-all; color: #e6e6e6; font-family: "JetBrains Mono", "DejaVu Sans Mono", monospace; font-size: 12px; }
 .statusbar { display: flex; gap: 1.1rem; align-items: center; padding: .28rem .8rem; background: #202020; border-top: 1px solid #333; font-size: .88rem; color: #bbb; white-space: nowrap; overflow: hidden; }
 .statusbar .msg { color: #e6d39a; overflow: hidden; text-overflow: ellipsis; }
+
+/* Inspector field editing (TAURI-RUST-MIGRATION-2) */
+.fields.editable tr { cursor: default; }
+.fields.editable th { cursor: pointer; }
+.fields.editable tr.ro th { color: #8a8a8a; }
+.fields .controls { display: flex; flex-wrap: wrap; gap: .25rem .4rem; align-items: center; }
+.fields .comp { display: inline-flex; gap: .2rem; align-items: center; color: #7c8aa8; font-size: .78rem; }
+.fields .comp input.num { width: 5.2rem; }
+.fields .comp input.text { width: 14rem; }
+.fields .comp input, .fields .comp select { background: #101317; color: #e6e6e6; border: 1px solid #3a4250; border-radius: 3px; padding: .1rem .25rem; font-family: "JetBrains Mono", "DejaVu Sans Mono", monospace; font-size: 12px; }
+.fields .reason { margin-left: .4rem; color: #9b7f57; font-size: .74rem; }
+.field-error { margin: .4rem .6rem; padding: .3rem .5rem; background: #3a1d1d; border: 1px solid #8a3a3a; color: #ffb4b4; border-radius: 3px; font-size: .85rem; }
+.readonly-note { margin: .3rem .6rem; color: #c9b27a; font-size: .85rem; }

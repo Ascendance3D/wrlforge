@@ -19,6 +19,8 @@ use crate::files::{self, Format};
 use wrlforge_document::EolCounts;
 
 pub const INSERT: &str = "# smoke: añadido ✓ 😀";
+/// The value the `--smoke-inspector` run writes through the Inspector.
+pub const INSPECTOR_VALUE: &str = "0.25";
 
 struct Plan {
     path: PathBuf,
@@ -27,6 +29,7 @@ struct Plan {
     format: Format,
     report_path: Option<PathBuf>,
     expect_preview: bool,
+    inspector: bool,
 }
 
 #[derive(Default)]
@@ -38,6 +41,7 @@ impl SmokeState {
         path: PathBuf,
         report_path: Option<PathBuf>,
         expect_preview: bool,
+        inspector: bool,
     ) -> Result<(), String> {
         let original_bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
         let (original_text, format) = files::decode(&original_bytes).map_err(|e| e.to_string())?;
@@ -48,6 +52,7 @@ impl SmokeState {
             format,
             report_path,
             expect_preview,
+            inspector,
         });
         Ok(())
     }
@@ -55,6 +60,7 @@ impl SmokeState {
         self.0.lock().ok()?.as_ref().map(|pl| p::SmokePlan {
             insert_text: INSERT.into(),
             expect_preview: pl.expect_preview,
+            inspector_value: pl.inspector.then(|| INSPECTOR_VALUE.to_string()),
         })
     }
 }
@@ -78,8 +84,15 @@ pub fn finish(app: &AppHandle, report: p::SmokeReport) {
         let disk = std::fs::read(&pl.path).unwrap_or_default();
         let decoded = files::decode(&disk);
         let want = expected_text(&pl.original_text);
+        let matches = |t: &str| {
+            if pl.inspector {
+                inspector_change_ok(&want, t)
+            } else {
+                t == want
+            }
+        };
         let (ok, detail) = match &decoded {
-            Ok((t, f)) if *f == pl.format && *t == want => {
+            Ok((t, f)) if *f == pl.format && matches(t) => {
                 (true, format!("{} bytes, format {}", disk.len(), f.as_str()))
             }
             Ok((t, f)) => (
@@ -143,9 +156,95 @@ pub fn finish(app: &AppHandle, report: p::SmokeReport) {
     }
 }
 
+fn is_delim(c: char) -> bool {
+    c.is_whitespace() || matches!(c, ',' | '[' | ']' | '{' | '}')
+}
+
+/// The single token that differs between `a` and `b`, widened to token
+/// boundaries: `(old, new, byte start in a)`. `None` if more than one token
+/// (or any delimiter) changed.
+pub fn one_token_change(a: &str, b: &str) -> Option<(String, String, usize)> {
+    if a == b {
+        return None;
+    }
+    let mut pre = a
+        .char_indices()
+        .zip(b.chars())
+        .find(|((_, x), y)| x != y)
+        .map(|((i, _), _)| i)
+        .unwrap_or(a.len().min(b.len()));
+    let mut suf = 0;
+    let (ab, bb) = (a.as_bytes(), b.as_bytes());
+    while suf < ab.len() - pre
+        && suf < bb.len() - pre
+        && ab[ab.len() - 1 - suf] == bb[bb.len() - 1 - suf]
+    {
+        suf += 1;
+    }
+    while pre > 0 && !is_delim(a[..pre].chars().next_back()?) {
+        pre -= a[..pre].chars().next_back()?.len_utf8();
+    }
+    let widen = |t: &str, mut s: usize| {
+        while s > 0 && !t.is_char_boundary(t.len() - s) {
+            s -= 1;
+        }
+        while s > 0 && !is_delim(t[t.len() - s..].chars().next().unwrap_or(' ')) {
+            let c = t[t.len() - s..].chars().next().unwrap();
+            s -= c.len_utf8();
+        }
+        s
+    };
+    let suf = widen(a, suf).min(widen(b, suf));
+    let old = &a[pre..a.len() - suf];
+    let new = &b[pre..b.len() - suf];
+    if old.is_empty() || new.is_empty() || old.contains(is_delim) || new.contains(is_delim) {
+        return None;
+    }
+    Some((old.to_string(), new.to_string(), pre))
+}
+
+/// The Inspector smoke changed exactly one numeric token, to the planned
+/// value, as the second component of `diffuseColor` or `translation`.
+pub fn inspector_change_ok(before: &str, after: &str) -> bool {
+    let Some((old, new, at)) = one_token_change(before, after) else {
+        return false;
+    };
+    let prior: Vec<&str> = before[..at]
+        .split(is_delim)
+        .filter(|t| !t.is_empty())
+        .collect();
+    new == INSPECTOR_VALUE
+        && old.parse::<f64>().is_ok()
+        && prior.len() >= 2
+        && prior[prior.len() - 1].parse::<f64>().is_ok()
+        && matches!(prior[prior.len() - 2], "diffuseColor" | "translation")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inspector_change_check_is_token_exact() {
+        let a = "Material { diffuseColor 0.046 0.062 0.118 }\r\n";
+        assert!(inspector_change_ok(a, &a.replace("0.062", "0.25")));
+        assert!(!inspector_change_ok(a, &a.replace("0.046", "0.25")));
+        assert!(!inspector_change_ok(
+            a,
+            &a.replace("0.062 0.118", "0.25 0.2")
+        ));
+        assert!(!inspector_change_ok(
+            a,
+            &a.replace("\r\n", "\n").replace("0.062", "0.25")
+        ));
+        assert!(!inspector_change_ok(a, a));
+        let t = "T { translation 1 2 3 } # é😀";
+        assert!(inspector_change_ok(t, &t.replace(" 2 ", " 0.25 ")));
+        assert_eq!(
+            one_token_change("x 12 y", "x 0.25 y"),
+            Some(("12".into(), "0.25".into(), 2))
+        );
+    }
     #[test]
     fn expected_text_inserts_with_the_document_ending() {
         assert_eq!(

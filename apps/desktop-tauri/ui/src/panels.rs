@@ -5,6 +5,8 @@
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
+use wrlforge_desktop_protocol as p;
+
 use crate::editor;
 use crate::ui::{self, ui};
 
@@ -52,31 +54,178 @@ pub fn Inspector() -> impl IntoView {
     view! {
         <section class="inspector" aria-label="Inspector">
             <div class="pane-title">"Inspector"
-                <span class="badge">"read-only — field editing not migrated"</span>
+                <span class="badge" title="Field edits are planned, validated and applied by Rust (wrlforge-vrml field_edit)">
+                    "SF fields editable · Rust-validated"
+                </span>
             </div>
+            {move || u.field_error.get().map(|e| view! {
+                <p class="field-error" id="inspector-error" role="alert">{e}</p>
+            })}
             {move || match u.inspection.get() {
                 None => view! { <p class="empty">"Select a Scene Tree item."</p> }.into_any(),
-                Some(i) => view! {
-                    <div>
-                        <h3 id="inspector-title">{i.title.clone()}</h3>
-                        <table class="fields">
-                            <tbody>
-                            {i.rows.into_iter().map(|r| {
-                                let (f, t) = (r.view_from, r.view_to);
-                                view! {
-                                    <tr on:click=move |_| editor::select(f, t)>
-                                        <th>{r.name}</th>
-                                        <td class="kind">{r.kind}</td>
-                                        <td><code>{r.source}{if r.elided { "…" } else { "" }}</code></td>
-                                    </tr>
-                                }
-                            }).collect_view()}
-                            </tbody>
-                        </table>
-                    </div>
-                }.into_any(),
+                Some(i) => {
+                    let title = i.title.clone();
+                    let body = match i.node {
+                        Some(n) => node_fields(n).into_any(),
+                        None => rows(i.rows).into_any(),
+                    };
+                    view! {
+                        <div>
+                            <h3 id="inspector-title">{title}</h3>
+                            {body}
+                        </div>
+                    }.into_any()
+                }
             }}
         </section>
+    }
+}
+
+fn rows(rows: Vec<p::InspectorRow>) -> impl IntoView {
+    view! {
+        <table class="fields">
+            <tbody>
+            {rows.into_iter().map(|r| {
+                let (f, t) = (r.view_from, r.view_to);
+                view! {
+                    <tr on:click=move |_| editor::select(f, t)>
+                        <th>{r.name}</th>
+                        <td class="kind">{r.kind}</td>
+                        <td><code>{r.source}{if r.elided { "…" } else { "" }}</code></td>
+                    </tr>
+                }
+            }).collect_view()}
+            </tbody>
+        </table>
+    }
+}
+
+fn input_id(field: u32, component: usize) -> String {
+    format!("fe-{field}-{component}")
+}
+
+/// Read the field's controls and hand the RAW values to Rust. No value is
+/// parsed, clamped or validated here: Rust is the only validator.
+fn submit(field: u32, name: String, kind: String, arity: usize) {
+    let mut out = Vec::with_capacity(arity);
+    for c in 0..arity {
+        let id = input_id(field, c);
+        let v = if kind == "bool" {
+            let Some(sel) = crate::element_by_id::<web_sys::HtmlSelectElement>(&id) else {
+                return;
+            };
+            p::FieldInput::Bool {
+                value: sel.value() == "TRUE",
+            }
+        } else {
+            let Some(inp) = crate::element_by_id::<web_sys::HtmlInputElement>(&id) else {
+                return;
+            };
+            p::FieldInput::Text { value: inp.value() }
+        };
+        out.push(v);
+    }
+    spawn_local(ui::edit_field(field, name, out));
+}
+
+fn node_fields(n: p::NodeFields) -> impl IntoView {
+    let banner = (!n.editable).then(|| {
+        view! {
+            <p class="readonly-note" id="inspector-readonly">
+                {format!("Read-only node: {}", n.reason)}
+            </p>
+        }
+    });
+    let empty = n.fields.is_empty().then(|| {
+        view! { <p class="empty">"No explicitly authored fields (defaults are not listed)."</p> }
+    });
+    view! {
+        {banner}
+        {empty}
+        <table class="fields editable">
+            <tbody>
+            {n.fields.into_iter().map(field_row).collect_view()}
+            </tbody>
+        </table>
+    }
+}
+
+fn field_row(f: p::EditableField) -> impl IntoView {
+    let (from, to) = (f.view_from, f.view_to);
+    let ty = f.field_type.clone().unwrap_or_else(|| "?".into());
+    let title = [
+        f.declaration.clone(),
+        f.bounds.clone().map(|b| format!("range {b}")),
+        f.constraint_note.clone().map(|n| format!("note {n}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" · ");
+    let value = if f.editable {
+        let idx = f.index;
+        let kind = f.kind.clone().unwrap_or_default();
+        let arity = f.components.len();
+        let controls = f
+            .components
+            .iter()
+            .enumerate()
+            .map(|(c, comp)| {
+                let id = input_id(idx, c);
+                let label = comp.label.clone();
+                if kind == "bool" {
+                    let on = comp.bool_value == Some(true);
+                    view! {
+                        <label class="comp">{label}
+                            <select id=id prop:value=if on { "TRUE" } else { "FALSE" }>
+                                <option value="TRUE" selected=on>"TRUE"</option>
+                                <option value="FALSE" selected=!on>"FALSE"</option>
+                            </select>
+                        </label>
+                    }
+                    .into_any()
+                } else {
+                    let (name, kind) = (f.name.clone(), kind.clone());
+                    let class = if kind == "string" { "text" } else { "num" };
+                    view! {
+                        <label class="comp">{label}
+                            <input id=id class=class type="text" spellcheck="false" prop:value=comp.text.clone()
+                                on:keydown=move |ev: web_sys::KeyboardEvent| {
+                                    if ev.key() == "Enter" {
+                                        ev.prevent_default();
+                                        submit(idx, name.clone(), kind.clone(), arity);
+                                    }
+                                } />
+                        </label>
+                    }
+                    .into_any()
+                }
+            })
+            .collect_view();
+        let (name, kind2) = (f.name.clone(), kind.clone());
+        view! {
+            <div class="controls">
+                {controls}
+                <button class="small" id=format!("fe-apply-{idx}")
+                    on:click=move |_| submit(idx, name.clone(), kind2.clone(), arity)>"Apply"</button>
+            </div>
+        }
+        .into_any()
+    } else {
+        view! {
+            <div>
+                <code>{f.value_excerpt.clone()}</code>
+                <span class="reason" title="Why this field is read-only">{f.reason.clone()}</span>
+            </div>
+        }
+        .into_any()
+    };
+    view! {
+        <tr class:ro=!f.editable data-field=f.name.clone()>
+            <th title=title on:click=move |_| editor::select(from, to)>{f.name.clone()}</th>
+            <td class="kind">{ty}</td>
+            <td>{value}</td>
+        </tr>
     }
 }
 

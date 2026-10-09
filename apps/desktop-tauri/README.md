@@ -34,6 +34,8 @@ after `./build-ui.sh`.
 cargo test -p wrl-forge-desktop                       # file + session services
 (cd ../../crates && cargo test -p wrlforge-vrml -p wrlforge-document)
 ./smoke.sh --headless file.wrl...                     # in-window end-to-end, on temp copies
+./smoke.sh --headless --inspector file.wrl...         # also drives a real Inspector field edit
+(cd ../.. && node scripts/check-rust-node-schema-parity.js)  # Rust/JS node schema equality
 ../../spikes/tauri-rust-migration-1/parity.sh <dir>   # JS-vs-Rust parser parity (needs node)
 ```
 

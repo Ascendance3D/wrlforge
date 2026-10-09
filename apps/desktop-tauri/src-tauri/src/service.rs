@@ -18,8 +18,9 @@ use std::sync::Mutex;
 use std::time::SystemTime;
 
 use wrlforge_desktop_protocol as p;
-use wrlforge_document::{Applied, Document, ViewEdit};
-use wrlforge_vrml::scene;
+use wrlforge_document::{map_span, Applied, Document, ViewEdit};
+use wrlforge_text::Edit;
+use wrlforge_vrml::{field_edit, scene};
 
 use crate::files::{self, FileError, Format, SaveOptions, Stamp};
 
@@ -66,6 +67,54 @@ impl ViewMap {
         // LFs of CRLF pairs strictly before `source` are not in the view.
         let n = self.crlf_lf_at.partition_point(|&lf| lf < source) as u64;
         source - n
+    }
+}
+
+/// The UTF-16 source span named by a Scene Tree NODE item id
+/// (`node-<from>-<to>`). Any other kind is not a node instance.
+pub fn node_span(item: &str) -> Option<(u64, u64)> {
+    let rest = item.strip_prefix("node-")?;
+    let (a, b) = rest.split_once('-')?;
+    let from = a.parse().ok()?;
+    let to = b.parse().ok()?;
+    (from < to).then_some((from, to))
+}
+
+fn node_fields(n: field_edit::NodeFields, vm: &ViewMap) -> p::NodeFields {
+    p::NodeFields {
+        editable: n.editable,
+        reason: n.reason.into(),
+        node_type: n.node_type,
+        fields: n
+            .fields
+            .into_iter()
+            .map(|f| p::EditableField {
+                index: f.index as u32,
+                name: f.name,
+                field_type: f.field_type.map(Into::into),
+                declaration: f.declaration.map(Into::into),
+                kind: f.kind.map(|k| k.as_str().into()),
+                editable: f.editable,
+                reason: f.reason.into(),
+                components: f
+                    .components
+                    .into_iter()
+                    .map(|c| p::FieldComponent {
+                        label: c.label.into(),
+                        text: c.text,
+                        bool_value: match c.value {
+                            field_edit::ComponentValue::Bool(b) => Some(b),
+                            _ => None,
+                        },
+                    })
+                    .collect(),
+                bounds: f.bounds.map(|b| b.text()),
+                constraint_note: f.constraint_note.map(Into::into),
+                value_excerpt: f.value_excerpt,
+                view_from: vm.view(f.from),
+                view_to: vm.view(f.to),
+            })
+            .collect(),
     }
 }
 
@@ -180,19 +229,43 @@ impl Service {
     }
 
     pub fn undo(&self, id: p::SessionId) -> Result<p::HistoryOutcome, String> {
-        self.history(id, true)
+        self.history(id, true, None)
     }
     pub fn redo(&self, id: p::SessionId) -> Result<p::HistoryOutcome, String> {
-        self.history(id, false)
+        self.history(id, false, None)
     }
-    fn history(&self, id: p::SessionId, undo: bool) -> Result<p::HistoryOutcome, String> {
+    /// Undo/redo carrying the selected Scene Tree item across the change.
+    /// The node span is mapped through the EXACT changes applied
+    /// (`wrlforge_document::map_span`); a change touching its boundary loses
+    /// the selection (`item: None`). Never a search or a nearest match.
+    pub fn history_with_item(
+        &self,
+        id: p::SessionId,
+        undo: bool,
+        item: Option<&str>,
+    ) -> Result<p::HistoryOutcome, String> {
+        self.history(id, undo, item)
+    }
+    fn history(
+        &self,
+        id: p::SessionId,
+        undo: bool,
+        item: Option<&str>,
+    ) -> Result<p::HistoryOutcome, String> {
         self.with(id, |s| {
             let r = if undo { s.doc.undo() } else { s.doc.redo() };
             match r {
-                Ok(a) => p::HistoryOutcome::Applied {
-                    state: Self::state(s, a),
-                    view: s.doc.view(),
-                },
+                Ok(a) => {
+                    let item = item
+                        .and_then(node_span)
+                        .and_then(|(f, t)| map_span(f, t, s.doc.last_history_changes()))
+                        .map(|(f, t)| format!("node-{f}-{t}"));
+                    p::HistoryOutcome::Applied {
+                        state: Self::state(s, a),
+                        view: s.doc.view(),
+                        item,
+                    }
+                }
                 Err(_) => p::HistoryOutcome::Nothing,
             }
         })
@@ -340,6 +413,12 @@ impl Service {
             let text = s.doc.text();
             let parsed = wrlforge_vrml::parse(text);
             let vm = ViewMap::new(text);
+            let node = node_span(item).map(|(from, to)| {
+                node_fields(
+                    field_edit::inspect_node_fields(&parsed, text, from, to),
+                    &vm,
+                )
+            });
             scene::inspect(&parsed.tree, text, item).map(|i| p::Inspection {
                 revision: s.doc.revision(),
                 id: i.id,
@@ -356,7 +435,97 @@ impl Service {
                         view_to: vm.view(r.to),
                     })
                     .collect(),
+                node,
             })
+        })
+    }
+
+    /// An Inspector field edit. Rust re-proves everything: the revision, the
+    /// node (exactly one node at the item's span in THIS revision), the field,
+    /// the type and the value. A ready plan is applied as ONE transaction
+    /// whose result must equal the planned, round-trip-verified text.
+    pub fn edit_field(&self, r: &p::FieldEditRequest) -> Result<p::FieldEditOutcome, String> {
+        self.with(r.session, |s| {
+            let refused = |reason: &str, message: Option<String>| p::FieldEditOutcome::Refused {
+                reason: reason.into(),
+                message,
+                component_index: None,
+            };
+            if r.base_revision != s.doc.revision() {
+                return refused(
+                    "parse-session-is-stale",
+                    Some(format!(
+                        "The document changed (revision {} → {}); re-select the node.",
+                        r.base_revision,
+                        s.doc.revision()
+                    )),
+                );
+            }
+            let Some((node_from, node_to)) = node_span(&r.item) else {
+                return refused(field_edit::reason::NOT_A_NODE, None);
+            };
+            let req = field_edit::Request {
+                node_from,
+                node_to,
+                field_index: r.field_index as usize,
+                field_name: r.field_name.clone(),
+                components: r
+                    .components
+                    .iter()
+                    .map(|c| match c {
+                        p::FieldInput::Bool { value } => field_edit::Input::Bool(*value),
+                        p::FieldInput::Text { value } => field_edit::Input::Text(value.clone()),
+                    })
+                    .collect(),
+            };
+            match field_edit::plan_field_edit(s.doc.text(), &req) {
+                field_edit::Plan::Unchanged => p::FieldEditOutcome::Unchanged,
+                field_edit::Plan::Refused {
+                    reason,
+                    message,
+                    component_index,
+                } => p::FieldEditOutcome::Refused {
+                    reason: reason.into(),
+                    message,
+                    component_index: component_index.map(|i| i as u32),
+                },
+                field_edit::Plan::Ready {
+                    edits,
+                    new_text,
+                    changed,
+                } => {
+                    // Every edit lies inside the node: its start is fixed and
+                    // its end moves by the total length change.
+                    let delta: i64 = edits
+                        .iter()
+                        .map(|e| e.insert.encode_utf16().count() as i64 - (e.to - e.from) as i64)
+                        .sum();
+                    let item = format!("node-{node_from}-{}", node_to as i64 + delta);
+                    let edits: Vec<Edit> = edits
+                        .into_iter()
+                        .map(|e| Edit {
+                            from: e.from,
+                            to: e.to,
+                            insert: e.insert,
+                        })
+                        .collect();
+                    match s
+                        .doc
+                        .apply_source_transaction(r.base_revision, &edits, &new_text)
+                    {
+                        Ok(a) => p::FieldEditOutcome::Applied {
+                            state: Self::state(s, a),
+                            view: s.doc.view(),
+                            changed: changed.into_iter().map(|i| i as u32).collect(),
+                            item,
+                        },
+                        Err(e) => refused(
+                            field_edit::reason::TRANSACTION_REJECTED,
+                            Some(e.to_string()),
+                        ),
+                    }
+                }
+            }
         })
     }
 
@@ -521,7 +690,7 @@ mod tests {
         let doc = opened(svc.open_path(&path));
         edit(&svc, doc.session, 0, 1, 2, "");
         assert_eq!(svc.text(doc.session).unwrap(), "AB");
-        let p::HistoryOutcome::Applied { view, state } = svc.undo(doc.session).unwrap() else {
+        let p::HistoryOutcome::Applied { view, state, .. } = svc.undo(doc.session).unwrap() else {
             panic!()
         };
         assert_eq!(view, "A\nB");
@@ -566,6 +735,158 @@ mod tests {
             svc.open_path(Path::new("/nonexistent/x.wrl")),
             p::OpenOutcome::Failed { .. }
         ));
+    }
+
+    fn field_edit(
+        svc: &Service,
+        id: u64,
+        rev: u64,
+        item: &str,
+        field: (u32, &str),
+        values: &[&str],
+    ) -> p::FieldEditOutcome {
+        svc.edit_field(&p::FieldEditRequest {
+            session: id,
+            base_revision: rev,
+            item: item.into(),
+            field_index: field.0,
+            field_name: field.1.into(),
+            components: values
+                .iter()
+                .map(|v| p::FieldInput::Text {
+                    value: v.to_string(),
+                })
+                .collect(),
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn inspector_field_edit_end_to_end_bom_crlf_cr_unicode_gzip() {
+        let dir = tmp("field");
+        // BOM, CRLF, a lone CR and non-ASCII text in one file.
+        let src = "\u{FEFF}#VRML V2.0 utf8\r\n# Tëst 😀\rDEF Ä Transform { translation 1 2 3\r\n  children Shape { appearance Appearance { material Material { diffuseColor 0.8 0.8 0.8 } } } }\r\nWorldInfo { title \"日本\" }\r\n";
+        let path = dir.join("real.wrl");
+        fs::write(&path, files::encode(src, Format::Gzip).unwrap()).unwrap();
+        let svc = Service::new(clock);
+        let doc = opened(svc.open_path(&path));
+        let a = svc.analyze(doc.session).unwrap();
+        assert!(a.diagnostics.is_empty(), "{:?}", a.diagnostics);
+        let mat = a.items.iter().find(|i| i.label == "Material").unwrap();
+        let insp = svc.inspect(doc.session, &mat.id).unwrap().unwrap();
+        let nf = insp.node.unwrap();
+        assert!(nf.editable, "{}", nf.reason);
+        let f = &nf.fields[0];
+        assert_eq!(
+            (f.name.as_str(), f.editable, f.field_type.as_deref()),
+            ("diffuseColor", true, Some("SFColor"))
+        );
+        assert_eq!(f.bounds.as_deref(), Some("≥ 0 and ≤ 1"));
+        // The edit: one component changes, one undo step.
+        let p::FieldEditOutcome::Applied {
+            state,
+            view,
+            changed,
+            item,
+        } = field_edit(
+            &svc,
+            doc.session,
+            0,
+            &mat.id,
+            (0, "diffuseColor"),
+            &["0.8", "0.25", "0.8"],
+        )
+        else {
+            panic!("not applied")
+        };
+        assert_eq!(changed, [1]);
+        // The returned id is the same Material in the new revision.
+        let a2 = svc.analyze(doc.session).unwrap();
+        let mat2 = a2.items.iter().find(|i| i.label == "Material").unwrap();
+        assert_eq!(mat2.id, item);
+        let want = src.replace("diffuseColor 0.8 0.8 0.8", "diffuseColor 0.8 0.25 0.8");
+        assert_eq!(svc.text(doc.session).unwrap(), want);
+        assert_eq!(view, Document::new(want.clone()).view());
+        assert!(state.dirty && state.can_undo && state.revision == 1);
+        // Stale revision, out-of-range, wrong node kind, wrong field: refused, no change.
+        for (rev, item, field, vals) in [
+            (
+                0u64,
+                mat.id.as_str(),
+                (0u32, "diffuseColor"),
+                vec!["1", "1", "1"],
+            ),
+            (1, mat.id.as_str(), (0, "diffuseColor"), vec!["2", "0", "0"]),
+            (1, "use-1-2", (0, "diffuseColor"), vec!["1", "1", "1"]),
+            (1, mat.id.as_str(), (0, "shininess"), vec!["1"]),
+        ] {
+            let out = field_edit(&svc, doc.session, rev, item, field, &vals);
+            assert!(
+                matches!(out, p::FieldEditOutcome::Refused { .. }),
+                "{out:?}"
+            );
+        }
+        assert_eq!(svc.text(doc.session).unwrap(), want);
+        // Undo / redo are exact.
+        // Undo / redo carry the selected node through the exact changes.
+        let p::HistoryOutcome::Applied { item: back, .. } = svc
+            .history_with_item(doc.session, true, Some(&item))
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(back.as_deref(), Some(mat.id.as_str()));
+        assert_eq!(svc.text(doc.session).unwrap(), src);
+        let p::HistoryOutcome::Applied { item: fwd, .. } = svc
+            .history_with_item(doc.session, false, back.as_deref())
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(fwd.as_deref(), Some(item.as_str()));
+        assert_eq!(svc.text(doc.session).unwrap(), want);
+        // Transform via its own item (a DEF node, non-ASCII name).
+        let a = svc.analyze(doc.session).unwrap();
+        let tr = a.items.iter().find(|i| i.label == "Transform Ä").unwrap();
+        let p::FieldEditOutcome::Applied { .. } = field_edit(
+            &svc,
+            doc.session,
+            3,
+            &tr.id,
+            (0, "translation"),
+            &["1", "-2.5", "3"],
+        ) else {
+            panic!("transform edit not applied")
+        };
+        let want = want.replace("translation 1 2 3", "translation 1 -2.5 3");
+        assert_eq!(svc.text(doc.session).unwrap(), want);
+        // Save and reopen keep everything, BOM and line endings included.
+        assert!(matches!(
+            svc.save(doc.session),
+            p::SaveOutcome::Saved { .. }
+        ));
+        let again = opened(Service::new(clock).open_path(&path));
+        assert_eq!(again.view, Document::new(want.clone()).view());
+        let svc2 = Service::new(clock);
+        let d2 = opened(svc2.open_path(&path));
+        assert_eq!(svc2.text(d2.session).unwrap(), want);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn node_span_accepts_only_node_items() {
+        assert_eq!(node_span("node-12-40"), Some((12, 40)));
+        for bad in [
+            "use-1-2",
+            "node-5-5",
+            "node-9-3",
+            "node-1",
+            "node--1-2",
+            "node-a-b",
+            "x",
+        ] {
+            assert_eq!(node_span(bad), None, "{bad}");
+        }
     }
 
     #[test]

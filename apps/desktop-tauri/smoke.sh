@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # In-window end-to-end smoke test on DISPOSABLE copies (never a user file).
-# Usage: ./smoke.sh [--headless] [--no-preview] file.wrl...
+# Usage: ./smoke.sh [--headless] [--no-preview] [--inspector] file.wrl...
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 bin="$here/target/debug/wrl-forge"
 xvfb=(); extra=()
 while [[ "${1:-}" == --* ]]; do
-  case "$1" in --headless) xvfb=(xvfb-run -a -s "-screen 0 1600x1000x24");; --no-preview) extra+=(--smoke-no-preview);; esac; shift
+  case "$1" in --headless) xvfb=(xvfb-run -a -s "-screen 0 1600x1000x24");; --no-preview) extra+=(--smoke-no-preview);; --inspector) extra+=(--smoke-inspector);; esac; shift
 done
 work="$(mktemp -d /tmp/wrlforge-tauri-smoke.XXXXXX)"
 fail=0
