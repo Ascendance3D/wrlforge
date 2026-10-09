@@ -196,8 +196,9 @@ pub struct Document {
     eol: Eol,
     undo: Vec<Group>,
     redo: Vec<Group>,
-    /// The exact changes the last undo/redo applied, in application order.
-    last_history: Vec<SpanChange>,
+    /// The exact changes the last change of ANY kind (edit, transaction,
+    /// undo, redo) applied, in application order.
+    last_changes: Vec<SpanChange>,
 }
 
 /// One applied change in SOURCE UTF-16 coordinates current at its time.
@@ -280,7 +281,7 @@ impl Document {
             eol,
             undo: vec![],
             redo: vec![],
-            last_history: vec![],
+            last_changes: vec![],
         }
     }
 
@@ -446,6 +447,11 @@ impl Document {
                     })
             });
         let caret = from + utf16_len(&insert);
+        self.last_changes = vec![SpanChange {
+            from,
+            removed: utf16_len(&removed),
+            inserted: utf16_len(&insert),
+        }];
         let change = Change {
             from,
             removed,
@@ -510,6 +516,14 @@ impl Document {
             .first()
             .map(|c| c.from + utf16_len(&c.inserted))
             .unwrap_or(0);
+        self.last_changes = changes
+            .iter()
+            .map(|c| SpanChange {
+                from: c.from,
+                removed: utf16_len(&c.removed),
+                inserted: utf16_len(&c.inserted),
+            })
+            .collect();
         self.text = next;
         self.revision += 1;
         self.redo.clear();
@@ -534,7 +548,7 @@ impl Document {
             });
             caret = c.from + utf16_len(&c.removed);
         }
-        self.last_history = applied;
+        self.last_changes = applied;
         self.text = text;
         self.revision += 1;
         self.redo.push(g);
@@ -555,16 +569,23 @@ impl Document {
             });
             caret = c.from + utf16_len(&c.inserted);
         }
-        self.last_history = applied;
+        self.last_changes = applied;
         self.text = text;
         self.revision += 1;
         self.undo.push(g);
         Ok(self.applied(caret))
     }
 
-    /// The exact changes the most recent undo/redo applied.
+    /// The exact changes the most recent change applied (edit, transaction,
+    /// undo or redo), in application order, SOURCE coordinates.
+    pub fn last_changes(&self) -> &[SpanChange] {
+        &self.last_changes
+    }
+
+    /// The exact changes the most recent undo/redo applied (valid right
+    /// after `undo` / `redo`).
     pub fn last_history_changes(&self) -> &[SpanChange] {
-        &self.last_history
+        &self.last_changes
     }
 
     /// Current state without a change (for resyncs).
@@ -644,6 +665,16 @@ mod tests {
         assert_eq!(map_span(16, 25, d.last_history_changes()), Some((14, 23)));
         d.redo().unwrap();
         assert_eq!(map_span(0, 13, d.last_history_changes()), Some((0, 15)));
+        // A typed edit and a transaction record their exact changes too.
+        d.apply_source_edit(0, 0, "#\n".into(), true).unwrap();
+        assert_eq!(d.last_changes(), &[c(0, 0, 2)]);
+        assert_eq!(map_span(16, 25, d.last_changes()), Some((18, 27)));
+        let r = d.revision();
+        let t = d.text().replacen("y 0", "y 10", 1);
+        d.apply_source_transaction(r, &[se(24, 25, "10")], &t)
+            .unwrap();
+        assert_eq!(d.last_changes(), &[c(24, 1, 2)]);
+        assert_eq!(map_span(18, 27, d.last_changes()), Some((18, 28)));
     }
 
     #[test]
