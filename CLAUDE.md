@@ -37,8 +37,17 @@
 - `src/vrml/` is the **sole** grammar/parser authority: no second parser,
   grammar or competing semantic model. It does not replace `validator.js`,
   World scanning, the preview resolver or packaging without an approved lane.
-- **X_ITE is the renderer**, loaded locally (no CDN). Never build a custom
-  VRML/X3D renderer. New X_ITE integration points need their own approved lane.
+- **Renderer policy.** X_ITE is the **temporary** working preview renderer,
+  loaded locally (no CDN). New X_ITE integration points need their own
+  approved lane. Ryan has approved a **custom Rust VRML97/X3D renderer** as the
+  future rendering engine; building it needs its own approved implementation
+  lane. It replaces X_ITE only after it supports the required VRML97/X3D
+  features, compatibility tests pass and Ryan approves the replacement; keep
+  X_ITE available until then. Never claim full standards support before tests
+  establish it. The renderer renders projections of the canonical source
+  document and fits the visual-authoring architecture (`WD.md`,
+  `docs/PRODUCT_VISION.md`); source preservation and filesystem security rules
+  are unchanged.
 - Runtime dependencies stay **X_ITE-only** unless Ryan approves another. Prefer
   Node built-ins; `zlib` only for gzip and archives. VSCodium is optional.
 - File identity is by content (gzip magic bytes), not extension; gzip `.wrl` is
