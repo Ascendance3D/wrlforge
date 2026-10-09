@@ -15,6 +15,7 @@ pub mod create;
 pub mod diagnostics;
 pub mod field_edit;
 pub mod highlight;
+pub mod manipulate;
 pub mod node_schema;
 pub mod parser;
 pub mod pick;
