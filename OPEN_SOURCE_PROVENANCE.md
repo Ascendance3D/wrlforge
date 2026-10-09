@@ -210,6 +210,19 @@ WRL Forge's byte-preserving document invariant.
 (MIT) and FTGL (MIT) from **their own upstreams**, not through White Dune: better terms,
 cleaner provenance, active maintenance. Those would be `THIRD_PARTY_NOTICES.md` entries.
 
+**VISUAL-3A — White Dune handle architecture (translation gizmo)**
+
+| field | value |
+|---|---|
+| Project | **White Dune** 1.956 |
+| Local source | `~/Projects/cybertown/white_dune` (owner-supplied for VISUAL-3A; its own checkout, outside the WRL Forge repository; opened **read-only**, nothing modified or copied) |
+| Files studied | `src/Node.h` (`getHandle()`, `setHandle()`, `drawHandles()` declarations), `src/TransformNode.cpp` (`getHandle()` / `setHandle()` / `drawHandles()` for `TRANSLATION_X/Y/Z`), `src/Scene3DView.cpp` (handle drag: project / unproject, `constrainLine`) |
+| License verified | each studied file's own header: Copyright (C) 1999 Stephen F. White (`Node.h` also 2005 J. "MUFTI" Scheurich), GNU GPL "version 2 … or (at your option) any later version" — `GPL-2.0-or-later` |
+| Mode | **conceptually informed only.** The idea taken is the split between a handle that REPORTS a position for one field (`getHandle`) and a drag that turns a constrained handle position into a new value for that field (`setHandle`), drawn per node (`drawHandles`). |
+| Not taken | No code, data structure, constant, numeric scene path or source writer. White Dune's handles live in the Transform's rotated local frame and its drag unprojects at the handle's screen depth; WRL Forge's VISUAL-3A gizmo uses **world** axes for top-level Transforms and a closest-point-between-lines axis drag (`apps/desktop-tauri/protocol/src/gizmo.rs`), binds the rendered node by its proven top-level statement index (never a White Dune-style numeric scene path as identity), and writes one source token through the existing field-edit planner (`crates/wrlforge-vrml/src/manipulate.rs`). |
+| Destination files | `crates/wrlforge-vrml/src/manipulate.rs`, `apps/desktop-tauri/protocol/src/gizmo.rs` (each names the design reference in its header) |
+| Status | design reference; §4 register correctly still reads **None** for White Dune |
+
 **WD1.7-E0 — blaxxun compatibility-evidence study**
 
 | field | value |
