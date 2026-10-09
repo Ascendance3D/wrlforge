@@ -43,6 +43,17 @@ option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
 .theme-picker { display: flex; gap: .35rem; align-items: center; color: var(--wf-text-muted); font-size: .9rem; }
 .theme-picker select { padding: .25rem .4rem; font-size: .9rem; }
 .theme-error { color: var(--wf-error-fg); background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); border-radius: 3px; padding: .1rem .45rem; font-size: .85rem; max-width: 24rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Create control (VISUAL-1): a menu button and a raised menu, tokens only. */
+.create-menu { position: relative; display: inline-flex; }
+.create-list { position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; display: flex; flex-direction: column; min-width: 11rem; padding: .3rem; gap: .15rem; background: var(--wf-surface-raised); border: 1px solid var(--wf-border); border-radius: 4px; box-shadow: var(--wf-shadow); }
+.create-item { display: flex; align-items: center; gap: .55rem; text-align: left; background: transparent; color: var(--wf-text-primary); padding: .35rem .6rem; }
+.create-item:hover, .create-item:focus-visible { background: var(--wf-surface-hover); color: var(--wf-text-primary); }
+.create-item .glyph { display: inline-block; width: .9rem; height: .9rem; border: 2px solid var(--wf-icon-active); flex: none; }
+.create-item .glyph-box { border-radius: 1px; }
+.create-item .glyph-sphere { border-radius: 50%; }
+.create-item .glyph-cylinder { border-radius: 40% / 18%; }
+.create-item .glyph-cone { width: 0; height: 0; border-width: 0 .5rem .9rem .5rem; border-color: transparent transparent var(--wf-icon-active) transparent; }
+.create-error { color: var(--wf-error-fg); background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); border-radius: 3px; padding: .1rem .45rem; font-size: .85rem; max-width: 28rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .banner { display: flex; gap: .6rem; align-items: center; padding: .5rem .8rem; background: var(--wf-warning-bg); border-bottom: 1px solid var(--wf-warning-border); color: var(--wf-warning-fg); }
 .workspace { flex: 1 1 auto; display: flex; min-height: 0; }

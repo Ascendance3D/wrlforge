@@ -34,6 +34,10 @@ pub struct DocumentInfo {
     pub bytes_on_disk: u64,
     pub can_undo: bool,
     pub can_redo: bool,
+    /// A new world that has no file yet (VISUAL-1): Save goes through Save
+    /// As, and `display_path` is a label, not a path.
+    #[serde(default)]
+    pub untitled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -297,6 +301,58 @@ pub enum FieldEditOutcome {
     },
 }
 
+/// The primitives the Create control offers (VISUAL-1). A closed set: the
+/// UI names a primitive, never a template or source text.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum Primitive {
+    Box,
+    Sphere,
+    Cylinder,
+    Cone,
+}
+
+impl Primitive {
+    pub const ALL: [Primitive; 4] = [
+        Primitive::Box,
+        Primitive::Sphere,
+        Primitive::Cylinder,
+        Primitive::Cone,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            Primitive::Box => "Box",
+            Primitive::Sphere => "Sphere",
+            Primitive::Cylinder => "Cylinder",
+            Primitive::Cone => "Cone",
+        }
+    }
+}
+
+/// Create one primitive object at top level of the document, as it is at
+/// `base_revision`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateRequest {
+    pub session: SessionId,
+    pub base_revision: u64,
+    pub primitive: Primitive,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum CreateOutcome {
+    /// Inserted as ONE undo step. `item` is the new Transform's Scene Tree
+    /// id in the NEW revision (`state.revision`), proven by a re-parse.
+    Applied {
+        state: DocState,
+        view: String,
+        item: String,
+        def_name: String,
+    },
+    /// Refused; the buffer and revision are unchanged.
+    Refused { reason: String, message: String },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewSource {
@@ -324,6 +380,23 @@ pub struct SmokePlan {
     /// the color layer, so an external screenshot can prove registration.
     #[serde(default)]
     pub syntax_align_hold_ms: u64,
+    /// `--smoke-create` (VISUAL-1): run the New World → Create workflow
+    /// instead of the file workflow.
+    #[serde(default)]
+    pub create: Option<CreateSmoke>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSmoke {
+    /// The Box's new translation, typed into the Inspector.
+    pub translation: Vec<String>,
+    /// The Box Material's new diffuseColor, typed into the Inspector.
+    pub color: Vec<String>,
+    /// Every built-in theme id, cycled with the document open.
+    pub themes: Vec<String>,
+    /// When non-zero, pause this long at named checkpoints (screenshots).
+    pub hold_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

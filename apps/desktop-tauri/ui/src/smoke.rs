@@ -11,6 +11,7 @@ use crate::editor::{self, textarea, CORE};
 use crate::ipc::{self, call, Session};
 use crate::ui::{self, ui};
 
+mod create;
 mod selection;
 mod syntax;
 
@@ -71,7 +72,11 @@ async fn settle() {
 
 pub async fn run(plan: p::SmokePlan) {
     let mut r = R(vec![]);
-    if run_steps(&plan, &mut r).await.is_none() {
+    let done = match &plan.create {
+        Some(c) => create::run(c, &mut r).await,
+        None => run_steps(&plan, &mut r).await,
+    };
+    if done.is_none() {
         r.step(
             "smoke script ran to completion",
             false,

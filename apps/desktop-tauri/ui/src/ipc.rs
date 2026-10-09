@@ -22,6 +22,18 @@ extern "C" {
     async fn preview_load_js(text: &str) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = probe, catch)]
     fn preview_probe_js() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = coverage, catch)]
+    async fn preview_coverage_js() -> Result<JsValue, JsValue>;
+}
+
+/// Fraction of viewport pixels that differ from the background after the
+/// next frame (a render check for tests); -1 when unavailable.
+pub async fn preview_coverage() -> f64 {
+    preview_coverage_js()
+        .await
+        .ok()
+        .and_then(|v| v.as_f64())
+        .unwrap_or(-1.0)
 }
 
 fn js_err(e: JsValue) -> String {

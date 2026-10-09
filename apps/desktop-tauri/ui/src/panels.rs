@@ -75,7 +75,7 @@ pub fn SceneTree() -> impl IntoView {
                     }
                 }).collect_view()}))}
             </ul>
-            {move || (u.doc.with(|d| d.is_none())).then(|| view! { <p class="empty">"Open a file to see its scene."</p> })}
+            {move || (u.doc.with(|d| d.is_none())).then(|| view! { <p class="empty">"Start a New World or open a file to see its scene."</p> })}
         </aside>
     }
 }

@@ -116,6 +116,23 @@ pub fn adopt(doc: &p::DocumentInfo) {
     ui::doc_loaded(doc);
 }
 
+/// No document: the widget is emptied and no edit can be sent.
+pub fn clear() {
+    CORE.with_borrow_mut(|c| {
+        c.session = None;
+        c.shown.clear();
+        c.revision = 0;
+        c.busy = false;
+        c.generation += 1;
+        c.analyzed = None;
+        c.previewed = None;
+    });
+    if let Some(ta) = textarea() {
+        ta.set_value("");
+    }
+    syntax::reset("");
+}
+
 pub async fn resync(reason: &str) {
     let Some(session) = CORE.with_borrow(|c| c.session) else {
         return;

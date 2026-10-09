@@ -20,6 +20,8 @@ struct Args {
     open: Option<PathBuf>,
     smoke: Option<PathBuf>,
     smoke_report: Option<PathBuf>,
+    /// `--smoke-create <dir>`: the VISUAL-1 New World → Create workflow.
+    smoke_create: Option<PathBuf>,
     smoke_no_preview: bool,
     smoke_inspector: bool,
     smoke_theme: Option<p::ThemeSmoke>,
@@ -32,6 +34,7 @@ fn parse_args() -> Args {
         open: None,
         smoke: None,
         smoke_report: None,
+        smoke_create: None,
         smoke_no_preview: false,
         smoke_inspector: false,
         smoke_theme: None,
@@ -45,6 +48,7 @@ fn parse_args() -> Args {
         match arg.to_str() {
             Some("--smoke") => a.smoke = it.next().map(PathBuf::from),
             Some("--smoke-report") => a.smoke_report = it.next().map(PathBuf::from),
+            Some("--smoke-create") => a.smoke_create = it.next().map(PathBuf::from),
             Some("--smoke-no-preview") => a.smoke_no_preview = true,
             Some("--smoke-inspector") => a.smoke_inspector = true,
             Some("--smoke-theme") => theme_final = it.next().and_then(|s| s.into_string().ok()),
@@ -90,6 +94,11 @@ pub fn run() {
                 let outcome = app.state::<service::Service>().open_path(&path);
                 *app.state::<commands::Startup>().0.lock().unwrap() = Some(outcome);
             }
+            if let Some(dir) = args.smoke_create.clone() {
+                app.state::<smoke::SmokeState>()
+                    .arm_create(&dir, args.smoke_report.clone())
+                    .map_err(|e| format!("smoke-create: {e}"))?;
+            }
             if let Some(path) = args.smoke.clone() {
                 app.state::<smoke::SmokeState>()
                     .arm(
@@ -107,6 +116,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::startup_document,
             commands::open_document,
+            commands::new_document,
+            commands::doc_create,
             commands::close_document,
             commands::doc_snapshot,
             commands::doc_edit,

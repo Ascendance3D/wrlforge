@@ -20,16 +20,22 @@ use std::time::SystemTime;
 use wrlforge_desktop_protocol as p;
 use wrlforge_document::{map_span, view_of, Applied, Document, SpanChange, ViewEdit};
 use wrlforge_text::Edit;
-use wrlforge_vrml::{field_edit, highlight, scene};
+use wrlforge_vrml::{create, field_edit, highlight, scene};
 
 use crate::files::{self, FileError, Format, SaveOptions, Stamp};
 
 pub struct Session {
-    path: PathBuf,
+    /// `None` for a new world that has no file yet (VISUAL-1). A path is
+    /// assigned only by a verified Save As.
+    path: Option<PathBuf>,
     format: Format,
-    stamp: Stamp,
+    /// The disk state at open / last save; `None` while untitled.
+    stamp: Option<Stamp>,
     doc: Document,
 }
+
+/// The file name a new world suggests in Save As, and shows until saved.
+pub const UNTITLED_NAME: &str = "untitled.wrl";
 
 pub struct Service {
     sessions: Mutex<HashMap<p::SessionId, Session>>,
@@ -143,12 +149,17 @@ impl Service {
         let counts = s.doc.eol_counts();
         p::DocumentInfo {
             session: id,
-            name: s
-                .path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            display_path: s.path.display().to_string(),
+            name: match &s.path {
+                Some(p) => p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                None => UNTITLED_NAME.into(),
+            },
+            display_path: match &s.path {
+                Some(p) => p.display().to_string(),
+                None => "New world (not saved yet)".into(),
+            },
             format: s.format.as_str().into(),
             view: s.doc.view(),
             revision: s.doc.revision(),
@@ -156,9 +167,10 @@ impl Service {
             eol: s.doc.eol().name().into(),
             eol_mixed: counts.mixed(),
             bom: s.doc.text().starts_with('\u{FEFF}'),
-            bytes_on_disk: s.stamp.size,
+            bytes_on_disk: s.stamp.as_ref().map_or(0, |st| st.size),
             can_undo: s.doc.can_undo(),
             can_redo: s.doc.can_redo(),
+            untitled: s.path.is_none(),
         }
     }
 
@@ -184,13 +196,35 @@ impl Service {
                 }
             }
         };
-        let id = self.next.fetch_add(1, Ordering::Relaxed);
-        let s = Session {
-            path: path.to_path_buf(),
+        self.insert(Session {
+            path: Some(path.to_path_buf()),
             format: loaded.format,
-            stamp: loaded.stamp,
+            stamp: Some(loaded.stamp),
             doc: Document::new(loaded.text),
-        };
+        })
+    }
+
+    /// A new, empty VRML97 world in a new session. It has NO path and no
+    /// file until a Save As: nothing is written, no temporary file exists.
+    /// It is in the canonical document engine like any opened file, and is
+    /// not dirty until it is changed.
+    pub fn new_world(&self) -> p::OpenOutcome {
+        self.insert(Session {
+            path: None,
+            format: Format::Plain,
+            stamp: None,
+            doc: Document::new(create::NEW_WORLD.into()),
+        })
+    }
+
+    /// Whether `id` holds changes that are not on disk (the New World
+    /// confirmation asks Rust, never the UI's copy of the flag).
+    pub fn is_dirty(&self, id: p::SessionId) -> Result<bool, String> {
+        self.with(id, |s| s.doc.dirty())
+    }
+
+    fn insert(&self, s: Session) -> p::OpenOutcome {
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
         let doc = Self::info(id, &s);
         match self.sessions.lock() {
             Ok(mut m) => {
@@ -291,12 +325,18 @@ impl Service {
     pub fn save(&self, id: p::SessionId) -> p::SaveOutcome {
         let now = (self.clock)();
         let r = self.with(id, |s| {
+            let (Some(path), Some(stamp)) = (s.path.clone(), s.stamp.as_ref()) else {
+                // An untitled world has no destination: only Save As (a
+                // native dialog) may give it one.
+                return p::SaveOutcome::Failed {
+                    message: "this world has no file yet; use Save As".into(),
+                };
+            };
             let opts = SaveOptions {
                 preserve_existing_gzip: true,
                 ..Default::default()
             };
-            let result =
-                files::safe_save(&s.path, s.doc.text(), s.format, Some(&s.stamp), opts, now);
+            let result = files::safe_save(&path, s.doc.text(), s.format, Some(stamp), opts, now);
             Self::after_save(id, s, result)
         });
         r.unwrap_or_else(|m| p::SaveOutcome::Failed { message: m })
@@ -314,7 +354,7 @@ impl Service {
             };
             let result = files::safe_save(path, s.doc.text(), s.format, None, opts, now);
             if result.is_ok() {
-                s.path = path.to_path_buf();
+                s.path = Some(path.to_path_buf());
             }
             Self::after_save(id, s, result)
         });
@@ -328,7 +368,7 @@ impl Service {
     ) -> p::SaveOutcome {
         match result {
             Ok(saved) => {
-                s.stamp = saved.stamp;
+                s.stamp = Some(saved.stamp);
                 s.doc.mark_saved();
                 p::SaveOutcome::Saved {
                     bytes_written: saved.bytes_written,
@@ -349,27 +389,37 @@ impl Service {
     }
 
     pub fn check_external(&self, id: p::SessionId) -> Result<p::ExternalStatus, String> {
-        self.with(id, |s| {
-            let c = files::poll_external_change(&s.stamp, &s.path);
-            p::ExternalStatus {
-                changed: c != files::Change::Unchanged,
-                reason: c.reason().into(),
+        self.with(id, |s| match (&s.stamp, &s.path) {
+            (Some(stamp), Some(path)) => {
+                let c = files::poll_external_change(stamp, path);
+                p::ExternalStatus {
+                    changed: c != files::Change::Unchanged,
+                    reason: c.reason().into(),
+                }
             }
+            // No file: nothing on disk can change behind the buffer.
+            _ => p::ExternalStatus {
+                changed: false,
+                reason: files::Change::Unchanged.reason().into(),
+            },
         })
     }
 
     /// Discard buffer edits and re-read the file (the conflict "Reload" path).
     pub fn reload(&self, id: p::SessionId) -> p::OpenOutcome {
-        let r = self.with(id, |s| match files::load(&s.path) {
-            Ok(l) => {
+        let r = self.with(id, |s| match s.path.as_deref().map(files::load) {
+            None => p::OpenOutcome::Failed {
+                message: "this world has no file to reload".into(),
+            },
+            Some(Ok(l)) => {
                 s.format = l.format;
-                s.stamp = l.stamp;
+                s.stamp = Some(l.stamp);
                 s.doc.reset(l.text);
                 p::OpenOutcome::Opened {
                     doc: Self::info(id, s),
                 }
             }
-            Err(e) => p::OpenOutcome::Failed {
+            Some(Err(e)) => p::OpenOutcome::Failed {
                 message: e.to_string(),
             },
         });
@@ -582,6 +632,68 @@ impl Service {
                             field_edit::reason::TRANSACTION_REJECTED,
                             Some(e.to_string()),
                         ),
+                    }
+                }
+            }
+        })
+    }
+
+    /// Create one primitive object (VISUAL-1). Rust re-proves everything:
+    /// the revision, a top-level insertion point, a free DEF name and -- by
+    /// re-parsing the result -- the exact new structure at the exact span.
+    /// The insert is applied as ONE transaction (one undo step) whose result
+    /// must equal the planned text. The reply's item is the new Transform's
+    /// Scene Tree id in the new revision.
+    pub fn create(&self, r: &p::CreateRequest) -> Result<p::CreateOutcome, String> {
+        self.with(r.session, |s| {
+            if r.base_revision != s.doc.revision() {
+                return p::CreateOutcome::Refused {
+                    reason: "parse-session-is-stale".into(),
+                    message: format!(
+                        "The document changed (revision {} → {}); nothing was created.",
+                        r.base_revision,
+                        s.doc.revision()
+                    ),
+                };
+            }
+            let prim = match r.primitive {
+                p::Primitive::Box => create::Primitive::Box,
+                p::Primitive::Sphere => create::Primitive::Sphere,
+                p::Primitive::Cylinder => create::Primitive::Cylinder,
+                p::Primitive::Cone => create::Primitive::Cone,
+            };
+            match create::plan_create(s.doc.text(), prim) {
+                create::Plan::Refused { reason, message } => p::CreateOutcome::Refused {
+                    reason: reason.into(),
+                    message,
+                },
+                create::Plan::Ready {
+                    at,
+                    insert,
+                    new_text,
+                    node_from,
+                    node_to,
+                    def_name,
+                } => {
+                    let edit = Edit {
+                        from: at,
+                        to: at,
+                        insert,
+                    };
+                    match s
+                        .doc
+                        .apply_source_transaction(r.base_revision, &[edit], &new_text)
+                    {
+                        Ok(a) => p::CreateOutcome::Applied {
+                            state: Self::state(s, a),
+                            view: s.doc.view(),
+                            item: format!("node-{node_from}-{node_to}"),
+                            def_name,
+                        },
+                        Err(e) => p::CreateOutcome::Refused {
+                            reason: field_edit::reason::TRANSACTION_REJECTED.into(),
+                            message: e.to_string(),
+                        },
                     }
                 }
             }
@@ -1107,6 +1219,236 @@ mod tests {
         let svc2 = Service::new(clock);
         let d2 = opened(svc2.open_path(&path));
         assert_eq!(svc2.text(d2.session).unwrap(), want);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn create(svc: &Service, id: u64, rev: u64, prim: p::Primitive) -> p::CreateOutcome {
+        svc.create(&p::CreateRequest {
+            session: id,
+            base_revision: rev,
+            primitive: prim,
+        })
+        .unwrap()
+    }
+
+    fn created(o: p::CreateOutcome) -> (p::DocState, String, String) {
+        match o {
+            p::CreateOutcome::Applied {
+                state,
+                item,
+                def_name,
+                ..
+            } => (state, item, def_name),
+            other => panic!("not created: {other:?}"),
+        }
+    }
+
+    /// VISUAL-1: New World → Create Box → Inspector translation and color
+    /// → Undo / Redo → Save (refused: no file) → Save As → reopen.
+    #[test]
+    fn new_world_create_edit_undo_save_as_reopen() {
+        let dir = tmp("visual1");
+        let svc = Service::new(clock);
+        let doc = opened(svc.new_world());
+        assert!(doc.untitled && !doc.dirty && doc.revision == 0);
+        assert_eq!(doc.view, "#VRML V2.0 utf8\n");
+        assert_eq!(doc.name, UNTITLED_NAME);
+        // Nothing on disk exists for it; no external change can be reported.
+        assert!(!svc.check_external(doc.session).unwrap().changed);
+        assert!(matches!(
+            svc.reload(doc.session),
+            p::OpenOutcome::Failed { .. }
+        ));
+
+        let (st, item, name) = created(create(&svc, doc.session, 0, p::Primitive::Box));
+        assert_eq!((st.revision, st.dirty, st.can_undo), (1, true, true));
+        assert_eq!(name, "Box_1");
+        // The returned item is the Scene Tree's own id for the Transform.
+        let a = svc.analyze(doc.session).unwrap();
+        assert!(a.diagnostics.is_empty(), "{:?}", a.diagnostics);
+        let tr = a.items.iter().find(|i| i.id == item).unwrap();
+        assert_eq!(tr.label, "Transform Box_1");
+        // The Inspector edits the authored transform fields.
+        let insp = found(svc.inspect(doc.session, &item, 1));
+        let nf = insp.node.unwrap();
+        let names: Vec<_> = nf
+            .fields
+            .iter()
+            .filter(|f| f.editable)
+            .map(|f| f.name.as_str())
+            .collect();
+        assert_eq!(names, ["translation", "rotation", "scale"]);
+        let p::FieldEditOutcome::Applied { item: item2, .. } = field_edit(
+            &svc,
+            doc.session,
+            1,
+            &item,
+            (0, "translation"),
+            &["1.5", "0", "-2"],
+        ) else {
+            panic!("translation not applied")
+        };
+        // ... and the Material's diffuse color.
+        let a = svc.analyze(doc.session).unwrap();
+        let mat = a.items.iter().find(|i| i.label == "Material").unwrap();
+        let insp = found(svc.inspect(doc.session, &mat.id, 2));
+        let dc = &insp.node.unwrap().fields[0];
+        assert_eq!(dc.name, "diffuseColor");
+        assert!(matches!(
+            field_edit(
+                &svc,
+                doc.session,
+                2,
+                &mat.id,
+                (dc.index, "diffuseColor"),
+                &["0.1", "0.9", "0.1"]
+            ),
+            p::FieldEditOutcome::Applied { .. }
+        ));
+        let want = svc.text(doc.session).unwrap();
+        assert!(want.contains("translation 1.5 0 -2"));
+        assert!(want.contains("diffuseColor 0.1 0.9 0.1"));
+        // Undo the color, redo it; undo everything back to the empty world.
+        svc.undo(doc.session).unwrap();
+        assert!(svc
+            .text(doc.session)
+            .unwrap()
+            .contains("diffuseColor 0.8 0.3 0.2"));
+        svc.redo(doc.session).unwrap();
+        assert_eq!(svc.text(doc.session).unwrap(), want);
+        let p::HistoryOutcome::Applied { item: kept, .. } = svc
+            .history_with_item(doc.session, true, Some(&item2))
+            .unwrap()
+        else {
+            panic!()
+        };
+        // The color undo lies strictly inside the Transform: carried.
+        let kept = kept.expect("an edit inside the node keeps it");
+        let p::HistoryOutcome::Applied { item: kept, .. } = svc
+            .history_with_item(doc.session, true, Some(&kept))
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(kept.as_deref(), Some(item.as_str()));
+        // Undoing the Create removes the node itself: the selection is lost.
+        let p::HistoryOutcome::Applied { item: lost, .. } = svc
+            .history_with_item(doc.session, true, kept.as_deref())
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(lost, None);
+        assert_eq!(svc.text(doc.session).unwrap(), create::NEW_WORLD);
+        // One Create is one undo step: redo it whole.
+        for _ in 0..3 {
+            svc.redo(doc.session).unwrap();
+        }
+        assert_eq!(svc.text(doc.session).unwrap(), want);
+
+        // Save with no file is refused; Save As assigns the path.
+        assert!(matches!(
+            svc.save(doc.session),
+            p::SaveOutcome::Failed { .. }
+        ));
+        let path = dir.join("world.wrl");
+        let p::SaveOutcome::Saved { doc: saved, .. } = svc.save_as(doc.session, &path) else {
+            panic!("save as failed")
+        };
+        assert!(!saved.untitled && !saved.dirty && saved.name == "world.wrl");
+        assert_eq!(fs::read_to_string(&path).unwrap(), want);
+        // A later save is the ordinary backup-first, conflict-checked save.
+        let r = svc.snapshot(doc.session).unwrap().revision;
+        created(create(&svc, doc.session, r, p::Primitive::Cone));
+        let p::SaveOutcome::Saved { backup, .. } = svc.save(doc.session) else {
+            panic!("save failed")
+        };
+        assert!(backup.is_some());
+        let final_text = svc.text(doc.session).unwrap();
+        // Reopen: the same objects, in a fresh service.
+        let svc2 = Service::new(clock);
+        let again = opened(svc2.open_path(&path));
+        assert_eq!(svc2.text(again.session).unwrap(), final_text);
+        let a = svc2.analyze(again.session).unwrap();
+        let labels: Vec<_> = a
+            .items
+            .iter()
+            .filter(|i| i.depth == 1)
+            .map(|i| i.label.as_str())
+            .collect();
+        assert_eq!(labels, ["Transform Box_1", "Transform Cone_1"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Creating in an existing file changes nothing but the appended object:
+    /// BOM, CRLF, a lone CR, non-ASCII text and comments stay byte-exact.
+    #[test]
+    fn create_in_existing_file_is_exact_and_refusals_change_nothing() {
+        let dir = tmp("visual1-exist");
+        let src = "\u{FEFF}#VRML V2.0 utf8\r\n# Tëst 😀\rDEF Box_1 Transform { translation 1 2 3 }\r\nDEF Box_1b Group {}\r\n";
+        let path = dir.join("e.wrl");
+        fs::write(&path, files::encode(src, Format::Gzip).unwrap()).unwrap();
+        let svc = Service::new(clock);
+        let doc = opened(svc.open_path(&path));
+        // Stale base revision: refused, nothing changed.
+        assert!(matches!(
+            create(&svc, doc.session, 7, p::Primitive::Box),
+            p::CreateOutcome::Refused { .. }
+        ));
+        assert_eq!(
+            (
+                svc.text(doc.session).unwrap().as_str(),
+                svc.snapshot(doc.session).unwrap().revision
+            ),
+            (src, 0)
+        );
+        for (i, prim) in p::Primitive::ALL.into_iter().enumerate() {
+            let before = svc.text(doc.session).unwrap();
+            let (st, item, _) = created(create(&svc, doc.session, i as u64, prim));
+            assert_eq!(st.revision, i as u64 + 1);
+            let after = svc.text(doc.session).unwrap();
+            assert!(after.starts_with(&before), "prefix changed");
+            let added = &after[before.len()..];
+            assert!(added.starts_with("\r\nDEF "));
+            assert!(!added.replace("\r\n", "").contains(['\r', '\n']));
+            let a = svc.analyze(doc.session).unwrap();
+            assert!(a.diagnostics.is_empty(), "{:?}", a.diagnostics);
+            assert!(a.items.iter().any(|it| it.id == item));
+        }
+        assert!(svc
+            .text(doc.session)
+            .unwrap()
+            .contains("DEF Box_2 Transform"));
+        // Four creates, four undo steps, back to the exact original.
+        for _ in 0..4 {
+            svc.undo(doc.session).unwrap();
+        }
+        assert_eq!(svc.text(doc.session).unwrap(), src);
+        assert!(!svc.snapshot(doc.session).unwrap().dirty);
+        // A document whose end is not provably top level is refused.
+        let r = svc.snapshot(doc.session).unwrap().revision;
+        let view_end = svc
+            .snapshot(doc.session)
+            .unwrap()
+            .view
+            .encode_utf16()
+            .count() as u64;
+        edit(
+            &svc,
+            doc.session,
+            r,
+            view_end,
+            view_end,
+            "Group { children [",
+        );
+        let broken = svc.text(doc.session).unwrap();
+        let out = create(&svc, doc.session, r + 1, p::Primitive::Sphere);
+        assert!(
+            matches!(&out, p::CreateOutcome::Refused { reason, .. } if reason == create::reason::SYNTAX_ERROR),
+            "{out:?}"
+        );
+        assert_eq!(svc.text(doc.session).unwrap(), broken);
+        assert_eq!(svc.snapshot(doc.session).unwrap().revision, r + 1);
         let _ = fs::remove_dir_all(&dir);
     }
 

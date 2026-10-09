@@ -9,7 +9,7 @@
 use std::sync::Mutex;
 
 use tauri::{AppHandle, Manager, State};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use wrlforge_desktop_protocol as p;
 
 use crate::service::Service;
@@ -29,6 +29,11 @@ pub fn startup_document(startup: State<'_, Startup>) -> Option<p::OpenOutcome> {
 
 #[tauri::command]
 pub async fn open_document(app: AppHandle) -> p::OpenOutcome {
+    // `--smoke-create` only: the launch argument's file stands in for the
+    // dialog (Rust-chosen, never a WebView path).
+    if let Some(path) = app.state::<SmokeState>().open_override() {
+        return app.state::<Service>().open_path(&path);
+    }
     let picked = app
         .dialog()
         .file()
@@ -44,6 +49,54 @@ pub async fn open_document(app: AppHandle) -> p::OpenOutcome {
             message: format!("unsupported dialog result: {e}"),
         },
     }
+}
+
+/// File → New World. `replace` is the session the window shows now. If Rust
+/// says it holds unsaved changes, a native confirmation runs first; Cancel
+/// returns `Canceled` and leaves that document exactly as it was. The new
+/// world has no path until Save As.
+#[tauri::command]
+pub async fn new_document(app: AppHandle, replace: Option<p::SessionId>) -> p::OpenOutcome {
+    let svc = app.state::<Service>();
+    if let Some(id) = replace {
+        let name = svc.snapshot(id).map(|d| d.name).unwrap_or_default();
+        match svc.is_dirty(id) {
+            Ok(true) => {
+                let discard = match app.state::<SmokeState>().confirm_override() {
+                    Some(answer) => answer,
+                    None => app
+                        .dialog()
+                        .message(format!(
+                            "\"{name}\" has unsaved changes. Discard them and start a new world?"
+                        ))
+                        .title("New World")
+                        .kind(MessageDialogKind::Warning)
+                        .buttons(MessageDialogButtons::OkCancelCustom(
+                            "Discard changes".into(),
+                            "Cancel".into(),
+                        ))
+                        .blocking_show(),
+                };
+                if !discard {
+                    return p::OpenOutcome::Canceled;
+                }
+            }
+            Ok(false) => {}
+            // An unknown session holds nothing to lose.
+            Err(_) => {}
+        }
+    }
+    svc.new_world()
+}
+
+/// Create one primitive object (VISUAL-1). Synchronous for the same
+/// ordering reason as `doc_edit`.
+#[tauri::command]
+pub fn doc_create(
+    svc: State<'_, Service>,
+    request: p::CreateRequest,
+) -> Result<p::CreateOutcome, String> {
+    svc.create(&request)
 }
 
 #[tauri::command]
@@ -98,7 +151,10 @@ pub async fn doc_save_as(app: AppHandle, session: p::SessionId) -> p::SaveOutcom
         .state::<Service>()
         .snapshot(session)
         .map(|d| d.name)
-        .unwrap_or_else(|_| "untitled.wrl".into());
+        .unwrap_or_else(|_| crate::service::UNTITLED_NAME.into());
+    if let Some(path) = app.state::<SmokeState>().save_as_override() {
+        return app.state::<Service>().save_as(session, &path);
+    }
     let picked = app
         .dialog()
         .file()

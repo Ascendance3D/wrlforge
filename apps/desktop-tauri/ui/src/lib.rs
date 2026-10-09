@@ -4,6 +4,7 @@
 //! The UI holds NO document authority: it renders projections the Rust
 //! backend computes and sends view edits back. See `editor.rs`.
 
+mod create;
 mod editor;
 mod ipc;
 mod panels;
@@ -64,6 +65,10 @@ fn on_keydown(ev: web_sys::KeyboardEvent) {
             ev.prevent_default();
             ui::open();
         }
+        "n" => {
+            ev.prevent_default();
+            ui::new_world();
+        }
         _ => {}
     }
 }
@@ -91,14 +96,18 @@ fn App() -> impl IntoView {
         <div class="app">
             <header class="toolbar" role="toolbar" aria-label="File and edit commands">
                 <span class="brand">"WRL Forge"</span>
-                <button id="btn-open" on:click=move |_| ui::open()>"Open…"</button>
+                <button id="btn-new" title="Start a new, empty VRML97 world (Ctrl+N)" on:click=move |_| ui::new_world()>"New World"</button>
+                <button id="btn-open" title="Open a .wrl / .wrz file (Ctrl+O)" on:click=move |_| ui::open()>"Open…"</button>
                 <button id="btn-save" disabled=move || !has_doc() on:click=move |_| ui::save(false)>"Save"</button>
                 <button id="btn-save-as" class="secondary" disabled=move || !has_doc() on:click=move |_| ui::save(true)>"Save As…"</button>
+                <button id="btn-close" class="secondary" title="Close the document (refused while it has unsaved changes)" disabled=move || !has_doc() on:click=move |_| ui::close()>"Close"</button>
                 <span class="sep"></span>
                 <button id="btn-undo" class="secondary" disabled=move || !u.can_undo.get()
                     on:click=move |_| spawn_local(editor::history(true))>"Undo"</button>
                 <button id="btn-redo" class="secondary" disabled=move || !u.can_redo.get()
                     on:click=move |_| spawn_local(editor::history(false))>"Redo"</button>
+                <span class="sep"></span>
+                <create::CreateMenu/>
                 <span class="spacer"></span>
                 <theme::ThemePicker/>
                 <span class="sep"></span>
@@ -128,7 +137,7 @@ fn App() -> impl IntoView {
                         <pre id="source-hl" class="source-hl source-metrics" aria-hidden="true" data-state="pending"></pre>
                         <textarea id="source" class="source source-metrics" spellcheck="false" wrap="off"
                             autocomplete="off" autocapitalize="off" aria-label="VRML source"
-                            placeholder="Open a .wrl / .wrz file (Ctrl+O). Plain and gzip VRML97 are supported."
+                            placeholder="Start a New World (Ctrl+N) or open a .wrl / .wrz file (Ctrl+O). Plain and gzip VRML97 are supported."
                             readonly=move || !has_doc()
                             on:input=move |_| editor::on_input()
                             on:beforeinput=on_beforeinput

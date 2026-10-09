@@ -34,6 +34,8 @@ pub struct Ui {
     /// X_ITE scene loads this run (lets tests prove a theme switch never
     /// reloads the preview).
     pub preview_loads: RwSignal<u64>,
+    /// The last Create refusal, shown until the next Create or document.
+    pub create_error: RwSignal<Option<String>>,
 }
 
 /// A Scene Tree selection. Item ids are SOURCE spans of one revision, so
@@ -145,6 +147,7 @@ pub fn ui() -> Ui {
             preview_enabled: RwSignal::new(true),
             last_save: RwSignal::new(None),
             preview_loads: RwSignal::new(0),
+            create_error: RwSignal::new(None),
         })
     })
 }
@@ -163,6 +166,9 @@ pub fn doc_loaded(doc: &p::DocumentInfo) {
     u.conflict.set(None);
     u.selected.set(None);
     u.inspection.set(None);
+    // The previous document's Scene Tree and diagnostics never show under
+    // the new one, not even until its first analysis arrives.
+    u.analysis.set(None);
     state_changed(doc.revision, doc.dirty, doc.can_undo, doc.can_redo);
     set_title(doc);
 }
@@ -450,9 +456,9 @@ pub fn open() {
 
 async fn confirm_discard() -> bool {
     // A dirty buffer is never discarded silently. Without a modal dialog
-    // (WebView alerts block the IPC), the Open action simply refuses.
+    // (WebView alerts block the IPC), Open and Close simply refuse.
     if ui().dirty.get_untracked() {
-        flash("Save or undo your changes before opening another file.");
+        flash("Save or undo your changes before opening or closing a file.");
         return false;
     }
     true
@@ -486,6 +492,137 @@ pub async fn apply_open(o: p::OpenOutcome, verb: &str) {
     }
 }
 
+/// File → New World. Rust decides whether the open document holds unsaved
+/// changes and, if so, asks with a native confirmation; Cancel leaves it
+/// exactly as it is.
+pub fn new_world() {
+    spawn_local(async {
+        editor::idle().await;
+        #[derive(serde::Serialize)]
+        struct A {
+            replace: Option<u64>,
+        }
+        let replace = CORE.with_borrow(|c| c.session);
+        match call::<p::OpenOutcome>("new_document", A { replace }).await {
+            Ok(p::OpenOutcome::Canceled) => {
+                flash("New World canceled — your document is unchanged.")
+            }
+            Ok(o) => {
+                apply_open(o, "New world:").await;
+                ui().create_error.set(None);
+            }
+            Err(e) => flash(&format!("New World failed: {e}")),
+        }
+    });
+}
+
+/// Create one primitive object through Rust (`doc_create`). The UI sends
+/// only the primitive choice and the revision it shows; Rust generates,
+/// inserts and proves the source. The new Transform is selected by the id
+/// Rust returned for the NEW revision, then shown in every view at once.
+pub async fn create(prim: p::Primitive) {
+    editor::idle().await;
+    let u = ui();
+    let (Some(session), revision, busy) = CORE.with_borrow(|c| (c.session, c.revision, c.busy))
+    else {
+        return;
+    };
+    if busy {
+        flash("Not created — an edit is being applied; try again.");
+        return;
+    }
+    #[derive(serde::Serialize)]
+    struct A {
+        request: p::CreateRequest,
+    }
+    let request = p::CreateRequest {
+        session,
+        base_revision: revision,
+        primitive: prim,
+    };
+    match call::<p::CreateOutcome>("doc_create", A { request }).await {
+        Ok(p::CreateOutcome::Applied {
+            state,
+            view,
+            item,
+            def_name,
+        }) => {
+            u.create_error.set(None);
+            u.field_error.set(None);
+            u.inspection.set(None);
+            u.selected.set(Some(Selected {
+                session,
+                revision: state.revision,
+                id: item,
+            }));
+            editor::adopt_change(&state, view);
+            flash(&format!(
+                "Created {} {def_name} (revision {}).",
+                prim.label(),
+                state.revision
+            ));
+            // A Create is one discrete command, not typing: show it in the
+            // Scene Tree, Inspector and viewport now, not after the debounce.
+            analyze().await;
+            // Show the generated source, selected, in the editor.
+            let span = u.analysis.with_untracked(|a| {
+                a.as_ref().and_then(|a| {
+                    let sel = u.selected.get_untracked()?;
+                    (a.revision == sel.revision)
+                        .then(|| a.items.iter().find(|i| sel.is(&i.id)))
+                        .flatten()
+                        .map(|i| (a.session, a.revision, i.view_from, i.view_to))
+                })
+            });
+            if let Some((s, r, from, to)) = span {
+                select_from("Create", s, r, from, to);
+            }
+            preview(false).await;
+        }
+        Ok(p::CreateOutcome::Refused { reason, message }) => {
+            let m = format!("Not created — {}: {message}", prim.label());
+            u.create_error.set(Some(format!("{m} [{reason}]")));
+            flash(&m);
+        }
+        Err(e) => {
+            u.create_error.set(Some(format!("Create failed: {e}")));
+            flash(&format!("Create failed: {e}"));
+        }
+    }
+}
+
+/// File → Close. Like Open, a dirty document is never discarded silently.
+pub fn close() {
+    spawn_local(async {
+        editor::idle().await;
+        if !confirm_discard().await {
+            return;
+        }
+        let Some(session) = CORE.with_borrow(|c| c.session) else {
+            return;
+        };
+        let _ = call::<()>("close_document", Session { session }).await;
+        editor::clear();
+        let u = ui();
+        u.doc.set(None);
+        u.analysis.set(None);
+        u.selected.set(None);
+        u.inspection.set(None);
+        u.field_error.set(None);
+        u.create_error.set(None);
+        u.conflict.set(None);
+        u.revision.set(0);
+        u.dirty.set(false);
+        u.can_undo.set(false);
+        u.can_redo.set(false);
+        // No document: the viewport shows an empty world, not the old one.
+        let status = ipc::preview_load("#VRML V2.0 utf8\n").await;
+        u.preview_loads.update(|n| *n += 1);
+        u.preview_status.set(format!("no document · {status}"));
+        flash("Closed.");
+    });
+}
+
 pub fn save(as_new: bool) {
     spawn_local(async move {
         let _ = save_now(as_new).await;
@@ -495,7 +632,15 @@ pub fn save(as_new: bool) {
 pub async fn save_now(as_new: bool) -> Option<p::SaveOutcome> {
     editor::idle().await;
     let session = CORE.with_borrow(|c| c.session)?;
-    let cmd = if as_new { "doc_save_as" } else { "doc_save" };
+    // A new world has no file yet: its first save is a Save As.
+    let untitled = ui()
+        .doc
+        .with_untracked(|d| d.as_ref().is_some_and(|d| d.untitled));
+    let cmd = if as_new || untitled {
+        "doc_save_as"
+    } else {
+        "doc_save"
+    };
     let r = call::<p::SaveOutcome>(cmd, Session { session }).await;
     let u = ui();
     match &r {
