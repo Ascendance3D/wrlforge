@@ -12,6 +12,7 @@
 
 pub mod ast;
 pub mod diagnostics;
+pub mod node_schema;
 pub mod parser;
 pub mod scene;
 pub mod tokenizer;
