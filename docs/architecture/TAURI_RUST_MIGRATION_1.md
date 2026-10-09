@@ -57,7 +57,7 @@ workspace; `crates/Cargo.lock` gained only their two path entries.
 | `src/editor/file-io.js` | `src-tauri/src/files.rs` | MIGRATED | Same 7-step order. Stricter: refuses invalid UTF-8; exact byte stamp instead of SHA-1. |
 | `src/files/vrml-file.js` (`isGzip`), `backups.js`, `src/preview/wrl-source.js` | `files.rs` | MIGRATED | `editPathFor` (Mall `.edit.wrl`) not ported. |
 | `src/editor/session.js`, `session-store.js`, `editor-controller.js`, `path-authorizer.js` | `src-tauri/src/service.rs` + `commands.rs` | PARTIAL | Rust-owned sessions; paths only from native dialogs or the launch argument. No multi-document UI. No World-graph authorization. |
-| `src/editor/language.js` + CodeMirror 6 | `<textarea>` + `ui/src/editor.rs` | PARTIAL | No syntax highlighting, no gutter, no folding. CodeMirror is NOT used. |
+| `src/editor/language.js` + CodeMirror 6 | `wrlforge-vrml::highlight` + `protocol::syntax` + `<textarea>` with `ui/src/syntax.rs` colour layer | PARTIAL | UI-SYNTAX-1: parser-derived syntax colours and diagnostic underlines from the same parse and revision as the Diagnostics panel. Highlight parity with `language.js`: 65/65 committed fixtures, 328/328 approved real items. No gutter, no folding, no outline pane. CodeMirror is NOT used. |
 | `src/editor/recovery-store.js`, `recovery-controller.js` | — | PENDING | No crash recovery. |
 | `src/editor/ui-state.js` (zoom, themes) | `protocol::theme` + `ui/src/theme.rs` + `ui/static/themes.css` | PARTIAL | UI-THEME-1: three built-in Tokyo Night themes (`tokyo-night` default, `tokyo-night-storm`, `tokyo-night-light`), toolbar selector, persisted. No zoom, High Contrast or Follow System yet. |
 | `src/editor/command-registry.js`, `panel-registry.js`, `workspace-presets.js`, `src/shell/*` | — | PENDING | Fixed layout; toolbar and shortcuts only. |
@@ -95,8 +95,8 @@ code are **not** used by the Tauri application.
   `protocol/src/theme.rs` is the contract: each theme must define exactly that
   set, `style.css` may hold no raw colour, and listed text / control pairs must
   meet WCAG AA (`cargo test -p wrlforge-desktop-protocol`). `--wf-syntax-*`
-  and `--wf-axis-*` are reserved and unused: there is no syntax highlighting
-  and no transform overlay yet. Switching sets `<html data-theme>` in the same
+  colour the source editor (UI-SYNTAX-1); `--wf-axis-*` are reserved and
+  unused: there is no transform overlay yet. Switching sets `<html data-theme>` in the same
   event turn and persists through `theme_set`; it never touches the document,
   history, selection, Inspector or X_ITE scene. The body stays hidden until the
   persisted theme is applied (1.5 s fallback), so there is no flash of the
@@ -105,6 +105,28 @@ code are **not** used by the Tauri application.
   to Tokyo Night with a visible notice. Smoke: `./smoke.sh --headless --theme
   <final-id> [--theme-expect id] [--theme-notice] [--theme-save-fails]`; it
   always uses a temporary `--config-dir`.
+
+* **Syntax highlighting (UI-SYNTAX-1).** `wrlforge_vrml::highlight` ports the
+  classification of `src/editor/language.js`: lexical classes from the
+  tokenizer, identifier roles (node type, field, DEF name, USE / ROUTE
+  reference, field type) from exact AST ranges; an identifier the tree does
+  not place stays plain. `Service::analyze` derives the spans from the SAME
+  parse as the Scene Tree and diagnostics, maps them through `ViewMap`, and
+  sends them `[gap, len, class]`-encoded with `session`, `revision`,
+  `view_hash` and `view_len`. The UI applies them only when all four match the
+  text on screen. The `<textarea>` stays the only editing control (glyphs
+  transparent, caret and selection native); an `aria-hidden`,
+  `pointer-events: none` layer behind it paints the same text with identical
+  metrics, follows scrolling by transform, and is built from whole-line block
+  chunks (≤ 64 lines / ~8K units) so an edit relays out one chunk. Only chunks
+  near the viewport carry colour spans (budget 16,000 elements). Between an
+  edit and the next analysis, spans touching the edit are dropped and later
+  spans move over identical characters. A theme change is CSS only. Smoke
+  runs 21 syntax steps per file; `WRLFORGE_SMOKE_ALIGN_HOLD_MS` adds
+  screenshot pauses that paint the textarea's own glyphs over the layer.
+  Parity: `spikes/tauri-rust-migration-1/highlight-parity.sh <dir>`.
+  Per-keystroke cost is dominated by the plain `<textarea>` itself on large
+  files (see the UI-SYNTAX-1 report); the colour layer adds 2–25 ms.
 
 * **BOM (fixed in Rust, Migration-2).** The JS tokenizer reads a leading
   U+FEFF as an identifier (`VRML001` + `VRML020` and a bogus node), which makes

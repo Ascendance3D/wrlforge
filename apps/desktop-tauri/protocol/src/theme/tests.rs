@@ -405,6 +405,9 @@ const UI_PAIRS: &[(&str, &str)] = &[
     ("--wf-tree-selected-indicator", "--wf-surface-panel"),
     ("--wf-tab-active-border", "--wf-tab-active-bg"),
     ("--wf-editor-caret", "--wf-surface-editor"),
+    // UI-SYNTAX-1 diagnostic underlines in the source editor.
+    ("--wf-error-fg", "--wf-surface-editor"),
+    ("--wf-warning-fg", "--wf-surface-editor"),
     ("--wf-icon-active", "--wf-surface-chrome"),
     ("--wf-icon-inactive", "--wf-surface-chrome"),
     ("--wf-scrollbar-thumb", "--wf-scrollbar-track"),

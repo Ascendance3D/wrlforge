@@ -20,7 +20,7 @@ use std::time::SystemTime;
 use wrlforge_desktop_protocol as p;
 use wrlforge_document::{map_span, Applied, Document, ViewEdit};
 use wrlforge_text::Edit;
-use wrlforge_vrml::{field_edit, scene};
+use wrlforge_vrml::{field_edit, highlight, scene};
 
 use crate::files::{self, FileError, Format, SaveOptions, Stamp};
 
@@ -398,8 +398,28 @@ impl Service {
                     view_to: vm.view(d.range.end.offset as u64),
                 })
                 .collect();
+            // Highlights come from THIS parse; no second parse for colour.
+            let spans = highlight::highlight(&parsed, text);
+            let highlights_truncated = spans.len() > p::syntax::MAX_SPANS;
+            let highlights = p::syntax::encode(
+                spans
+                    .iter()
+                    .take(p::syntax::MAX_SPANS)
+                    .map(|h| p::syntax::Span {
+                        from: vm.view(h.from as u64),
+                        to: vm.view(h.to as u64),
+                        class: h.class as u8,
+                    })
+                    .filter(|s| s.to > s.from),
+            );
+            let view = s.doc.view();
             p::Analysis {
+                session: id,
                 revision: s.doc.revision(),
+                view_hash: p::view_hash(&view),
+                view_len: view.encode_utf16().count() as u64,
+                highlights,
+                highlights_truncated,
                 items,
                 diagnostics,
                 resolution_scope: tree.resolution_scope.into(),
@@ -723,6 +743,79 @@ mod tests {
         assert_eq!(insp.title, "Group A");
         assert_eq!(insp.rows[1].name, "children");
         assert_eq!(insp.rows[1].source, "[ USE A ]");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn syntax_class_codes_match_the_protocol_registry() {
+        assert_eq!(highlight::Class::ALL.len(), p::syntax::SYNTAX_CLASSES.len());
+        for c in highlight::Class::ALL {
+            assert_eq!(c.as_str(), p::syntax::SYNTAX_CLASSES[c as usize].0);
+        }
+    }
+
+    #[test]
+    fn analysis_highlights_map_to_view_coordinates() {
+        let dir = tmp("hl");
+        let path = dir.join("h.wrl");
+        // BOM, CRLF, lone CR, a multiline CRLF string, astral characters.
+        let src = "\u{FEFF}#VRML V2.0 utf8\r\n# é😀\rDEF 😀A Transform {\r\n translation 1 -2 3e1\r\n}\r\nWorldInfo { info [ \"a\r\n😀 DEF\" ] }\r\nROUTE 😀A.translation TO X.y\r\n";
+        fs::write(&path, src).unwrap();
+        let svc = Service::new(clock);
+        let doc = opened(svc.open_path(&path));
+        let a = svc.analyze(doc.session).unwrap();
+        assert_eq!(a.session, doc.session);
+        assert_eq!(a.revision, doc.revision);
+        assert_eq!(a.view_hash, p::view_hash(&doc.view));
+        assert_eq!(a.view_len, doc.view.encode_utf16().count() as u64);
+        assert!(!a.highlights_truncated);
+        let spans = p::syntax::decode(&a.highlights, a.view_len).expect("well-formed");
+        let v: Vec<u16> = doc.view.encode_utf16().collect();
+        let got: Vec<(String, &str)> = spans
+            .iter()
+            .map(|s| {
+                (
+                    String::from_utf16(&v[s.from as usize..s.to as usize]).unwrap(),
+                    p::syntax::SYNTAX_CLASSES[s.class as usize].0,
+                )
+            })
+            .collect();
+        let want: Vec<(&str, &str)> = vec![
+            ("#VRML V2.0 utf8", "header"),
+            ("# é😀", "comment"),
+            ("DEF", "keyword"),
+            ("😀A", "def-name"),
+            ("Transform", "node-type"),
+            ("{", "punctuation"),
+            ("translation", "field"),
+            ("1", "number"),
+            ("-2", "number"),
+            ("3e1", "number"),
+            ("}", "punctuation"),
+            ("WorldInfo", "node-type"),
+            ("{", "punctuation"),
+            ("info", "field"),
+            ("[", "punctuation"),
+            ("\"a\n😀 DEF\"", "string"),
+            ("]", "punctuation"),
+            ("}", "punctuation"),
+            ("ROUTE", "route"),
+            ("😀A", "def-ref"),
+            (".", "punctuation"),
+            ("translation", "field"),
+            ("TO", "route"),
+            ("X", "def-ref"),
+            (".", "punctuation"),
+            ("y", "field"),
+        ];
+        let got_ref: Vec<(&str, &str)> = got.iter().map(|(t, c)| (t.as_str(), *c)).collect();
+        assert_eq!(got_ref, want);
+
+        // A new revision gets a new analysis; the old one no longer matches.
+        let st = edit(&svc, doc.session, doc.revision, 0, 0, " ");
+        let b = svc.analyze(doc.session).unwrap();
+        assert_eq!(b.revision, st.revision);
+        assert_ne!(b.view_hash, a.view_hash);
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -8,6 +8,7 @@ mod editor;
 mod ipc;
 mod panels;
 mod smoke;
+mod syntax;
 mod theme;
 mod ui;
 
@@ -23,6 +24,7 @@ use crate::ui::ui;
 pub fn start() {
     leptos::mount::mount_to_body(App);
     ui::start_external_watch();
+    syntax::install();
     // The UI stays hidden (style.css) until `<html data-theme>` is set, so a
     // persisted Storm/Light choice never flashes Tokyo Night widgets first.
     theme::reveal_fallback();
@@ -119,17 +121,24 @@ fn App() -> impl IntoView {
                         "Source"
                         <span class="muted">{move || u.doc.with(|d| d.as_ref().map(|d| format!(" — {}", d.display_path)).unwrap_or_default())}</span>
                     </div>
-                    <textarea id="source" class="source" spellcheck="false" wrap="off"
-                        autocomplete="off" autocapitalize="off"
-                        placeholder="Open a .wrl / .wrz file (Ctrl+O). Plain and gzip VRML97 are supported."
-                        readonly=move || !has_doc()
-                        on:input=move |_| editor::on_input()
-                        on:beforeinput=on_beforeinput
-                        on:keydown=on_keydown
-                        on:keyup=move |_| editor::update_cursor()
-                        on:click=move |_| editor::update_cursor()
-                        on:select=move |_| editor::update_cursor()
-                    ></textarea>
+                    // The textarea is the ONLY editing control (its glyphs are
+                    // transparent); the aria-hidden layer behind it paints the
+                    // same text in syntax colours and takes no input.
+                    <div class="source-wrap">
+                        <pre id="source-hl" class="source-hl source-metrics" aria-hidden="true" data-state="pending"></pre>
+                        <textarea id="source" class="source source-metrics" spellcheck="false" wrap="off"
+                            autocomplete="off" autocapitalize="off" aria-label="VRML source"
+                            placeholder="Open a .wrl / .wrz file (Ctrl+O). Plain and gzip VRML97 are supported."
+                            readonly=move || !has_doc()
+                            on:input=move |_| editor::on_input()
+                            on:beforeinput=on_beforeinput
+                            on:keydown=on_keydown
+                            on:keyup=move |_| editor::update_cursor()
+                            on:click=move |_| editor::update_cursor()
+                            on:select=move |_| editor::update_cursor()
+                            on:scroll=move |_| syntax::on_scroll()
+                        ></textarea>
+                    </div>
                     <panels::Diagnostics/>
                 </section>
                 <section class="right-col">

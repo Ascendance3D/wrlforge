@@ -121,7 +121,24 @@ pub async fn analyze() {
     };
     match call::<p::Analysis>("doc_analyze", Session { session }).await {
         Ok(a) => {
+            // A reply for a document that is no longer open, or one older than
+            // the analysis already shown, is discarded.
+            if CORE.with_borrow(|c| c.session) != Some(a.session)
+                || ui().analysis.with_untracked(|cur| {
+                    cur.as_ref()
+                        .is_some_and(|c| c.session == a.session && c.revision > a.revision)
+                })
+            {
+                return;
+            }
             CORE.with_borrow_mut(|c| c.analyzed = Some(a.revision));
+            // Colours and underlines only if this parse is of the text on
+            // screen (session, revision, view hash); otherwise a newer
+            // analysis is already scheduled.
+            crate::syntax::apply(&a);
+            if a.highlights_truncated {
+                flash("Large document: syntax colours cover the first 400,000 tokens only.");
+            }
             let u = ui();
             let still = u
                 .selected

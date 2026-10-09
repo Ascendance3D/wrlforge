@@ -235,6 +235,17 @@ pub fn Diagnostics() -> impl IntoView {
     let u = ui();
     view! {
         <div class="diagnostics" aria-label="Diagnostics">
+            // Diagnostics and syntax colours come from the same Rust parse;
+            // say which revision that was.
+            {move || u.analysis.with(|a| a.as_ref().map(|a| {
+                let current = a.revision == u.revision.get();
+                view! {
+                    <div class="diag-head" id="diag-head" data-revision=a.revision.to_string()>
+                        {format!("Parser · rev {}", a.revision)}
+                        {(!current).then_some(" · updating…")}
+                    </div>
+                }
+            }))}
             {move || u.analysis.with(|a| match a {
                 None => view! { <span class="muted">"Diagnostics: —"</span> }.into_any(),
                 Some(a) if a.diagnostics.is_empty() => view! { <span class="ok">"✓ No parser diagnostics (native Rust parser)"</span> }.into_any(),

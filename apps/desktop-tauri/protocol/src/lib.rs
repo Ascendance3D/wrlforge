@@ -12,6 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod syntax;
 pub mod theme;
 
 pub type SessionId = u64;
@@ -149,7 +150,16 @@ pub struct SceneItem {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Analysis {
+    /// The session and revision this ONE parse was made from. The UI applies
+    /// highlights and diagnostic marks only when both, and the view hash,
+    /// still match what the editor shows.
+    pub session: SessionId,
     pub revision: u64,
+    pub view_hash: u64,
+    pub view_len: u64,
+    /// Syntax spans from the same parse, `syntax::encode`d, VIEW offsets.
+    pub highlights: Vec<u32>,
+    pub highlights_truncated: bool,
     /// Depth-first source order; the document root is omitted.
     pub items: Vec<SceneItem>,
     pub diagnostics: Vec<Diagnostic>,
@@ -286,6 +296,11 @@ pub struct SmokePlan {
     /// `--smoke-theme`: also drive the toolbar theme selector (UI-THEME-1).
     #[serde(default)]
     pub theme: Option<ThemeSmoke>,
+    /// UI-SYNTAX-1 visual check: when non-zero, the run pauses this long at
+    /// each alignment state with the textarea's own glyphs made visible over
+    /// the colour layer, so an external screenshot can prove registration.
+    #[serde(default)]
+    pub syntax_align_hold_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -319,8 +334,13 @@ pub struct SmokeReport {
 /// so it survives the JSON number round trip exactly. A drift detector shared
 /// by both sides, not a security hash.
 pub fn view_hash(view: &str) -> u64 {
+    view_hash_units(view.encode_utf16())
+}
+
+/// `view_hash` over UTF-16 code units the caller already holds.
+pub fn view_hash_units(units: impl IntoIterator<Item = u16>) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
-    for u in view.encode_utf16() {
+    for u in units {
         h ^= u as u64;
         h = h.wrapping_mul(0x100000001b3);
     }

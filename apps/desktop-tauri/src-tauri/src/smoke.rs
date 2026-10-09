@@ -72,6 +72,12 @@ impl SmokeState {
             expect_preview: pl.expect_preview,
             inspector_value: pl.inspector.then(|| INSPECTOR_VALUE.to_string()),
             theme: pl.theme.clone(),
+            // Opt-in visual registration pauses (never set by default).
+            syntax_align_hold_ms: std::env::var("WRLFORGE_SMOKE_ALIGN_HOLD_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0)
+                .min(10_000),
         })
     }
 }

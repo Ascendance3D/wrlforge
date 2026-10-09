@@ -11,6 +11,8 @@ use crate::editor::{self, textarea, CORE};
 use crate::ipc::{self, call, Session};
 use crate::ui::{self, ui};
 
+mod syntax;
+
 struct R(Vec<p::SmokeStep>);
 impl R {
     fn step(&mut self, name: &str, ok: bool, detail: impl Into<String>) -> bool {
@@ -144,6 +146,10 @@ async fn run_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
         inspector_steps(value, plan.expect_preview, r).await?;
     }
 
+    // UI-SYNTAX-1: runs on the edited (and, with --inspector, field-edited)
+    // document and returns it to exactly that text before the Save below.
+    syntax::syntax_steps(plan, r).await?;
+
     // Save through the toolbar button's handler.
     let btn: HtmlElement = crate::element_by_id("btn-save")?;
     btn.click();
@@ -231,6 +237,7 @@ async fn run_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
             status,
         );
     }
+    syntax::reload_steps(r).await?;
     Some(())
 }
 
@@ -557,8 +564,9 @@ const SURFACES: &[(&str, &str, &str)] = &[
         "background-color",
         "--wf-tree-selected-bg",
     ),
-    ("#source", "background-color", "--wf-surface-editor"),
-    ("#source", "color", "--wf-text-editor"),
+    (".source-wrap", "background-color", "--wf-surface-editor"),
+    ("#source-hl", "color", "--wf-text-editor"),
+    ("#source", "caret-color", "--wf-editor-caret"),
     (".diagnostics", "background-color", "--wf-surface-panel"),
     (".inspector", "background-color", "--wf-surface-panel"),
     ("#inspector-title", "color", "--wf-text-heading"),

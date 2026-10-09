@@ -28,4 +28,5 @@ features = [
   "HtmlInputElement", "HtmlSelectElement", "NodeList",
   "Event", "EventInit", "EventTarget", "InputEvent", "InputEventInit", "KeyboardEvent", "KeyboardEventInit",
   "Performance", "console", "DomRect", "CssStyleDeclaration",
+  "Range", "TreeWalker", "Node", "DomRectList",
 ]

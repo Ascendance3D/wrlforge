@@ -66,11 +66,41 @@ option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
 
 /* Source editor */
 .editor-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; background: var(--wf-surface-editor); }
-.source { flex: 1 1 auto; width: 100%; resize: none; border: 0; margin: 0; padding: .5rem .7rem;
-  background: var(--wf-surface-editor); color: var(--wf-text-editor); caret-color: var(--wf-editor-caret); font-family: var(--wf-font-mono);
-  font-size: 13px; line-height: 18px; tab-size: 4; white-space: pre; overflow: auto; }
-.source::selection { background: var(--wf-editor-selection-bg); color: var(--wf-editor-selection-fg); }
+/* Two layers with IDENTICAL text metrics (UI-SYNTAX-1): the textarea is the
+   only editing control and paints caret + selection; its glyphs are
+   transparent. The aria-hidden layer behind it paints the same text in
+   syntax colours, follows its scroll by transform, and takes no input.
+   Colour, underline and nothing else may differ per token: no weight, style
+   or ligature change, so glyph advances never move. */
+.source-wrap { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--wf-surface-editor); }
+.source-metrics { font-family: var(--wf-font-mono); font-size: 13px; line-height: 18px; tab-size: 4;
+  white-space: pre; letter-spacing: normal; word-spacing: normal; font-variant-ligatures: none; font-kerning: none;
+  font-weight: 400; font-style: normal; text-transform: none; padding: .5rem .7rem; margin: 0; border: 0; }
+.source { position: absolute; inset: 0; width: 100%; height: 100%; resize: none; overflow: auto; z-index: 1;
+  background: transparent; color: transparent; -webkit-text-fill-color: transparent; caret-color: var(--wf-editor-caret); }
+.source::selection { background: var(--wf-editor-selection-bg); color: var(--wf-editor-selection-fg); -webkit-text-fill-color: var(--wf-editor-selection-fg); }
+.source::placeholder { -webkit-text-fill-color: var(--wf-text-placeholder); }
 .source:focus-visible { outline-offset: -3px; }
+.source-hl { position: absolute; top: 0; left: 0; min-width: 100%; min-height: 100%; overflow: visible;
+  color: var(--wf-text-editor); pointer-events: none; user-select: none; -webkit-user-select: none; will-change: transform; }
+.source-hl span { font: inherit; }
+.tk-header, .tk-keyword { color: var(--wf-syntax-keyword); }
+.tk-comment { color: var(--wf-syntax-comment); }
+.tk-route { color: var(--wf-syntax-route); }
+.tk-literal, .tk-number { color: var(--wf-syntax-number); }
+.tk-string { color: var(--wf-syntax-string); }
+.tk-node-type, .tk-field-type { color: var(--wf-syntax-node-type); }
+.tk-field { color: var(--wf-syntax-field); }
+.tk-def-name, .tk-def-ref { color: var(--wf-syntax-def-name); }
+.tk-punctuation { color: var(--wf-syntax-punctuation); }
+.tk-invalid { color: var(--wf-syntax-invalid); }
+/* Diagnostics are marked by an underline SHAPE as well as colour. */
+.dg-error { text-decoration: underline wavy var(--wf-error-fg); text-decoration-skip-ink: none; }
+.dg-warning { text-decoration: underline dashed var(--wf-warning-fg); text-decoration-skip-ink: none; }
+/* Smoke-only registration check: the textarea's own glyphs are painted over
+   the colour layer; any offset shows as doubled glyphs in a screenshot. */
+.source-wrap[data-align-check] .source { -webkit-text-fill-color: var(--wf-syntax-invalid); color: var(--wf-syntax-invalid); }
+.diag-head { color: var(--wf-text-muted); font-size: .8rem; margin-bottom: .15rem; }
 .diagnostics { flex: 0 0 auto; max-height: 8.5rem; overflow: auto; border-top: 1px solid var(--wf-border); background: var(--wf-surface-panel); color: var(--wf-text-secondary); padding: .3rem .6rem; font-size: .88rem; }
 .diagnostics ul { margin: 0; padding: 0; list-style: none; }
 .diag { cursor: pointer; padding: .05rem 0; }

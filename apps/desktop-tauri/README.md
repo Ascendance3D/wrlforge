@@ -38,7 +38,14 @@ cargo test -p wrl-forge-desktop                       # file + session services
 ./smoke.sh --headless --theme tokyo-night-light file.wrl...   # drives the theme selector (UI-THEME-1)
 (cd ../.. && node scripts/check-rust-node-schema-parity.js)  # Rust/JS node schema equality
 ../../spikes/tauri-rust-migration-1/parity.sh <dir>   # JS-vs-Rust parser parity (needs node)
+../../spikes/tauri-rust-migration-1/highlight-parity.sh <dir>  # Rust highlight vs language.js (needs node)
+WRLFORGE_SMOKE_ALIGN_HOLD_MS=2500 ./smoke.sh ...      # pause at each syntax-layer registration state (screenshots)
 ```
+
+Every smoke run also checks the syntax colour layer (UI-SYNTAX-1): colours
+from the current revision only, registration with the textarea at four scroll
+positions, typing / paste / undo / redo / reload, stale-reply rejection,
+diagnostic underlines and theme recolouring.
 
 `smoke.sh` always copies its inputs to a fresh `/tmp` directory first. It never
 touches the original files. Settings go to a temporary `--config-dir` per file,

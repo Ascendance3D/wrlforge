@@ -18,7 +18,7 @@ use web_sys::HtmlTextAreaElement;
 use wrlforge_desktop_protocol as p;
 
 use crate::ipc::{self, call, Session};
-use crate::ui;
+use crate::{syntax, ui};
 
 #[derive(Default)]
 pub struct Core {
@@ -91,6 +91,7 @@ pub fn adopt(doc: &p::DocumentInfo) {
         ta.set_scroll_top(0);
         ta.set_scroll_left(0);
     }
+    syntax::reset(&doc.view);
     ui::doc_loaded(doc);
 }
 
@@ -113,6 +114,7 @@ pub async fn resync(reason: &str) {
                 ta.set_value(&doc.view);
                 let _ = ta.set_selection_range(caret, caret);
             }
+            syntax::set_text(&doc.view);
             ui::state_changed(doc.revision, doc.dirty, doc.can_undo, doc.can_redo);
             ui::flash(&format!("Editor resynced from the Rust document: {reason}"));
         }
@@ -122,6 +124,10 @@ pub async fn resync(reason: &str) {
 
 /// `input` handler: start (or fold into) the single in-flight edit.
 pub fn on_input() {
+    // Paint the widget's new text immediately (typing, paste, IME preedit).
+    if let Some(ta) = textarea() {
+        syntax::set_text(&ta.value());
+    }
     let start = CORE.with_borrow_mut(|c| {
         if c.busy || c.session.is_none() {
             false
@@ -246,6 +252,7 @@ pub fn adopt_change(state: &p::DocState, view: String) {
         let _ = ta.set_selection_range(caret, caret);
         ta.set_scroll_top(top);
     }
+    syntax::set_text(&view);
     ui::state_changed(state.revision, state.dirty, state.can_undo, state.can_redo);
 }
 
