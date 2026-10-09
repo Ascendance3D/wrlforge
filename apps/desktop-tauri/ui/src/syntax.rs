@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Source-editor syntax colouring (UI-SYNTAX-1).
+//! Source-editor syntax coloring (UI-SYNTAX-1).
 //!
 //! The `<textarea>` stays the ONLY editing control: it owns focus, caret,
 //! selection, IME, clipboard and scrolling, and it still edits the Rust
 //! document through `editor.rs`. Its glyphs are transparent. Behind it sits a
 //! read-only `aria-hidden` `<pre>` that paints the SAME text — always the
-//! widget's current value — in the same font metrics, with colour spans from
+//! widget's current value — in the same font metrics, with color spans from
 //! the Rust analysis of one exact revision. The overlay takes no pointer
 //! input, holds no document and never writes text anywhere.
 //!
@@ -14,13 +14,13 @@
 //!   view length all match the text on screen; anything else is discarded.
 //! * Between a keystroke and the next analysis, spans that touch the edit are
 //!   dropped and later spans are shifted over EXACTLY the unchanged text, so a
-//!   colour never lands on a different character. Their class may lag one
+//!   color never lands on a different character. Their class may lag one
 //!   analysis (the editor is then "pending").
 //! * The layer is a stack of independent block CHUNKS (at most 64 lines or
 //!   ~8K UTF-16 units each, always whole lines). An edit rebuilds only the
 //!   chunk(s) it touches, so the browser relays out one small block instead
 //!   of the whole document; later chunks only move. Only chunks near the
-//!   viewport carry colour spans; the rest are one plain text node each, so
+//!   viewport carry color spans; the rest are one plain text node each, so
 //!   the DOM stays bounded.
 
 use std::cell::RefCell;
@@ -32,15 +32,15 @@ use wrlforge_desktop_protocol::syntax::{self, SYNTAX_CLASSES};
 
 use crate::editor::{self, CORE};
 
-/// Lines coloured above and below the visible lines.
+/// Lines colored above and below the visible lines.
 const MARGIN_LINES: u32 = 80;
 /// A chunk ends after this many lines, or at the first line end past
 /// `CHUNK_UNITS` UTF-16 units (one long line is never split).
 const CHUNK_LINES: u32 = 64;
 const CHUNK_UNITS: u32 = 8_192;
-/// Cap on coloured elements per chunk (very long lines).
+/// Cap on colored elements per chunk (very long lines).
 const MAX_ELEMENTS: usize = 4_000;
-/// Cap on coloured elements in the whole layer. Visible chunks come first,
+/// Cap on colored elements in the whole layer. Visible chunks come first,
 /// then the nearest ones; beyond the budget a chunk stays plain text.
 const BUDGET_ELEMENTS: usize = 16_000;
 /// Cap on diagnostic underlines kept.
@@ -64,14 +64,14 @@ pub struct Mark {
     pub sev: u8,
 }
 
-/// One block of whole lines in the colour layer.
+/// One block of whole lines in the color layer.
 struct Chunk {
     from: u32,
     to: u32,
     lines: u32,
     el: web_sys::Element,
-    coloured: bool,
-    /// Coloured elements currently in `el`.
+    colored: bool,
+    /// Colored elements currently in `el`.
     elements: usize,
 }
 
@@ -126,6 +126,39 @@ pub fn split_chunks(text: &[u16], from: u32, to: u32) -> Vec<(u32, u32, u32)> {
         out.push((start, to, lines + last_open as u32));
     }
     out
+}
+
+/// 1-based line and UTF-16 column of `pos`, using whole-line chunks
+/// `(from, to, lines)` that tile `text`: only the chunk holding `pos` is
+/// scanned, never the text before it.
+pub fn line_col_in(text: &[u16], chunks: &[(u32, u32, u32)], pos: u32) -> Option<(u32, u32)> {
+    if pos as usize > text.len() || chunks.is_empty() {
+        return None;
+    }
+    let i = chunks.partition_point(|c| c.1 <= pos).min(chunks.len() - 1);
+    // Every chunk before `i` ends with a line break: `lines` counts them.
+    let before: u32 = chunks[..i].iter().map(|c| c.2).sum();
+    let mut line = before + 1;
+    let mut start = chunks[i].0;
+    for k in chunks[i].0..pos {
+        if text[k as usize] == b'\n' as u16 {
+            line += 1;
+            start = k + 1;
+        }
+    }
+    Some((line, pos - start + 1))
+}
+
+/// Line / column of `pos` from the layer's copy of the widget text, if that
+/// copy has the widget's length `len` (else `None`: the caller scans).
+pub fn line_col(pos: u32, len: u32) -> Option<(u32, u32)> {
+    HL.with_borrow(|h| {
+        if h.text.len() != len as usize {
+            return None;
+        }
+        let c: Vec<(u32, u32, u32)> = h.chunks.iter().map(|c| (c.from, c.to, c.lines)).collect();
+        line_col_in(&h.text, &c, pos)
+    })
 }
 
 /// Minimal single edit (UTF-16, surrogate-safe) turning `a` into `b`:
@@ -303,14 +336,14 @@ fn sync_scroll(h: &Hl) {
     }
 }
 
-/// Lines that should carry colour: the visible ones plus a margin.
+/// Lines that should carry color: the visible ones plus a margin.
 fn visible_lines(h: &Hl) -> (u32, u32) {
     let top = (h.vp.0 as f64 / LINE_PX).floor().max(0.0) as u32;
     let rows = (h.vp.2.max(0) as f64 / LINE_PX).ceil() as u32 + 1;
     (top, top + rows)
 }
 
-/// Which chunks carry colour: the chunks touching the visible lines, then
+/// Which chunks carry color: the chunks touching the visible lines, then
 /// the nearest ones within the margin, while the element budget lasts.
 fn wanted(h: &Hl) -> Vec<bool> {
     let (vt, vb) = visible_lines(h);
@@ -340,7 +373,7 @@ fn wanted(h: &Hl) -> Vec<bool> {
     let mut want = vec![false; h.chunks.len()];
     let mut spent = 0usize;
     for (_, i, cost) in cand {
-        // Nearest first; the first chunk is always coloured.
+        // Nearest first; the first chunk is always colored.
         if spent > 0 && spent + cost > BUDGET_ELEMENTS {
             continue;
         }
@@ -361,12 +394,12 @@ fn now() -> f64 {
         .unwrap_or(0.0)
 }
 
-/// Fill one chunk element: plain text, or coloured runs.
-fn paint(h: &Hl, d: &web_sys::Document, i: usize, coloured: bool) -> usize {
+/// Fill one chunk element: plain text, or colored runs.
+fn paint(h: &Hl, d: &web_sys::Document, i: usize, colored: bool) -> usize {
     let c = &h.chunks[i];
     let el = &c.el;
     let text = |a: u32, b: u32| utf16_str(&h.text[a as usize..b as usize]);
-    if !coloured {
+    if !colored {
         el.set_text_content(Some(&text(c.from, c.to)));
         return 0;
     }
@@ -412,15 +445,15 @@ fn new_chunk_el(d: &web_sys::Document) -> Option<web_sys::Element> {
     Some(el)
 }
 
-/// Which chunks to repaint even if their coloured state is unchanged.
+/// Which chunks to repaint even if their colored state is unchanged.
 enum Force {
     None,
     Range(std::ops::Range<usize>),
-    Coloured,
+    Colored,
     All,
 }
 
-/// (Re)paint chunks: those entering or leaving the coloured range, plus
+/// (Re)paint chunks: those entering or leaving the colored range, plus
 /// the `force`d ones.
 fn update(h: &mut Hl, force: Force) {
     let Some(d) = doc() else { return };
@@ -428,16 +461,16 @@ fn update(h: &mut Hl, force: Force) {
     let wanted = wanted(h);
     let mut rebuilt = 0;
     for (i, &want) in wanted.iter().enumerate() {
-        let was = h.chunks[i].coloured;
+        let was = h.chunks[i].colored;
         let forced = match &force {
             Force::None => false,
             Force::Range(r) => r.contains(&i),
-            Force::Coloured => was,
+            Force::Colored => was,
             Force::All => true,
         };
         if want != was || forced {
             let n = paint(h, &d, i, want);
-            h.chunks[i].coloured = want;
+            h.chunks[i].colored = want;
             h.chunks[i].elements = n;
             rebuilt += 1;
         }
@@ -464,7 +497,7 @@ fn rebuild_all(h: &mut Hl) {
             to,
             lines,
             el,
-            coloured: false,
+            colored: false,
             elements: 0,
         });
     }
@@ -473,7 +506,7 @@ fn rebuild_all(h: &mut Hl) {
 }
 
 /// The widget's text changed (typing, paste, IME, undo, redo, Inspector,
-/// resync). Show the new text NOW; keep only colours that provably still
+/// resync). Show the new text NOW; keep only colors that provably still
 /// cover the same characters.
 pub fn set_text(new: &str) {
     let t0 = now();
@@ -501,7 +534,7 @@ pub fn set_text(new: &str) {
         h.exact = false;
         let delta = new_to as i64 - old_to as i64;
         // OLD-coordinate range whose painting may be wrong now: the edit and
-        // every dropped colour.
+        // every dropped color.
         let mut lo = from;
         let mut hi = old_to;
         for (a, z) in [ds, dm].into_iter().flatten() {
@@ -519,7 +552,7 @@ pub fn set_text(new: &str) {
             return false;
         }
         // Chunks [a, z] cover [lo, hi] (an edit at a chunk boundary belongs
-        // to both neighbours: the line it joins may change).
+        // to both neighbors: the line it joins may change).
         let a = h.chunks.partition_point(|c| c.to < lo).min(n - 1);
         let z = h
             .chunks
@@ -543,7 +576,7 @@ pub fn set_text(new: &str) {
                 to,
                 lines,
                 el,
-                coloured: false,
+                colored: false,
                 elements: 0,
             });
         }
@@ -560,7 +593,7 @@ pub fn set_text(new: &str) {
     pending_attr(exact);
 }
 
-/// A different document: no colour carries over.
+/// A different document: no color carries over.
 pub fn reset(text: &str) {
     HL.with_borrow_mut(|h| {
         h.text = text.encode_utf16().collect();
@@ -574,7 +607,7 @@ pub fn reset(text: &str) {
     pending_attr(false);
 }
 
-/// Adopt the colours of one analysis, if — and only if — it describes
+/// Adopt the colors of one analysis, if — and only if — it describes
 /// exactly the text on screen. Returns whether it was applied.
 pub fn apply(a: &p::Analysis) -> bool {
     let (session, revision) = CORE.with_borrow(|c| (c.session, c.revision));
@@ -599,8 +632,8 @@ pub fn apply(a: &p::Analysis) -> bool {
                 h.marks = marks_from(&a.diagnostics, &h.text);
                 h.exact = true;
                 h.from_analysis = Some((a.session, a.revision));
-                // Only coloured chunks show classes; plain ones are unchanged.
-                update(h, Force::Coloured);
+                // Only colored chunks show classes; plain ones are unchanged.
+                update(h, Force::Colored);
                 true
             }
             None => {
@@ -644,7 +677,7 @@ pub struct Probe {
     pub last_chunks_rebuilt: usize,
     pub last_set_text_ms: f64,
     pub chunks: usize,
-    pub coloured_chunks: usize,
+    pub colored_chunks: usize,
     pub total_elements: usize,
     pub chunks_consistent: bool,
     pub text_matches_widget: bool,
@@ -669,7 +702,7 @@ pub fn probe() -> Probe {
         last_chunks_rebuilt: h.last_chunks_rebuilt,
         last_set_text_ms: h.last_set_text_ms,
         chunks: h.chunks.len(),
-        coloured_chunks: h.chunks.iter().filter(|c| c.coloured).count(),
+        colored_chunks: h.chunks.iter().filter(|c| c.colored).count(),
         total_elements: h.chunks.iter().map(|c| c.elements).sum(),
         // Chunks tile the text exactly, each ends at a line end (or EOF),
         // and each element shows exactly its slice.
@@ -756,6 +789,37 @@ mod tests {
                 &new[s.from as usize..s.to as usize],
                 &old[o.from as usize..o.to as usize]
             );
+        }
+    }
+
+    #[test]
+    fn line_col_from_chunks_matches_a_full_scan() {
+        let long = "y".repeat(9000);
+        for src in ["", "a", "a\n", "\n\n", "ab\ncd😀e\n\nfg", long.as_str()] {
+            let mut text = String::new();
+            for i in 0..150 {
+                text.push_str(src);
+                text.push_str(&format!("line {i}\n"));
+            }
+            let t = u(&text);
+            let chunks = split_chunks(&t, 0, t.len() as u32);
+            assert!(chunks.len() > 1);
+            // One running scan supplies the expected value at every offset.
+            let (mut l, mut c) = (1, 1);
+            for pos in 0..=t.len() {
+                if pos % 7 == 0 || pos == t.len() {
+                    assert_eq!(line_col_in(&t, &chunks, pos as u32), Some((l, c)), "{pos}");
+                }
+                if pos < t.len() {
+                    if t[pos] == b'\n' as u16 {
+                        l += 1;
+                        c = 1;
+                    } else {
+                        c += 1;
+                    }
+                }
+            }
+            assert_eq!(line_col_in(&t, &chunks, t.len() as u32 + 1), None);
         }
     }
 

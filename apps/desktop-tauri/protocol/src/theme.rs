@@ -196,7 +196,7 @@ pub const REQUIRED_TOKENS: &[&str] = &[
     "--wf-editor-caret",
     "--wf-editor-line-number",
     "--wf-editor-active-line",
-    // syntax (source editor colours, UI-SYNTAX-1)
+    // syntax (source editor colors, UI-SYNTAX-1)
     "--wf-syntax-comment",
     "--wf-syntax-keyword",
     "--wf-syntax-string",

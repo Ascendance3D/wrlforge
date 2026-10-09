@@ -128,7 +128,7 @@ pub fn ThemePicker() -> impl IntoView {
     view! {
         <label class="theme-picker" for="theme-select">
             "Theme"
-            <select id="theme-select" title="Application colour theme (saved for next launch)"
+            <select id="theme-select" title="Application color theme (saved for next launch)"
                 prop:value=move || t.id.get()
                 on:change=move |ev| select(event_target_value(&ev))>
                 {THEMES.iter().map(|d| view! {

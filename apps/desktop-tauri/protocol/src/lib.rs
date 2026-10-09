@@ -40,7 +40,7 @@ pub struct DocumentInfo {
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum OpenOutcome {
     Opened { doc: DocumentInfo },
-    Cancelled,
+    Canceled,
     Failed { message: String },
 }
 
@@ -52,6 +52,10 @@ pub struct EditRequest {
     pub from: u64,
     pub to: u64,
     pub insert: String,
+    /// The selected Scene Tree item id, valid at `base_revision`. Rust maps
+    /// it through the exact change (`EditOutcome::Applied::item`).
+    #[serde(default)]
+    pub item: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -71,12 +75,14 @@ pub struct DocState {
 pub enum EditOutcome {
     Applied {
         state: DocState,
+        /// The request's item carried through the exact change, or `None`
+        /// when it cannot be proven (or none was sent).
+        #[serde(default)]
+        item: Option<String>,
     },
     /// Refused; the buffer is unchanged. The UI must resync its widget from
     /// `doc_snapshot` before sending another edit.
-    Refused {
-        message: String,
-    },
+    Refused { message: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -108,7 +114,7 @@ pub enum SaveOutcome {
     Conflict {
         reason: String,
     },
-    Cancelled,
+    Canceled,
     Failed {
         message: String,
     },
@@ -188,6 +194,23 @@ pub struct Inspection {
     pub rows: Vec<InspectorRow>,
     /// Typed field descriptors when the item is a node; `None` otherwise.
     pub node: Option<NodeFields>,
+}
+
+/// The reply to `doc_inspect`. An item id names a source span of ONE
+/// revision, so the request says which revision it came from.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum InspectOutcome {
+    Found {
+        inspection: Inspection,
+    },
+    /// No item with this id in that revision.
+    Missing,
+    /// The document is no longer at the requested revision. Nothing was
+    /// inspected; the caller must use a Scene Tree of the current revision.
+    Stale {
+        current: u64,
+    },
 }
 
 /// One component of an editable value, as Rust read it from the source.
@@ -298,7 +321,7 @@ pub struct SmokePlan {
     pub theme: Option<ThemeSmoke>,
     /// UI-SYNTAX-1 visual check: when non-zero, the run pauses this long at
     /// each alignment state with the textarea's own glyphs made visible over
-    /// the colour layer, so an external screenshot can prove registration.
+    /// the color layer, so an external screenshot can prove registration.
     #[serde(default)]
     pub syntax_align_hold_ms: u64,
 }

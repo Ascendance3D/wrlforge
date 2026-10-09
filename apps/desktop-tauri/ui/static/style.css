@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    WRL Forge desktop (Tauri) — component styles. Sizing follows
-   renderer/editor.html. Colours come ONLY from the semantic --wf-* tokens in
-   themes.css; no raw colour value belongs in this file (enforced by the
+   renderer/editor.html. Colors come ONLY from the semantic --wf-* tokens in
+   themes.css; no raw color value belongs in this file (enforced by the
    protocol crate's theme tests). */
 :root { --ui: 13px; --wf-font-ui: -apple-system, "Segoe UI", "Cantarell", sans-serif;
   --wf-font-mono: "JetBrains Mono", "DejaVu Sans Mono", monospace; }
@@ -55,7 +55,7 @@ option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
 .tree { list-style: none; margin: 0; padding: .2rem 0; overflow: auto; flex: 1 1 auto; font-size: .92rem; }
 .tree-item { padding: .14rem .4rem; cursor: pointer; white-space: nowrap; display: flex; gap: .4rem; color: var(--wf-text-primary); }
 .tree-item:hover { background: var(--wf-tree-hover-bg); }
-/* Selected is shown by colour AND an inset bar, never colour alone. */
+/* Selected is shown by color AND an inset bar, never color alone. */
 .tree-item.selected { background: var(--wf-tree-selected-bg); color: var(--wf-tree-selected-fg); box-shadow: inset 3px 0 0 var(--wf-tree-selected-indicator); }
 .tree-item .kind { color: var(--wf-tree-kind); font-size: .78rem; min-width: 3.6rem; }
 .tree-item.kind-route .label { color: var(--wf-tree-route); }
@@ -69,8 +69,8 @@ option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
 /* Two layers with IDENTICAL text metrics (UI-SYNTAX-1): the textarea is the
    only editing control and paints caret + selection; its glyphs are
    transparent. The aria-hidden layer behind it paints the same text in
-   syntax colours, follows its scroll by transform, and takes no input.
-   Colour, underline and nothing else may differ per token: no weight, style
+   syntax colors, follows its scroll by transform, and takes no input.
+   Color, underline and nothing else may differ per token: no weight, style
    or ligature change, so glyph advances never move. */
 .source-wrap { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--wf-surface-editor); }
 .source-metrics { font-family: var(--wf-font-mono); font-size: 13px; line-height: 18px; tab-size: 4;
@@ -94,11 +94,11 @@ option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
 .tk-def-name, .tk-def-ref { color: var(--wf-syntax-def-name); }
 .tk-punctuation { color: var(--wf-syntax-punctuation); }
 .tk-invalid { color: var(--wf-syntax-invalid); }
-/* Diagnostics are marked by an underline SHAPE as well as colour. */
+/* Diagnostics are marked by an underline SHAPE as well as color. */
 .dg-error { text-decoration: underline wavy var(--wf-error-fg); text-decoration-skip-ink: none; }
 .dg-warning { text-decoration: underline dashed var(--wf-warning-fg); text-decoration-skip-ink: none; }
 /* Smoke-only registration check: the textarea's own glyphs are painted over
-   the colour layer; any offset shows as doubled glyphs in a screenshot. */
+   the color layer; any offset shows as doubled glyphs in a screenshot. */
 .source-wrap[data-align-check] .source { -webkit-text-fill-color: var(--wf-syntax-invalid); color: var(--wf-syntax-invalid); }
 .diag-head { color: var(--wf-text-muted); font-size: .8rem; margin-bottom: .15rem; }
 .diagnostics { flex: 0 0 auto; max-height: 8.5rem; overflow: auto; border-top: 1px solid var(--wf-border); background: var(--wf-surface-panel); color: var(--wf-text-secondary); padding: .3rem .6rem; font-size: .88rem; }

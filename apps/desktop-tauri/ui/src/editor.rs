@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The source editor's synchronisation with the canonical Rust document.
+//! The source editor's synchronization with the canonical Rust document.
 //!
 //! The `<textarea>` DISPLAYS the editor view; it is not a text authority. Each
 //! user change is turned into ONE minimal view edit against the text last
@@ -23,8 +23,9 @@ use crate::{syntax, ui};
 #[derive(Default)]
 pub struct Core {
     pub session: Option<u64>,
-    /// The view text as last acknowledged by the backend.
-    pub shown: String,
+    /// The view text as last acknowledged by the backend, in UTF-16 units
+    /// (the widget's own unit), so an edit is diffed without re-encoding.
+    pub shown: Vec<u16>,
     pub revision: u64,
     pub busy: bool,
     /// Bumped on every acknowledged change; drives debounced analysis/preview.
@@ -34,6 +35,33 @@ pub struct Core {
     pub previewed: Option<u64>,
     /// Bumped per preview load; only the newest load reports its status.
     pub preview_seq: u64,
+    /// Timings of the last keystroke path, for the smoke harness (ms).
+    pub perf: Perf,
+    /// Bumped per Inspector request; only the newest reply may land.
+    pub inspect_seq: u64,
+    /// Replies discarded as stale (test/diagnostic counters).
+    pub stale_analyses: u64,
+    pub stale_inspections: u64,
+}
+
+/// Per-stage cost of the last edit, measured where it happens.
+#[derive(Default, Clone, Copy, Debug)]
+pub struct Perf {
+    /// `input` handler: widget read + color layer.
+    pub input_ms: f64,
+    /// Pump work on the main thread before and after the IPC call.
+    pub pump_ms: f64,
+    /// The `doc_edit` round trip (Rust apply + acknowledgment).
+    pub ack_ms: f64,
+    /// Caret line / column.
+    pub cursor_ms: f64,
+}
+
+pub fn now() -> f64 {
+    web_sys::window()
+        .and_then(|w| w.performance())
+        .map(|p| p.now())
+        .unwrap_or(0.0)
 }
 
 thread_local! {
@@ -53,23 +81,14 @@ pub fn textarea() -> Option<HtmlTextAreaElement> {
 pub fn diff(old: &str, new: &str) -> (u64, u64, String) {
     let a: Vec<u16> = old.encode_utf16().collect();
     let b: Vec<u16> = new.encode_utf16().collect();
-    let mut pre = 0;
-    while pre < a.len() && pre < b.len() && a[pre] == b[pre] {
-        pre += 1;
-    }
-    if pre > 0 && (0xD800..0xDC00).contains(&a[pre - 1]) {
-        pre -= 1;
-    }
-    let mut suf = 0;
-    while suf < a.len() - pre && suf < b.len() - pre && a[a.len() - 1 - suf] == b[b.len() - 1 - suf]
-    {
-        suf += 1;
-    }
-    if suf > 0 && (0xDC00..0xE000).contains(&a[a.len() - suf]) {
-        suf -= 1;
-    }
-    let insert = String::from_utf16(&b[pre..b.len() - suf]).unwrap_or_default();
-    (pre as u64, (a.len() - suf) as u64, insert)
+    diff_units(&a, &b)
+}
+
+/// `diff` over UTF-16 units: (from, old_to, inserted text).
+pub fn diff_units(a: &[u16], b: &[u16]) -> (u64, u64, String) {
+    let (from, old_to, new_to) = syntax::diff16(a, b);
+    let insert = String::from_utf16(&b[from as usize..new_to as usize]).unwrap_or_default();
+    (from as u64, old_to as u64, insert)
 }
 
 pub fn utf16_len(s: &str) -> u64 {
@@ -80,7 +99,7 @@ pub fn utf16_len(s: &str) -> u64 {
 pub fn adopt(doc: &p::DocumentInfo) {
     CORE.with_borrow_mut(|c| {
         c.session = Some(doc.session);
-        c.shown = doc.view.clone();
+        c.shown = doc.view.encode_utf16().collect();
         c.revision = doc.revision;
         c.busy = false;
         c.generation += 1;
@@ -107,7 +126,7 @@ pub async fn resync(reason: &str) {
                 .and_then(|t| t.selection_start().ok().flatten())
                 .unwrap_or(0);
             CORE.with_borrow_mut(|c| {
-                c.shown = doc.view.clone();
+                c.shown = doc.view.encode_utf16().collect();
                 c.revision = doc.revision;
                 c.busy = false;
                 c.generation += 1;
@@ -117,6 +136,9 @@ pub async fn resync(reason: &str) {
                 let _ = ta.set_selection_range(caret, caret);
             }
             syntax::set_text(&doc.view);
+            // The change that led here is unknown: no selection survives it.
+            ui::ui().selected.set(None);
+            ui::ui().inspection.set(None);
             ui::state_changed(doc.revision, doc.dirty, doc.can_undo, doc.can_redo);
             ui::flash(&format!("Editor resynced from the Rust document: {reason}"));
         }
@@ -126,10 +148,12 @@ pub async fn resync(reason: &str) {
 
 /// `input` handler: start (or fold into) the single in-flight edit.
 pub fn on_input() {
+    let t0 = now();
     // Paint the widget's new text immediately (typing, paste, IME preedit).
     if let Some(ta) = textarea() {
         syntax::set_text(&ta.value());
     }
+    CORE.with_borrow_mut(|c| c.perf.input_ms = now() - t0);
     let start = CORE.with_borrow_mut(|c| {
         if c.busy || c.session.is_none() {
             false
@@ -146,31 +170,46 @@ pub fn on_input() {
 async fn pump() {
     loop {
         let Some(ta) = textarea() else { break };
-        let current = ta.value();
-        let (session, shown, revision) =
-            CORE.with_borrow(|c| (c.session, c.shown.clone(), c.revision));
+        let t0 = now();
+        // The widget is the truth for what the user typed: read it, once.
+        let current: Vec<u16> = ta.value().encode_utf16().collect();
+        let (session, revision) = CORE.with_borrow(|c| (c.session, c.revision));
         let Some(session) = session else { break };
-        if current == shown {
+        let Some((from, to, insert)) =
+            CORE.with_borrow(|c| (c.shown != current).then(|| diff_units(&c.shown, &current)))
+        else {
             CORE.with_borrow_mut(|c| c.busy = false);
             break;
-        }
-        let (from, to, insert) = diff(&shown, &current);
+        };
+        // The selection travels with the edit only if it is of this base.
+        let sel = ui::ui()
+            .selected
+            .get_untracked()
+            .filter(|s| s.session == session && s.revision == revision);
         let req = p::EditRequest {
             session,
             base_revision: revision,
             from,
             to,
             insert,
+            item: sel.as_ref().map(|s| s.id.clone()),
         };
         #[derive(serde::Serialize)]
         struct A {
             request: p::EditRequest,
         }
-        match call::<p::EditOutcome>("doc_edit", A { request: req }).await {
-            Ok(p::EditOutcome::Applied { state }) => {
-                if state.view_hash != p::view_hash(&current)
-                    || state.view_len != utf16_len(&current)
-                {
+        let t1 = now();
+        let reply = call::<p::EditOutcome>("doc_edit", A { request: req }).await;
+        let t2 = now();
+        match reply {
+            Ok(p::EditOutcome::Applied { state, item }) => {
+                let hash_ok = state.view_len == current.len() as u64
+                    && state.view_hash == p::view_hash_units(current.iter().copied());
+                CORE.with_borrow_mut(|c| {
+                    c.perf.pump_ms = (t1 - t0) + (now() - t2);
+                    c.perf.ack_ms = t2 - t1;
+                });
+                if !hash_ok {
                     resync("view hash mismatch after edit").await;
                     break;
                 }
@@ -179,6 +218,7 @@ async fn pump() {
                     c.revision = state.revision;
                     c.generation += 1;
                 });
+                carry_selection(sel, item, state.revision);
                 ui::state_changed(state.revision, state.dirty, state.can_undo, state.can_redo);
             }
             Ok(p::EditOutcome::Refused { message }) => {
@@ -214,20 +254,17 @@ pub async fn history(undo: bool) {
         session: u64,
         item: Option<String>,
     }
-    let item = ui::ui().selected.get_untracked();
-    let had = item.is_some();
+    let revision = CORE.with_borrow(|c| c.revision);
+    let sel = ui::ui()
+        .selected
+        .get_untracked()
+        .filter(|s| s.session == session && s.revision == revision);
+    let item = sel.as_ref().map(|s| s.id.clone());
     match call::<p::HistoryOutcome>(cmd, A { session, item }).await {
         Ok(p::HistoryOutcome::Applied { state, view, item }) => {
             adopt_change(&state, view);
-            // Rust mapped the selection through the exact change; a lost one
-            // is cleared, never guessed.
-            match item {
-                Some(id) => ui::inspect(id).await,
-                None if had => {
-                    ui::ui().selected.set(None);
-                    ui::ui().inspection.set(None);
-                }
-                None => {}
+            if let Some(sel) = carry_selection(sel, item, state.revision) {
+                ui::inspect(sel).await;
             }
         }
         Ok(p::HistoryOutcome::Nothing) => ui::flash(if undo {
@@ -239,11 +276,33 @@ pub async fn history(undo: bool) {
     }
 }
 
+/// After an acknowledged change: the selection becomes the item Rust mapped
+/// through the exact change, at the new revision, or is cleared when Rust
+/// could not prove it -- never guessed. The Inspector keeps its (older)
+/// data, marked as updating, until the analysis of the new revision.
+fn carry_selection(
+    sent: Option<ui::Selected>,
+    item: Option<String>,
+    revision: u64,
+) -> Option<ui::Selected> {
+    let u = ui::ui();
+    let next = sent.zip(item).map(|(s, id)| ui::Selected {
+        session: s.session,
+        revision,
+        id,
+    });
+    if next.is_none() && u.selected.get_untracked().is_some() {
+        u.inspection.set(None);
+    }
+    u.selected.set(next.clone());
+    next
+}
+
 /// Adopt a change Rust made and acknowledged (undo, redo, an Inspector field
 /// edit): the widget shows exactly the returned view, never a local guess.
 pub fn adopt_change(state: &p::DocState, view: String) {
     CORE.with_borrow_mut(|c| {
-        c.shown = view.clone();
+        c.shown = view.encode_utf16().collect();
         c.revision = state.revision;
         c.generation += 1;
     });
@@ -264,12 +323,7 @@ pub fn select(from: u64, to: u64) {
         let _ = ta.focus();
         let _ = ta.set_selection_range(from as u32, to as u32);
         // Scroll: place the selection's line near the top third.
-        let v = ta.value();
-        let line = v
-            .encode_utf16()
-            .take(from as usize)
-            .filter(|&u| u == b'\n' as u16)
-            .count();
+        let line = line_col(&ta, from as u32).0 as usize - 1;
         let lh = 18.0_f64; // matches .source line-height in style.css (px)
         ta.set_scroll_top(((line as f64 * lh) - ta.client_height() as f64 / 3.0).max(0.0) as i32);
         update_cursor();
@@ -277,16 +331,24 @@ pub fn select(from: u64, to: u64) {
 }
 
 pub fn update_cursor() {
+    let t0 = now();
     let Some(ta) = textarea() else { return };
-    let pos = ta.selection_start().ok().flatten().unwrap_or(0) as usize;
-    let end = ta.selection_end().ok().flatten().unwrap_or(0) as usize;
-    let v = ta.value();
+    let pos = ta.selection_start().ok().flatten().unwrap_or(0);
+    let end = ta.selection_end().ok().flatten().unwrap_or(0);
+    let (line, col) = line_col(&ta, pos);
+    ui::cursor(line, col, end.saturating_sub(pos));
+    CORE.with_borrow_mut(|c| c.perf.cursor_ms = now() - t0);
+}
+
+/// 1-based line / UTF-16 column of `pos`: from the color layer's line index
+/// when it holds the widget's text, else by scanning the widget value.
+fn line_col(ta: &HtmlTextAreaElement, pos: u32) -> (u32, u32) {
+    if let Some(lc) = syntax::line_col(pos, ta.text_length()) {
+        return lc;
+    }
     let mut line = 1u32;
     let mut col = 1u32;
-    for (i, u) in v.encode_utf16().enumerate() {
-        if i >= pos {
-            break;
-        }
+    for u in ta.value().encode_utf16().take(pos as usize) {
         if u == b'\n' as u16 {
             line += 1;
             col = 1;
@@ -294,7 +356,7 @@ pub fn update_cursor() {
             col += 1;
         }
     }
-    ui::cursor(line, col, end.saturating_sub(pos) as u32);
+    (line, col)
 }
 
 #[cfg(test)]

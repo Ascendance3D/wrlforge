@@ -3,19 +3,19 @@
 
    This file is the ONLY place palette values live. Component styles
    (style.css) refer to the semantic --wf-* tokens below and never to a raw
-   colour. Every built-in theme defines the SAME token set; the contract is
+   color. Every built-in theme defines the SAME token set; the contract is
    enforced by `wrlforge-desktop-protocol`'s theme tests (REQUIRED_TOKENS).
 
-   Colour values are adapted from the Tokyo Night VS Code theme:
+   Color values are adapted from the Tokyo Night VS Code theme:
      https://github.com/tokyo-night/tokyo-night-vscode-theme
      commit 7c0f11eaef322f293621ca7befe462214b7ea468 (v1.1.2)
      themes/tokyo-night-color-theme.json
      themes/tokyo-night-storm-color-theme.json
      themes/tokyo-night-light-color-theme.json
    Copyright (c) 2018-present Enkia. MIT License — full text ships beside this
-   file as LICENSE-tokyo-night.txt. Adaptation: upstream workbench colours are
+   file as LICENSE-tokyo-night.txt. Adaptation: upstream workbench colors are
    mapped onto WRL Forge semantic roles; translucent upstream values are
-   pre-blended onto their surface; some text/control colours are adjusted to
+   pre-blended onto their surface; some text/control colors are adjusted to
    meet WCAG AA (see OPEN_SOURCE_PROVENANCE.md §4). Not a runtime dependency.
 
    The rendered VRML scene is NOT themed: no token here reaches authored
@@ -148,7 +148,7 @@
   --wf-viewport-status-fg: #8089b3;
   --wf-viewport-border: #101014;
 
-  /* transform-overlay axes — reserved; must stay recognisably X/Y/Z */
+  /* transform-overlay axes — reserved; must stay recognizably X/Y/Z */
   --wf-axis-x: #f7768e;
   --wf-axis-y: #9ece6a;
   --wf-axis-z: #7aa2f7;

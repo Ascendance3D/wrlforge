@@ -7,14 +7,14 @@
 //! carry text, never edit text, and are discarded when the revision moves.
 
 /// Syntax classes in wire-code order (`code == index`), each with the theme
-/// token that colours it. The order matches `wrlforge_vrml::highlight::Class`
+/// token that colors it. The order matches `wrlforge_vrml::highlight::Class`
 /// (checked by a backend test). Add at the end, never reorder.
 pub const SYNTAX_CLASSES: &[(&str, &str)] = &[
     ("header", "--wf-syntax-keyword"),
     ("comment", "--wf-syntax-comment"),
     ("keyword", "--wf-syntax-keyword"),
     ("route", "--wf-syntax-route"),
-    // TRUE / FALSE / NULL: upstream Tokyo Night colours language constants
+    // TRUE / FALSE / NULL: upstream Tokyo Night colors language constants
     // like numbers.
     ("literal", "--wf-syntax-number"),
     ("string", "--wf-syntax-string"),
@@ -117,8 +117,8 @@ mod tests {
         assert_eq!(decode(&[], 0), Some(vec![]));
     }
 
-    /// style.css colours every class with exactly its registered token, and
-    /// changes nothing but colour (no weight / style / size that would move
+    /// style.css colors every class with exactly its registered token, and
+    /// changes nothing but color (no weight / style / size that would move
     /// glyphs off the textarea's).
     #[test]
     fn stylesheet_paints_each_class_with_its_token_only() {

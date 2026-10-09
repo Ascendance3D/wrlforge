@@ -123,7 +123,7 @@ fn App() -> impl IntoView {
                     </div>
                     // The textarea is the ONLY editing control (its glyphs are
                     // transparent); the aria-hidden layer behind it paints the
-                    // same text in syntax colours and takes no input.
+                    // same text in syntax colors and takes no input.
                     <div class="source-wrap">
                         <pre id="source-hl" class="source-hl source-metrics" aria-hidden="true" data-state="pending"></pre>
                         <textarea id="source" class="source source-metrics" spellcheck="false" wrap="off"

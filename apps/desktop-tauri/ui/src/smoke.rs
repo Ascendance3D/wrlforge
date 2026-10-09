@@ -11,6 +11,7 @@ use crate::editor::{self, textarea, CORE};
 use crate::ipc::{self, call, Session};
 use crate::ui::{self, ui};
 
+mod selection;
 mod syntax;
 
 struct R(Vec<p::SmokeStep>);
@@ -45,6 +46,21 @@ fn key(k: &str, shift: bool) {
     ) {
         let _ = ta.dispatch_event(&ev);
     }
+}
+
+/// Select + inspect an item of the CURRENT analysis directly (probing many
+/// items quickly); a click goes through `ui::tree_select` instead.
+async fn inspect_item(id: &str) {
+    let (Some(session), revision) = CORE.with_borrow(|c| (c.session, c.revision)) else {
+        return;
+    };
+    let sel = ui::Selected {
+        session,
+        revision,
+        id: id.to_string(),
+    };
+    ui().selected.set(Some(sel.clone()));
+    ui::inspect(sel).await;
 }
 
 async fn settle() {
@@ -251,6 +267,9 @@ async fn run_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
             .unwrap_or_default(),
     );
 
+    // UI-EDITOR-2: no selection from a projection of an older revision.
+    selection::selection_steps(r).await?;
+
     // Preview.
     let probe = ipc::preview_probe();
     r.step("WebView WebGL probe", true, probe.clone());
@@ -331,7 +350,7 @@ async fn inspector_steps(value: &str, expect_preview: bool, r: &mut R) -> Option
     let mut target = None;
     'pick: for want in ["diffuseColor", "translation"] {
         for it in items.iter().filter(|i| i.kind == "Node") {
-            ui::inspect(it.id.clone()).await;
+            inspect_item(&it.id).await;
             let Some(n) = ui().inspection.get_untracked().and_then(|i| i.node) else {
                 continue;
             };
@@ -465,7 +484,10 @@ async fn inspector_steps(value: &str, expect_preview: bool, r: &mut R) -> Option
     r.step(
         "inspector: re-inspected node shows the new value",
         shown.is_some() && ui().field_error.get_untracked().is_none(),
-        ui().selected.get_untracked().unwrap_or_default(),
+        ui().selected
+            .get_untracked()
+            .map(|s| s.id)
+            .unwrap_or_default(),
     );
     let tree_ok = wait_for(|| {
         ui().analysis
@@ -474,7 +496,7 @@ async fn inspector_steps(value: &str, expect_preview: bool, r: &mut R) -> Option
             .map(|a| {
                 a.items
                     .iter()
-                    .any(|i| Some(&i.id) == ui().selected.get_untracked().as_ref())
+                    .any(|i| Some(&i.id) == ui().selected.get_untracked().map(|s| s.id).as_ref())
             })
             .filter(|ok| *ok)
     })
@@ -666,7 +688,7 @@ async fn doc_state() -> Option<DocState> {
             ta.selection_start().ok().flatten().unwrap_or(u32::MAX),
             ta.selection_end().ok().flatten().unwrap_or(u32::MAX),
         ),
-        selected: ui().selected.get_untracked(),
+        selected: ui().selected.get_untracked().map(|s| s.id),
         inspection: ui().inspection.get_untracked(),
         preview_loads: ui().preview_loads.get_untracked(),
     })

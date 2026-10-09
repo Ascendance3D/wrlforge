@@ -42,10 +42,10 @@ cargo test -p wrl-forge-desktop                       # file + session services
 WRLFORGE_SMOKE_ALIGN_HOLD_MS=2500 ./smoke.sh ...      # pause at each syntax-layer registration state (screenshots)
 ```
 
-Every smoke run also checks the syntax colour layer (UI-SYNTAX-1): colours
+Every smoke run also checks the syntax color layer (UI-SYNTAX-1): colors
 from the current revision only, registration with the textarea at four scroll
 positions, typing / paste / undo / redo / reload, stale-reply rejection,
-diagnostic underlines and theme recolouring.
+diagnostic underlines and theme recoloring.
 
 `smoke.sh` always copies its inputs to a fresh `/tmp` directory first. It never
 touches the original files. Settings go to a temporary `--config-dir` per file,

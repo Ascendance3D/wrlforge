@@ -36,7 +36,7 @@ pub async fn open_document(app: AppHandle) -> p::OpenOutcome {
         .add_filter("VRML97 (.wrl, .wrz, gzip)", FILTER_EXT)
         .blocking_pick_file();
     let Some(fp) = picked else {
-        return p::OpenOutcome::Cancelled;
+        return p::OpenOutcome::Canceled;
     };
     match fp.into_path() {
         Ok(path) => app.state::<Service>().open_path(&path),
@@ -107,7 +107,7 @@ pub async fn doc_save_as(app: AppHandle, session: p::SessionId) -> p::SaveOutcom
         .add_filter("VRML97 (.wrl, .wrz, gzip)", FILTER_EXT)
         .blocking_save_file();
     let Some(fp) = picked else {
-        return p::SaveOutcome::Cancelled;
+        return p::SaveOutcome::Canceled;
     };
     match fp.into_path() {
         Ok(path) => app.state::<Service>().save_as(session, &path),
@@ -130,18 +130,27 @@ pub fn doc_reload(svc: State<'_, Service>, session: p::SessionId) -> p::OpenOutc
     svc.reload(session)
 }
 
+/// Async on purpose (unlike `doc_edit`): the parse runs on a worker thread
+/// over a copy of one revision, so the main thread -- and the edits queued
+/// on it -- never wait behind it. The reply names its revision; the UI
+/// discards it unless it is still current.
 #[tauri::command]
-pub fn doc_analyze(svc: State<'_, Service>, session: p::SessionId) -> Result<p::Analysis, String> {
+pub async fn doc_analyze(
+    svc: State<'_, Service>,
+    session: p::SessionId,
+) -> Result<p::Analysis, String> {
     svc.analyze(session)
 }
 
+/// Async for the same reason as `doc_analyze`.
 #[tauri::command]
-pub fn doc_inspect(
+pub async fn doc_inspect(
     svc: State<'_, Service>,
     session: p::SessionId,
     item: String,
-) -> Result<Option<p::Inspection>, String> {
-    svc.inspect(session, &item)
+    revision: u64,
+) -> Result<p::InspectOutcome, String> {
+    svc.inspect(session, &item, revision)
 }
 
 /// Synchronous for the same ordering reason as `doc_edit`.

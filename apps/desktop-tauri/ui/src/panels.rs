@@ -7,47 +7,108 @@ use leptos::task::spawn_local;
 
 use wrlforge_desktop_protocol as p;
 
-use crate::editor;
 use crate::ui::{self, ui};
 
 #[component]
 pub fn SceneTree() -> impl IntoView {
     let u = ui();
+    // Only the items whose (revision, id) key flips re-render on a selection
+    // change -- not every item on every keystroke.
+    let sel = Selector::new(move || {
+        u.selected
+            .with(|s| s.as_ref().map(|s| (s.revision, s.id.clone())))
+    });
+    // The tree is "current" only when its analysis is of the revision the
+    // document is at; otherwise its offsets are of older text.
+    let stale = move || {
+        u.analysis
+            .with(|a| a.as_ref().is_some_and(|a| a.revision != u.revision.get()))
+    };
     view! {
         <aside class="tree-col" aria-label="Scene Tree">
             <div class="pane-title">"Scene Tree"
                 <span class="muted" title="USE resolution uses the flat, non-authoritative scope; the WD1.5 scope graph is not migrated yet">
                     {move || u.analysis.with(|a| a.as_ref().map(|a| format!(" · {} items · {} scope", a.items.len(), a.resolution_scope)).unwrap_or_default())}
                 </span>
+                <span class="tree-updating" id="tree-updating">{move || stale().then_some(" · updating…")}</span>
             </div>
             // The analysis revision these items (and their offsets) belong to.
-            <ul class="tree" role="tree" aria-label="Scene items"
-                data-revision=move || u.analysis.with(|a| a.as_ref().map(|a| a.revision.to_string()).unwrap_or_default())>
-                {move || u.analysis.with(|a| a.as_ref().map(|a| a.items.iter().map(|it| {
+            <ul class="tree" role="tree" aria-label="Scene items" tabindex="0"
+                class:stale=stale
+                aria-busy=move || if stale() { "true" } else { "false" }
+                data-stale=move || if stale() { "true" } else { "false" }
+                data-revision=move || u.analysis.with(|a| a.as_ref().map(|a| a.revision.to_string()).unwrap_or_default())
+                on:keydown=tree_keydown>
+                {let sel = sel.clone(); move || u.analysis.with(|a| a.as_ref().map(|a| {
+                    let (session, rev) = (a.session, a.revision);
+                    // Keys of the previous render are gone with its items.
+                    sel.clear();
+                    a.items.iter().map(|it| {
+                    let (sel, sel2) = (sel.clone(), sel.clone());
                     let id = it.id.clone();
-                    let id_sel = it.id.clone();
+                    let key = Some((rev, it.id.clone()));
+                    let key2 = key.clone();
                     let (from, to) = (it.view_from, it.view_to);
                     let pad = format!("padding-left: {}rem", 0.4 + (it.depth.saturating_sub(1)) as f32 * 0.9);
                     let class = format!("tree-item kind-{}{}", it.kind.to_lowercase(),
                         if it.use_status.as_deref() == Some("unresolved") { " unresolved" } else { "" });
                     let title = it.use_status.clone().map(|s| format!("USE {s} (flat scope, non-authoritative)")).unwrap_or_default();
+                    // Offsets of THIS render's revision; tree_select refuses
+                    // them unless that is still the document's revision.
+                    let id2 = id.clone();
+                    let act = move || { ui::tree_select(session, rev, id2.clone(), from, to); };
+                    let act2 = act.clone();
                     view! {
-                        <li role="treeitem" class=class style=pad title=title data-id=id.clone()
-                            class:selected={let id_sel = id_sel.clone(); move || u.selected.get().as_deref() == Some(id_sel.as_str())}
-                            aria-selected=move || if u.selected.get().as_deref() == Some(id_sel.as_str()) { "true" } else { "false" }
-                            on:click=move |_| {
-                                editor::select(from, to);
-                                let id = id.clone();
-                                spawn_local(ui::inspect(id));
+                        <li role="treeitem" class=class style=pad title=title data-id=id.clone() tabindex="-1"
+                            class:selected=move || sel.selected(&key)
+                            aria-selected=move || if sel2.selected(&key2) { "true" } else { "false" }
+                            on:click=move |_| act()
+                            on:keydown=move |ev: web_sys::KeyboardEvent| {
+                                if ev.key() == "Enter" || ev.key() == " " {
+                                    ev.prevent_default();
+                                    act2();
+                                }
                             }>
                             <span class="kind">{it.kind.clone()}</span>
                             <span class="label">{it.label.clone()}</span>
                         </li>
                     }
-                }).collect_view()))}
+                }).collect_view()}))}
             </ul>
             {move || (u.doc.with(|d| d.is_none())).then(|| view! { <p class="empty">"Open a file to see its scene."</p> })}
         </aside>
+    }
+}
+
+/// Arrow keys move focus between items (no selection change); Enter/Space
+/// on an item selects it through the same revision check as a click.
+fn tree_keydown(ev: web_sys::KeyboardEvent) {
+    use wasm_bindgen::JsCast;
+    let down = match ev.key().as_str() {
+        "ArrowDown" => true,
+        "ArrowUp" => false,
+        _ => return,
+    };
+    let Some(target) = ev
+        .target()
+        .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+    else {
+        return;
+    };
+    let next = if target.tag_name().eq_ignore_ascii_case("ul") {
+        if down {
+            target.first_element_child()
+        } else {
+            target.last_element_child()
+        }
+    } else if down {
+        target.next_element_sibling()
+    } else {
+        target.previous_element_sibling()
+    };
+    if let Some(n) = next.and_then(|n| n.dyn_into::<web_sys::HtmlElement>().ok()) {
+        ev.prevent_default();
+        let _ = n.focus();
     }
 }
 
@@ -68,12 +129,19 @@ pub fn Inspector() -> impl IntoView {
                 None => view! { <p class="empty">"Select a Scene Tree item."</p> }.into_any(),
                 Some(i) => {
                     let title = i.title.clone();
+                    let rev = i.revision;
+                    let session = crate::editor::CORE.with_borrow(|c| c.session).unwrap_or(0);
                     let body = match i.node {
-                        Some(n) => node_fields(n).into_any(),
-                        None => rows(i.rows).into_any(),
+                        Some(n) => node_fields(n, session, rev).into_any(),
+                        None => rows(i.rows, session, rev).into_any(),
                     };
                     view! {
-                        <div>
+                        <div data-revision=rev.to_string()>
+                            {move || (u.revision.get() != rev).then(|| view! {
+                                <p class="inspector-stale" id="inspector-stale" role="status">
+                                    {format!("Updating… these fields are of revision {rev}.")}
+                                </p>
+                            })}
                             <h3 id="inspector-title">{title}</h3>
                             {body}
                         </div>
@@ -84,14 +152,14 @@ pub fn Inspector() -> impl IntoView {
     }
 }
 
-fn rows(rows: Vec<p::InspectorRow>) -> impl IntoView {
+fn rows(rows: Vec<p::InspectorRow>, session: u64, rev: u64) -> impl IntoView {
     view! {
         <table class="fields">
             <tbody>
             {rows.into_iter().map(|r| {
                 let (f, t) = (r.view_from, r.view_to);
                 view! {
-                    <tr on:click=move |_| editor::select(f, t)>
+                    <tr on:click=move |_| { ui::select_from("Inspector", session, rev, f, t); }>
                         <th>{r.name}</th>
                         <td class="kind">{r.kind}</td>
                         <td><code>{r.source}{if r.elided { "…" } else { "" }}</code></td>
@@ -131,7 +199,7 @@ fn submit(field: u32, name: String, kind: String, arity: usize) {
     spawn_local(ui::edit_field(field, name, out));
 }
 
-fn node_fields(n: p::NodeFields) -> impl IntoView {
+fn node_fields(n: p::NodeFields, session: u64, rev: u64) -> impl IntoView {
     let banner = (!n.editable).then(|| {
         view! {
             <p class="readonly-note" id="inspector-readonly">
@@ -147,13 +215,13 @@ fn node_fields(n: p::NodeFields) -> impl IntoView {
         {empty}
         <table class="fields editable">
             <tbody>
-            {n.fields.into_iter().map(field_row).collect_view()}
+            {n.fields.into_iter().map(|f| field_row(f, session, rev)).collect_view()}
             </tbody>
         </table>
     }
 }
 
-fn field_row(f: p::EditableField) -> impl IntoView {
+fn field_row(f: p::EditableField, session: u64, rev: u64) -> impl IntoView {
     let (from, to) = (f.view_from, f.view_to);
     let ty = f.field_type.clone().unwrap_or_else(|| "?".into());
     let title = [
@@ -210,6 +278,7 @@ fn field_row(f: p::EditableField) -> impl IntoView {
             <div class="controls">
                 {controls}
                 <button class="small" id=format!("fe-apply-{idx}")
+                    disabled=move || ui().revision.get() != rev
                     on:click=move |_| submit(idx, name.clone(), kind2.clone(), arity)>"Apply"</button>
             </div>
         }
@@ -225,7 +294,7 @@ fn field_row(f: p::EditableField) -> impl IntoView {
     };
     view! {
         <tr class:ro=!f.editable data-field=f.name.clone()>
-            <th title=title on:click=move |_| editor::select(from, to)>{f.name.clone()}</th>
+            <th title=title on:click=move |_| { ui::select_from("Inspector", session, rev, from, to); }>{f.name.clone()}</th>
             <td class="kind">{ty}</td>
             <td>{value}</td>
         </tr>
@@ -237,7 +306,7 @@ pub fn Diagnostics() -> impl IntoView {
     let u = ui();
     view! {
         <div class="diagnostics" aria-label="Diagnostics">
-            // Diagnostics and syntax colours come from the same Rust parse;
+            // Diagnostics and syntax colors come from the same Rust parse;
             // say which revision that was.
             {move || u.analysis.with(|a| a.as_ref().map(|a| {
                 let current = a.revision == u.revision.get();
@@ -255,9 +324,11 @@ pub fn Diagnostics() -> impl IntoView {
                     <ul>
                         {a.diagnostics.iter().take(200).map(|d| {
                             let (f, t) = (d.view_from, d.view_to);
+                            let (session, rev) = (a.session, a.revision);
                             view! {
-                                <li class=format!("diag {}", d.severity) on:click=move |_| editor::select(f, t)>
-                                    // Severity in words too: never colour alone.
+                                <li class=format!("diag {}", d.severity)
+                                    on:click=move |_| { ui::select_from("Diagnostics", session, rev, f, t); }>
+                                    // Severity in words too: never color alone.
                                     <span class="sev">{severity_label(&d.severity)}</span>
                                     {format!("{}:{} {} {}", d.line, d.column, d.code, d.message)}
                                 </li>

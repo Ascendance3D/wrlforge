@@ -28,7 +28,7 @@
     },
     load: async function (text) {
       var c = canvas();
-      if (!c || !c.browser) return 'unavailable: X_ITE canvas not initialised';
+      if (!c || !c.browser) return 'unavailable: X_ITE canvas not initialized';
       var browser = c.browser;
       try {
         var scene = await browser.createX3DFromString(String(text == null ? '' : text));

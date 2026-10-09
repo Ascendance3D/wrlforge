@@ -2,7 +2,7 @@
 // Dev-time ORACLE only (not shipped): compares the Rust highlight dump
 // (argv[2]) with src/editor/language.js for the same stdin text.
 //
-// Every span the JS editor coloured must have the SAME span and the mapped
+// Every span the JS editor colored must have the SAME span and the mapped
 // class in Rust. Rust may add a role only on a token JS left as a plain
 // identifier, and only one of the documented UI-SYNTAX-1 additions. Two
 // documented refinements: `TO` is a ROUTE word, and an unterminated string

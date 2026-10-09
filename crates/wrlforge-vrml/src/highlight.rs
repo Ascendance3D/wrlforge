@@ -102,7 +102,7 @@ pub struct Span {
 
 /// Identifier roles keyed by the token's UTF-16 start offset. Applied ONLY to
 /// `Id` tokens, so a recovery range that lands on a keyword or brace never
-/// recolours it.
+/// recolors it.
 struct Roles(HashMap<u32, Class>);
 
 impl Roles {

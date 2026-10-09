@@ -3,7 +3,7 @@
 //!
 //! Replaces the Electron main-process editor lane (`src/editor/session.js`,
 //! `session-store.js`, `editor-controller.js`, the `editor:*` IPC handlers in
-//! `main.js`) for the Tauri application. Tauri-free, so every behaviour here is
+//! `main.js`) for the Tauri application. Tauri-free, so every behavior here is
 //! tested with plain `cargo test`; `commands.rs` is a thin IPC shim over it.
 //!
 //! Security shape: a session holds the ONLY copy of its path. The WebView
@@ -18,7 +18,7 @@ use std::sync::Mutex;
 use std::time::SystemTime;
 
 use wrlforge_desktop_protocol as p;
-use wrlforge_document::{map_span, Applied, Document, ViewEdit};
+use wrlforge_document::{map_span, view_of, Applied, Document, SpanChange, ViewEdit};
 use wrlforge_text::Edit;
 use wrlforge_vrml::{field_edit, highlight, scene};
 
@@ -218,9 +218,19 @@ impl Service {
                 insert: r.insert.clone(),
             };
             match s.doc.apply_view_edit(r.base_revision, &e) {
-                Ok(a) => p::EditOutcome::Applied {
-                    state: Self::state(s, a),
-                },
+                Ok(a) => {
+                    // An empty no-op edit changes nothing (same revision): the
+                    // item stays as it was.
+                    let item = if a.revision == r.base_revision {
+                        r.item.clone()
+                    } else {
+                        Self::carry(r.item.as_deref(), s.doc.last_changes())
+                    };
+                    p::EditOutcome::Applied {
+                        state: Self::state(s, a),
+                        item,
+                    }
+                }
                 Err(e) => p::EditOutcome::Refused {
                     message: e.to_string(),
                 },
@@ -256,10 +266,7 @@ impl Service {
             let r = if undo { s.doc.undo() } else { s.doc.redo() };
             match r {
                 Ok(a) => {
-                    let item = item
-                        .and_then(node_span)
-                        .and_then(|(f, t)| map_span(f, t, s.doc.last_history_changes()))
-                        .map(|(f, t)| format!("node-{f}-{t}"));
+                    let item = Self::carry(item, s.doc.last_changes());
                     p::HistoryOutcome::Applied {
                         state: Self::state(s, a),
                         view: s.doc.view(),
@@ -269,6 +276,15 @@ impl Service {
                 Err(_) => p::HistoryOutcome::Nothing,
             }
         })
+    }
+
+    /// Carry a node item id through the exact changes just applied. A
+    /// change touching its boundary, or a non-node item, loses it (`None`):
+    /// never a search or a nearest match.
+    fn carry(item: Option<&str>, changes: &[SpanChange]) -> Option<String> {
+        item.and_then(node_span)
+            .and_then(|(f, t)| map_span(f, t, changes))
+            .map(|(f, t)| format!("node-{f}-{t}"))
     }
 
     /// Save to the session's own path: conflict-checked, gzip-preserving.
@@ -360,9 +376,16 @@ impl Service {
         r.unwrap_or_else(|m| p::OpenOutcome::Failed { message: m })
     }
 
+    /// A copy of one revision's text, taken under the session lock. Parsing
+    /// then runs WITHOUT the lock, so an edit never waits behind a parse.
+    fn text_at(&self, id: p::SessionId) -> Result<(String, u64), String> {
+        self.with(id, |s| (s.doc.text().to_string(), s.doc.revision()))
+    }
+
     pub fn analyze(&self, id: p::SessionId) -> Result<p::Analysis, String> {
-        self.with(id, |s| {
-            let text = s.doc.text();
+        let (text, revision) = self.text_at(id)?;
+        let text = text.as_str();
+        {
             let parsed = wrlforge_vrml::parse(text);
             let tree = scene::build_scene_tree(&parsed.tree, text);
             let vm = ViewMap::new(text);
@@ -398,7 +421,7 @@ impl Service {
                     view_to: vm.view(d.range.end.offset as u64),
                 })
                 .collect();
-            // Highlights come from THIS parse; no second parse for colour.
+            // Highlights come from THIS parse; no second parse for color.
             let spans = highlight::highlight(&parsed, text);
             let highlights_truncated = spans.len() > p::syntax::MAX_SPANS;
             let highlights = p::syntax::encode(
@@ -412,10 +435,10 @@ impl Service {
                     })
                     .filter(|s| s.to > s.from),
             );
-            let view = s.doc.view();
-            p::Analysis {
+            let view = view_of(text);
+            Ok(p::Analysis {
                 session: id,
-                revision: s.doc.revision(),
+                revision,
                 view_hash: p::view_hash(&view),
                 view_len: view.encode_utf16().count() as u64,
                 highlights,
@@ -424,13 +447,25 @@ impl Service {
                 diagnostics,
                 resolution_scope: tree.resolution_scope.into(),
                 truncated: parsed.truncated,
-            }
-        })
+            })
+        }
     }
 
-    pub fn inspect(&self, id: p::SessionId, item: &str) -> Result<Option<p::Inspection>, String> {
-        self.with(id, |s| {
-            let text = s.doc.text();
+    /// Inspect `item` as it is in `revision`. Item ids are source spans of
+    /// one revision, so any other revision is refused (`Stale`), never
+    /// re-interpreted against the current text.
+    pub fn inspect(
+        &self,
+        id: p::SessionId,
+        item: &str,
+        revision: u64,
+    ) -> Result<p::InspectOutcome, String> {
+        let (text, current) = self.text_at(id)?;
+        if revision != current {
+            return Ok(p::InspectOutcome::Stale { current });
+        }
+        let text = text.as_str();
+        {
             let parsed = wrlforge_vrml::parse(text);
             let vm = ViewMap::new(text);
             let node = node_span(item).map(|(from, to)| {
@@ -439,8 +474,8 @@ impl Service {
                     &vm,
                 )
             });
-            scene::inspect(&parsed.tree, text, item).map(|i| p::Inspection {
-                revision: s.doc.revision(),
+            let found = scene::inspect(&parsed.tree, text, item).map(|i| p::Inspection {
+                revision,
                 id: i.id,
                 title: i.title,
                 rows: i
@@ -456,8 +491,12 @@ impl Service {
                     })
                     .collect(),
                 node,
+            });
+            Ok(match found {
+                Some(inspection) => p::InspectOutcome::Found { inspection },
+                None => p::InspectOutcome::Missing,
             })
-        })
+        }
     }
 
     /// An Inspector field edit. Rust re-proves everything: the revision, the
@@ -598,6 +637,109 @@ mod tests {
         }
     }
 
+    fn found(r: Result<p::InspectOutcome, String>) -> p::Inspection {
+        match r.unwrap() {
+            p::InspectOutcome::Found { inspection } => inspection,
+            other => panic!("not found: {other:?}"),
+        }
+    }
+
+    /// One edit carrying a selected item; returns (state, carried item).
+    fn edit_item(
+        svc: &Service,
+        id: u64,
+        rev: u64,
+        (from, to, ins): (u64, u64, &str),
+        item: &str,
+    ) -> (p::DocState, Option<String>) {
+        match svc
+            .edit(&p::EditRequest {
+                session: id,
+                base_revision: rev,
+                from,
+                to,
+                insert: ins.into(),
+                item: Some(item.into()),
+            })
+            .unwrap()
+        {
+            p::EditOutcome::Applied { state, item } => (state, item),
+            other => panic!("refused: {other:?}"),
+        }
+    }
+
+    /// UI-EDITOR-2: an item id is a source span of ONE revision. Inspect
+    /// refuses any other revision; an edit carries the selection through the
+    /// exact change or loses it -- including the case where a DIFFERENT
+    /// node now sits at the old id's span.
+    #[test]
+    fn inspect_and_selection_are_bound_to_one_revision() {
+        let dir = tmp("rev-bound");
+        let path = dir.join("two.wrl");
+        let src = "#VRML V2.0 utf8\r\nDEF A Group {}\r\nDEF B Group { children [] }\r\n";
+        fs::write(&path, src).unwrap();
+        let svc = Service::new(clock);
+        let doc = opened(svc.open_path(&path));
+        let a0 = svc.analyze(doc.session).unwrap();
+        let (ia, ib) = (&a0.items[0], &a0.items[1]);
+        assert_eq!(
+            (ia.label.as_str(), ib.label.as_str()),
+            ("Group A", "Group B")
+        );
+        assert_eq!(found(svc.inspect(doc.session, &ia.id, 0)).title, "Group A");
+
+        // Typing inside B (view offsets; CRLF source) keeps B, end moved.
+        let inside = ib.view_from + "DEF B Group { ".len() as u64;
+        let (st, carried) = edit_item(&svc, doc.session, 0, (inside, inside, "x"), &ib.id);
+        let a1 = svc.analyze(doc.session).unwrap();
+        let b1 = a1.items.iter().find(|i| i.label == "Group B").unwrap();
+        assert_eq!(carried.as_deref(), Some(b1.id.as_str()));
+        assert_eq!(st.revision, 1);
+        // The old revision's ids are refused, never re-read against rev 1.
+        assert_eq!(
+            svc.inspect(doc.session, &ib.id, 0).unwrap(),
+            p::InspectOutcome::Stale { current: 1 }
+        );
+        // An empty no-op edit keeps the item and the revision.
+        let (st, same) = edit_item(&svc, doc.session, 1, (0, 0, ""), &b1.id);
+        assert_eq!((st.revision, same.as_deref()), (1, Some(b1.id.as_str())));
+
+        // Delete "DEF A Group {}\n": B moves onto A's old span. A selected
+        // A is LOST (the change crosses it), not carried onto B.
+        let a_start = ia.view_from;
+        let (st, lost) = edit_item(
+            &svc,
+            doc.session,
+            1,
+            (a_start, a_start + "DEF A Group {}\n".len() as u64, ""),
+            &a1.items[0].id,
+        );
+        assert_eq!((st.revision, lost), (2, None));
+        let a2 = svc.analyze(doc.session).unwrap();
+        assert_eq!(a2.items.len(), 1);
+        // B now has A's old span start. Inspecting A's rev-1 id at rev 2 is
+        // refused, so B's fields can never appear for A's selection.
+        assert_eq!(
+            svc.inspect(doc.session, &a1.items[0].id, 1).unwrap(),
+            p::InspectOutcome::Stale { current: 2 }
+        );
+        assert_eq!(
+            found(svc.inspect(doc.session, &a2.items[0].id, 2)).title,
+            "Group B"
+        );
+        // A boundary-touching edit loses the selection.
+        let b2 = &a2.items[0];
+        let (_, lost) = edit_item(
+            &svc,
+            doc.session,
+            2,
+            (b2.view_from, b2.view_from, "#"),
+            &b2.id,
+        );
+        assert_eq!(lost, None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     fn edit(svc: &Service, id: u64, rev: u64, from: u64, to: u64, ins: &str) -> p::DocState {
         match svc
             .edit(&p::EditRequest {
@@ -606,10 +748,11 @@ mod tests {
                 from,
                 to,
                 insert: ins.into(),
+                item: None,
             })
             .unwrap()
         {
-            p::EditOutcome::Applied { state } => state,
+            p::EditOutcome::Applied { state, .. } => state,
             other => panic!("refused: {other:?}"),
         }
     }
@@ -695,6 +838,7 @@ mod tests {
                 from: 0,
                 to: 0,
                 insert: "x".into(),
+                item: None,
             })
             .unwrap();
         assert!(matches!(r, p::EditOutcome::Refused { .. }));
@@ -739,7 +883,7 @@ mod tests {
             &doc.view[g.view_from as usize..g.view_to as usize],
             "DEF A Group { children [ USE A ] }"
         );
-        let insp = svc.inspect(doc.session, &g.id).unwrap().unwrap();
+        let insp = found(svc.inspect(doc.session, &g.id, a.revision));
         assert_eq!(insp.title, "Group A");
         assert_eq!(insp.rows[1].name, "children");
         assert_eq!(insp.rows[1].source, "[ USE A ]");
@@ -866,7 +1010,7 @@ mod tests {
         let a = svc.analyze(doc.session).unwrap();
         assert!(a.diagnostics.is_empty(), "{:?}", a.diagnostics);
         let mat = a.items.iter().find(|i| i.label == "Material").unwrap();
-        let insp = svc.inspect(doc.session, &mat.id).unwrap().unwrap();
+        let insp = found(svc.inspect(doc.session, &mat.id, a.revision));
         let nf = insp.node.unwrap();
         assert!(nf.editable, "{}", nf.reason);
         let f = &nf.fields[0];

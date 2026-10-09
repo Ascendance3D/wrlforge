@@ -197,7 +197,7 @@ const NAMED_COLORS: &[&str] = &[
 #[test]
 fn component_styles_use_tokens_not_raw_colors() {
     let css = strip_comments(STYLE_CSS);
-    // Values only: `x3d-canvas#viewport` is a selector, not a colour. Nested
+    // Values only: `x3d-canvas#viewport` is a selector, not a color. Nested
     // blocks (@media) are flattened by scanning every `prop: value` pair.
     let values: Vec<(String, String)> = rules(&css)
         .iter()
@@ -217,7 +217,7 @@ fn component_styles_use_tokens_not_raw_colors() {
     );
     for (prop, value) in &values {
         for bad in ["#", "rgb(", "rgba(", "hsl(", "hsla(", "color-mix("] {
-            assert!(!value.contains(bad), "style.css {prop}: raw colour {value}");
+            assert!(!value.contains(bad), "style.css {prop}: raw color {value}");
         }
         if prop.starts_with("--wf-font-") {
             continue;
@@ -228,12 +228,12 @@ fn component_styles_use_tokens_not_raw_colors() {
         {
             assert!(
                 !NAMED_COLORS.contains(&word.to_ascii_lowercase().as_str()),
-                "style.css {prop}: named colour {word}"
+                "style.css {prop}: named color {word}"
             );
         }
     }
     // Every token style.css reads is a contract token (or one of its own
-    // non-colour font tokens).
+    // non-color font tokens).
     let own: BTreeSet<_> = rules(STYLE_CSS)
         .iter()
         .flat_map(|(_, b)| declarations(b))

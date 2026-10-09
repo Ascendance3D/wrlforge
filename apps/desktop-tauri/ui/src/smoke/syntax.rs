@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! UI-SYNTAX-1 smoke steps: syntax colours from the Rust analysis, layer
+//! UI-SYNTAX-1 smoke steps: syntax colors from the Rust analysis, layer
 //! registration, editing through the real textarea, stale-reply rejection,
-//! diagnostics marks and theme recolouring.
+//! diagnostics marks and theme recoloring.
 
 use wasm_bindgen::JsCast;
 use web_sys::{Element, HtmlElement};
@@ -21,9 +21,9 @@ fn now() -> f64 {
         .unwrap_or(0.0)
 }
 
-/// Wait (bounded) until the colour layer holds an exact analysis of the
+/// Wait (bounded) until the color layer holds an exact analysis of the
 /// current session + revision. Uses the normal debounced scheduling.
-async fn wait_exact() -> Option<f64> {
+pub(super) async fn wait_exact() -> Option<f64> {
     let t0 = now();
     for _ in 0..250 {
         let (s, rev) = CORE.with_borrow(|c| (c.session, c.revision));
@@ -89,7 +89,7 @@ fn classes_match_tokens() -> (bool, usize, String) {
     )
 }
 
-fn type_at(at: u32, text: &str, paste: bool) -> Option<f64> {
+pub(super) fn type_at(at: u32, text: &str, paste: bool) -> Option<f64> {
     let ta = textarea()?;
     let _ = ta.set_selection_range(at, at);
     // Like real typing / pasting: the caret ends after the inserted text.
@@ -106,7 +106,7 @@ fn type_at(at: u32, text: &str, paste: bool) -> Option<f64> {
     let t0 = now();
     ta.dispatch_event(&ev).ok()?;
     // Include the layout the browser must do for this keystroke (textarea
-    // and colour layer), so the figure is the real synchronous cost.
+    // and color layer), so the figure is the real synchronous cost.
     let _ = ta.scroll_height();
     let _ = crate::element_by_id::<HtmlElement>("source-hl").map(|l| l.offset_height());
     Some(now() - t0)
@@ -114,7 +114,7 @@ fn type_at(at: u32, text: &str, paste: bool) -> Option<f64> {
 
 /// Press Ctrl+Z (or Ctrl+Shift+Z) and wait until Rust's answer is adopted
 /// (the revision moves), so a slow document never gets a second press.
-async fn history_key(redo: bool) {
+pub(super) async fn history_key(redo: bool) {
     let before = CORE.with_borrow(|c| c.revision);
     key("z", redo);
     for _ in 0..500 {
@@ -130,7 +130,7 @@ fn utf16_len(s: &str) -> u32 {
     s.encode_utf16().count() as u32
 }
 
-/// The rendered position of a VIEW offset in the colour layer (client px).
+/// The rendered position of a VIEW offset in the color layer (client px).
 fn layer_rect_at(offset: u32) -> Option<web_sys::DomRect> {
     let layer = doc_el()?.get_element_by_id("source-hl")?;
     // Walk text nodes in order, counting UTF-16 units.
@@ -214,11 +214,11 @@ fn registration(view: &str, k: usize, col: u32) -> Option<(bool, String)> {
 
 pub async fn syntax_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
     let ta = textarea()?;
-    // ---- 1. initial colours from the Rust parse of this revision --------
+    // ---- 1. initial colors from the Rust parse of this revision --------
     let waited = wait_exact().await;
     let pr = syntax::probe();
     r.step(
-        "syntax: colours come from the Rust analysis of the current session + revision",
+        "syntax: colors come from the Rust analysis of the current session + revision",
         waited.is_some(),
         format!(
             "{} spans, {} marks, analysis {:?}, waited {:.0} ms",
@@ -229,7 +229,7 @@ pub async fn syntax_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
         ),
     );
     r.step(
-        "syntax: colour layer shows exactly the widget text, in whole-line chunks",
+        "syntax: color layer shows exactly the widget text, in whole-line chunks",
         pr.text_matches_widget && pr.chunks_consistent,
         format!("{} chunks", pr.chunks),
     );
@@ -270,7 +270,7 @@ pub async fn syntax_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
         })
         .collect();
     r.step(
-        "syntax: textarea and colour layer share every text-metric property",
+        "syntax: textarea and color layer share every text-metric property",
         diff.is_empty(),
         diff.join("; "),
     );
@@ -368,7 +368,7 @@ pub async fn syntax_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
     ta.set_scroll_left(0);
     ipc::sleep(40).await;
 
-    // ---- 4. typing: painted at once, recoloured from the new revision ---
+    // ---- 4. typing: painted at once, recolored from the new revision ---
     let base = ta.value();
     let base_rev = CORE.with_borrow(|c| c.revision);
     let at = base
@@ -382,10 +382,10 @@ pub async fn syntax_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
     let ms = type_at(at, &probe_text, false)?;
     let pr = syntax::probe();
     r.step(
-        "syntax: typed text is painted immediately, marked pending until re-analysed",
+        "syntax: typed text is painted immediately, marked pending until re-analyzed",
         pr.text_matches_widget && pr.chunks_consistent && !pr.exact,
         format!(
-            "input + layout {ms:.1} ms, colour-layer Rust work {:.1} ms ({} chunk(s) rebuilt)",
+            "input + layout {ms:.1} ms, color-layer Rust work {:.1} ms ({} chunk(s) rebuilt)",
             pr.last_set_text_ms, pr.last_chunks_rebuilt
         ),
     );
@@ -407,7 +407,7 @@ pub async fn syntax_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
         .map(|(t, c)| format!("{t}: {:?} != {c}", class_of_text(t)))
         .collect();
     r.step(
-        "syntax: after the edit, Rust re-analysed the new revision and the new tokens are coloured correctly",
+        "syntax: after the edit, Rust re-analyzed the new revision and the new tokens are colored correctly",
         waited.is_some() && rev > base_rev && wrong.is_empty() && (syntax::probe().text_matches_widget && syntax::probe().chunks_consistent),
         format!(
             "rev {base_rev} -> {rev}, exact after {:.0} ms; {}",
@@ -437,7 +437,7 @@ pub async fn syntax_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
     let max = times.iter().cloned().fold(0.0, f64::max);
     let avg = times.iter().sum::<f64>() / times.len() as f64;
     r.step(
-        "syntax: 25 rapid inputs + a paste reach Rust exactly; colours catch up to the final revision",
+        "syntax: 25 rapid inputs + a paste reach Rust exactly; colors catch up to the final revision",
         snap.view == ta.value() && waited.is_some() && (syntax::probe().text_matches_widget && syntax::probe().chunks_consistent),
         format!(
             "input handler avg {avg:.1} ms, max {max:.1} ms; exact {:.0} ms after settle",
@@ -518,7 +518,7 @@ pub async fn syntax_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
     }
     let waited = wait_exact().await;
     r.step(
-        "syntax: Undo restores the exact text and its colours",
+        "syntax: Undo restores the exact text and its colors",
         ta.value() == base
             && waited.is_some()
             && (syntax::probe().text_matches_widget && syntax::probe().chunks_consistent),
@@ -529,14 +529,14 @@ pub async fn syntax_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
     history_key(false).await;
     let undo_ok = wait_exact().await.is_some() && ta.value() == base;
     r.step(
-        "syntax: Redo then Undo recolour each revision exactly",
+        "syntax: Redo then Undo recolor each revision exactly",
         redo_ok
             && undo_ok
             && (syntax::probe().text_matches_widget && syntax::probe().chunks_consistent),
         "",
     );
 
-    // ---- 9. theme change recolours without touching the document --------
+    // ---- 9. theme change recolors without touching the document --------
     let pre_rev = CORE.with_borrow(|c| c.revision);
     let pre_doc = snapshot().await?;
     let pre = syntax::probe();
@@ -562,7 +562,7 @@ pub async fn syntax_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
     let post = syntax::probe();
     let post_doc = snapshot().await?;
     r.step(
-        "syntax: each Tokyo Night theme recolours the same tokens with its own tokens",
+        "syntax: each Tokyo Night theme recolors the same tokens with its own tokens",
         theme_ok,
         theme_rows.join(" | "),
     );
@@ -593,13 +593,13 @@ pub async fn syntax_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
         "syntax: performance on this document",
         pr.total_elements <= 16_000,
         format!(
-            "{} UTF-16 units, {} lines, {} spans ({} wire numbers), analyze round trip {rt:.0} ms, last render {:.1} ms; {} of {} chunks coloured, {} coloured elements in the DOM",
+            "{} UTF-16 units, {} lines, {} spans ({} wire numbers), analyze round trip {rt:.0} ms, last render {:.1} ms; {} of {} chunks colored, {} colored elements in the DOM",
             utf16_len(&ta.value()),
             lines,
             pr.spans,
             a.highlights.len(),
             pr.last_render_ms,
-            pr.coloured_chunks,
+            pr.colored_chunks,
             pr.chunks,
             pr.total_elements
         ),
@@ -607,7 +607,7 @@ pub async fn syntax_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
     ta.set_scroll_top(0);
     ipc::sleep(80).await;
 
-    // Per-keystroke synchronous cost (handler + layout), with the colour
+    // Per-keystroke synchronous cost (handler + layout), with the color
     // layer shown vs. not laid out, so the layer's own share is visible.
     let base = ta.value();
     let at = base
@@ -639,7 +639,7 @@ pub async fn syntax_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
     };
     let back = wait_exact().await.is_some() && ta.value() == base;
     r.step(
-        "syntax: keystroke cost with the colour layer vs. without it (text restored after)",
+        "syntax: keystroke cost with the color layer vs. without it (text restored after)",
         back,
         format!(
             "median {:.0} ms with layer, {:.0} ms with layer not laid out",
@@ -647,10 +647,96 @@ pub async fn syntax_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
             med(&mut hidden)
         ),
     );
+    keystroke_breakdown(r, at).await;
     Some(())
 }
 
-/// Reload from disk (the saved file): a fresh document view, colours from
+/// Where one keystroke's time goes, stage by stage (medians of 7), on line 2
+/// of the real document: the browser's own insertion + layout, the widget
+/// read, the `input` handler, layout after it, the caret line/column, the
+/// pump's main-thread work and the Rust acknowledgment. Text restored after.
+async fn keystroke_breakdown(r: &mut R, at: u32) -> Option<()> {
+    use leptos::prelude::*;
+    let ta = textarea()?;
+    let base = ta.value();
+    let layout = || {
+        let _ = ta.scroll_height();
+        let _ = crate::element_by_id::<HtmlElement>("source-hl").map(|l| l.offset_height());
+    };
+    let mut rows: [Vec<f64>; 8] = Default::default();
+    for _ in 0..7 {
+        let _ = ta.set_selection_range(at, at);
+        let t0 = now();
+        ta.set_range_text_with_start_and_end_and_mode("a", at, at, "end")
+            .ok()?;
+        layout();
+        let t1 = now();
+        let _ = ta.value();
+        let t2 = now();
+        let init = web_sys::InputEventInit::new();
+        init.set_input_type("insertText");
+        init.set_bubbles(true);
+        let ev = web_sys::InputEvent::new_with_event_init_dict("input", &init).ok()?;
+        ta.dispatch_event(&ev).ok()?;
+        let t3 = now();
+        layout();
+        let t4 = now();
+        crate::editor::update_cursor();
+        let t5 = now();
+        settle().await;
+        let pf = CORE.with_borrow(|c| c.perf);
+        for (i, v) in [
+            t1 - t0,
+            t2 - t1,
+            t3 - t2,
+            t4 - t3,
+            t5 - t4,
+            pf.pump_ms,
+            pf.ack_ms,
+            (t5 - t2) + pf.pump_ms,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            rows[i].push(v);
+        }
+    }
+    for _ in 0..40 {
+        if ta.value() == base || !ui().can_undo.get_untracked() {
+            break;
+        }
+        history_key(false).await;
+    }
+    let med = |v: &mut Vec<f64>| {
+        v.sort_by(|a, b| a.total_cmp(b));
+        v[v.len() / 2]
+    };
+    let names = [
+        "browser insert+layout",
+        "widget value read",
+        "input handler",
+        "layout after handler",
+        "caret line/col",
+        "pump main-thread",
+        "rust ack",
+        "our main-thread total",
+    ];
+    let detail = names
+        .iter()
+        .zip(rows.iter_mut())
+        .map(|(n, v)| format!("{n} {:.1}", med(v)))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    let back = wait_exact().await.is_some() && ta.value() == base;
+    r.step(
+        "perf: keystroke breakdown in ms (medians of 7; text restored after)",
+        back,
+        detail,
+    );
+    Some(())
+}
+
+/// Reload from disk (the saved file): a fresh document view, colors from
 /// nothing carried over, then a fresh exact analysis.
 pub async fn reload_steps(r: &mut R) -> Option<()> {
     let ta = textarea()?;
