@@ -607,3 +607,153 @@ fn refusal_texts_are_short_and_present() {
     }
     assert!(refusal_text(Status::NoHit, "").is_empty());
 }
+
+// ---- VISUAL-3A1: runtime binding by exact provenance ------------------------
+
+fn bind(text: &str, hit: &Hit, offset: u64, want: (u64, u64)) -> Result<usize, Resolution> {
+    let p = parse(text);
+    resolve_node(hit, &p, offset, want.0, want.1).map(|chain| {
+        assert_eq!(
+            (
+                chain[0].range.start.offset as u64,
+                chain[0].range.end.offset as u64
+            ),
+            want,
+            "the proven node is exactly the authored one"
+        );
+        chain.len()
+    })
+}
+
+/// A located top-level node: `n1` with one occurrence, parent SCENE.
+fn located(ty: &str, span: (u64, u64)) -> Hit {
+    let mut g = G::default();
+    g.node("n1", ty, &[span], &["SCENE"]);
+    g.hit("n1")
+}
+
+#[test]
+fn binding_twin_transforms_proves_each_exactly_and_never_the_other() {
+    // Two anonymous top-level Transforms with EQUAL translations and equal
+    // geometry: name, type, value and root order cannot tell them apart.
+    let mut d = Doc::new();
+    simple(&mut d, "t1", "s1", "1 2 3", "Box { }");
+    simple(&mut d, "t2", "s2", "1 2 3", "Box { }");
+    let mut wrong = 0;
+    for (me, other) in [("t1", "t2"), ("t2", "t1")] {
+        let hit = located("Transform", d.span(me));
+        assert_eq!(bind(&d.s, &hit, 0, d.span(me)).ok(), Some(1));
+        // The runtime node of `me` can never bind as `other`.
+        match bind(&d.s, &hit, 0, d.span(other)) {
+            Ok(_) => wrong += 1,
+            Err(r) => refused(r, Status::Unsupported, reason::BIND_SPAN),
+        }
+    }
+    assert_eq!(wrong, 0, "WRONG_RUNTIME_MANIPULATIONS");
+}
+
+#[test]
+fn binding_refuses_shared_nested_proto_and_malformed_provenance() {
+    // DEF + USE: one runtime node, two source occurrences.
+    let mut d = Doc::new();
+    d.open("def", "DEF T Transform { children [ ");
+    d.leaf("s", "Shape { geometry Box { } }");
+    d.close(" ] }");
+    d.put("\n");
+    d.leaf("use", "USE T");
+    d.put("\n");
+    let mut g = G::default();
+    g.node(
+        "n1",
+        "Transform",
+        &[d.span("def"), d.span("use")],
+        &["SCENE"],
+    );
+    refused(
+        bind(&d.s, &g.hit("n1"), 0, d.span("def")).unwrap_err(),
+        Status::RefusedAmbiguous,
+        reason::SEVERAL_OCCURRENCES,
+    );
+    // One runtime node with two live parents.
+    let mut g = G::default();
+    g.node("n1", "Transform", &[d.span("def")], &["SCENE", "SCENE"]);
+    refused(
+        bind(&d.s, &g.hit("n1"), 0, d.span("def")).unwrap_err(),
+        Status::RefusedAmbiguous,
+        reason::SEVERAL_PARENTS,
+    );
+
+    // Nested: the chain proves depth 2 (the caller refuses non-top-level).
+    let mut d = Doc::new();
+    d.open("outer", "Transform { children [ ");
+    simple(&mut d, "inner", "s", "0 0 0", "Box { }");
+    d.close("] }");
+    d.put("\n");
+    let mut g = G::default();
+    g.node("n1", "Transform", &[d.span("inner")], &["n2"]).node(
+        "n2",
+        "Transform",
+        &[d.span("outer")],
+        &["SCENE"],
+    );
+    let r = bind(&d.s, &g.hit("n1"), 0, d.span("inner"));
+    assert_eq!(r.as_ref().ok(), Some(&2), "{r:?}");
+    // ... and a runtime parent that is not the source parent disagrees.
+    let mut g = G::default();
+    g.node("n1", "Transform", &[d.span("inner")], &["SCENE"]);
+    refused(
+        bind(&d.s, &g.hit("n1"), 0, d.span("inner")).unwrap_err(),
+        Status::Unsupported,
+        reason::CHAIN_DISAGREES,
+    );
+
+    // A node inside a PROTO body is never the document's node.
+    let mut g = G::default();
+    g.node_in(
+        "n1",
+        "Transform",
+        Ctx::ProtoBody,
+        &[d.span("outer")],
+        &["SCENE"],
+    );
+    refused(
+        bind(&d.s, &g.hit("n1"), 0, d.span("outer")).unwrap_err(),
+        Status::Unsupported,
+        reason::PROTO_INSTANCE,
+    );
+    // No provenance, a type that disagrees, a dangling label, a span off by
+    // one: each refuses, none is "close enough".
+    let mut g = G::default();
+    g.node("n1", "Transform", &[], &["SCENE"]);
+    refused(
+        bind(&d.s, &g.hit("n1"), 0, d.span("outer")).unwrap_err(),
+        Status::Unsupported,
+        reason::NO_PROVENANCE,
+    );
+    refused(
+        bind(&d.s, &located("Group", d.span("outer")), 0, d.span("outer")).unwrap_err(),
+        Status::Unsupported,
+        reason::JOIN_TYPE,
+    );
+    let mut g = G::default();
+    g.node("n1", "Transform", &[d.span("outer")], &["n9"]);
+    refused(
+        bind(&d.s, &g.hit("n1"), 0, d.span("outer")).unwrap_err(),
+        Status::Unsupported,
+        reason::CHAIN_UNBOUNDED,
+    );
+    let (a, b) = d.span("outer");
+    assert!(bind(&d.s, &located("Transform", (a, b - 1)), 0, (a, b)).is_err());
+}
+
+#[test]
+fn binding_joins_through_the_bom_projection_exactly() {
+    // The preview omits the BOM: provenance + 1 = canonical offset.
+    let mut d = Doc::with("\u{FEFF}#VRML V2.0 utf8\r\n# é ✓\r");
+    simple(&mut d, "t", "s", "0 0 0", "Box { }");
+    let (a, b) = d.span("t");
+    let hit = located("Transform", (a - 1, b - 1));
+    assert_eq!(bind(&d.s, &hit, 1, (a, b)).ok(), Some(1));
+    // Without the projection the span is not the node.
+    assert!(bind(&d.s, &hit, 0, (a, b)).is_err());
+}

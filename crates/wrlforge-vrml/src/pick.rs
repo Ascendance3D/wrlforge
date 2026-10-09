@@ -89,6 +89,12 @@ pub mod reason {
     pub const NOT_IN_TREE: &str = "logical-node-not-in-scene-tree";
     pub const GENERATION_UNPROVABLE: &str = "generation-unprovable";
     pub const SPAN_OUT_OF_RANGE: &str = "provenance-span-out-of-range";
+    /// VISUAL-3A1 runtime binding: the located runtime node's provenance is
+    /// not exactly the authored node it was asked for.
+    pub const BIND_SPAN: &str = "runtime-node-is-not-the-authored-node";
+    /// VISUAL-3A1 runtime binding: zero or several runtime nodes carry the
+    /// authored node's exact span.
+    pub const BIND_NOT_UNIQUE: &str = "runtime-node-for-span-not-unique";
 }
 
 /// The execution context the adapter classified a runtime node into.
@@ -377,6 +383,149 @@ fn source_node(n: &Node) -> SourceNode {
     }
 }
 
+/// Steps 4-9: prove the runtime chain of `hit.shape` up to the scene and join
+/// every link to exactly one AST node. Returns the AST chain, innermost first
+/// (`[0]` is the node `hit.shape` came from; the last one is top-level).
+fn prove_chain<'a>(
+    hit: &Hit,
+    parse: &'a ParseResult,
+    preview_offset: u64,
+) -> Result<Vec<&'a Node>, Resolution> {
+    // 4/5. Execution context of the hit Shape.
+    match hit.ctx {
+        Ctx::Document => {}
+        Ctx::ExternalScene => return Err(refuse(Status::RefusedExternal, reason::OTHER_DOCUMENT)),
+        Ctx::ProtoBody => return Err(refuse(Status::Unsupported, reason::PROTO_INSTANCE)),
+        _ => return Err(refuse(Status::Unsupported, reason::DETACHED)),
+    }
+    // 6. A damaged or capped document proves nothing.
+    if parse
+        .diagnostics
+        .iter()
+        .any(|d| d.severity == Severity::Error)
+    {
+        return Err(refuse(Status::Unsupported, reason::SYNTAX_ERRORS));
+    }
+    if parse.truncated || parse.depth_capped {
+        return Err(refuse(Status::Unsupported, reason::PARSE_CAPPED));
+    }
+
+    // 7. Climb: every link uniquely provable.
+    struct Link<'g> {
+        occ: (u64, u64),
+        type_name: Option<&'g str>,
+    }
+    let mut chain: Vec<Link> = Vec::new();
+    let mut label: &str = &hit.shape;
+    let mut reached_scene = false;
+    for _ in 0..256 {
+        let Some(g) = hit.graph.get(label) else {
+            return Err(refuse(Status::Unsupported, reason::CHAIN_UNBOUNDED));
+        };
+        match g.ctx {
+            Ctx::Document => {}
+            Ctx::ProtoBody => return Err(refuse(Status::Unsupported, reason::PROTO_INSTANCE)),
+            Ctx::ExternalScene => {
+                return Err(refuse(Status::RefusedExternal, reason::OTHER_DOCUMENT))
+            }
+            _ => return Err(refuse(Status::Unsupported, reason::PARENT_OUTSIDE_DOCUMENT)),
+        }
+        match g.occurrences.len() {
+            0 => return Err(refuse(Status::Unsupported, reason::NO_PROVENANCE)),
+            1 => {}
+            _ => {
+                return Err(refuse(
+                    Status::RefusedAmbiguous,
+                    reason::SEVERAL_OCCURRENCES,
+                ))
+            }
+        }
+        let mut doc_parents: Vec<&str> = Vec::new();
+        let mut at_scene = 0usize;
+        for p in &g.parents {
+            match p {
+                Parent::Scene => at_scene += 1,
+                Parent::OtherContext => {
+                    return Err(refuse(Status::Unsupported, reason::PARENT_OUTSIDE_DOCUMENT))
+                }
+                Parent::Node(pl) => {
+                    let Some(pg) = hit.graph.get(pl) else {
+                        return Err(refuse(Status::Unsupported, reason::CHAIN_UNBOUNDED));
+                    };
+                    match pg.ctx {
+                        Ctx::WorldInfrastructure => continue,
+                        Ctx::ProtoBody => {
+                            return Err(refuse(Status::Unsupported, reason::PROTO_INSTANCE))
+                        }
+                        Ctx::Document => doc_parents.push(pl),
+                        _ => {
+                            return Err(refuse(
+                                Status::Unsupported,
+                                reason::PARENT_OUTSIDE_DOCUMENT,
+                            ))
+                        }
+                    }
+                }
+            }
+        }
+        match doc_parents.len() + at_scene {
+            0 => return Err(refuse(Status::Unsupported, reason::DETACHED)),
+            1 => {}
+            _ => return Err(refuse(Status::RefusedAmbiguous, reason::SEVERAL_PARENTS)),
+        }
+        chain.push(Link {
+            occ: g.occurrences[0],
+            type_name: g.type_name.as_deref(),
+        });
+        if at_scene == 1 {
+            reached_scene = true;
+            break;
+        }
+        label = doc_parents[0];
+    }
+    if !reached_scene {
+        return Err(refuse(Status::Unsupported, reason::CHAIN_UNBOUNDED));
+    }
+
+    // 8. Exact join, same type.
+    let ix = index(&parse.tree);
+    let mut ast: Vec<&Node> = Vec::with_capacity(chain.len());
+    for link in &chain {
+        let (Some(from), Some(to)) = (
+            link.occ.0.checked_add(preview_offset),
+            link.occ.1.checked_add(preview_offset),
+        ) else {
+            return Err(refuse(Status::Unsupported, reason::SPAN_OUT_OF_RANGE));
+        };
+        let found = ix
+            .by_span
+            .get(&(from, to))
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        if found.len() != 1 {
+            return Err(refuse(Status::Unsupported, join_found(found.len())));
+        }
+        if link.type_name != Some(found[0].node_type.as_str()) {
+            return Err(refuse(Status::Unsupported, reason::JOIN_TYPE));
+        }
+        ast.push(found[0]);
+    }
+    // 9. Runtime chain == AST containment chain, by identity.
+    for (i, n) in ast.iter().enumerate() {
+        let Some(&encl) = ix.enclosing.get(&(*n as *const Node)) else {
+            return Err(refuse(Status::Unsupported, reason::CHAIN_DISAGREES));
+        };
+        let agrees = match ast.get(i + 1) {
+            Some(parent) => encl.is_node(parent),
+            None => matches!(encl, Encl::Doc),
+        };
+        if !agrees {
+            return Err(refuse(Status::Unsupported, reason::CHAIN_DISAGREES));
+        }
+    }
+    Ok(ast)
+}
+
 /// Resolve one geometry hit against `parse` (of the canonical text whose
 /// preview the hit was taken from) and its Scene Tree.
 ///
@@ -395,126 +544,10 @@ pub fn resolve(
     if !hit.sensors.is_empty() {
         return refuse(Status::RefusedSensorConflict, reason::SENSOR);
     }
-    // 4/5. Execution context of the hit Shape.
-    match hit.ctx {
-        Ctx::Document => {}
-        Ctx::ExternalScene => return refuse(Status::RefusedExternal, reason::OTHER_DOCUMENT),
-        Ctx::ProtoBody => return refuse(Status::Unsupported, reason::PROTO_INSTANCE),
-        _ => return refuse(Status::Unsupported, reason::DETACHED),
-    }
-    // 6. A damaged or capped document proves nothing.
-    if parse
-        .diagnostics
-        .iter()
-        .any(|d| d.severity == Severity::Error)
-    {
-        return refuse(Status::Unsupported, reason::SYNTAX_ERRORS);
-    }
-    if parse.truncated || parse.depth_capped {
-        return refuse(Status::Unsupported, reason::PARSE_CAPPED);
-    }
-
-    // 7. Climb: every link uniquely provable.
-    struct Link<'g> {
-        occ: (u64, u64),
-        type_name: Option<&'g str>,
-    }
-    let mut chain: Vec<Link> = Vec::new();
-    let mut label: &str = &hit.shape;
-    let mut reached_scene = false;
-    for _ in 0..256 {
-        let Some(g) = hit.graph.get(label) else {
-            return refuse(Status::Unsupported, reason::CHAIN_UNBOUNDED);
-        };
-        match g.ctx {
-            Ctx::Document => {}
-            Ctx::ProtoBody => return refuse(Status::Unsupported, reason::PROTO_INSTANCE),
-            Ctx::ExternalScene => return refuse(Status::RefusedExternal, reason::OTHER_DOCUMENT),
-            _ => return refuse(Status::Unsupported, reason::PARENT_OUTSIDE_DOCUMENT),
-        }
-        match g.occurrences.len() {
-            0 => return refuse(Status::Unsupported, reason::NO_PROVENANCE),
-            1 => {}
-            _ => return refuse(Status::RefusedAmbiguous, reason::SEVERAL_OCCURRENCES),
-        }
-        let mut doc_parents: Vec<&str> = Vec::new();
-        let mut at_scene = 0usize;
-        for p in &g.parents {
-            match p {
-                Parent::Scene => at_scene += 1,
-                Parent::OtherContext => {
-                    return refuse(Status::Unsupported, reason::PARENT_OUTSIDE_DOCUMENT)
-                }
-                Parent::Node(pl) => {
-                    let Some(pg) = hit.graph.get(pl) else {
-                        return refuse(Status::Unsupported, reason::CHAIN_UNBOUNDED);
-                    };
-                    match pg.ctx {
-                        Ctx::WorldInfrastructure => continue,
-                        Ctx::ProtoBody => {
-                            return refuse(Status::Unsupported, reason::PROTO_INSTANCE)
-                        }
-                        Ctx::Document => doc_parents.push(pl),
-                        _ => return refuse(Status::Unsupported, reason::PARENT_OUTSIDE_DOCUMENT),
-                    }
-                }
-            }
-        }
-        match doc_parents.len() + at_scene {
-            0 => return refuse(Status::Unsupported, reason::DETACHED),
-            1 => {}
-            _ => return refuse(Status::RefusedAmbiguous, reason::SEVERAL_PARENTS),
-        }
-        chain.push(Link {
-            occ: g.occurrences[0],
-            type_name: g.type_name.as_deref(),
-        });
-        if at_scene == 1 {
-            reached_scene = true;
-            break;
-        }
-        label = doc_parents[0];
-    }
-    if !reached_scene {
-        return refuse(Status::Unsupported, reason::CHAIN_UNBOUNDED);
-    }
-
-    // 8. Exact join, same type.
-    let ix = index(&parse.tree);
-    let mut ast: Vec<&Node> = Vec::with_capacity(chain.len());
-    for link in &chain {
-        let (Some(from), Some(to)) = (
-            link.occ.0.checked_add(preview_offset),
-            link.occ.1.checked_add(preview_offset),
-        ) else {
-            return refuse(Status::Unsupported, reason::SPAN_OUT_OF_RANGE);
-        };
-        let found = ix
-            .by_span
-            .get(&(from, to))
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        if found.len() != 1 {
-            return refuse(Status::Unsupported, join_found(found.len()));
-        }
-        if link.type_name != Some(found[0].node_type.as_str()) {
-            return refuse(Status::Unsupported, reason::JOIN_TYPE);
-        }
-        ast.push(found[0]);
-    }
-    // 9. Runtime chain == AST containment chain, by identity.
-    for (i, n) in ast.iter().enumerate() {
-        let Some(&encl) = ix.enclosing.get(&(*n as *const Node)) else {
-            return refuse(Status::Unsupported, reason::CHAIN_DISAGREES);
-        };
-        let agrees = match ast.get(i + 1) {
-            Some(parent) => encl.is_node(parent),
-            None => matches!(encl, Encl::Doc),
-        };
-        if !agrees {
-            return refuse(Status::Unsupported, reason::CHAIN_DISAGREES);
-        }
-    }
+    let ast = match prove_chain(hit, parse, preview_offset) {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
 
     // 10. Promotion: only to the recognized simple object of THIS Shape.
     let shape = ast[0];
@@ -539,6 +572,31 @@ pub fn resolve(
         role,
         item,
     })
+}
+
+/// VISUAL-3A1: prove that the runtime node a span lookup found
+/// (`hit.shape`, from `xite-pick-adapter` `snapshotSpan`) IS the authored
+/// node `[from, to)` of the canonical text, by the same chain proof a pick
+/// uses (steps 4-9): exactly one source occurrence and one live parent per
+/// link, every link joined to exactly one AST node of the same type, and the
+/// runtime chain equal to the source containment chain up to the scene.
+///
+/// Returns the AST chain, innermost (`[0]`, the authored node) first: its
+/// length is the node's depth (1 = a top-level statement). Never a search:
+/// the link must be exactly `[from, to)`, both ends.
+pub fn resolve_node<'a>(
+    hit: &Hit,
+    parse: &'a ParseResult,
+    preview_offset: u64,
+    from: u64,
+    to: u64,
+) -> Result<Vec<&'a Node>, Resolution> {
+    let ast = prove_chain(hit, parse, preview_offset)?;
+    let n = ast[0];
+    if (n.range.start.offset as u64, n.range.end.offset as u64) != (from, to) {
+        return Err(refuse(Status::Unsupported, reason::BIND_SPAN));
+    }
+    Ok(ast)
 }
 
 /// Contextual one-line UX text per refusal (the WD2-D wording).

@@ -199,7 +199,15 @@ pub struct Document {
     /// The exact changes the last change of ANY kind (edit, transaction,
     /// undo, redo) applied, in application order.
     last_changes: Vec<SpanChange>,
+    /// The exact changes of the most recent revisions, oldest first:
+    /// `(revision reached, changes applied to reach it)`. Bounded; a reset
+    /// clears it. Lets a span be carried from an OLDER revision (a preview
+    /// generation) to the current one without a search.
+    log: std::collections::VecDeque<(u64, Vec<SpanChange>)>,
 }
+
+/// How many revisions `Document::changes_since` can reach back.
+pub const CHANGE_LOG_CAP: usize = 64;
 
 /// One applied change in SOURCE UTF-16 coordinates current at its time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -282,7 +290,41 @@ impl Document {
             undo: vec![],
             redo: vec![],
             last_changes: vec![],
+            log: Default::default(),
         }
+    }
+
+    /// Log the change that just produced `self.revision`.
+    fn record(&mut self) {
+        if self.log.len() == CHANGE_LOG_CAP {
+            self.log.pop_front();
+        }
+        self.log
+            .push_back((self.revision, self.last_changes.clone()));
+    }
+
+    /// The exact changes, in application order, that turned the text of
+    /// `revision` into the current text; `Some(vec![])` for the current
+    /// revision. `None` when `revision` is unknown, in the future, before a
+    /// reset, or older than the bounded log: then nothing can be carried.
+    pub fn changes_since(&self, revision: u64) -> Option<Vec<SpanChange>> {
+        if revision == self.revision {
+            return Some(vec![]);
+        }
+        if revision > self.revision {
+            return None;
+        }
+        let first = self.log.iter().position(|(r, _)| *r == revision + 1)?;
+        let mut out = Vec::new();
+        let mut want = revision + 1;
+        for (r, changes) in self.log.iter().skip(first) {
+            if *r != want {
+                return None;
+            }
+            out.extend_from_slice(changes);
+            want += 1;
+        }
+        (want == self.revision + 1).then_some(out)
     }
 
     pub fn text(&self) -> &str {
@@ -452,6 +494,7 @@ impl Document {
             removed: utf16_len(&removed),
             inserted: utf16_len(&insert),
         }];
+        self.record();
         let change = Change {
             from,
             removed,
@@ -526,6 +569,7 @@ impl Document {
             .collect();
         self.text = next;
         self.revision += 1;
+        self.record();
         self.redo.clear();
         self.undo.push(Group {
             changes,
@@ -551,6 +595,7 @@ impl Document {
         self.last_changes = applied;
         self.text = text;
         self.revision += 1;
+        self.record();
         self.redo.push(g);
         Ok(self.applied(caret))
     }
@@ -572,6 +617,7 @@ impl Document {
         self.last_changes = applied;
         self.text = text;
         self.revision += 1;
+        self.record();
         self.undo.push(g);
         Ok(self.applied(caret))
     }
@@ -631,6 +677,43 @@ mod tests {
         assert!(!d.dirty());
         d.redo().unwrap();
         assert_eq!(d.text(), want);
+    }
+
+    #[test]
+    fn changes_since_carries_spans_across_several_revisions_or_refuses() {
+        let src = "A { x 1 }\nB { y 0 }";
+        let mut d = Document::new(src.into());
+        assert_eq!(d.changes_since(0), Some(vec![]));
+        assert_eq!(d.changes_since(1), None, "a future revision");
+        // rev 1: A's value grows; rev 2: undo; rev 3: redo.
+        d.apply_source_transaction(0, &[se(6, 7, "1.25")], "A { x 1.25 }\nB { y 0 }")
+            .unwrap();
+        d.undo().unwrap();
+        d.redo().unwrap();
+        let b = (10u64, 19u64); // "B { y 0 }" in revision 0
+        let all = d.changes_since(0).unwrap();
+        assert_eq!(map_span(b.0, b.1, &all), Some((13, 22)));
+        assert_eq!(&d.text()[13..22], "B { y 0 }");
+        assert_eq!(
+            map_span(b.0, b.1, &d.changes_since(2).unwrap()),
+            Some((13, 22))
+        );
+        assert_eq!(
+            map_span(13, 22, &d.changes_since(3).unwrap()),
+            Some((13, 22))
+        );
+        // A reset forgets every older revision.
+        d.reset("C {}".into());
+        assert_eq!(d.changes_since(3), None);
+        assert_eq!(d.changes_since(d.revision()), Some(vec![]));
+        // The log is bounded: the oldest revisions fall out.
+        let mut d = Document::new(String::new());
+        for i in 0..(CHANGE_LOG_CAP as u64 + 3) {
+            d.apply_source_edit(i, i, "x".into(), false).unwrap();
+        }
+        assert_eq!(d.changes_since(0), None);
+        let last = d.revision() - CHANGE_LOG_CAP as u64;
+        assert_eq!(d.changes_since(last).map(|c| c.len()), Some(CHANGE_LOG_CAP));
     }
 
     #[test]
