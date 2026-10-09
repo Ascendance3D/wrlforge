@@ -36,6 +36,7 @@ cargo test -p wrl-forge-desktop                       # file + session services
 ./smoke.sh --headless file.wrl...                     # in-window end-to-end, on temp copies
 ./smoke.sh --headless --inspector file.wrl...         # also drives a real Inspector field edit
 ./smoke.sh --headless --create                        # VISUAL-1: New World → Create → edit → save → reopen
+./smoke.sh --headless --pick                          # VISUAL-2: viewport picking (node: oracle plan; xdotool: real clicks in Xvfb)
 ./smoke.sh --headless --theme tokyo-night-light file.wrl...   # drives the theme selector (UI-THEME-1)
 (cd ../.. && node scripts/check-rust-node-schema-parity.js)  # Rust/JS node schema equality
 ../../spikes/tauri-rust-migration-1/parity.sh <dir>   # JS-vs-Rust parser parity (needs node)

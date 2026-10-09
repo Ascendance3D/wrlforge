@@ -12,6 +12,7 @@ use crate::ipc::{self, call, Session};
 use crate::ui::{self, ui};
 
 mod create;
+mod pick;
 mod selection;
 mod syntax;
 
@@ -72,9 +73,10 @@ async fn settle() {
 
 pub async fn run(plan: p::SmokePlan) {
     let mut r = R(vec![]);
-    let done = match &plan.create {
-        Some(c) => create::run(c, &mut r).await,
-        None => run_steps(&plan, &mut r).await,
+    let done = match (&plan.create, &plan.pick) {
+        (Some(c), _) => create::run(c, &mut r).await,
+        (None, Some(pk)) => pick::run(pk, &mut r).await,
+        (None, None) => run_steps(&plan, &mut r).await,
     };
     if done.is_none() {
         r.step(

@@ -15,6 +15,9 @@ cargo build --manifest-path "$here/Cargo.toml" -p wrlforge-ui --target wasm32-un
 rm -rf "$here/dist"; mkdir -p "$here/dist/vendor"
 "$wb" --target web --no-typescript --out-dir "$here/dist" "$here/target/wasm32-unknown-unknown/$profile/wrlforge_ui.wasm"
 cp "$here/ui/static/"* "$here/dist/"
+# VISUAL-2: the WD2-D X_ITE picking adapter, verbatim (one source of truth;
+# every private X_ITE access stays in that one file).
+cp "$here/../../src/preview/xite-pick-adapter.js" "$here/dist/xite-pick-adapter.js"
 xite="${X_ITE_DIST:-}"
 if [[ -z "$xite" ]]; then
   for c in "$here/../../node_modules/x_ite/dist" "$here/../../../../../wrlforge/node_modules/x_ite/dist"; do

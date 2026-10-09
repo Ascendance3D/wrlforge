@@ -17,7 +17,7 @@ use crate::ipc::{self, call};
 use crate::ui::{self, ui};
 
 /// Poll `f` every 20 ms for up to `ms`.
-async fn wait_ms<T>(ms: u32, mut f: impl FnMut() -> Option<T>) -> Option<T> {
+pub(super) async fn wait_ms<T>(ms: u32, mut f: impl FnMut() -> Option<T>) -> Option<T> {
     for _ in 0..(ms / 20).max(1) {
         if let Some(v) = f() {
             return Some(v);
@@ -27,11 +27,11 @@ async fn wait_ms<T>(ms: u32, mut f: impl FnMut() -> Option<T>) -> Option<T> {
     None
 }
 
-fn el(sel: &str) -> Option<web_sys::Element> {
+pub(super) fn el(sel: &str) -> Option<web_sys::Element> {
     doc_el()?.query_selector(sel).ok().flatten()
 }
 
-fn all(sel: &str) -> Vec<web_sys::Element> {
+pub(super) fn all(sel: &str) -> Vec<web_sys::Element> {
     let Some(list) = doc_el().and_then(|d| d.query_selector_all(sel).ok()) else {
         return vec![];
     };
@@ -64,12 +64,12 @@ fn keydown(target: &str, k: &str) {
     }
 }
 
-fn text() -> String {
+pub(super) fn text() -> String {
     textarea().map(|t| t.value()).unwrap_or_default()
 }
 
 /// The Scene Tree `<li>` whose label is exactly `label` (first in order).
-fn tree_item(label: &str) -> Option<HtmlElement> {
+pub(super) fn tree_item(label: &str) -> Option<HtmlElement> {
     all("li.tree-item")
         .into_iter()
         .find(|li| {
@@ -84,7 +84,7 @@ fn tree_item(label: &str) -> Option<HtmlElement> {
 }
 
 /// The preview finished loading revision `rev` with `roots` root nodes.
-async fn previewed(rev: u64, roots: usize, ms: u32) -> Option<String> {
+pub(super) async fn previewed(rev: u64, roots: usize, ms: u32) -> Option<String> {
     let want = format!("rev {rev} · loaded: {roots} root node(s)");
     wait_ms(ms, || {
         let s = ui().preview_status.get_untracked();
@@ -193,7 +193,7 @@ async fn create_one(
 
 /// Type `values` into the field's component boxes and press its Apply
 /// button; wait for the new revision.
-async fn apply_field(field: &str, values: &[String]) -> Option<p::DocState> {
+pub(super) async fn apply_field(field: &str, values: &[String]) -> Option<p::DocState> {
     let inputs = all(&format!("tr[data-field=\"{field}\"] input"));
     if inputs.len() != values.len() {
         return None;

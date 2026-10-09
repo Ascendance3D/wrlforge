@@ -34,6 +34,10 @@ pub struct Session {
     doc: Document,
 }
 
+/// The largest runtime graph a pick snapshot may carry (the adapter's own
+/// climb bound).
+const MAX_PICK_GRAPH: usize = 256;
+
 /// The file name a new world suggests in Save As, and shows until saved.
 pub const UNTITLED_NAME: &str = "untitled.wrl";
 
@@ -706,11 +710,119 @@ impl Service {
     pub fn preview_source(&self, id: p::SessionId) -> Result<p::PreviewSource, String> {
         self.with(id, |s| {
             let t = s.doc.text();
+            let text = t.strip_prefix('\u{FEFF}').unwrap_or(t).to_string();
             p::PreviewSource {
                 revision: s.doc.revision(),
-                text: t.strip_prefix('\u{FEFF}').unwrap_or(t).to_string(),
+                hash: p::preview_hash(&text),
+                text,
             }
         })
+    }
+
+    /// Resolve one viewport pick (VISUAL-2) against the document AS IT IS
+    /// NOW. Read-only: nothing here changes the buffer, the revision, the
+    /// dirty flag or the undo history.
+    ///
+    /// The snapshot's preview generation rendered (`revision`,
+    /// `preview_hash`); unless the document still holds exactly that text,
+    /// the pick is `REFUSED_STALE`. Otherwise the provenance spans are joined
+    /// to ONE parse of that text (`wrlforge_vrml::pick`), never re-matched.
+    pub fn pick(&self, r: &p::PickRequest) -> Result<p::PickOutcome, String> {
+        use wrlforge_vrml::pick::{self as pk, reason, Status};
+        let (text, revision) = self.text_at(r.session)?;
+        let done = |res: pk::Resolution, vm: Option<&ViewMap>| {
+            let status = res.status();
+            let reason = res.reason().to_string();
+            let node = |n: &pk::SourceNode| {
+                let vm = vm.expect("a proven pick carries its view map");
+                p::PickNode {
+                    from: n.from,
+                    to: n.to,
+                    view_from: vm.view(n.from),
+                    view_to: vm.view(n.to),
+                    node_type: n.node_type.clone(),
+                }
+            };
+            let (item, role, logical, shape) = match &res {
+                pk::Resolution::Proven(pr) => (
+                    Some(pr.item.clone()),
+                    Some(pr.role.as_str().to_string()),
+                    Some(node(&pr.logical)),
+                    Some(node(&pr.shape)),
+                ),
+                _ => (None, None, None, None),
+            };
+            p::PickOutcome {
+                status: status.as_str().into(),
+                message: pk::refusal_text(status, &reason),
+                reason,
+                generation: r.generation,
+                revision,
+                item,
+                role,
+                logical,
+                shape,
+            }
+        };
+        let snap = &r.snapshot;
+        let why = |d: &str| snap.reason.clone().unwrap_or_else(|| d.to_string());
+        if snap.outcome == "disabled" {
+            let res = pk::refuse(Status::CompatibilityDisabled, why("compatibility-unproven"));
+            return Ok(done(res, None));
+        }
+        // The generation must have rendered exactly the text held now.
+        let preview = text.strip_prefix('\u{FEFF}').unwrap_or(&text);
+        if r.revision != revision || p::preview_hash(preview) != r.preview_hash {
+            let res = pk::refuse(Status::RefusedStale, reason::SOURCE_CHANGED);
+            return Ok(done(res, None));
+        }
+        let res = match snap.outcome.as_str() {
+            "stale" => pk::refuse(Status::RefusedStale, why(reason::LAST_VALID_SCENE)),
+            "external" => pk::refuse(Status::RefusedExternal, why(reason::OTHER_DOCUMENT)),
+            "no-hit" => pk::refuse(Status::NoHit, why(reason::NO_GEOMETRY)),
+            "hit" => match (&snap.shape, snap.graph.len()) {
+                (Some(shape), 1..=MAX_PICK_GRAPH) => {
+                    let hit = pk::Hit {
+                        shape: shape.clone(),
+                        ctx: pk::Ctx::parse(snap.ctx_kind.as_deref().unwrap_or("")),
+                        sensors: snap.sensors.clone(),
+                        graph: snap
+                            .graph
+                            .iter()
+                            .map(|(k, g)| {
+                                (
+                                    k.clone(),
+                                    pk::GraphNode {
+                                        type_name: g.type_name.clone(),
+                                        ctx: pk::Ctx::parse(&g.ctx_kind),
+                                        occurrences: g
+                                            .occurrences
+                                            .iter()
+                                            .map(|o| (o.start, o.end))
+                                            .collect(),
+                                        parents: g
+                                            .parents
+                                            .iter()
+                                            .map(|q| pk::Parent::parse(q))
+                                            .collect(),
+                                    },
+                                )
+                            })
+                            .collect(),
+                    };
+                    let parsed = wrlforge_vrml::parse(&text);
+                    let tree = scene::build_scene_tree(&parsed.tree, &text);
+                    // The preview omits a leading U+FEFF: one UTF-16 unit.
+                    let offset = u64::from(preview.len() != text.len());
+                    let vm = ViewMap::new(&text);
+                    return Ok(done(pk::resolve(&hit, &parsed, &tree, offset), Some(&vm)));
+                }
+                (None, _) => pk::refuse(Status::NoHit, reason::NO_GEOMETRY),
+                _ => pk::refuse(Status::Unsupported, reason::CHAIN_UNBOUNDED),
+            },
+            _ => pk::refuse(Status::Unsupported, why(reason::GENERATION_UNPROVABLE)),
+        };
+        Ok(done(res, None))
     }
 
     /// Test/smoke support: the exact canonical text.
@@ -1450,6 +1562,186 @@ mod tests {
         assert_eq!(svc.text(doc.session).unwrap(), broken);
         assert_eq!(svc.snapshot(doc.session).unwrap().revision, r + 1);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A snapshot in the X_ITE adapter's shape for a simple object: Shape
+    /// -> Transform -> scene, provenance = the items' SOURCE spans minus
+    /// the preview offset (a stripped BOM).
+    fn pick_req(
+        svc: &Service,
+        id: u64,
+        transform: &str,
+        shape: &str,
+        shift: u64,
+    ) -> p::PickRequest {
+        let src = svc.preview_source(id).unwrap();
+        let span = |item: &str| {
+            let (a, b) = node_span(item).unwrap();
+            p::PickSpan {
+                start: a - shift,
+                end: b - shift,
+            }
+        };
+        let g = |ty: &str, occ: p::PickSpan, parent: &str| p::PickGraphNode {
+            type_name: Some(ty.into()),
+            ctx_kind: "document".into(),
+            occurrences: vec![occ],
+            parents: vec![parent.into()],
+        };
+        p::PickRequest {
+            session: id,
+            revision: src.revision,
+            preview_hash: src.hash,
+            generation: 7,
+            snapshot: p::PickSnapshot {
+                outcome: "hit".into(),
+                reason: None,
+                shape: Some("n1".into()),
+                ctx_kind: Some("document".into()),
+                sensors: vec![],
+                graph: [
+                    ("n1".to_string(), g("Shape", span(shape), "n2")),
+                    ("n2".to_string(), g("Transform", span(transform), "SCENE")),
+                ]
+                .into_iter()
+                .collect(),
+            },
+        }
+    }
+
+    /// (doc snapshot, exact text): what a pick must never change.
+    fn untouched(svc: &Service, id: u64) -> (p::DocumentInfo, String) {
+        (svc.snapshot(id).unwrap(), svc.text(id).unwrap())
+    }
+
+    #[test]
+    fn pick_is_source_proven_read_only_and_bound_to_the_rendered_text() {
+        let dir = tmp("pick");
+        let body = "# é 😀 comment\nTransform { children [ Shape { geometry Box { } } ] }\nTransform { children [ Shape { geometry Box { } } ] }\n";
+        for (name, bom, nl) in [
+            ("lf.wrl", "", "\n"),
+            ("crlf.wrl", "", "\r\n"),
+            ("cr.wrl", "", "\r"),
+            ("bom.wrl", "\u{FEFF}", "\r\n"),
+        ] {
+            let text = format!("{bom}#VRML V2.0 utf8\n{body}").replace('\n', nl);
+            let path = dir.join(name);
+            fs::write(&path, &text).unwrap();
+            let svc = &Service::new(clock);
+            let id = opened(svc.open_path(&path)).session;
+            let a = svc.analyze(id).unwrap();
+            let ts: Vec<_> = a.items.iter().filter(|i| i.label == "Transform").collect();
+            let ss: Vec<_> = a.items.iter().filter(|i| i.label == "Shape").collect();
+            assert_eq!((ts.len(), ss.len()), (2, 2), "{name}");
+            let shift = bom.encode_utf16().count() as u64;
+            let before = untouched(svc, id);
+            // The SECOND of two byte-identical objects: exactly that one.
+            let out = svc
+                .pick(&pick_req(svc, id, &ts[1].id, &ss[1].id, shift))
+                .unwrap();
+            assert!(out.is_proven(), "{name}: {out:?}");
+            assert_eq!(out.item.as_deref(), Some(ts[1].id.as_str()), "{name}");
+            assert_eq!(out.role.as_deref(), Some("simple-object"));
+            let l = out.logical.as_ref().unwrap();
+            assert_eq!(
+                (l.view_from, l.view_to),
+                (ts[1].view_from, ts[1].view_to),
+                "{name}"
+            );
+            assert_eq!(out.generation, 7);
+            assert_eq!(
+                untouched(svc, id),
+                before,
+                "{name}: a pick changed the document"
+            );
+            // Provenance NOT shifted for the stripped BOM never joins.
+            if shift > 0 {
+                let out = svc
+                    .pick(&pick_req(svc, id, &ts[1].id, &ss[1].id, 0))
+                    .unwrap();
+                assert_eq!(out.status, "UNSUPPORTED", "{out:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn stale_or_refused_picks_select_nothing_and_change_nothing() {
+        let svc = Service::new(clock);
+        let doc = opened(svc.new_world());
+        let id = doc.session;
+        let (_, box_t, _) = created(create(&svc, id, 0, p::Primitive::Box));
+        let (_, sph_t, _) = created(create(&svc, id, 1, p::Primitive::Sphere));
+        let a = svc.analyze(id).unwrap();
+        let shape_in = |t: &str| {
+            let (f, e) = node_span(t).unwrap();
+            a.items
+                .iter()
+                .find(|i| {
+                    i.label == "Shape" && node_span(&i.id).is_some_and(|(a, b)| a > f && b < e)
+                })
+                .unwrap()
+                .id
+                .clone()
+        };
+        let (box_s, sph_s) = (shape_in(&box_t), shape_in(&sph_t));
+        let before = untouched(&svc, id);
+        let b = svc.pick(&pick_req(&svc, id, &box_t, &box_s, 0)).unwrap();
+        let s = svc.pick(&pick_req(&svc, id, &sph_t, &sph_s, 0)).unwrap();
+        assert_eq!(b.item.as_deref(), Some(box_t.as_str()));
+        assert_eq!(s.item.as_deref(), Some(sph_t.as_str()));
+        assert_eq!(untouched(&svc, id), before);
+
+        // A request of another revision, or of other text, is stale.
+        let mut r = pick_req(&svc, id, &box_t, &box_s, 0);
+        r.revision -= 1;
+        let out = svc.pick(&r).unwrap();
+        assert_eq!(
+            (out.status.as_str(), out.item.is_none()),
+            ("REFUSED_STALE", true)
+        );
+        let mut r = pick_req(&svc, id, &box_t, &box_s, 0);
+        r.preview_hash ^= 1;
+        assert_eq!(svc.pick(&r).unwrap().status, "REFUSED_STALE");
+        // A pick taken before an edit lands after it: stale, never re-mapped.
+        let late = pick_req(&svc, id, &box_t, &box_s, 0);
+        let st = edit(&svc, id, 2, 0, 0, "#c\n");
+        assert_eq!(st.revision, 3);
+        let out = svc.pick(&late).unwrap();
+        assert_eq!(out.status, "REFUSED_STALE", "{out:?}");
+        assert!(!out.message.is_empty());
+        // Adapter outcomes map one to one; none selects anything.
+        let cur = untouched(&svc, id);
+        for (outcome, status) in [
+            ("disabled", "COMPATIBILITY_DISABLED"),
+            ("stale", "REFUSED_STALE"),
+            ("external", "REFUSED_EXTERNAL"),
+            ("no-hit", "NO_HIT"),
+            ("unsupported", "UNSUPPORTED"),
+            ("bogus", "UNSUPPORTED"),
+        ] {
+            let mut r = pick_req(&svc, id, &box_t, &box_s, 0);
+            r.snapshot = p::PickSnapshot {
+                outcome: outcome.into(),
+                ..Default::default()
+            };
+            let out = svc.pick(&r).unwrap();
+            assert_eq!(
+                (out.status.as_str(), out.item.as_deref()),
+                (status, None),
+                "{outcome}"
+            );
+        }
+        // A hit with no graph, or an oversized one, proves nothing.
+        let mut r = pick_req(&svc, id, &box_t, &box_s, 0);
+        r.snapshot.graph.clear();
+        assert_eq!(svc.pick(&r).unwrap().status, "UNSUPPORTED");
+        assert_eq!(untouched(&svc, id), cur);
+        assert!(svc
+            .pick(&p::PickRequest {
+                session: 999,
+                ..late
+            })
+            .is_err());
     }
 
     #[test]

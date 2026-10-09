@@ -8,6 +8,7 @@ mod create;
 mod editor;
 mod ipc;
 mod panels;
+mod pick;
 mod smoke;
 mod syntax;
 mod theme;
@@ -24,6 +25,7 @@ use crate::ui::ui;
 #[wasm_bindgen(start)]
 pub fn start() {
     leptos::mount::mount_to_body(App);
+    pick::install();
     ui::start_external_watch();
     syntax::install();
     // The UI stays hidden (style.css) until `<html data-theme>` is set, so a

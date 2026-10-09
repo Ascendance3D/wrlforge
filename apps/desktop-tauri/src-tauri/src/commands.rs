@@ -218,12 +218,51 @@ pub fn doc_edit_field(
     svc.edit_field(&request)
 }
 
+/// Resolve one viewport pick (VISUAL-2). Read-only; async like
+/// `doc_analyze` because it parses.
+#[tauri::command]
+pub async fn doc_pick(
+    svc: State<'_, Service>,
+    request: p::PickRequest,
+) -> Result<p::PickOutcome, String> {
+    svc.pick(&request)
+}
+
 #[tauri::command]
 pub fn doc_preview_source(
     svc: State<'_, Service>,
     session: p::SessionId,
 ) -> Result<p::PreviewSource, String> {
     svc.preview_source(session)
+}
+
+/// `--smoke-pick` only: open fixture `index` of the armed plan. The path is
+/// Rust's; the WebView names an index.
+#[tauri::command]
+pub fn smoke_open_fixture(
+    svc: State<'_, Service>,
+    smoke: State<'_, SmokeState>,
+    index: usize,
+) -> p::OpenOutcome {
+    match smoke.pick_fixture(index) {
+        Some(path) => svc.open_path(&path),
+        None => p::OpenOutcome::Failed {
+            message: "no picking smoke run is armed".into(),
+        },
+    }
+}
+
+/// `--smoke-pick` only: a REAL X pointer click at client CSS px (`x`, `y`)
+/// of the main window (see `SmokeState::real_click` for the guards). Async:
+/// the main thread must stay free to receive the click.
+#[tauri::command]
+pub async fn smoke_real_click(app: AppHandle, x: f64, y: f64) -> Result<String, String> {
+    let w = app.get_webview_window("main").ok_or("no main window")?;
+    let pos = w.inner_position().map_err(|e| e.to_string())?;
+    let scale = w.scale_factor().map_err(|e| e.to_string())?;
+    let rx = (pos.x as f64 + x * scale).round() as i32;
+    let ry = (pos.y as f64 + y * scale).round() as i32;
+    app.state::<SmokeState>().real_click(rx, ry)
 }
 
 #[tauri::command]

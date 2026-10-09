@@ -54,8 +54,25 @@ pub const CREATE_FILE: &str = "visual1-world.wrl";
 pub const CREATE_TRANSLATION: [&str; 3] = ["1.5", "0.5", "-1"];
 pub const CREATE_COLOR: [&str; 3] = ["0.1", "0.6", "0.9"];
 
+/// `--smoke-pick <dir>` (VISUAL-2). `dir` holds `plan.json` and the
+/// fixture files `smoke-pick-plan.cjs` wrote. The UI opens a fixture by
+/// INDEX; the path never leaves Rust.
+struct PickArm {
+    report_path: Option<PathBuf>,
+    save_path: PathBuf,
+    /// (path, the exact bytes at arm time): picks must never change them.
+    files: Vec<(PathBuf, Vec<u8>)>,
+    fixtures: Vec<p::PickFixture>,
+}
+
+pub const PICK_FILE: &str = "visual2-world.wrl";
+
 #[derive(Default)]
-pub struct SmokeState(Mutex<Option<Plan>>, Mutex<Option<CreateArm>>);
+pub struct SmokeState(
+    Mutex<Option<Plan>>,
+    Mutex<Option<CreateArm>>,
+    Mutex<Option<PickArm>>,
+);
 
 impl SmokeState {
     pub fn arm(
@@ -110,8 +127,69 @@ impl SmokeState {
         Ok(())
     }
 
+    /// Arm the VISUAL-2 picking run from `dir/plan.json` (written by
+    /// `smoke-pick-plan.cjs`). Every fixture must be a plain file directly
+    /// in `dir` (no separators, no symlinks), and `dir` must be temporary.
+    pub fn arm_pick(&self, dir: &Path, report_path: Option<PathBuf>) -> Result<(), String> {
+        let dir = temp_dir_checked(dir)?;
+        #[derive(serde::Deserialize)]
+        struct Fx {
+            id: String,
+            file: String,
+            camera: [f64; 3],
+            clicks: Vec<p::PickClick>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Plan {
+            fixtures: Vec<Fx>,
+        }
+        let raw = std::fs::read_to_string(dir.join("plan.json")).map_err(|e| e.to_string())?;
+        let plan: Plan = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        let mut files = Vec::new();
+        let mut fixtures = Vec::new();
+        for f in plan.fixtures {
+            if f.file.is_empty() || f.file.contains(['/', '\\']) || f.file.starts_with('.') {
+                return Err(format!("bad fixture file name {:?}", f.file));
+            }
+            let path = dir.join(&f.file);
+            let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+            if !meta.is_file() {
+                return Err(format!("{} is not a plain file", f.file));
+            }
+            files.push((
+                path.clone(),
+                std::fs::read(&path).map_err(|e| e.to_string())?,
+            ));
+            fixtures.push(p::PickFixture {
+                id: f.id,
+                camera: f.camera,
+                clicks: f.clicks,
+            });
+        }
+        let save_path = dir.join(PICK_FILE);
+        if save_path.exists() {
+            return Err(format!("{} already exists", save_path.display()));
+        }
+        *self.2.lock().unwrap() = Some(PickArm {
+            report_path,
+            save_path,
+            files,
+            fixtures,
+        });
+        Ok(())
+    }
+
+    /// Smoke only: fixture `index` of the picking run.
+    pub fn pick_fixture(&self, index: usize) -> Option<PathBuf> {
+        let g = self.2.lock().ok()?;
+        g.as_ref()?.files.get(index).map(|(p, _)| p.clone())
+    }
+
     /// Smoke only: the Save As destination (instead of the native dialog).
     pub fn save_as_override(&self) -> Option<PathBuf> {
+        if let Some(p) = self.2.lock().ok()?.as_ref().map(|a| a.save_path.clone()) {
+            return Some(p);
+        }
         self.1.lock().ok()?.as_ref().map(|a| a.save_path.clone())
     }
 
@@ -125,6 +203,10 @@ impl SmokeState {
     /// Smoke only: the discard-confirmation answer. An unplanned question
     /// is answered Cancel (never discards).
     pub fn confirm_override(&self) -> Option<bool> {
+        // The picking run starts a fresh New World per theme: discard.
+        if self.2.lock().ok()?.is_some() {
+            return Some(true);
+        }
         let mut g = self.1.lock().ok()?;
         let a = g.as_mut()?;
         a.asked += 1;
@@ -137,6 +219,22 @@ impl SmokeState {
             .and_then(|v| v.parse().ok())
             .unwrap_or(0u64)
             .min(10_000);
+        if let Some(a) = self.2.lock().ok()?.as_ref() {
+            return Some(p::SmokePlan {
+                insert_text: String::new(),
+                expect_preview: true,
+                inspector_value: None,
+                theme: None,
+                syntax_align_hold_ms: 0,
+                create: None,
+                pick: Some(p::PickSmoke {
+                    fixtures: a.fixtures.clone(),
+                    themes: p::theme::THEMES.iter().map(|t| t.id.to_string()).collect(),
+                    hold_ms: hold,
+                    real_pointer: real_pointer_env().is_ok(),
+                }),
+            });
+        }
         if self.1.lock().ok()?.is_some() {
             return Some(p::SmokePlan {
                 insert_text: String::new(),
@@ -150,6 +248,7 @@ impl SmokeState {
                     themes: p::theme::THEMES.iter().map(|t| t.id.to_string()).collect(),
                     hold_ms: hold,
                 }),
+                pick: None,
             });
         }
         self.0.lock().ok()?.as_ref().map(|pl| p::SmokePlan {
@@ -160,8 +259,99 @@ impl SmokeState {
             // Opt-in visual registration pauses (never set by default).
             syntax_align_hold_ms: hold,
             create: None,
+            pick: None,
         })
     }
+}
+
+/// The private Xvfb screen `smoke.sh --headless` creates.
+const XVFB_GEOMETRY: &str = "1600 1000";
+
+/// Real pointer input is allowed ONLY when `smoke.sh` launched this process
+/// inside its own Xvfb server (`WRLFORGE_SMOKE_XVFB=1`) with a DISPLAY set.
+fn real_pointer_env() -> Result<String, String> {
+    if std::env::var("WRLFORGE_SMOKE_XVFB").as_deref() != Ok("1") {
+        return Err("not inside the harness's Xvfb (WRLFORGE_SMOKE_XVFB unset)".into());
+    }
+    std::env::var("DISPLAY").map_err(|_| "no DISPLAY".to_string())
+}
+
+fn xdotool(args: &[&str]) -> Result<String, String> {
+    eprintln!("smoke-pick: xdotool {}", args.join(" "));
+    let out = std::process::Command::new("timeout")
+        .arg("5")
+        .arg("xdotool")
+        .args(args)
+        .output()
+        .map_err(|e| format!("xdotool: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "xdotool {}: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+impl SmokeState {
+    /// Smoke only (`--smoke-pick` under `smoke.sh --headless`): one REAL X
+    /// primary-button click at root coordinates (`x`, `y`).
+    ///
+    /// Input is sent only after proving where it goes: the harness's Xvfb
+    /// (environment marker + the exact screen geometry it created), a window
+    /// owned by THIS process, and that window holding the input focus.
+    pub fn real_click(&self, x: i32, y: i32) -> Result<String, String> {
+        if self.2.lock().map_err(|e| e.to_string())?.is_none() {
+            return Err("no picking smoke run is armed".into());
+        }
+        let display = real_pointer_env()?;
+        let geo = xdotool(&["getdisplaygeometry"])?;
+        if geo != XVFB_GEOMETRY {
+            return Err(format!(
+                "display {display} is {geo}, not the harness Xvfb ({XVFB_GEOMETRY})"
+            ));
+        }
+        let pid = std::process::id().to_string();
+        let mine = xdotool(&["search", "--onlyvisible", "--pid", &pid])?;
+        let mine: Vec<&str> = mine.lines().filter(|l| !l.is_empty()).collect();
+        if mine.is_empty() {
+            return Err(format!("no visible window of pid {pid}"));
+        }
+        // A bare Xvfb has no window manager (focus = PointerRoot): give the
+        // focus to OUR window, then require that it holds it.
+        let held = xdotool(&["getwindowfocus"]).ok();
+        if !held.as_deref().is_some_and(|f| mine.contains(&f)) {
+            xdotool(&["windowfocus", "--sync", mine[0]])?;
+        }
+        let focus = xdotool(&["getwindowfocus"])?;
+        if !mine.contains(&focus.as_str()) {
+            return Err(format!("focus {focus} is not a window of pid {pid}"));
+        }
+        let (xs, ys) = (x.to_string(), y.to_string());
+        // No `--sync`: it waits for pointer MOTION, which never comes when
+        // the pointer is already at the target (a repeated click).
+        xdotool(&["mousemove", &xs, &ys, "click", "1"])?;
+        Ok(format!(
+            "display {display} ({geo}) window {focus} of pid {pid} at {x},{y}"
+        ))
+    }
+}
+
+/// `dir`, canonical, when it is an existing directory strictly under the
+/// system temp dir.
+fn temp_dir_checked(dir: &Path) -> Result<PathBuf, String> {
+    let dir = dir.canonicalize().map_err(|e| e.to_string())?;
+    let tmp = std::env::temp_dir()
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    if !dir.starts_with(&tmp) || dir == tmp || !dir.is_dir() {
+        return Err(format!(
+            "refusing a non-temporary directory: {}",
+            dir.display()
+        ));
+    }
+    Ok(dir)
 }
 
 /// The source text the UI's edit must produce: a new line inserted before the
@@ -177,6 +367,32 @@ pub fn expected_text(original: &str) -> String {
 pub fn finish(app: &AppHandle, report: p::SmokeReport) {
     use tauri::Manager;
     let state = app.state::<SmokeState>();
+    if let Some(arm) = state.2.lock().unwrap().take() {
+        let mut steps = report.steps;
+        // Source integrity: no fixture file changed on disk.
+        let changed: Vec<String> = arm
+            .files
+            .iter()
+            .filter(|(path, bytes)| std::fs::read(path).ok().as_deref() != Some(&bytes[..]))
+            .map(|(path, _)| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        steps.push(p::SmokeStep {
+            name: "rust: every fixture file is byte-identical after the picking run".into(),
+            ok: changed.is_empty(),
+            detail: format!("{} files checked; changed: {changed:?}", arm.files.len()),
+        });
+        let all = steps.iter().all(|s| s.ok);
+        let json = serde_json::to_string_pretty(
+            &serde_json::json!({ "pass": all, "file": PICK_FILE, "steps": steps }),
+        )
+        .unwrap();
+        println!("{json}");
+        if let Some(rp) = arm.report_path {
+            let _ = std::fs::write(rp, &json);
+        }
+        app.exit(if all { 0 } else { 1 });
+        return;
+    }
     if let Some(arm) = state.1.lock().unwrap().take() {
         let mut steps = report.steps;
         steps.extend(verify_create(&arm));

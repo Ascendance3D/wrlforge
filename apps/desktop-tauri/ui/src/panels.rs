@@ -363,10 +363,52 @@ pub fn Viewport() -> impl IntoView {
                     "Live"
                 </label>
                 <button class="secondary small" on:click=move |_| spawn_local(ui::preview(true))>"Update"</button>
+                <span class="sep"></span>
+                // VISUAL-2: an explicit selection mode. A click selects the
+                // exact authored object; a drag still moves the camera.
+                <button id="btn-select" class="secondary small"
+                    title="Select: click an object in the viewport to select its exact source node (drag still moves the camera)"
+                    aria-pressed=move || if u.pick_mode.get() { "true" } else { "false" }
+                    disabled=move || u.doc.with(|d| d.is_none())
+                    on:click=move |_| {
+                        u.pick_mode.update(|m| *m = !*m);
+                        if !u.pick_mode.get_untracked() { u.pick_message.set(None); }
+                    }>"Select"</button>
             </div>
-            <x3d-canvas id="viewport" splashScreen="false" contextMenu="false" notifications="false"
+            <x3d-canvas id="viewport" class:picking=move || u.pick_mode.get() splashScreen="false" contextMenu="false" notifications="false"
                 timings="false" cache="false"></x3d-canvas>
             <div class="preview-status" id="preview-status">{move || format!("Preview: {}", u.preview_status.get())}</div>
+            <div class="pick-status" id="pick-status" role="status" aria-live="polite"
+                data-kind=move || u.pick_message.with(|m| m.as_ref().map(|m| m.0.clone()).unwrap_or_default())
+                hidden=move || u.pick_message.with(|m| m.is_none())>
+                {move || u.pick_message.with(|m| m.as_ref().map(|m| m.1.clone()).unwrap_or_default())}
+            </div>
         </section>
+    }
+}
+
+/// Scroll the Scene Tree so item `id` is visible (a viewport selection may
+/// name an item far from the current scroll position). Display only.
+pub fn reveal_tree_item(id: &str) {
+    use wasm_bindgen::JsCast;
+    let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+    let Ok(Some(li)) = doc.query_selector(&format!("li.tree-item[data-id=\"{id}\"]")) else {
+        return;
+    };
+    let (Ok(li), Some(Ok(ul))) = (
+        li.dyn_into::<web_sys::HtmlElement>(),
+        doc.query_selector("ul.tree")
+            .ok()
+            .flatten()
+            .map(|u| u.dyn_into::<web_sys::HtmlElement>()),
+    ) else {
+        return;
+    };
+    let (top, h) = (li.offset_top() - ul.offset_top(), li.offset_height());
+    let (st, vh) = (ul.scroll_top(), ul.client_height());
+    if top < st || top + h > st + vh {
+        ul.set_scroll_top((top - vh / 3).max(0));
     }
 }

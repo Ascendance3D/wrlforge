@@ -36,6 +36,10 @@ pub struct Ui {
     pub preview_loads: RwSignal<u64>,
     /// The last Create refusal, shown until the next Create or document.
     pub create_error: RwSignal<Option<String>>,
+    /// VISUAL-2: the viewport Select mode (a click selects, a drag navigates).
+    pub pick_mode: RwSignal<bool>,
+    /// The last viewport pick result: (`ok` | `none` | `refused`, text).
+    pub pick_message: RwSignal<Option<(String, String)>>,
 }
 
 /// A Scene Tree selection. Item ids are SOURCE spans of one revision, so
@@ -112,20 +116,63 @@ pub fn tree_select(session: u64, revision: u64, id: String, from: u64, to: u64) 
         spawn_local(analyze());
         return false;
     }
-    let u = ui();
-    let sel = Selected {
+    adopt_selection(Selected {
         session,
         revision,
         id,
-    };
+    });
+    true
+}
+
+/// THE selection authority: the Scene Tree and the viewport both select
+/// through here. Never shows the previous item's fields under a new one.
+pub fn adopt_selection(sel: Selected) {
+    let u = ui();
     if u.selected.get_untracked().as_ref() != Some(&sel) {
         u.field_error.set(None);
-        // Never show the previous item's fields under the new selection.
         u.inspection.set(None);
     }
     u.selected.set(Some(sel.clone()));
     spawn_local(inspect(sel));
-    true
+}
+
+/// Select the Scene Tree item a PROVEN viewport pick named, in exactly the
+/// revision Rust resolved it against. The source caret does NOT move. The
+/// Scene Tree must show that revision (it is brought up to date first) and
+/// must hold the item; otherwise nothing changes. Returns the item label.
+pub async fn pick_select(session: u64, revision: u64, id: String) -> Result<String, String> {
+    if let Some(why) = stale_reason(session, revision) {
+        return Err(why);
+    }
+    let held = |u: Ui| {
+        u.analysis
+            .with_untracked(|a| a.as_ref().map(|a| (a.session, a.revision)))
+    };
+    let u = ui();
+    if held(u) != Some((session, revision)) {
+        analyze().await;
+        if let Some(why) = stale_reason(session, revision) {
+            return Err(why);
+        }
+        if held(u) != Some((session, revision)) {
+            return Err("the Scene Tree is updating".into());
+        }
+    }
+    let label = u.analysis.with_untracked(|a| {
+        a.as_ref()
+            .and_then(|a| a.items.iter().find(|i| i.id == id))
+            .map(|i| i.label.clone())
+    });
+    let Some(label) = label else {
+        return Err("the object is not in the Scene Tree".into());
+    };
+    adopt_selection(Selected {
+        session,
+        revision,
+        id: id.clone(),
+    });
+    crate::panels::reveal_tree_item(&id);
+    Ok(label)
 }
 
 pub fn ui() -> Ui {
@@ -148,6 +195,8 @@ pub fn ui() -> Ui {
             last_save: RwSignal::new(None),
             preview_loads: RwSignal::new(0),
             create_error: RwSignal::new(None),
+            pick_mode: RwSignal::new(false),
+            pick_message: RwSignal::new(None),
         })
     })
 }
@@ -166,6 +215,8 @@ pub fn doc_loaded(doc: &p::DocumentInfo) {
     u.conflict.set(None);
     u.selected.set(None);
     u.inspection.set(None);
+    u.pick_message.set(None);
+    crate::pick::retire("preview-scene-replaced");
     // The previous document's Scene Tree and diagnostics never show under
     // the new one, not even until its first analysis arrives.
     u.analysis.set(None);
@@ -204,6 +255,7 @@ pub fn state_changed(revision: u64, dirty: bool, can_undo: bool, can_redo: bool)
             set_title(&doc);
         }
     }
+    crate::pick::document_changed(CORE.with_borrow(|c| c.session), revision);
     let generation = CORE.with_borrow(|c| c.generation);
     spawn_local(async move {
         ipc::sleep(250).await;
@@ -420,6 +472,9 @@ pub async fn preview(force: bool) {
         return;
     }
     let u = ui();
+    // A newer preview starts: the generation on screen is retired NOW, so a
+    // pick in flight can never land on it.
+    crate::pick::retire("preview-scene-replaced");
     // Only the newest load may report: a superseded X_ITE load ends with
     // "Replacing world aborted" and must not overwrite a newer status.
     let seq = CORE.with_borrow_mut(|c| {
@@ -431,9 +486,19 @@ pub async fn preview(force: bool) {
     match call::<p::PreviewSource>("doc_preview_source", Session { session }).await {
         Ok(src) => {
             CORE.with_borrow_mut(|c| c.previewed = Some(src.revision));
-            let status = ipc::preview_load(&src.text).await;
+            let gen = crate::pick::Gen {
+                session,
+                revision: src.revision,
+                hash: src.hash,
+                seq,
+            };
+            let status = ipc::preview_load(&src.text, Some(&gen)).await;
             u.preview_loads.update(|n| *n += 1);
             if newest() {
+                // Only the newest successful load is the picking generation.
+                if status.starts_with("loaded") {
+                    crate::pick::loaded(gen);
+                }
                 u.preview_status
                     .set(format!("rev {} · {status}", src.revision));
             }
@@ -615,8 +680,10 @@ pub fn close() {
         u.dirty.set(false);
         u.can_undo.set(false);
         u.can_redo.set(false);
+        u.pick_message.set(None);
+        crate::pick::retire("preview-scene-replaced");
         // No document: the viewport shows an empty world, not the old one.
-        let status = ipc::preview_load("#VRML V2.0 utf8\n").await;
+        let status = ipc::preview_load("#VRML V2.0 utf8\n", None).await;
         u.preview_loads.update(|n| *n += 1);
         u.preview_status.set(format!("no document · {status}"));
         flash("Closed.");

@@ -170,3 +170,8 @@ x3d-canvas#viewport { flex: 1 1 auto; width: 100%; min-height: 12rem; display: b
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 }
+/* VISUAL-2 viewport selection: Select mode cursor and the pick result line. */
+x3d-canvas.picking { cursor: crosshair; }
+.pick-status { padding: .2rem .6rem; font-size: .85rem; color: var(--wf-text-muted); border-top: 1px solid var(--wf-border-subtle); }
+.pick-status[data-kind="ok"] { color: var(--wf-text-primary); }
+.pick-status[data-kind="refused"] { color: var(--wf-warning-fg); background: var(--wf-warning-bg); }

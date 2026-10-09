@@ -359,6 +359,112 @@ pub struct PreviewSource {
     pub revision: u64,
     /// The canonical text (not the view projection), minus a leading BOM.
     pub text: String,
+    /// `preview_hash(text)`: a viewport pick names the exact text its
+    /// preview generation rendered by this hash plus `revision`.
+    #[serde(default)]
+    pub hash: u64,
+}
+
+/// The drift hash of a preview text (FNV-1a over its UTF-16 units, as
+/// `view_hash`). Not a security hash: the revision is the primary check.
+pub fn preview_hash(text: &str) -> u64 {
+    view_hash(text)
+}
+
+/// A parse-provenance span `[start, end)`, UTF-16 units of the PREVIEW text.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PickSpan {
+    pub start: u64,
+    pub end: u64,
+}
+
+/// One runtime node of a viewport hit, as plain data from the X_ITE adapter
+/// (`xite-pick-adapter.js`). No runtime object crosses the boundary.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PickGraphNode {
+    #[serde(rename = "type", default)]
+    pub type_name: Option<String>,
+    #[serde(default)]
+    pub ctx_kind: String,
+    #[serde(default)]
+    pub occurrences: Vec<PickSpan>,
+    /// Labels of other graph nodes, `SCENE` or `OTHER_CONTEXT`.
+    #[serde(default)]
+    pub parents: Vec<String>,
+}
+
+/// The adapter's plain-data pick snapshot. `outcome`: `hit` | `no-hit` |
+/// `stale` | `external` | `unsupported` | `disabled`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PickSnapshot {
+    pub outcome: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub shape: Option<String>,
+    #[serde(default)]
+    pub ctx_kind: Option<String>,
+    #[serde(default)]
+    pub sensors: Vec<Option<String>>,
+    #[serde(default)]
+    pub graph: std::collections::BTreeMap<String, PickGraphNode>,
+}
+
+/// Resolve one viewport pick. `revision` and `preview_hash` name the exact
+/// text the hit's preview generation rendered; Rust refuses the pick unless
+/// the document holds exactly that text now.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PickRequest {
+    pub session: SessionId,
+    pub revision: u64,
+    pub preview_hash: u64,
+    /// The UI's preview generation number (diagnostic; echoed back).
+    pub generation: u64,
+    pub snapshot: PickSnapshot,
+}
+
+/// One exact source node of a proven pick: canonical UTF-16 span and the
+/// same span in the editor view.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PickNode {
+    pub from: u64,
+    pub to: u64,
+    pub view_from: u64,
+    pub view_to: u64,
+    pub node_type: String,
+}
+
+/// The reply to `doc_pick`. Only `PROVEN` carries an item; every other
+/// status selects nothing.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PickOutcome {
+    /// `PROVEN` | `NO_HIT` | `REFUSED_AMBIGUOUS` | `REFUSED_EXTERNAL` |
+    /// `REFUSED_SENSOR_CONFLICT` | `REFUSED_STALE` | `UNSUPPORTED` |
+    /// `COMPATIBILITY_DISABLED`.
+    pub status: String,
+    pub reason: String,
+    /// Short user-facing text; empty for `PROVEN` and `NO_HIT`.
+    pub message: String,
+    pub generation: u64,
+    /// The document revision the pick was resolved against.
+    pub revision: u64,
+    /// The Scene Tree item id (of `revision`) to select.
+    pub item: Option<String>,
+    /// `shape` | `simple-object`.
+    pub role: Option<String>,
+    pub logical: Option<PickNode>,
+    pub shape: Option<PickNode>,
+}
+
+impl PickOutcome {
+    pub fn is_proven(&self) -> bool {
+        self.status == "PROVEN" && self.item.is_some()
+    }
 }
 
 /// Launch-time smoke test plan (`--smoke`), consumed by the UI. Never set in a
@@ -384,6 +490,50 @@ pub struct SmokePlan {
     /// instead of the file workflow.
     #[serde(default)]
     pub create: Option<CreateSmoke>,
+    /// `--smoke-pick` (VISUAL-2): viewport picking workflow + fixture matrix.
+    #[serde(default)]
+    pub pick: Option<PickSmoke>,
+}
+
+/// VISUAL-2 smoke plan. Fixture files stay on the Rust side; the UI opens
+/// them by index (`smoke_open_fixture`), never by path.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PickSmoke {
+    pub fixtures: Vec<PickFixture>,
+    pub themes: Vec<String>,
+    pub hold_ms: u64,
+    /// Real X pointer input is available (`smoke_real_click`): only inside
+    /// the harness's own Xvfb server, never on a desktop session.
+    #[serde(default)]
+    pub real_pointer: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PickFixture {
+    pub id: String,
+    /// The bound camera's position (the fixtures' front Viewpoint).
+    pub camera: [f64; 3],
+    pub clicks: Vec<PickClick>,
+}
+
+/// One oracle click: a world point and the expected answer.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PickClick {
+    pub id: String,
+    pub world: [f64; 3],
+    #[serde(default)]
+    pub skip: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub note: Option<String>,
+    /// The expected selected node's SOURCE span, for `PROVEN`.
+    #[serde(default)]
+    pub logical: Option<[u64; 2]>,
+    #[serde(default)]
+    pub oracle_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
