@@ -24,6 +24,8 @@ struct Args {
     smoke_create: Option<PathBuf>,
     /// `--smoke-pick <dir>`: the VISUAL-2 viewport picking run.
     smoke_pick: Option<PathBuf>,
+    /// `--smoke-move <dir>`: the VISUAL-3A translation-gizmo run.
+    smoke_move: Option<PathBuf>,
     smoke_no_preview: bool,
     smoke_inspector: bool,
     smoke_theme: Option<p::ThemeSmoke>,
@@ -38,6 +40,7 @@ fn parse_args() -> Args {
         smoke_report: None,
         smoke_create: None,
         smoke_pick: None,
+        smoke_move: None,
         smoke_no_preview: false,
         smoke_inspector: false,
         smoke_theme: None,
@@ -53,6 +56,7 @@ fn parse_args() -> Args {
             Some("--smoke-report") => a.smoke_report = it.next().map(PathBuf::from),
             Some("--smoke-create") => a.smoke_create = it.next().map(PathBuf::from),
             Some("--smoke-pick") => a.smoke_pick = it.next().map(PathBuf::from),
+            Some("--smoke-move") => a.smoke_move = it.next().map(PathBuf::from),
             Some("--smoke-no-preview") => a.smoke_no_preview = true,
             Some("--smoke-inspector") => a.smoke_inspector = true,
             Some("--smoke-theme") => theme_final = it.next().and_then(|s| s.into_string().ok()),
@@ -108,6 +112,11 @@ pub fn run() {
                     .arm_pick(&dir, args.smoke_report.clone())
                     .map_err(|e| format!("smoke-pick: {e}"))?;
             }
+            if let Some(dir) = args.smoke_move.clone() {
+                app.state::<smoke::SmokeState>()
+                    .arm_move(&dir, args.smoke_report.clone())
+                    .map_err(|e| format!("smoke-move: {e}"))?;
+            }
             if let Some(path) = args.smoke.clone() {
                 app.state::<smoke::SmokeState>()
                     .arm(
@@ -141,12 +150,15 @@ pub fn run() {
             commands::doc_edit_field,
             commands::doc_preview_source,
             commands::doc_pick,
+            commands::doc_translate_target,
+            commands::doc_translate,
             commands::window_title,
             commands::theme_get,
             commands::theme_set,
             commands::smoke_plan,
             commands::smoke_open_fixture,
             commands::smoke_real_click,
+            commands::smoke_real_pointer,
             commands::smoke_finish,
         ])
         .run(tauri::generate_context!())

@@ -67,11 +67,57 @@ struct PickArm {
 
 pub const PICK_FILE: &str = "visual2-world.wrl";
 
+/// `--smoke-move <dir>` (VISUAL-3A). Rust writes the source-format fixtures
+/// into the disposable `dir` and keeps their original bytes; the UI opens
+/// them by INDEX and moves one object in each, then saves.
+struct MoveArm {
+    report_path: Option<PathBuf>,
+    save_path: PathBuf,
+    /// (path, original bytes, label).
+    fixtures: Vec<(PathBuf, Vec<u8>, String)>,
+}
+
+pub const MOVE_FILE: &str = "visual3a-world.wrl";
+
+/// (file, label, text): LF / CRLF + BOM / lone CR, comments, Unicode, and a
+/// nested Transform the gizmo must refuse.
+pub fn move_fixtures() -> Vec<(&'static str, &'static str, String)> {
+    use wrlforge_vrml::create::{template, Primitive};
+    let doc = |bom: &str, eol: &str, def: &str, extra: &str| {
+        let body = template(Primitive::Box, def, eol).replace(
+            &format!("scale 1 1 1{eol}"),
+            &format!("scale 1 1 1 # größe ✓ 😀{eol}"),
+        );
+        format!(
+            "{bom}#VRML V2.0 utf8{eol}# 世界 — VISUAL-3A fixture ✓{eol}WorldInfo {{ title \"héllo 😀\" }}{eol}{body}{eol}{extra}# fin ✓{eol}"
+        )
+    };
+    let nested = |eol: &str| {
+        format!(
+            "Transform {{ translation 0 -2.5 0 children [{eol}  DEF Inner Transform {{ translation 0 0 0 children [ Shape {{ appearance Appearance {{ material Material {{ diffuseColor 0.9 0.8 0.1 }} }} geometry Sphere {{ radius 0.4 }} }} ] }}{eol}] }}{eol}"
+        )
+    };
+    vec![
+        (
+            "fx-crlf-bom.wrl",
+            "BOM + CRLF + comments + Unicode",
+            doc("\u{feff}", "\r\n", "Box_ü", &nested("\r\n")),
+        ),
+        ("fx-cr.wrl", "lone CR + Unicode", doc("", "\r", "Box_ü", "")),
+        (
+            "fx-lf.wrl",
+            "LF + comments",
+            doc("", "\n", "Box_1", "").replace("translation 0 0 0", "translation 0.0 0.0 0.0"),
+        ),
+    ]
+}
+
 #[derive(Default)]
 pub struct SmokeState(
     Mutex<Option<Plan>>,
     Mutex<Option<CreateArm>>,
     Mutex<Option<PickArm>>,
+    Mutex<Option<MoveArm>>,
 );
 
 impl SmokeState {
@@ -179,14 +225,45 @@ impl SmokeState {
         Ok(())
     }
 
-    /// Smoke only: fixture `index` of the picking run.
+    /// Arm the VISUAL-3A gizmo run in `dir` (temporary, must not hold the
+    /// fixture or world files yet). The fixtures are written here, by Rust.
+    pub fn arm_move(&self, dir: &Path, report_path: Option<PathBuf>) -> Result<(), String> {
+        let dir = temp_dir_checked(dir)?;
+        let save_path = dir.join(MOVE_FILE);
+        if save_path.exists() {
+            return Err(format!("{} already exists", save_path.display()));
+        }
+        let mut fixtures = Vec::new();
+        for (file, label, text) in move_fixtures() {
+            let path = dir.join(file);
+            if path.exists() {
+                return Err(format!("{} already exists", path.display()));
+            }
+            std::fs::write(&path, text.as_bytes()).map_err(|e| e.to_string())?;
+            fixtures.push((path, text.into_bytes(), label.to_string()));
+        }
+        *self.3.lock().unwrap() = Some(MoveArm {
+            report_path,
+            save_path,
+            fixtures,
+        });
+        Ok(())
+    }
+
+    /// Smoke only: fixture `index` of the picking or gizmo run.
     pub fn pick_fixture(&self, index: usize) -> Option<PathBuf> {
+        if let Some(a) = self.3.lock().ok()?.as_ref() {
+            return a.fixtures.get(index).map(|(p, _, _)| p.clone());
+        }
         let g = self.2.lock().ok()?;
         g.as_ref()?.files.get(index).map(|(p, _)| p.clone())
     }
 
     /// Smoke only: the Save As destination (instead of the native dialog).
     pub fn save_as_override(&self) -> Option<PathBuf> {
+        if let Some(p) = self.3.lock().ok()?.as_ref().map(|a| a.save_path.clone()) {
+            return Some(p);
+        }
         if let Some(p) = self.2.lock().ok()?.as_ref().map(|a| a.save_path.clone()) {
             return Some(p);
         }
@@ -195,6 +272,9 @@ impl SmokeState {
 
     /// Smoke only: the Open choice -- the file this run saved, once it exists.
     pub fn open_override(&self) -> Option<PathBuf> {
+        if let Some(p) = self.3.lock().ok()?.as_ref().map(|a| a.save_path.clone()) {
+            return Some(p).filter(|p| p.exists());
+        }
         let g = self.1.lock().ok()?;
         let a = g.as_ref()?;
         Some(a.save_path.clone()).filter(|p| p.exists())
@@ -203,8 +283,8 @@ impl SmokeState {
     /// Smoke only: the discard-confirmation answer. An unplanned question
     /// is answered Cancel (never discards).
     pub fn confirm_override(&self) -> Option<bool> {
-        // The picking run starts a fresh New World per theme: discard.
-        if self.2.lock().ok()?.is_some() {
+        // The picking and gizmo runs start a fresh New World per theme: discard.
+        if self.2.lock().ok()?.is_some() || self.3.lock().ok()?.is_some() {
             return Some(true);
         }
         let mut g = self.1.lock().ok()?;
@@ -219,6 +299,23 @@ impl SmokeState {
             .and_then(|v| v.parse().ok())
             .unwrap_or(0u64)
             .min(10_000);
+        if let Some(a) = self.3.lock().ok()?.as_ref() {
+            return Some(p::SmokePlan {
+                insert_text: String::new(),
+                expect_preview: true,
+                inspector_value: None,
+                theme: None,
+                syntax_align_hold_ms: 0,
+                create: None,
+                pick: None,
+                gizmo: Some(p::GizmoSmoke {
+                    themes: p::theme::THEMES.iter().map(|t| t.id.to_string()).collect(),
+                    fixtures: a.fixtures.iter().map(|(_, _, l)| l.clone()).collect(),
+                    hold_ms: hold,
+                    real_pointer: real_pointer_env().is_ok(),
+                }),
+            });
+        }
         if let Some(a) = self.2.lock().ok()?.as_ref() {
             return Some(p::SmokePlan {
                 insert_text: String::new(),
@@ -227,6 +324,7 @@ impl SmokeState {
                 theme: None,
                 syntax_align_hold_ms: 0,
                 create: None,
+                gizmo: None,
                 pick: Some(p::PickSmoke {
                     fixtures: a.fixtures.clone(),
                     themes: p::theme::THEMES.iter().map(|t| t.id.to_string()).collect(),
@@ -249,6 +347,7 @@ impl SmokeState {
                     hold_ms: hold,
                 }),
                 pick: None,
+                gizmo: None,
             });
         }
         self.0.lock().ok()?.as_ref().map(|pl| p::SmokePlan {
@@ -260,6 +359,7 @@ impl SmokeState {
             syntax_align_hold_ms: hold,
             create: None,
             pick: None,
+            gizmo: None,
         })
     }
 }
@@ -302,8 +402,18 @@ impl SmokeState {
     /// (environment marker + the exact screen geometry it created), a window
     /// owned by THIS process, and that window holding the input focus.
     pub fn real_click(&self, x: i32, y: i32) -> Result<String, String> {
-        if self.2.lock().map_err(|e| e.to_string())?.is_none() {
-            return Err("no picking smoke run is armed".into());
+        self.real_pointer("click", x, y)
+    }
+
+    /// Smoke only (`--smoke-pick` / `--smoke-move` under `smoke.sh
+    /// --headless`): one REAL X input action at root coordinates: `click`,
+    /// `down` (press at x, y), `move` (to x, y, button state unchanged), `up`
+    /// (release at x, y) or `escape` (the Escape key). Same guards as a click.
+    pub fn real_pointer(&self, action: &str, x: i32, y: i32) -> Result<String, String> {
+        let armed = self.2.lock().map_err(|e| e.to_string())?.is_some()
+            || self.3.lock().map_err(|e| e.to_string())?.is_some();
+        if !armed {
+            return Err("no picking or gizmo smoke run is armed".into());
         }
         let display = real_pointer_env()?;
         let geo = xdotool(&["getdisplaygeometry"])?;
@@ -331,7 +441,14 @@ impl SmokeState {
         let (xs, ys) = (x.to_string(), y.to_string());
         // No `--sync`: it waits for pointer MOTION, which never comes when
         // the pointer is already at the target (a repeated click).
-        xdotool(&["mousemove", &xs, &ys, "click", "1"])?;
+        match action {
+            "click" => xdotool(&["mousemove", &xs, &ys, "click", "1"])?,
+            "down" => xdotool(&["mousemove", &xs, &ys, "mousedown", "1"])?,
+            "move" => xdotool(&["mousemove", &xs, &ys])?,
+            "up" => xdotool(&["mousemove", &xs, &ys, "mouseup", "1"])?,
+            "escape" => xdotool(&["key", "Escape"])?,
+            other => return Err(format!("unknown real input action {other:?}")),
+        };
         Ok(format!(
             "display {display} ({geo}) window {focus} of pid {pid} at {x},{y}"
         ))
@@ -367,6 +484,21 @@ pub fn expected_text(original: &str) -> String {
 pub fn finish(app: &AppHandle, report: p::SmokeReport) {
     use tauri::Manager;
     let state = app.state::<SmokeState>();
+    if let Some(arm) = state.3.lock().unwrap().take() {
+        let mut steps = report.steps;
+        steps.extend(verify_move(&arm));
+        let all = steps.iter().all(|s| s.ok);
+        let json = serde_json::to_string_pretty(
+            &serde_json::json!({ "pass": all, "file": MOVE_FILE, "steps": steps }),
+        )
+        .unwrap();
+        println!("{json}");
+        if let Some(rp) = arm.report_path {
+            let _ = std::fs::write(rp, &json);
+        }
+        app.exit(if all { 0 } else { 1 });
+        return;
+    }
     if let Some(arm) = state.2.lock().unwrap().take() {
         let mut steps = report.steps;
         // Source integrity: no fixture file changed on disk.
@@ -491,6 +623,92 @@ pub fn finish(app: &AppHandle, report: p::SmokeReport) {
         }
         app.exit(if all { 0 } else { 1 });
     }
+}
+
+/// The bytes a gizmo move may change: exactly one translation token, every
+/// other byte (BOM, line endings, comments, Unicode) identical. Returns the
+/// (old, new) token.
+pub fn one_translation_token(before: &[u8], after: &[u8]) -> Option<(String, String)> {
+    let pre = before.iter().zip(after).take_while(|(a, b)| a == b).count();
+    let max_suf = before.len().min(after.len()) - pre;
+    let suf = before
+        .iter()
+        .rev()
+        .zip(after.iter().rev())
+        .take(max_suf)
+        .take_while(|(a, b)| a == b)
+        .count();
+    // Widen to whole tokens (an edit may share leading / trailing digits).
+    let delim = |c: u8| c.is_ascii_whitespace() || b"[]{},".contains(&c);
+    let mut a = pre;
+    while a > 0 && !delim(before[a - 1]) {
+        a -= 1;
+    }
+    let (mut eb, mut ea) = (before.len() - suf, after.len() - suf);
+    while eb < before.len() && !delim(before[eb]) {
+        eb += 1;
+        ea += 1;
+    }
+    let old = std::str::from_utf8(&before[a..eb]).ok()?;
+    let new = std::str::from_utf8(&after[a..ea]).ok()?;
+    let line_start = before[..a]
+        .iter()
+        .rposition(|&c| c == b'\n' || c == b'\r')
+        .map_or(0, |i| i + 1);
+    let line = std::str::from_utf8(&before[line_start..a]).ok()?;
+    let one = !old.is_empty()
+        && !new.is_empty()
+        && !old.bytes().any(delim)
+        && !new.bytes().any(delim)
+        && line.trim_start().starts_with("translation ")
+        && before[..a] == after[..a]
+        && before[eb..] == after[ea..];
+    one.then(|| (old.to_string(), new.to_string()))
+}
+
+fn verify_move(arm: &MoveArm) -> Vec<p::SmokeStep> {
+    let mut steps = Vec::new();
+    for (path, original, label) in &arm.fixtures {
+        let disk = std::fs::read(path).unwrap_or_default();
+        let one = one_translation_token(original, &disk);
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let backups: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .map(|rd| {
+                rd.filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| {
+                        p.file_name().is_some_and(|n| {
+                            n.to_string_lossy().starts_with(&format!("{name}.bak-"))
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let backup_ok =
+            backups.len() == 1 && std::fs::read(&backups[0]).ok().as_deref() == Some(&original[..]);
+        steps.push(p::SmokeStep {
+            name: format!("rust: {label} fixture on disk differs by exactly one translation token; one backup holds the original bytes"),
+            ok: one.is_some() && backup_ok,
+            detail: format!("{name}: {one:?} · {} backup(s)", backups.len()),
+        });
+    }
+    let saved = std::fs::read(&arm.save_path).ok();
+    let parsed = saved
+        .as_deref()
+        .and_then(|b| files::decode(b).ok())
+        .map(|(t, _)| t);
+    let ok = parsed.as_deref().is_some_and(|t| {
+        let pr = wrlforge_vrml::parse(t);
+        !wrlforge_vrml::field_edit::has_blocking_syntax_error(&pr)
+            && t.contains("DEF Box_1 Transform")
+            && !t.contains("DEF Box_1 Transform {\n  translation 0 0 0")
+    });
+    steps.push(p::SmokeStep {
+        name: "rust: the saved world parses and holds the moved Box_1".into(),
+        ok,
+        detail: format!("{} bytes", saved.map_or(0, |b| b.len())),
+    });
+    steps
 }
 
 /// The exact texts the VISUAL-1 workflow must leave: `first` after the
@@ -697,6 +915,99 @@ pub fn inspector_change_ok(before: &str, after: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gizmo_fixtures_are_movable_and_the_disk_check_is_one_token_exact() {
+        use wrlforge_vrml::manipulate::{plan_translate, translate_target, Axis};
+        for (file, _, text) in move_fixtures() {
+            let p = wrlforge_vrml::parse(&text);
+            assert!(
+                !wrlforge_vrml::field_edit::has_blocking_syntax_error(&p),
+                "{file}"
+            );
+            let t = p
+                .tree
+                .statements
+                .iter()
+                .find_map(|s| match s {
+                    wrlforge_vrml::ast::Ast::Node(n)
+                        if n.node_type == "Transform" && n.def.is_some() =>
+                    {
+                        Some((n.range.start.offset as u64, n.range.end.offset as u64))
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            assert!(translate_target(&text, t.0, t.1).is_ok(), "{file}");
+            let (plan, _) = plan_translate(&text, t.0, t.1, Axis::X, 1.75, 2);
+            let wrlforge_vrml::field_edit::Plan::Ready { new_text, .. } = plan else {
+                panic!("{file}: {plan:?}")
+            };
+            let got = one_translation_token(text.as_bytes(), new_text.as_bytes());
+            assert_eq!(
+                got.as_ref().map(|(_, n)| n.as_str()),
+                Some("1.75"),
+                "{file}"
+            );
+            // Any other change is not a one-token move.
+            let other = new_text.replacen("fin", "fín", 1);
+            assert!(
+                one_translation_token(text.as_bytes(), other.as_bytes()).is_none(),
+                "{file}"
+            );
+            assert!(one_translation_token(text.as_bytes(), text.as_bytes()).is_none());
+        }
+    }
+
+    /// VISUAL-3A guard: the private X_ITE camera surfaces the gizmo needs
+    /// are read ONLY in `xite-gizmo-adapter.js` (comments excluded), and that
+    /// adapter touches none of the WD2-D parser / hit-test surfaces.
+    #[test]
+    fn private_xite_camera_access_stays_in_the_gizmo_adapter() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui/static");
+        let code = |t: &str| {
+            t.lines()
+                .map(|l| l.split("//").next().unwrap_or(""))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let private = [
+            "getActiveLayer",
+            "getViewpoint",
+            "getViewMatrix",
+            "getProjectionMatrix",
+            "getRectangle",
+        ];
+        let mut seen = 0;
+        for e in std::fs::read_dir(&dir).unwrap() {
+            let path = e.unwrap().path();
+            if path.extension().and_then(|x| x.to_str()) != Some("js") {
+                continue;
+            }
+            let src = code(&std::fs::read_to_string(&path).unwrap());
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            if name == "xite-gizmo-adapter.js" {
+                seen += 1;
+                for p in private {
+                    assert!(src.contains(p), "the adapter no longer reads {p}");
+                }
+                for p in [
+                    "VRMLParser",
+                    "nodeStatement",
+                    "getHit",
+                    "getParents",
+                    ".touch(",
+                ] {
+                    assert!(!src.contains(p), "the gizmo adapter must not touch {p}");
+                }
+            } else {
+                for p in private {
+                    assert!(!src.contains(p), "{name} reads private X_ITE surface {p}");
+                }
+            }
+        }
+        assert_eq!(seen, 1);
+    }
 
     #[test]
     fn inspector_change_check_is_token_exact() {

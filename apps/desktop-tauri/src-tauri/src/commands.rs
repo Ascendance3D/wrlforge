@@ -218,6 +218,26 @@ pub fn doc_edit_field(
     svc.edit_field(&request)
 }
 
+/// VISUAL-3A: whether the gizmo may move an item. Read-only; async like
+/// `doc_inspect` because it parses.
+#[tauri::command]
+pub async fn doc_translate_target(
+    svc: State<'_, Service>,
+    request: p::TranslateTargetRequest,
+) -> Result<p::TranslateTargetOutcome, String> {
+    svc.translate_target(&request)
+}
+
+/// VISUAL-3A: commit one gizmo drag. Synchronous for the same ordering
+/// reason as `doc_edit`.
+#[tauri::command]
+pub fn doc_translate(
+    svc: State<'_, Service>,
+    request: p::TranslateRequest,
+) -> Result<p::TranslateOutcome, String> {
+    svc.translate(&request)
+}
+
 /// Resolve one viewport pick (VISUAL-2). Read-only; async like
 /// `doc_analyze` because it parses.
 #[tauri::command]
@@ -263,6 +283,23 @@ pub async fn smoke_real_click(app: AppHandle, x: f64, y: f64) -> Result<String, 
     let rx = (pos.x as f64 + x * scale).round() as i32;
     let ry = (pos.y as f64 + y * scale).round() as i32;
     app.state::<SmokeState>().real_click(rx, ry)
+}
+
+/// `--smoke-pick` / `--smoke-move` only: one REAL X input action at client
+/// CSS px (`x`, `y`) of the main window (`SmokeState::real_pointer`).
+#[tauri::command]
+pub async fn smoke_real_pointer(
+    app: AppHandle,
+    action: String,
+    x: f64,
+    y: f64,
+) -> Result<String, String> {
+    let w = app.get_webview_window("main").ok_or("no main window")?;
+    let pos = w.inner_position().map_err(|e| e.to_string())?;
+    let scale = w.scale_factor().map_err(|e| e.to_string())?;
+    let rx = (pos.x as f64 + x * scale).round() as i32;
+    let ry = (pos.y as f64 + y * scale).round() as i32;
+    app.state::<SmokeState>().real_pointer(&action, rx, ry)
 }
 
 #[tauri::command]

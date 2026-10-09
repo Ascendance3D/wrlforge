@@ -20,7 +20,7 @@ use std::time::SystemTime;
 use wrlforge_desktop_protocol as p;
 use wrlforge_document::{map_span, view_of, Applied, Document, SpanChange, ViewEdit};
 use wrlforge_text::Edit;
-use wrlforge_vrml::{create, field_edit, highlight, scene};
+use wrlforge_vrml::{create, field_edit, highlight, manipulate, scene};
 
 use crate::files::{self, FileError, Format, SaveOptions, Stamp};
 
@@ -698,6 +698,115 @@ impl Service {
                             reason: field_edit::reason::TRANSACTION_REJECTED.into(),
                             message: e.to_string(),
                         },
+                    }
+                }
+            }
+        })
+    }
+
+    /// VISUAL-3A: whether the translation gizmo may move `item` as it is in
+    /// `revision` (read-only). Any other revision is `Stale`, never
+    /// re-interpreted against the current text.
+    pub fn translate_target(
+        &self,
+        r: &p::TranslateTargetRequest,
+    ) -> Result<p::TranslateTargetOutcome, String> {
+        let (text, current) = self.text_at(r.session)?;
+        if r.revision != current {
+            return Ok(p::TranslateTargetOutcome::Stale { current });
+        }
+        let Some((from, to)) = node_span(&r.item) else {
+            return Ok(p::TranslateTargetOutcome::Refused {
+                reason: field_edit::reason::NOT_A_NODE.into(),
+                message: "Select an object (a Transform) to move it.".into(),
+            });
+        };
+        Ok(match manipulate::translate_target(&text, from, to) {
+            Ok(t) => p::TranslateTargetOutcome::Ready {
+                revision: current,
+                item: r.item.clone(),
+                def_name: t.def,
+                root_index: t.root_index as u32,
+                translation: t.translation,
+                origin: t.origin,
+            },
+            Err(e) => p::TranslateTargetOutcome::Refused {
+                reason: e.reason.into(),
+                message: e.message,
+            },
+        })
+    }
+
+    /// VISUAL-3A: commit one gizmo drag. Rust re-proves everything (the
+    /// revision, the Transform at the item's span, the explicit translation)
+    /// and writes ONE token, as ONE transaction whose result must equal the
+    /// planned, round-trip-verified text.
+    pub fn translate(&self, r: &p::TranslateRequest) -> Result<p::TranslateOutcome, String> {
+        self.with(r.session, |s| {
+            let refused = |reason: &str, message: String| p::TranslateOutcome::Refused {
+                reason: reason.into(),
+                message,
+            };
+            if r.base_revision != s.doc.revision() {
+                return refused(
+                    "parse-session-is-stale",
+                    format!(
+                        "The document changed (revision {} → {}); the object was not moved.",
+                        r.base_revision,
+                        s.doc.revision()
+                    ),
+                );
+            }
+            let Some((node_from, node_to)) = node_span(&r.item) else {
+                return refused(field_edit::reason::NOT_A_NODE, "Not an object.".into());
+            };
+            let axis = match r.axis {
+                p::gizmo::Axis::X => manipulate::Axis::X,
+                p::gizmo::Axis::Y => manipulate::Axis::Y,
+                p::gizmo::Axis::Z => manipulate::Axis::Z,
+            };
+            let (plan, text) = manipulate::plan_translate(
+                s.doc.text(),
+                node_from,
+                node_to,
+                axis,
+                r.value,
+                r.decimals,
+            );
+            match plan {
+                field_edit::Plan::Unchanged => p::TranslateOutcome::Unchanged,
+                field_edit::Plan::Refused {
+                    reason, message, ..
+                } => refused(reason, message.unwrap_or_else(|| reason.to_string())),
+                field_edit::Plan::Ready {
+                    edits, new_text, ..
+                } => {
+                    // The edit lies inside the node: its start is fixed and
+                    // its end moves by the length change.
+                    let delta: i64 = edits
+                        .iter()
+                        .map(|e| e.insert.encode_utf16().count() as i64 - (e.to - e.from) as i64)
+                        .sum();
+                    let item = format!("node-{node_from}-{}", node_to as i64 + delta);
+                    let edits: Vec<Edit> = edits
+                        .into_iter()
+                        .map(|e| Edit {
+                            from: e.from,
+                            to: e.to,
+                            insert: e.insert,
+                        })
+                        .collect();
+                    match s
+                        .doc
+                        .apply_source_transaction(r.base_revision, &edits, &new_text)
+                    {
+                        Ok(a) => p::TranslateOutcome::Applied {
+                            state: Self::state(s, a),
+                            view: s.doc.view(),
+                            item,
+                            text: text.unwrap_or_default(),
+                        },
+                        Err(e) => refused(field_edit::reason::TRANSACTION_REJECTED, e.to_string()),
                     }
                 }
             }
@@ -1767,6 +1876,240 @@ mod tests {
         let d = Document::new(t.into());
         for s in [0u64, 1, 3, 5, 7, 8, 9, 10, 11] {
             assert_eq!(vm.view(s), d.source_to_view(s), "source {s}");
+        }
+    }
+
+    // ---- VISUAL-3A: translation gizmo ---------------------------------------
+
+    fn target(svc: &Service, id: u64, rev: u64, item: &str) -> p::TranslateTargetOutcome {
+        svc.translate_target(&p::TranslateTargetRequest {
+            session: id,
+            revision: rev,
+            item: item.into(),
+        })
+        .unwrap()
+    }
+
+    fn mv(
+        svc: &Service,
+        id: u64,
+        rev: u64,
+        item: &str,
+        axis: p::gizmo::Axis,
+        v: f64,
+    ) -> p::TranslateOutcome {
+        svc.translate(&p::TranslateRequest {
+            session: id,
+            base_revision: rev,
+            item: item.into(),
+            axis,
+            value: v,
+            decimals: 3,
+        })
+        .unwrap()
+    }
+
+    fn moved(o: p::TranslateOutcome) -> (p::DocState, String, String) {
+        match o {
+            p::TranslateOutcome::Applied {
+                state, item, text, ..
+            } => (state, item, text),
+            other => panic!("not moved: {other:?}"),
+        }
+    }
+
+    /// New World → Box → X, Y, Z drags (positive and negative) → each is ONE
+    /// token and ONE undo step → exact Undo / Redo → stale / wrong-node /
+    /// zero-distance / invalid refusals change nothing → Save As → reopen.
+    #[test]
+    fn gizmo_moves_are_exact_single_undo_steps_and_survive_save_and_reopen() {
+        use p::gizmo::Axis;
+        let dir = tmp("visual3a");
+        let svc = Service::new(clock);
+        let doc = opened(svc.new_world());
+        let id = doc.session;
+        let (st, item, _) = created(create(&svc, id, doc.revision, p::Primitive::Box));
+        let rev0 = st.revision;
+        let base = svc.text(id).unwrap();
+        match target(&svc, id, rev0, &item) {
+            p::TranslateTargetOutcome::Ready {
+                def_name,
+                translation,
+                origin,
+                ..
+            } => {
+                assert_eq!(def_name.as_deref(), Some("Box_1"));
+                assert_eq!(translation, [0.0; 3]);
+                assert_eq!(origin, [0.0; 3]);
+            }
+            other => panic!("{other:?}"),
+        }
+        // A stale target query examines nothing.
+        assert_eq!(
+            target(&svc, id, rev0 - 1, &item),
+            p::TranslateTargetOutcome::Stale { current: rev0 }
+        );
+
+        let mut texts = vec![base.clone()];
+        let (mut rev, mut it) = (rev0, item.clone());
+        for (axis, v, tok) in [
+            (Axis::X, 2.5, "2.5"),
+            (Axis::Y, -1.25, "-1.25"),
+            (Axis::Z, 0.75, "0.75"),
+            (Axis::X, -3.0, "-3"),
+        ] {
+            let before = svc.text(id).unwrap();
+            let (st, item2, text) = moved(mv(&svc, id, rev, &it, axis, v));
+            assert_eq!(text, tok);
+            assert_eq!(st.revision, rev + 1, "one revision per drag");
+            let after = svc.text(id).unwrap();
+            // Exactly one token differs.
+            let pre = before
+                .bytes()
+                .zip(after.bytes())
+                .take_while(|(a, b)| a == b)
+                .count();
+            let suf = before
+                .bytes()
+                .rev()
+                .zip(after.bytes().rev())
+                .take_while(|(a, b)| a == b)
+                .count();
+            let changed_old = &before[pre..before.len() - suf.min(before.len() - pre)];
+            assert!(
+                !changed_old.contains(char::is_whitespace),
+                "{changed_old:?}"
+            );
+            assert!(after.contains("translation "), "{after}");
+            texts.push(after);
+            rev = st.revision;
+            it = item2;
+        }
+        let last = texts.last().unwrap().clone();
+        assert!(last.contains("translation -3 -1.25 0.75"), "{last}");
+
+        // Refusals change nothing.
+        let snap = |svc: &Service| (svc.text(id).unwrap(), svc.snapshot(id).unwrap().revision);
+        let s0 = snap(&svc);
+        assert!(matches!(
+            mv(&svc, id, rev - 1, &it, Axis::X, 9.0),
+            p::TranslateOutcome::Refused { ref reason, .. } if reason == "parse-session-is-stale"
+        ));
+        assert!(matches!(
+            mv(&svc, id, rev, &it, Axis::X, -3.0),
+            p::TranslateOutcome::Unchanged
+        ));
+        assert!(matches!(
+            mv(&svc, id, rev, &it, Axis::X, -3.0001),
+            p::TranslateOutcome::Unchanged
+        ));
+        assert!(matches!(
+            mv(&svc, id, rev, &it, Axis::Y, f64::NAN),
+            p::TranslateOutcome::Refused { .. }
+        ));
+        assert!(matches!(
+            mv(&svc, id, rev, "tree-route-0-1", Axis::Y, 1.0),
+            p::TranslateOutcome::Refused { .. }
+        ));
+        // Wrong node: the Box's Shape span (a real node, not a Transform).
+        let a = svc.analyze(id).unwrap();
+        let shape = a
+            .items
+            .iter()
+            .find(|i| i.label.starts_with("Shape"))
+            .unwrap()
+            .id
+            .clone();
+        assert!(matches!(
+            mv(&svc, id, rev, &shape, Axis::Y, 1.0),
+            p::TranslateOutcome::Refused { ref reason, .. } if reason == "node-is-not-a-transform"
+        ));
+        assert!(matches!(
+            target(&svc, id, rev, &shape),
+            p::TranslateTargetOutcome::Refused { .. }
+        ));
+        assert_eq!(
+            snap(&svc),
+            s0,
+            "refusals left source and revision unchanged"
+        );
+
+        // Exact undo / redo, one drag per step.
+        for want in texts.iter().rev().skip(1) {
+            assert!(matches!(
+                svc.undo(id).unwrap(),
+                p::HistoryOutcome::Applied { .. }
+            ));
+            assert_eq!(&svc.text(id).unwrap(), want);
+        }
+        for want in texts.iter().skip(1) {
+            assert!(matches!(
+                svc.redo(id).unwrap(),
+                p::HistoryOutcome::Applied { .. }
+            ));
+            assert_eq!(&svc.text(id).unwrap(), want);
+        }
+
+        // Save As, reopen: the moved translation persists, byte for byte.
+        let path = dir.join("moved.wrl");
+        assert!(matches!(
+            svc.save_as(id, &path),
+            p::SaveOutcome::Saved { .. }
+        ));
+        assert_eq!(fs::read_to_string(&path).unwrap(), last);
+        let svc2 = Service::new(clock);
+        let again = opened(svc2.open_path(&path));
+        assert_eq!(svc2.text(again.session).unwrap(), last);
+        let a2 = svc2.analyze(again.session).unwrap();
+        let tf = a2
+            .items
+            .iter()
+            .find(|i| i.label == "Transform Box_1")
+            .unwrap();
+        match target(&svc2, again.session, again.revision, &tf.id) {
+            p::TranslateTargetOutcome::Ready { translation, .. } => {
+                assert_eq!(translation, [-3.0, -1.25, 0.75])
+            }
+            other => panic!("{other:?}"),
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A moved file keeps its BOM, CRLF / lone CR line endings, comments and
+    /// Unicode byte for byte; only the translation token differs on disk.
+    #[test]
+    fn gizmo_move_on_disk_changes_one_token_bom_crlf_cr_unicode() {
+        use p::gizmo::Axis;
+        for (tag, eol, bom) in [
+            ("lf", "\n", ""),
+            ("crlf", "\r\n", "\u{feff}"),
+            ("cr", "\r", ""),
+        ] {
+            let dir = tmp(&format!("visual3a-{tag}"));
+            let body = create::template(create::Primitive::Box, "Box_ü", eol);
+            let src = format!("{bom}#VRML V2.0 utf8{eol}# 世界 ✓ 😀{eol}{body}{eol}# fin{eol}");
+            let path = dir.join("w.wrl");
+            fs::write(&path, &src).unwrap();
+            let svc = Service::new(clock);
+            let doc = opened(svc.open_path(&path));
+            let a = svc.analyze(doc.session).unwrap();
+            let tf = a
+                .items
+                .iter()
+                .find(|i| i.label == "Transform Box_ü")
+                .unwrap()
+                .id
+                .clone();
+            let (_, _, text) = moved(mv(&svc, doc.session, doc.revision, &tf, Axis::Y, 1.5));
+            assert_eq!(text, "1.5");
+            assert!(matches!(
+                svc.save(doc.session),
+                p::SaveOutcome::Saved { .. }
+            ));
+            let disk = fs::read(&path).unwrap();
+            let want = src.replacen("translation 0 0 0", "translation 0 1.5 0", 1);
+            assert_eq!(disk, want.as_bytes(), "{tag}");
+            let _ = fs::remove_dir_all(&dir);
         }
     }
 }

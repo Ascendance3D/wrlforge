@@ -415,6 +415,13 @@ const UI_PAIRS: &[(&str, &str)] = &[
     ("--wf-axis-x", "--wf-viewport-header-bg"),
     ("--wf-axis-y", "--wf-viewport-header-bg"),
     ("--wf-axis-z", "--wf-viewport-header-bg"),
+    // VISUAL-3A gizmo: each axis, the active ring and the disabled state are
+    // drawn over the halo, so they read on any rendered scene background.
+    ("--wf-axis-x", "--wf-gizmo-halo"),
+    ("--wf-axis-y", "--wf-gizmo-halo"),
+    ("--wf-axis-z", "--wf-gizmo-halo"),
+    ("--wf-gizmo-active", "--wf-gizmo-halo"),
+    ("--wf-gizmo-disabled", "--wf-gizmo-halo"),
 ];
 
 #[test]

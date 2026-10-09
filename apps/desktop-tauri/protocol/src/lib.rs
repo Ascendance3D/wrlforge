@@ -12,6 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod gizmo;
 pub mod syntax;
 pub mod theme;
 
@@ -353,6 +354,71 @@ pub enum CreateOutcome {
     Refused { reason: String, message: String },
 }
 
+/// VISUAL-3A: may the translation gizmo move `item` as it is in `revision`?
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslateTargetRequest {
+    pub session: SessionId,
+    pub revision: u64,
+    pub item: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum TranslateTargetOutcome {
+    /// A top-level Transform with an explicit translation; a DEF name, if
+    /// any, is unique, never USEd and never ROUTEd to. The preview binds it
+    /// by `root_index` (its position among the top-level node statements),
+    /// cross-checked against `def_name` when there is one.
+    Ready {
+        revision: u64,
+        item: String,
+        def_name: Option<String>,
+        root_index: u32,
+        translation: [f64; 3],
+        /// World position of the Transform's local origin.
+        origin: [f64; 3],
+    },
+    Refused {
+        reason: String,
+        message: String,
+    },
+    /// The document is at another revision; nothing was examined.
+    Stale {
+        current: u64,
+    },
+}
+
+/// VISUAL-3A: one completed gizmo drag. Rust formats `value` (at most
+/// `decimals` places), re-proves the node and writes ONE token.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslateRequest {
+    pub session: SessionId,
+    pub base_revision: u64,
+    pub item: String,
+    pub axis: gizmo::Axis,
+    pub value: f64,
+    pub decimals: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum TranslateOutcome {
+    /// Applied as ONE undo step. `item` is the same Transform in the NEW
+    /// revision; `text` is the token written.
+    Applied {
+        state: DocState,
+        view: String,
+        item: String,
+        text: String,
+    },
+    /// The value rounds to the current one: nothing changed.
+    Unchanged,
+    /// Refused; the buffer and revision are unchanged.
+    Refused { reason: String, message: String },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewSource {
@@ -493,6 +559,23 @@ pub struct SmokePlan {
     /// `--smoke-pick` (VISUAL-2): viewport picking workflow + fixture matrix.
     #[serde(default)]
     pub pick: Option<PickSmoke>,
+    /// `--smoke-move` (VISUAL-3A): translation-gizmo workflow.
+    #[serde(default)]
+    pub gizmo: Option<GizmoSmoke>,
+}
+
+/// VISUAL-3A smoke plan. Fixture files stay on the Rust side; the UI opens
+/// them by index (`smoke_open_fixture`), never by path.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GizmoSmoke {
+    pub themes: Vec<String>,
+    /// Labels of the source-format fixtures, by index.
+    pub fixtures: Vec<String>,
+    pub hold_ms: u64,
+    /// Real X pointer / key input is available (`smoke_real_pointer`).
+    #[serde(default)]
+    pub real_pointer: bool,
 }
 
 /// VISUAL-2 smoke plan. Fixture files stay on the Rust side; the UI opens

@@ -213,10 +213,13 @@ pub const REQUIRED_TOKENS: &[&str] = &[
     "--wf-viewport-header-bg",
     "--wf-viewport-status-fg",
     "--wf-viewport-border",
-    // transform-overlay axes (reserved)
+    // transform-gizmo axes and states (VISUAL-3A)
     "--wf-axis-x",
     "--wf-axis-y",
     "--wf-axis-z",
+    "--wf-gizmo-halo",
+    "--wf-gizmo-active",
+    "--wf-gizmo-disabled",
     // elevation
     "--wf-shadow",
 ];
