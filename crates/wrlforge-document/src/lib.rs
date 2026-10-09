@@ -196,6 +196,38 @@ pub struct Document {
     eol: Eol,
     undo: Vec<Group>,
     redo: Vec<Group>,
+    /// The exact changes the last undo/redo applied, in application order.
+    last_history: Vec<SpanChange>,
+}
+
+/// One applied change in SOURCE UTF-16 coordinates current at its time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpanChange {
+    pub from: u64,
+    pub removed: u64,
+    pub inserted: u64,
+}
+
+/// Map a span `[from, to)` through exact changes. A change entirely before
+/// the span shifts it; one strictly inside it moves its end; one after it
+/// does nothing. A change that touches or crosses a boundary returns `None`:
+/// the span can no longer be proven to be the same text, so it is LOST,
+/// never guessed.
+pub fn map_span(mut from: u64, mut to: u64, changes: &[SpanChange]) -> Option<(u64, u64)> {
+    for c in changes {
+        let end = c.from + c.removed;
+        let delta = c.inserted as i64 - c.removed as i64;
+        if end < from || (end == from && c.removed > 0 && c.from < from) {
+            from = (from as i64 + delta) as u64;
+            to = (to as i64 + delta) as u64;
+        } else if c.from > to || (c.from == to && c.removed > 0) {
+        } else if c.from > from && end < to {
+            to = (to as i64 + delta) as u64;
+        } else {
+            return None;
+        }
+    }
+    Some((from, to))
 }
 
 /// What the UI needs after any change.
@@ -248,6 +280,7 @@ impl Document {
             eol,
             undo: vec![],
             redo: vec![],
+            last_history: vec![],
         }
     }
 
@@ -429,14 +462,79 @@ impl Document {
         Ok(self.applied(caret))
     }
 
+    /// Apply a whole SOURCE-coordinate edit set (a semantic edit such as an
+    /// Inspector field change) as ONE atomic, ONE-step-undoable transaction.
+    ///
+    /// `expected` is the text the caller's planner derived and verified. The
+    /// set is re-validated and re-applied here by the WD1.2 algebra, and the
+    /// result must equal `expected` byte for byte; otherwise nothing changes.
+    pub fn apply_source_transaction(
+        &mut self,
+        base_revision: u64,
+        edits: &[Edit],
+        expected: &str,
+    ) -> Result<Applied, DocError> {
+        if base_revision != self.revision {
+            return Err(DocError::Stale {
+                expected: self.revision,
+                actual: base_revision,
+            });
+        }
+        if edits.is_empty() {
+            return Err(DocError::Nothing);
+        }
+        let order = wrlforge_text::edit::validate_edits(&self.text, edits)?;
+        let next = apply_edits(&self.text, edits)?;
+        if next != expected {
+            return Err(DocError::Edit(
+                "transaction result differs from the planned text".into(),
+            ));
+        }
+        // Record each change in the coordinates current when it is applied:
+        // descending `from`, so no earlier change shifts a later one. Undo
+        // replays the group backwards, redo forwards -- both exact.
+        let snap = TextSnapshot::new(self.text.clone());
+        let mut changes = Vec::with_capacity(edits.len());
+        for &i in order.iter().rev() {
+            let e = &edits[i];
+            let span = snap
+                .validate_span(e.from, e.to)
+                .map_err(|x| DocError::Edit(format!("{x:?}")))?;
+            changes.push(Change {
+                from: e.from,
+                removed: snap.text()[span.byte_from..span.byte_to].to_string(),
+                inserted: e.insert.clone(),
+            });
+        }
+        let caret = changes
+            .first()
+            .map(|c| c.from + utf16_len(&c.inserted))
+            .unwrap_or(0);
+        self.text = next;
+        self.revision += 1;
+        self.redo.clear();
+        self.undo.push(Group {
+            changes,
+            typing: false,
+        });
+        Ok(self.applied(caret))
+    }
+
     pub fn undo(&mut self) -> Result<Applied, DocError> {
         let g = self.undo.pop().ok_or(DocError::Nothing)?;
         let mut text = self.text.clone();
+        let mut applied = Vec::with_capacity(g.changes.len());
         let mut caret = 0;
         for c in g.changes.iter().rev() {
             text = apply_edits(&text, &[c.backward()])?;
+            applied.push(SpanChange {
+                from: c.from,
+                removed: utf16_len(&c.inserted),
+                inserted: utf16_len(&c.removed),
+            });
             caret = c.from + utf16_len(&c.removed);
         }
+        self.last_history = applied;
         self.text = text;
         self.revision += 1;
         self.redo.push(g);
@@ -446,15 +544,27 @@ impl Document {
     pub fn redo(&mut self) -> Result<Applied, DocError> {
         let g = self.redo.pop().ok_or(DocError::Nothing)?;
         let mut text = self.text.clone();
+        let mut applied = Vec::with_capacity(g.changes.len());
         let mut caret = 0;
         for c in g.changes.iter() {
             text = apply_edits(&text, &[c.forward()])?;
+            applied.push(SpanChange {
+                from: c.from,
+                removed: utf16_len(&c.removed),
+                inserted: utf16_len(&c.inserted),
+            });
             caret = c.from + utf16_len(&c.inserted);
         }
+        self.last_history = applied;
         self.text = text;
         self.revision += 1;
         self.undo.push(g);
         Ok(self.applied(caret))
+    }
+
+    /// The exact changes the most recent undo/redo applied.
+    pub fn last_history_changes(&self) -> &[SpanChange] {
+        &self.last_history
     }
 
     /// Current state without a change (for resyncs).
@@ -473,6 +583,84 @@ mod tests {
             to,
             insert: s.into(),
         }
+    }
+
+    fn se(from: u64, to: u64, s: &str) -> Edit {
+        Edit {
+            from,
+            to,
+            insert: s.into(),
+        }
+    }
+
+    #[test]
+    fn source_transaction_is_one_undo_step_and_exact() {
+        let src = "\u{FEFF}#VRML V2.0 utf8\r\nT { t 1 2 3 }\rX é😀\n";
+        let mut d = Document::new(src.into());
+        let one = utf16_len("\u{FEFF}#VRML V2.0 utf8\r\nT { t ");
+        let three = one + 4;
+        let edits = [se(three, three + 1, "-3.5"), se(one, one + 1, "10")];
+        let want = "\u{FEFF}#VRML V2.0 utf8\r\nT { t 10 2 -3.5 }\rX é😀\n";
+        let a = d.apply_source_transaction(0, &edits, want).unwrap();
+        assert_eq!(d.text(), want);
+        assert_eq!(a.revision, 1);
+        assert!(a.dirty && d.can_undo());
+        d.undo().unwrap();
+        assert_eq!(d.text(), src);
+        assert!(!d.dirty());
+        d.redo().unwrap();
+        assert_eq!(d.text(), want);
+    }
+
+    #[test]
+    fn spans_map_through_exact_history_changes_or_are_lost() {
+        let c = |from, removed, inserted| SpanChange {
+            from,
+            removed,
+            inserted,
+        };
+        // inside -> end moves; before -> shift; after -> unchanged.
+        assert_eq!(map_span(10, 20, &[c(12, 3, 5)]), Some((10, 22)));
+        assert_eq!(map_span(10, 20, &[c(2, 3, 1)]), Some((8, 18)));
+        assert_eq!(map_span(10, 20, &[c(25, 3, 1)]), Some((10, 20)));
+        // touching or crossing a boundary -> lost.
+        for ch in [
+            c(10, 1, 1),
+            c(19, 1, 1),
+            c(5, 6, 1),
+            c(15, 10, 0),
+            c(20, 0, 3),
+            c(10, 0, 3),
+        ] {
+            assert_eq!(map_span(10, 20, &[ch]), None, "{ch:?}");
+        }
+        // The real flow: an Inspector transaction, then undo/redo.
+        let src = "A { x 1 2 3 }\nB { y 0 }";
+        let mut d = Document::new(src.into());
+        d.apply_source_transaction(0, &[se(8, 9, "2.5")], "A { x 1 2.5 3 }\nB { y 0 }")
+            .unwrap();
+        d.undo().unwrap();
+        assert_eq!(map_span(0, 15, d.last_history_changes()), Some((0, 13)));
+        assert_eq!(map_span(16, 25, d.last_history_changes()), Some((14, 23)));
+        d.redo().unwrap();
+        assert_eq!(map_span(0, 13, d.last_history_changes()), Some((0, 15)));
+    }
+
+    #[test]
+    fn source_transaction_refusals_change_nothing() {
+        let mut d = Document::new("abc".into());
+        assert!(matches!(
+            d.apply_source_transaction(3, &[se(0, 1, "x")], "xbc"),
+            Err(DocError::Stale { .. })
+        ));
+        assert!(d
+            .apply_source_transaction(0, &[se(0, 1, "x")], "WRONG")
+            .is_err());
+        assert!(d
+            .apply_source_transaction(0, &[se(0, 2, "x"), se(1, 3, "y")], "")
+            .is_err());
+        assert!(d.apply_source_transaction(0, &[], "abc").is_err());
+        assert_eq!((d.text(), d.revision(), d.can_undo()), ("abc", 0, false));
     }
 
     #[test]

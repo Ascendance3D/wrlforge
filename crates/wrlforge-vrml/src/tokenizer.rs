@@ -228,6 +228,15 @@ pub fn tokenize(src: &str) -> Tokenized {
     let mut comments = Vec::new();
     let mut diagnostics = Vec::new();
 
+    // A leading U+FEFF is the UTF-8 encoding signature, not content: it is
+    // skipped as trivia so a BOM file parses like its BOM-less twin. Every
+    // span still counts it (offset 1 / byte 3), so the text is never altered.
+    // DELIBERATE DIFFERENCE from `src/vrml/tokenizer.js` (TAURI-RUST-
+    // MIGRATION-2), which reads it as an identifier and reports VRML001/020.
+    if lx.peek() == Some('\u{FEFF}') {
+        lx.advance();
+    }
+
     // --- header: optional leading whitespace, then `#VRML ...` ---
     {
         let save = (lx.i, lx.u16, lx.line, lx.col);
@@ -569,6 +578,23 @@ fn read_identifier(lx: &mut Lexer) -> Token {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn leading_bom_is_signature_trivia_with_exact_spans() {
+        let src = "\u{FEFF}#VRML V2.0 utf8\r\nGroup {}";
+        let t = tokenize(src);
+        assert!(t.diagnostics.is_empty());
+        assert!(matches!(t.tokens[0].kind, TokKind::Header(_)));
+        assert_eq!(t.tokens[0].range.start.offset, 1);
+        assert_eq!(t.tokens[0].range.start.byte, 3);
+        assert_eq!(t.tokens[1].lexeme(src), "Group");
+        assert_eq!(
+            t.tokens[1].range.start.offset as usize,
+            src.encode_utf16().count() - "Group {}".len()
+        );
+        // Only a LEADING U+FEFF is a signature; elsewhere it stays content.
+        assert_eq!(tokenize("Group {} \u{FEFF}").tokens.len(), 5);
+    }
 
     fn kinds(src: &str) -> Vec<(String, String)> {
         let t = tokenize(src);
