@@ -126,6 +126,10 @@ pre-existing NATIVE-RENDER-1 set; this lane changes no Rust source.
 
 ## Not tested / known limits
 
+- Textures do not load in the viewport (texture serving is not migrated;
+  `ui/static/preview-adapter.js`). No test document here had a texture.
+  Seen on the owner's desktop after installing the `.deb` (X11 session): the
+  app started, opened a gzip mall item and rendered it untextured.
 - A real desktop session (GNOME, Plasma, Wayland compositor with a GPU) was
   not run with these packages; all GUI runs used Xvfb, except the settings
   launch on KWin `--virtual`.
