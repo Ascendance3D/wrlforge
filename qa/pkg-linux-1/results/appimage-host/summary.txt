@@ -1,0 +1,5 @@
+open-pkg-test-basic.wrl: exit=0 pass=true
+open-pkg-test-basic-gzip.wrl: exit=0 pass=true
+create: exit=0 pass=true
+pick: exit=0 pass=true
+exit=0
