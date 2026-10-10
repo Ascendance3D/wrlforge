@@ -1,0 +1,261 @@
+{
+  "file": "visual1-world.wrl",
+  "pass": true,
+  "steps": [
+    {
+      "detail": "",
+      "name": "startup: no document; Create, Save and Close are disabled",
+      "ok": true
+    },
+    {
+      "detail": "Some((\"untitled.wrl\", \"New world (not saved yet)\"))",
+      "name": "New World: an untitled, clean VRML97 world with no file",
+      "ok": true
+    },
+    {
+      "detail": "rev 0 · loaded: 0 root node(s) · covered 0.000% · webgl2 · Apple GPU · X_ITE loaded · canvas ready",
+      "name": "New World: the viewport shows an empty world",
+      "ok": true
+    },
+    {
+      "detail": "active btn-create",
+      "name": "Create menu: keyboard opens, moves (wraps, Home) and Escape closes to the button",
+      "ok": true
+    },
+    {
+      "detail": "click→scene loaded 114 ms, click→frame drawn 131 ms; covered pixels 0.00% → 6.08%; rev 1 · loaded: 1 root node(s)",
+      "name": "Create Box: viewport renders the new geometry",
+      "ok": true
+    },
+    {
+      "detail": "rev 1",
+      "name": "Create Box: source editor shows the generated VRML (rev 1)",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "Create Box: syntax colors cover the new source",
+      "ok": true
+    },
+    {
+      "detail": "Some(Selected { session: 1, revision: 1, id: \"node-17-287\" })",
+      "name": "Create Box: Scene Tree shows and selects Transform Box_1",
+      "ok": true
+    },
+    {
+      "detail": "(3, 4, 3)",
+      "name": "Create Box: Inspector shows editable translation / rotation / scale",
+      "ok": true
+    },
+    {
+      "detail": "translation 1.5 0.5 -1",
+      "name": "Inspector: translation edited through the real controls",
+      "ok": true
+    },
+    {
+      "detail": "rev 2 · loaded: 1 root node(s)",
+      "name": "Inspector: translation edit reached the viewport",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "Scene Tree: the new Material is selectable; the Inspector shows diffuseColor",
+      "ok": true
+    },
+    {
+      "detail": "diffuseColor 0.1 0.6 0.9",
+      "name": "Inspector: diffuseColor edited through the real controls",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "Undo restores the previous color, keeps the translation",
+      "ok": true
+    },
+    {
+      "detail": "Some(Selected { session: 1, revision: 5, id: \"node-169-224\" })",
+      "name": "Redo re-applies the color; the Material selection is carried",
+      "ok": true
+    },
+    {
+      "detail": "rev 5 · loaded: 1 root node(s)",
+      "name": "Undo/redo: the viewport follows the document",
+      "ok": true
+    },
+    {
+      "detail": "New World canceled — your document is unchanged.",
+      "name": "New World on unsaved changes: Cancel leaves the document unchanged",
+      "ok": true
+    },
+    {
+      "detail": "Ok(Refused { reason: \"parse-session-is-stale\", message: \"The document changed (revision 4 → 5); nothing was created.\" })",
+      "name": "Stale Scene Tree action and stale Create are refused; nothing changes",
+      "ok": true
+    },
+    {
+      "detail": "Saved visual1-world.wrl (293 B, plain). Backup: none (new file)",
+      "name": "Save on a new world runs Save As and assigns the file",
+      "ok": true
+    },
+    {
+      "detail": "Saved visual1-world.wrl (293 B, plain). Backup: none (new file)",
+      "name": "Close: no document, empty editor, empty Scene Tree",
+      "ok": true
+    },
+    {
+      "detail": "covered 4.92%",
+      "name": "Reopen: same source, Scene Tree and rendered object",
+      "ok": true
+    },
+    {
+      "detail": "click→scene loaded 109 ms, click→frame drawn 115 ms; covered pixels 4.92% → 8.08%; rev 1 · loaded: 2 root node(s)",
+      "name": "Create Sphere: viewport renders the new geometry",
+      "ok": true
+    },
+    {
+      "detail": "rev 1",
+      "name": "Create Sphere: source editor shows the generated VRML (rev 1)",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "Create Sphere: syntax colors cover the new source",
+      "ok": true
+    },
+    {
+      "detail": "Some(Selected { session: 2, revision: 1, id: \"node-294-568\" })",
+      "name": "Create Sphere: Scene Tree shows and selects Transform Sphere_1",
+      "ok": true
+    },
+    {
+      "detail": "(3, 4, 3)",
+      "name": "Create Sphere: Inspector shows editable translation / rotation / scale",
+      "ok": true
+    },
+    {
+      "detail": "click→scene loaded 93 ms, click→frame drawn 97 ms; covered pixels 8.08% → 8.64%; rev 2 · loaded: 3 root node(s)",
+      "name": "Create Cone: viewport renders the new geometry",
+      "ok": true
+    },
+    {
+      "detail": "rev 2",
+      "name": "Create Cone: source editor shows the generated VRML (rev 2)",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "Create Cone: syntax colors cover the new source",
+      "ok": true
+    },
+    {
+      "detail": "Some(Selected { session: 2, revision: 2, id: \"node-570-863\" })",
+      "name": "Create Cone: Scene Tree shows and selects Transform Cone_1",
+      "ok": true
+    },
+    {
+      "detail": "(3, 4, 3)",
+      "name": "Create Cone: Inspector shows editable translation / rotation / scale",
+      "ok": true
+    },
+    {
+      "detail": "click→scene loaded 102 ms, click→frame drawn 112 ms; covered pixels 8.64% → 9.26%; rev 3 · loaded: 4 root node(s)",
+      "name": "Create Cylinder: viewport renders the new geometry",
+      "ok": true
+    },
+    {
+      "detail": "rev 3",
+      "name": "Create Cylinder: source editor shows the generated VRML (rev 3)",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "Create Cylinder: syntax colors cover the new source",
+      "ok": true
+    },
+    {
+      "detail": "Some(Selected { session: 2, revision: 3, id: \"node-865-1160\" })",
+      "name": "Create Cylinder: Scene Tree shows and selects Transform Cylinder_1",
+      "ok": true
+    },
+    {
+      "detail": "(3, 4, 3)",
+      "name": "Create Cylinder: Inspector shows editable translation / rotation / scale",
+      "ok": true
+    },
+    {
+      "detail": "Saved visual1-world.wrl (1161 B, plain). Backup: visual1-world.wrl.bak-2026-10-10T10-40-25-783Z",
+      "name": "Ctrl+S saves the existing file (backup first)",
+      "ok": true
+    },
+    {
+      "detail": "covered 9.26%",
+      "name": "Theme tokyo-night: applied; document, revision and preview unchanged",
+      "ok": true
+    },
+    {
+      "detail": "covered 9.26%",
+      "name": "Theme tokyo-night-storm: applied; document, revision and preview unchanged",
+      "ok": true
+    },
+    {
+      "detail": "covered 9.26%",
+      "name": "Theme tokyo-night-light: applied; document, revision and preview unchanged",
+      "ok": true
+    },
+    {
+      "detail": "click→scene loaded 94 ms, click→frame drawn 105 ms; covered pixels 9.26% → 9.75%; rev 4 · loaded: 5 root node(s)",
+      "name": "Create Box: viewport renders the new geometry",
+      "ok": true
+    },
+    {
+      "detail": "rev 4",
+      "name": "Create Box: source editor shows the generated VRML (rev 4)",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "Create Box: syntax colors cover the new source",
+      "ok": true
+    },
+    {
+      "detail": "Some(Selected { session: 2, revision: 4, id: \"node-1162-1432\" })",
+      "name": "Create Box: Scene Tree shows and selects Transform Box_2",
+      "ok": true
+    },
+    {
+      "detail": "(3, 4, 3)",
+      "name": "Create Box: Inspector shows editable translation / rotation / scale",
+      "ok": true
+    },
+    {
+      "detail": "New world: untitled.wrl (plain, LF)",
+      "name": "New World on unsaved changes: Discard opens a new world (file untouched)",
+      "ok": true
+    },
+    {
+      "detail": "1161 bytes (want 1161)",
+      "name": "rust: saved world is exactly New World + Box (edited) + Sphere + Cone + Cylinder",
+      "ok": true
+    },
+    {
+      "detail": "0 diagnostics, 4 statements",
+      "name": "rust: saved world parses as VRML97 with no diagnostics and 4 top-level objects",
+      "ok": true
+    },
+    {
+      "detail": "1 backup(s)",
+      "name": "rust: the later Save took one backup holding the first Save As text",
+      "ok": true
+    },
+    {
+      "detail": "asked 2",
+      "name": "rust: the discard confirmation was asked exactly twice (Cancel, Discard)",
+      "ok": true
+    },
+    {
+      "detail": "visual1-world.wrl.bak-2026-10-10T10-40-25-783Z, visual1-world.wrl",
+      "name": "rust: no temp file and no other file in the work directory",
+      "ok": true
+    }
+  ]
+}

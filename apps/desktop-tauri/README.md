@@ -28,6 +28,25 @@ cargo build -p wrl-forge-desktop          # or --release
 `dist/` is embedded into the binary at compile time, so rebuild the binary
 after `./build-ui.sh`.
 
+## Linux packages (PKG-LINUX-1)
+
+```sh
+cargo install tauri-cli --version '^2' --locked   # once; provides `cargo tauri`
+./packaging/package-linux.sh
+# -> target/release/bundle/deb/WRL Forge_<version>_amd64.deb
+# -> target/release/bundle/appimage/WRL Forge_<version>_amd64.AppImage
+```
+
+The script builds the release UI and backend, stages the license texts
+(`target/pkg-licenses/`, including every third-party Rust crate license) and
+runs `cargo tauri build --bundles deb,appimage`. It remaps the builder's home
+and checkout paths (`--remap-path-prefix`), so the binaries do not contain
+private paths. The first AppImage build downloads `linuxdeploy` from GitHub.
+Evidence and the runtime library list: `qa/pkg-linux-1/README.md`.
+
+The packaged binary contains the smoke modes, so the same tests run against
+an installed copy: `WRLFORGE_BIN=/usr/bin/wrl-forge ./smoke.sh --headless ...`.
+
 ## Tests
 
 ```sh
