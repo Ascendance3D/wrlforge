@@ -29,6 +29,31 @@ wrlforge-desktop-protocol = { path = "../protocol" }
 wrlforge-text = { path = "../../../crates/wrlforge-text" }
 wrlforge-vrml = { path = "../../../crates/wrlforge-vrml" }
 wrlforge-document = { path = "../../../crates/wrlforge-document" }
+# NATIVE-RENDER-1 (hidden native viewport; X_ITE stays the default).
+wrlforge-scene = { path = "../scene" }
+wrlforge-render = { path = "../render" }
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl", "vulkan", "metal"] }
+raw-window-handle = "=0.6.2"
+glam = "=0.30.10"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "=0.18.2"
+gdk = "=0.18.2"
+gdkx11 = "=0.18.2"
+gdkwayland-sys = "=0.18.2"
+glib = "=0.18.5"
+# The render thread opens its OWN X connection (libxcb loaded at run time).
+x11rb = { version = "=0.13.2", features = ["allow-unsafe-code", "dl-libxcb"] }
+# A wl_subsurface on GDK's wl_display.
+wayland-client = "=0.31.15"
+wayland-backend = { version = "=0.3.17", features = ["client_system"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.6.5"
+objc2-foundation = { version = "=0.3.2", features = ["NSGeometry", "NSString", "NSArray", "NSThread", "NSNotification"] }
+objc2-app-kit = { version = "=0.3.2", features = ["NSView", "NSWindow", "NSEvent", "NSResponder", "NSGraphics", "NSApplication", "NSRunningApplication", "NSGraphicsContext"] }
+objc2-quartz-core = { version = "=0.3.2", features = ["CALayer", "CAMetalLayer", "CATransaction", "objc2-core-foundation"] }
+objc2-core-foundation = { version = "=0.3.2", features = ["CFCGTypes"] }
 
 [features]
 # Serve the bundled `dist/` through Tauri's custom protocol (no dev server).

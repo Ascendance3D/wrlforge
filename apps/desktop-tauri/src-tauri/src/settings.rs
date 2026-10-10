@@ -69,15 +69,44 @@ pub struct SettingsStore {
     /// runs on Tokyo Night, and every save reports NotSaved.
     dir: Option<PathBuf>,
     current: Mutex<Loaded>,
+    /// NATIVE-RENDER-1: the HIDDEN `"viewport": {"renderer": "native-experimental"}` key,
+    /// read once at startup. No UI writes it; anything else means X_ITE.
+    native_viewport: bool,
+}
+
+/// The approved (design) value of the hidden `viewport.renderer` key.
+pub const NATIVE_EXPERIMENTAL: &str = "native-experimental";
+
+/// `viewport.renderer == "native-experimental"` in settings bytes. Pure.
+/// Any other value, shape or a corrupt file
+/// means the default (X_ITE); that includes the unapproved `"native"`, which
+/// only an uncommitted pre-closeout build ever read.
+pub fn native_viewport_requested(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(bytes)
+        .ok()
+        .and_then(|v| {
+            v.get("viewport")?
+                .get("renderer")?
+                .as_str()
+                .map(|r| r == NATIVE_EXPERIMENTAL)
+        })
+        .unwrap_or(false)
 }
 
 impl SettingsStore {
     /// Load once at startup. Never fails.
     pub fn open(dir: PathBuf) -> Self {
-        let loaded = load(&dir.join(FILE_NAME));
+        let path = dir.join(FILE_NAME);
+        let loaded = load(&path);
+        let native_viewport = fs::metadata(&path)
+            .ok()
+            .filter(|m| m.is_file() && m.len() <= MAX_BYTES)
+            .and_then(|_| fs::read(&path).ok())
+            .is_some_and(|b| native_viewport_requested(&b));
         SettingsStore {
             dir: Some(dir),
             current: Mutex::new(loaded),
+            native_viewport,
         }
     }
 
@@ -85,7 +114,12 @@ impl SettingsStore {
         SettingsStore {
             dir: None,
             current: Mutex::new(fallback(format!("No settings directory ({reason})"))),
+            native_viewport: false,
         }
+    }
+
+    pub fn native_viewport(&self) -> bool {
+        self.native_viewport
     }
 
     pub fn path(&self) -> Option<PathBuf> {
@@ -201,6 +235,53 @@ fn write_theme(dir: &Path, id: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_native_viewport_is_hidden_and_off_by_default() {
+        assert!(native_viewport_requested(
+            br#"{"viewport":{"renderer":"native-experimental"}}"#
+        ));
+        for b in [
+            &b""[..],
+            b"not json",
+            br#"{"schemaVersion":1,"themeId":"tokyo-night"}"#,
+            br#"{"viewport":{"renderer":"xite"}}"#,
+            br#"{"viewport":{"renderer":"NATIVE"}}"#,
+            br#"{"viewport":{"renderer":"native"}}"#,
+            br#"{"viewport":{"renderer":"Native-Experimental"}}"#,
+            br#"{"viewport":{"renderer":"native-experimental "}}"#,
+            br#"{"viewport":{"renderer":""}}"#,
+            br#"{"viewport":{"renderer":null}}"#,
+            br#"{"viewport":{}}"#,
+            br#"{"renderer":"native-experimental"}"#,
+            br#"{"viewport":"native"}"#,
+            br#"{"viewport":{"renderer":1}}"#,
+        ] {
+            assert!(!native_viewport_requested(b), "{}", String::from_utf8_lossy(b));
+        }
+    }
+
+    #[test]
+    fn the_store_selects_xite_unless_the_approved_value_is_saved() {
+        let d = tmpdir("renderer");
+        assert!(
+            !SettingsStore::open(d.clone()).native_viewport(),
+            "absent file"
+        );
+        for (text, native) in [
+            (r#"{"viewport":{"renderer":"native"}}"#, false),
+            (r#"{"viewport":{"renderer":"bogus"}}"#, false),
+            (r#"{"viewport":{"renderer":"native-experimental"}}"#, true),
+        ] {
+            fs::write(d.join(FILE_NAME), text).unwrap();
+            assert_eq!(
+                SettingsStore::open(d.clone()).native_viewport(),
+                native,
+                "{text}"
+            );
+        }
+        let _ = fs::remove_dir_all(&d);
+    }
 
     fn tmpdir(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!(

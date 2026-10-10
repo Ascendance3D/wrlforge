@@ -8,7 +8,7 @@
 # boundary proofs). The pure crates are shared by PATH, not forked.
 [workspace]
 resolver = "2"
-members = ["protocol", "src-tauri", "ui"]
+members = ["protocol", "render", "scene", "src-tauri", "ui"]
 
 [workspace.package]
 version = "0.1.0"
@@ -22,6 +22,11 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+# NATIVE-RENDER-1: the CPU pick oracle runs ray casts per click; keep it
+# fast in debug builds too (smoke runs use the debug binary).
+[profile.dev.package.wrlforge-scene]
+opt-level = 3
 
 [profile.release.package.wrlforge-ui]
 opt-level = "z"

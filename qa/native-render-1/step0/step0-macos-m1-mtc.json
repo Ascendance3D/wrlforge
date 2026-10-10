@@ -1,0 +1,424 @@
+{
+ "checks": [
+  {
+   "detail": "presented=2 ready={\"id\":1,\"info\":{\"adapter\":\"Apple M1\",\"backend\":\"Metal\",\"device_type\":\"IntegratedGpu\",\"driver\":\" \",\"platform\":{\"created_on\":\"Some(\\\"nr1-render-1\\\")\",\"surface\":\"cametallayer\"},\"present_mode\":\"Fifo\",\"surface_copy_src\":true,\"surface_format\":\"Bgra8Unorm\",\"thread\":\"Some(\\\"nr1-render-1\\\")\"},\"init_ms\":41.0515}",
+   "name": "cycle0:first-frame-presented",
+   "pass": true
+  },
+  {
+   "detail": "None size=(1560, 1336)",
+   "name": "cycle0:initial:render",
+   "pass": true
+  },
+  {
+   "detail": "offscreen_frames=0",
+   "name": "cycle0:initial:presented",
+   "pass": true
+  },
+  {
+   "detail": "Some((434, 667, [120, 21, 17, 255]))",
+   "name": "cycle0:initial:surface-color-id1",
+   "pass": true
+  },
+  {
+   "detail": "Some((1152, 600, [23, 66, 169, 255]))",
+   "name": "cycle0:initial:surface-color-id2",
+   "pass": true
+  },
+  {
+   "detail": "Some((2, 2, [26, 28, 33, 255]))",
+   "name": "cycle0:initial:surface-color-bg",
+   "pass": true
+  },
+  {
+   "detail": "at=(217.2,334.0) gpu=1 cpu=1",
+   "name": "cycle0:initial:pick-id1",
+   "pass": true
+  },
+  {
+   "detail": "at=(576.3,300.2) gpu=2 cpu=2",
+   "name": "cycle0:initial:pick-id2",
+   "pass": true
+  },
+  {
+   "detail": "gpu=0 cpu=0",
+   "name": "cycle0:initial:pick-background",
+   "pass": true
+  },
+  {
+   "detail": "{0: 1688987, 1: 216999, 2: 178174}",
+   "name": "cycle0:initial:id-coverage",
+   "pass": true
+  },
+  {
+   "detail": "surface == view backing size",
+   "name": "cycle0:resize-1560x1336-to-1160x1096",
+   "pass": true
+  },
+  {
+   "detail": "surface == view backing size",
+   "name": "cycle0:resize-1160x1096-to-1560x1336",
+   "pass": true
+  },
+  {
+   "detail": "offscreen frames 0->32",
+   "name": "cycle0:hidden-renders-offscreen-no-present",
+   "pass": true
+  },
+  {
+   "detail": "54->69",
+   "name": "cycle0:hidden-picks-answered",
+   "pass": true
+  },
+  {
+   "detail": "parked at Some(511) ms, destroyed at 1370 ms",
+   "name": "blocked-present:parked-not-destroyed",
+   "pass": true
+  },
+  {
+   "detail": "1370 ms after Destroy request",
+   "name": "blocked-present:destroyed-after-unblock",
+   "pass": true
+  },
+  {
+   "detail": "presented=2 ready={\"id\":2,\"info\":{\"adapter\":\"Apple M1\",\"backend\":\"Metal\",\"device_type\":\"IntegratedGpu\",\"driver\":\" \",\"platform\":{\"created_on\":\"Some(\\\"nr1-render-2\\\")\",\"surface\":\"cametallayer\"},\"present_mode\":\"Fifo\",\"surface_copy_src\":true,\"surface_format\":\"Bgra8Unorm\",\"thread\":\"Some(\\\"nr1-render-2\\\")\"},\"init_ms\":20.889333}",
+   "name": "cycle1:first-frame-presented",
+   "pass": true
+  },
+  {
+   "detail": "None size=(1560, 1336)",
+   "name": "cycle1:initial:render",
+   "pass": true
+  },
+  {
+   "detail": "offscreen_frames=0",
+   "name": "cycle1:initial:presented",
+   "pass": true
+  },
+  {
+   "detail": "Some((434, 667, [120, 21, 17, 255]))",
+   "name": "cycle1:initial:surface-color-id1",
+   "pass": true
+  },
+  {
+   "detail": "Some((1152, 600, [23, 66, 169, 255]))",
+   "name": "cycle1:initial:surface-color-id2",
+   "pass": true
+  },
+  {
+   "detail": "Some((2, 2, [26, 28, 33, 255]))",
+   "name": "cycle1:initial:surface-color-bg",
+   "pass": true
+  },
+  {
+   "detail": "at=(217.2,334.0) gpu=1 cpu=1",
+   "name": "cycle1:initial:pick-id1",
+   "pass": true
+  },
+  {
+   "detail": "at=(576.3,300.2) gpu=2 cpu=2",
+   "name": "cycle1:initial:pick-id2",
+   "pass": true
+  },
+  {
+   "detail": "gpu=0 cpu=0",
+   "name": "cycle1:initial:pick-background",
+   "pass": true
+  },
+  {
+   "detail": "{0: 1688987, 1: 216999, 2: 178174}",
+   "name": "cycle1:initial:id-coverage",
+   "pass": true
+  },
+  {
+   "detail": "surface == view backing size",
+   "name": "cycle1:resize-1560x1336-to-1160x1096",
+   "pass": true
+  },
+  {
+   "detail": "surface == view backing size",
+   "name": "cycle1:resize-1160x1096-to-1560x1336",
+   "pass": true
+  },
+  {
+   "detail": "offscreen frames 0->31",
+   "name": "cycle1:hidden-renders-offscreen-no-present",
+   "pass": true
+  },
+  {
+   "detail": "124->137",
+   "name": "cycle1:hidden-picks-answered",
+   "pass": true
+  },
+  {
+   "detail": "device lost: Destroyed: ",
+   "name": "device-loss:reported-no-panic",
+   "pass": true
+  },
+  {
+   "detail": "mismatch(refused)=1",
+   "name": "device-loss:pick-refused-not-selected",
+   "pass": true
+  },
+  {
+   "detail": "16 ms",
+   "name": "cycle1:destroy-acked-without-park",
+   "pass": true
+  },
+  {
+   "detail": "presented=2 ready={\"id\":3,\"info\":{\"adapter\":\"Apple M1\",\"backend\":\"Metal\",\"device_type\":\"IntegratedGpu\",\"driver\":\" \",\"platform\":{\"created_on\":\"Some(\\\"nr1-render-3\\\")\",\"surface\":\"cametallayer\"},\"present_mode\":\"Fifo\",\"surface_copy_src\":true,\"surface_format\":\"Bgra8Unorm\",\"thread\":\"Some(\\\"nr1-render-3\\\")\"},\"init_ms\":22.367375}",
+   "name": "cycle2:first-frame-presented",
+   "pass": true
+  },
+  {
+   "detail": "None size=(1560, 1336)",
+   "name": "cycle2:initial:render",
+   "pass": true
+  },
+  {
+   "detail": "offscreen_frames=0",
+   "name": "cycle2:initial:presented",
+   "pass": true
+  },
+  {
+   "detail": "Some((434, 667, [120, 21, 17, 255]))",
+   "name": "cycle2:initial:surface-color-id1",
+   "pass": true
+  },
+  {
+   "detail": "Some((1152, 600, [23, 66, 169, 255]))",
+   "name": "cycle2:initial:surface-color-id2",
+   "pass": true
+  },
+  {
+   "detail": "Some((2, 2, [26, 28, 33, 255]))",
+   "name": "cycle2:initial:surface-color-bg",
+   "pass": true
+  },
+  {
+   "detail": "at=(217.2,334.0) gpu=1 cpu=1",
+   "name": "cycle2:initial:pick-id1",
+   "pass": true
+  },
+  {
+   "detail": "at=(576.3,300.2) gpu=2 cpu=2",
+   "name": "cycle2:initial:pick-id2",
+   "pass": true
+  },
+  {
+   "detail": "gpu=0 cpu=0",
+   "name": "cycle2:initial:pick-background",
+   "pass": true
+  },
+  {
+   "detail": "{0: 1688987, 1: 216999, 2: 178174}",
+   "name": "cycle2:initial:id-coverage",
+   "pass": true
+  },
+  {
+   "detail": "surface == view backing size",
+   "name": "cycle2:resize-1560x1336-to-1160x1096",
+   "pass": true
+  },
+  {
+   "detail": "surface == view backing size",
+   "name": "cycle2:resize-1160x1096-to-1560x1336",
+   "pass": true
+  },
+  {
+   "detail": "offscreen frames 0->32",
+   "name": "cycle2:hidden-renders-offscreen-no-present",
+   "pass": true
+  },
+  {
+   "detail": "190->205",
+   "name": "cycle2:hidden-picks-answered",
+   "pass": true
+  },
+  {
+   "detail": "17 ms",
+   "name": "cycle2:destroy-acked-without-park",
+   "pass": true
+  },
+  {
+   "detail": "waited 1337 ms, pending 0",
+   "name": "exit:waited-for-render-threads",
+   "pass": true
+  },
+  {
+   "detail": "4 / 4",
+   "name": "surfaces-created==destroyed",
+   "pass": true
+  },
+  {
+   "detail": "0",
+   "name": "view-never-removed-before-Destroyed",
+   "pass": true
+  },
+  {
+   "detail": "4 / 4",
+   "name": "render-threads-joined",
+   "pass": true
+  },
+  {
+   "detail": "0",
+   "name": "no-render-thread-left",
+   "pass": true
+  },
+  {
+   "detail": "sent=206 answered=206 late=0 outstanding=0 busy=0",
+   "name": "picks-all-answered-in-time",
+   "pass": true
+  },
+  {
+   "detail": "delegate.window calls: off-main=343 main=0 (control run=false)",
+   "name": "mac:wgpu-occlusion-walk-stopped-at-our-delegate",
+   "pass": true
+  },
+  {
+   "detail": "n=164 p99=29.49ms max=41.48ms",
+   "name": "watchdog:baseline-no-viewport (recorded, not gated)",
+   "pass": true
+  },
+  {
+   "detail": "n=254 p99=0.31ms max=0.69ms",
+   "name": "watchdog:blocked-present",
+   "pass": true
+  },
+  {
+   "detail": "n=85 p99=0.39ms max=0.41ms",
+   "name": "watchdog:device-loss",
+   "pass": true
+  },
+  {
+   "detail": "n=1 p99=0.09ms max=0.09ms",
+   "name": "watchdog:exit (recorded, not gated)",
+   "pass": true
+  },
+  {
+   "detail": "n=26 p99=0.11ms max=0.11ms",
+   "name": "watchdog:exit-during-block",
+   "pass": true
+  },
+  {
+   "detail": "n=975 p99=0.37ms max=0.99ms",
+   "name": "watchdog:gpu-load",
+   "pass": true
+  },
+  {
+   "detail": "n=309 p99=0.23ms max=4.61ms",
+   "name": "watchdog:hidden",
+   "pass": true
+  },
+  {
+   "detail": "n=27 p99=7.04ms max=7.04ms",
+   "name": "watchdog:resize (recorded, not gated)",
+   "pass": true
+  },
+  {
+   "detail": "n=114 p99=28.45ms max=34.72ms",
+   "name": "watchdog:startup (recorded, not gated)",
+   "pass": true
+  },
+  {
+   "detail": "n=12 p99=0.63ms max=0.63ms",
+   "name": "watchdog:teardown (recorded, not gated)",
+   "pass": true
+  }
+ ],
+ "checks_total": 65,
+ "counters": {
+  "created": 4,
+  "destroyed": 4,
+  "parked_events": 2,
+  "picks_answered": 206,
+  "picks_late": 0,
+  "picks_mismatch_refused": 1,
+  "picks_sent": 206
+ },
+ "delegate_window_calls": {
+  "main": 0,
+  "off_main": 343
+ },
+ "failures": [],
+ "layout": {
+  "macos": "27.0.1",
+  "style_mask": "0x800f"
+ },
+ "pass": true,
+ "pick_ms": "n=206 p50=1.185ms p95=1.576ms max=2.117ms",
+ "viewports": [
+  {
+   "id": 1,
+   "info": {
+    "adapter": "Apple M1",
+    "backend": "Metal",
+    "device_type": "IntegratedGpu",
+    "driver": " ",
+    "platform": {
+     "created_on": "Some(\"nr1-render-1\")",
+     "surface": "cametallayer"
+    },
+    "present_mode": "Fifo",
+    "surface_copy_src": true,
+    "surface_format": "Bgra8Unorm",
+    "thread": "Some(\"nr1-render-1\")"
+   },
+   "init_ms": 41.0515
+  },
+  {
+   "id": 2,
+   "info": {
+    "adapter": "Apple M1",
+    "backend": "Metal",
+    "device_type": "IntegratedGpu",
+    "driver": " ",
+    "platform": {
+     "created_on": "Some(\"nr1-render-2\")",
+     "surface": "cametallayer"
+    },
+    "present_mode": "Fifo",
+    "surface_copy_src": true,
+    "surface_format": "Bgra8Unorm",
+    "thread": "Some(\"nr1-render-2\")"
+   },
+   "init_ms": 20.889333
+  },
+  {
+   "id": 3,
+   "info": {
+    "adapter": "Apple M1",
+    "backend": "Metal",
+    "device_type": "IntegratedGpu",
+    "driver": " ",
+    "platform": {
+     "created_on": "Some(\"nr1-render-3\")",
+     "surface": "cametallayer"
+    },
+    "present_mode": "Fifo",
+    "surface_copy_src": true,
+    "surface_format": "Bgra8Unorm",
+    "thread": "Some(\"nr1-render-3\")"
+   },
+   "init_ms": 22.367375
+  },
+  {
+   "id": 4,
+   "info": {
+    "adapter": "Apple M1",
+    "backend": "Metal",
+    "device_type": "IntegratedGpu",
+    "driver": " ",
+    "platform": {
+     "created_on": "Some(\"nr1-render-4\")",
+     "surface": "cametallayer"
+    },
+    "present_mode": "Fifo",
+    "surface_copy_src": true,
+    "surface_format": "Bgra8Unorm",
+    "thread": "Some(\"nr1-render-4\")"
+   },
+   "init_ms": 20.659125
+  }
+ ]
+}

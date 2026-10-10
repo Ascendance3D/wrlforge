@@ -108,6 +108,49 @@ fn hit_of(shape: &str, snap: &p::PickSnapshot) -> wrlforge_vrml::pick::Hit {
     }
 }
 
+/// The `doc_pick` / native pick reply for one resolution. A proven
+/// resolution needs the view map of the text it was resolved against.
+pub(crate) fn pick_outcome(
+    res: wrlforge_vrml::pick::Resolution,
+    generation: u64,
+    revision: u64,
+    vm: Option<&ViewMap>,
+) -> p::PickOutcome {
+    use wrlforge_vrml::pick as pk;
+    let status = res.status();
+    let reason = res.reason().to_string();
+    let node = |n: &pk::SourceNode| {
+        let vm = vm.expect("a proven pick carries its view map");
+        p::PickNode {
+            from: n.from,
+            to: n.to,
+            view_from: vm.view(n.from),
+            view_to: vm.view(n.to),
+            node_type: n.node_type.clone(),
+        }
+    };
+    let (item, role, logical, shape) = match &res {
+        pk::Resolution::Proven(pr) => (
+            Some(pr.item.clone()),
+            Some(pr.role.as_str().to_string()),
+            Some(node(&pr.logical)),
+            Some(node(&pr.shape)),
+        ),
+        _ => (None, None, None, None),
+    };
+    p::PickOutcome {
+        status: status.as_str().into(),
+        message: pk::refusal_text(status, &reason),
+        reason,
+        generation,
+        revision,
+        item,
+        role,
+        logical,
+        shape,
+    }
+}
+
 /// UTF-16 units the canonical text has before its preview text: 1 for a
 /// leading U+FEFF (the preview omits it), else 0.
 fn preview_offset(text: &str) -> u64 {
@@ -464,7 +507,7 @@ impl Service {
 
     /// A copy of one revision's text, taken under the session lock. Parsing
     /// then runs WITHOUT the lock, so an edit never waits behind a parse.
-    fn text_at(&self, id: p::SessionId) -> Result<(String, u64), String> {
+    pub(crate) fn text_at(&self, id: p::SessionId) -> Result<(String, u64), String> {
         self.with(id, |s| (s.doc.text().to_string(), s.doc.revision()))
     }
 
@@ -962,40 +1005,7 @@ impl Service {
     pub fn pick(&self, r: &p::PickRequest) -> Result<p::PickOutcome, String> {
         use wrlforge_vrml::pick::{self as pk, reason, Status};
         let (text, revision) = self.text_at(r.session)?;
-        let done = |res: pk::Resolution, vm: Option<&ViewMap>| {
-            let status = res.status();
-            let reason = res.reason().to_string();
-            let node = |n: &pk::SourceNode| {
-                let vm = vm.expect("a proven pick carries its view map");
-                p::PickNode {
-                    from: n.from,
-                    to: n.to,
-                    view_from: vm.view(n.from),
-                    view_to: vm.view(n.to),
-                    node_type: n.node_type.clone(),
-                }
-            };
-            let (item, role, logical, shape) = match &res {
-                pk::Resolution::Proven(pr) => (
-                    Some(pr.item.clone()),
-                    Some(pr.role.as_str().to_string()),
-                    Some(node(&pr.logical)),
-                    Some(node(&pr.shape)),
-                ),
-                _ => (None, None, None, None),
-            };
-            p::PickOutcome {
-                status: status.as_str().into(),
-                message: pk::refusal_text(status, &reason),
-                reason,
-                generation: r.generation,
-                revision,
-                item,
-                role,
-                logical,
-                shape,
-            }
-        };
+        let done = |res: pk::Resolution, vm: Option<&ViewMap>| pick_outcome(res, r.generation, revision, vm);
         let snap = &r.snapshot;
         let why = |d: &str| snap.reason.clone().unwrap_or_else(|| d.to_string());
         if snap.outcome == "disabled" {
@@ -1033,6 +1043,29 @@ impl Service {
     /// Test/smoke support: the exact canonical text.
     pub fn text(&self, id: p::SessionId) -> Result<String, String> {
         self.with(id, |s| s.doc.text().to_string())
+    }
+}
+
+#[cfg(test)]
+impl Service {
+    /// A session holding `text` (no path), for tests in other modules.
+    pub(crate) fn open_text_for_test(&self, text: &str) -> p::SessionId {
+        match self.insert(Session {
+            path: None,
+            format: Format::Plain,
+            stamp: None,
+            doc: Document::new(text.into()),
+        }) {
+            p::OpenOutcome::Opened { doc } => doc.session,
+            _ => panic!("open failed"),
+        }
+    }
+
+    /// One view edit at the current revision.
+    pub(crate) fn edit_for_test(&self, id: p::SessionId, from: u64, to: u64, insert: &str) {
+        let base_revision = self.text_at(id).unwrap().1;
+        let r = p::EditRequest { session: id, base_revision, from, to, insert: insert.into(), item: None };
+        assert!(matches!(self.edit(&r).unwrap(), p::EditOutcome::Applied { .. }));
     }
 }
 

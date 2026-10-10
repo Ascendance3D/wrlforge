@@ -45,6 +45,8 @@ pub struct Ui {
     pub move_mode: RwSignal<bool>,
     /// The Move tool's status line: (`ok` | `none` | `refused`, text).
     pub gizmo_message: RwSignal<Option<(String, String)>>,
+    /// NATIVE-RENDER-1: the hidden native viewport's state (default off).
+    pub native: RwSignal<p::NativeState>,
 }
 
 /// A Scene Tree selection. Item ids are SOURCE spans of one revision, so
@@ -208,6 +210,7 @@ pub fn ui() -> Ui {
             pick_message: RwSignal::new(None),
             move_mode: RwSignal::new(false),
             gizmo_message: RwSignal::new(None),
+            native: RwSignal::new(p::NativeState::default()),
         })
     })
 }
@@ -483,6 +486,10 @@ pub async fn edit_field(field_index: u32, field_name: String, components: Vec<p:
 /// Load the current revision into X_ITE. Without `force`, a revision already
 /// on screen is not reloaded (each reload builds a whole new X_ITE scene).
 pub async fn preview(force: bool) {
+    // NATIVE-RENDER-1: while the native viewport is on, it shows the text.
+    if crate::native::on() {
+        return crate::native::preview(force).await;
+    }
     let Some(session) = CORE.with_borrow(|c| c.session) else {
         return;
     };

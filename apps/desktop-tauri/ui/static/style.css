@@ -207,3 +207,8 @@ x3d-canvas.picking { cursor: crosshair; }
 .gz-handle.disabled .gz-tip { fill: none; stroke: var(--wf-gizmo-disabled); }
 .gz-origin { fill: var(--wf-gizmo-halo); stroke: var(--wf-gizmo-active); stroke-width: 2; }
 .gizmo[data-state="disabled"] .gz-origin { stroke: var(--wf-gizmo-disabled); }
+
+/* NATIVE-RENDER-1 (hidden): the native viewport is a sibling pane of this
+   WebView, so the in-page viewport keeps only its title and status lines. */
+.viewport.native { flex: 0 0 auto; }
+.viewport-stage[hidden], .viewport .badge[hidden], .viewport button[hidden], .viewport .sep[hidden], .native-status[hidden] { display: none; }

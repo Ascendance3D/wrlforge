@@ -9,6 +9,7 @@ mod create;
 mod editor;
 mod gizmo;
 mod ipc;
+mod native;
 mod panels;
 mod pick;
 mod smoke;
@@ -36,6 +37,7 @@ pub fn start() {
     theme::reveal_fallback();
     spawn_local(async {
         theme::init().await;
+        native::install().await;
         if let Ok(Some(o)) =
             ipc::call::<Option<p::OpenOutcome>>("startup_document", ipc::NoArgs {}).await
         {

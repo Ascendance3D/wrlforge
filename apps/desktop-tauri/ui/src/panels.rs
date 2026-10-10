@@ -354,19 +354,28 @@ fn severity_label(s: &str) -> String {
 pub fn Viewport() -> impl IntoView {
     let u = ui();
     view! {
-        <section class="viewport" aria-label="3D Viewport">
+        <section class="viewport" class:native=move || u.native.with(|s| s.native_shown()) aria-label="3D Viewport">
             <div class="pane-title">"3D Viewport"
-                <span class="badge" title="X_ITE is a JavaScript renderer hosted through a narrow adapter">"X_ITE 15.1.10 (JavaScript) · temporary"</span>
+                <span class="badge" hidden=move || u.native.with(|s| s.native_shown())
+                    title="X_ITE is a JavaScript renderer hosted through a narrow adapter">"X_ITE 15.1.10 (JavaScript) · temporary"</span>
+                // NATIVE-RENDER-1 (hidden): the native viewport is the pane
+                // beside this window. Click selects, drag orbits, wheel zooms,
+                // Escape clears, Home resets the view. Selection only.
+                <span class="badge native-badge" hidden=move || !u.native.with(|s| s.native_shown())
+                    title=move || u.native.with(|s| s.info.clone().unwrap_or_default())>"Native (wgpu) · test · beside →"</span>
+                <button class="secondary small" hidden=move || !u.native.with(|s| s.native_shown())
+                    title="Reset the native view to frame the scene (Home)"
+                    on:click=move |_| crate::native::reset_camera()>"Reset view"</button>
                 <label class="toggle">
                     <input type="checkbox" prop:checked=move || u.preview_enabled.get()
                         on:change=move |ev| u.preview_enabled.set(event_target_checked(&ev)) />
                     "Live"
                 </label>
                 <button class="secondary small" on:click=move |_| spawn_local(ui::preview(true))>"Update"</button>
-                <span class="sep"></span>
+                <span class="sep" hidden=move || u.native.with(|s| s.native_shown())></span>
                 // VISUAL-2: an explicit selection mode. A click selects the
                 // exact authored object; a drag still moves the camera.
-                <button id="btn-select" class="secondary small"
+                <button id="btn-select" class="secondary small" hidden=move || u.native.with(|s| s.native_shown())
                     title="Select: click an object in the viewport to select its exact source node (drag still moves the camera)"
                     aria-pressed=move || if u.pick_mode.get() { "true" } else { "false" }
                     disabled=move || u.doc.with(|d| d.is_none())
@@ -378,7 +387,7 @@ pub fn Viewport() -> impl IntoView {
                 // VISUAL-3A: the Move tool. Drag an axis handle to move the
                 // selected top-level Transform; a click still selects, a drag
                 // elsewhere still moves the camera.
-                <button id="btn-move" class="secondary small"
+                <button id="btn-move" class="secondary small" hidden=move || u.native.with(|s| s.native_shown())
                     title="Move: drag the X (red), Y (green) or Z (blue) handle of the selected object. Esc cancels a drag; the Inspector takes exact values."
                     aria-pressed=move || if u.move_mode.get() { "true" } else { "false" }
                     disabled=move || u.doc.with(|d| d.is_none())
@@ -392,7 +401,7 @@ pub fn Viewport() -> impl IntoView {
                         }
                     }>"Move"</button>
             </div>
-            <div class="viewport-stage">
+            <div class="viewport-stage" hidden=move || u.native.with(|s| s.native_shown())>
                 <x3d-canvas id="viewport" class:picking=move || u.pick_mode.get() || u.move_mode.get() splashScreen="false" contextMenu="false" notifications="false"
                     timings="false" cache="false"></x3d-canvas>
                 // The gizmo overlay. Drawn from the renderer's camera by
@@ -411,6 +420,9 @@ pub fn Viewport() -> impl IntoView {
                 </svg>
             </div>
             <div class="preview-status" id="preview-status">{move || format!("Preview: {}", u.preview_status.get())}</div>
+            <div class="preview-status native-status" id="native-status" hidden=move || !u.native.with(|s| s.requested && s.reason.is_some())>
+                {move || u.native.with(|s| s.reason.clone().unwrap_or_default())}
+            </div>
             <div class="pick-status gizmo-status" id="gizmo-status" role="status" aria-live="polite"
                 data-kind=move || u.gizmo_message.with(|m| m.as_ref().map(|m| m.0.clone()).unwrap_or_default())
                 hidden=move || !u.move_mode.get() || u.gizmo_message.with(|m| m.is_none())>

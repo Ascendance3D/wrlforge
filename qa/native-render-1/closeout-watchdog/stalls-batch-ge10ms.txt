@@ -1,0 +1,2 @@
+control {"stalls": 1576, "busy": 1576, "starved": 0, "asleep": 0, "asleep_sys": {}, "span_median": 12.8, "span_max": 31.8}
+native {"stalls": 1435, "busy": 1434, "starved": 0, "asleep": 1, "asleep_sys": {"running": 11}, "span_median": 12.5, "span_max": 27.5}
