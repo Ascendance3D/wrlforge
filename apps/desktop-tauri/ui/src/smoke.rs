@@ -16,6 +16,7 @@ mod gizmo;
 mod pick;
 mod selection;
 mod syntax;
+mod texture;
 
 struct R(Vec<p::SmokeStep>);
 impl R {
@@ -75,6 +76,7 @@ async fn settle() {
 pub async fn run(plan: p::SmokePlan) {
     let mut r = R(vec![]);
     let done = match (&plan.create, &plan.pick, &plan.gizmo) {
+        _ if plan.texture.is_some() => texture::run(plan.texture.as_ref().unwrap(), &mut r).await,
         (Some(c), _, _) => create::run(c, &mut r).await,
         (None, Some(pk), _) => pick::run(pk, &mut r).await,
         (None, None, Some(g)) => gizmo::run(g, &mut r).await,

@@ -128,6 +128,7 @@ option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
 /* The canvas element's own background shows only before X_ITE paints; the
    scene's authored Background is never overridden. */
 x3d-canvas#viewport { flex: 1 1 auto; width: 100%; min-height: 12rem; display: block; background: var(--wf-viewport-canvas-bg); }
+.preview-status.texture-warning { color: var(--wf-warning-fg, #e0a030); }
 .preview-status { font-size: .82rem; color: var(--wf-viewport-status-fg); padding: .2rem .6rem; border-top: 1px solid var(--wf-viewport-border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .toggle { font-weight: 400; font-size: .85rem; display: flex; gap: .2rem; align-items: center; margin-left: auto; }
 .inspector { flex: 1 1 45%; overflow: auto; border-top: 1px solid var(--wf-border); background: var(--wf-surface-panel); }

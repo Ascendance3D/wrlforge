@@ -79,6 +79,37 @@ struct MoveArm {
 
 pub const MOVE_FILE: &str = "visual3a-world.wrl";
 
+/// `--smoke-texture <dir>` (TEXTURE-LOCAL-1). `dir` holds `plan.json` and
+/// the fixtures `smoke-texture-plan.py` wrote. The UI opens a fixture by
+/// INDEX; the path never leaves Rust.
+struct TextureArm {
+    dir: PathBuf,
+    report_path: Option<PathBuf>,
+    /// The fixture documents, in plan order.
+    docs: Vec<PathBuf>,
+    fixtures: Vec<p::TextureFixture>,
+    /// Every regular file under `dir` at arm time, with its bytes.
+    files: Vec<(PathBuf, Vec<u8>)>,
+}
+
+/// Every regular file below `dir` (symlinks are not followed).
+fn regular_files(dir: &Path, out: &mut Vec<(PathBuf, Vec<u8>)>) -> Result<(), String> {
+    let mut entries: Vec<_> = std::fs::read_dir(dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+    entries.sort_by_key(|e| e.file_name());
+    for e in entries {
+        let t = e.file_type().map_err(|e| e.to_string())?;
+        if t.is_dir() {
+            regular_files(&e.path(), out)?;
+        } else if t.is_file() {
+            out.push((e.path(), std::fs::read(e.path()).map_err(|e| e.to_string())?));
+        }
+    }
+    Ok(())
+}
+
 /// (file, label, text): LF / CRLF + BOM / lone CR, comments, Unicode, and a
 /// nested Transform the gizmo must refuse.
 pub fn move_fixtures() -> Vec<(&'static str, &'static str, String)> {
@@ -134,6 +165,7 @@ pub struct SmokeState(
     Mutex<Option<CreateArm>>,
     Mutex<Option<PickArm>>,
     Mutex<Option<MoveArm>>,
+    Mutex<Option<TextureArm>>,
 );
 
 impl SmokeState {
@@ -266,8 +298,90 @@ impl SmokeState {
         Ok(())
     }
 
+    /// Arm the TEXTURE-LOCAL-1 run from `dir/plan.json`. Every fixture
+    /// document must be a plain file below `dir` (normal relative
+    /// components only), and `dir` must be temporary.
+    pub fn arm_texture(&self, dir: &Path, report_path: Option<PathBuf>) -> Result<(), String> {
+        let dir = temp_dir_checked(dir)?;
+        #[derive(serde::Deserialize)]
+        struct Fx {
+            id: String,
+            file: String,
+            label: String,
+            samples: Vec<p::TextureSample>,
+            warnings: usize,
+        }
+        #[derive(serde::Deserialize)]
+        struct Plan {
+            fixtures: Vec<Fx>,
+        }
+        let raw = std::fs::read_to_string(dir.join("plan.json")).map_err(|e| e.to_string())?;
+        let plan: Plan = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        let mut docs = Vec::new();
+        let mut fixtures = Vec::new();
+        for f in plan.fixtures {
+            let rel = Path::new(&f.file);
+            if f.file.is_empty()
+                || !rel
+                    .components()
+                    .all(|c| matches!(c, std::path::Component::Normal(_)))
+            {
+                return Err(format!("bad fixture file name {:?}", f.file));
+            }
+            let path = dir.join(rel);
+            let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+            if !meta.is_file() {
+                return Err(format!("{} is not a plain file", f.file));
+            }
+            docs.push(path);
+            fixtures.push(p::TextureFixture {
+                id: f.id,
+                label: f.label,
+                samples: f.samples,
+                warnings: f.warnings,
+            });
+        }
+        let mut files = Vec::new();
+        regular_files(&dir, &mut files)?;
+        *self.4.lock().unwrap() = Some(TextureArm {
+            dir,
+            report_path,
+            docs,
+            fixtures,
+            files,
+        });
+        Ok(())
+    }
+
+    /// Whether the TEXTURE-LOCAL-1 run is armed (its test-only commands
+    /// refuse otherwise).
+    pub fn texture_armed(&self) -> bool {
+        self.4.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
+
+    /// `--smoke-texture` only: store one viewport capture as evidence in
+    /// `<dir>/captures/<id>.png` (a new folder; fixture files are checked
+    /// against their arm-time bytes, captures are not fixtures).
+    pub fn texture_capture(&self, id: &str, png: &[u8]) -> Result<String, String> {
+        let g = self.4.lock().map_err(|e| e.to_string())?;
+        let a = g.as_ref().ok_or("no texture smoke run is armed")?;
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            return Err("bad capture id".into());
+        }
+        if !png.starts_with(b"\x89PNG") {
+            return Err("not a PNG".into());
+        }
+        let d = a.dir.join("captures");
+        std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
+        std::fs::write(d.join(format!("{id}.png")), png).map_err(|e| e.to_string())?;
+        Ok(format!("captures/{id}.png"))
+    }
+
     /// Smoke only: fixture `index` of the picking or gizmo run.
     pub fn pick_fixture(&self, index: usize) -> Option<PathBuf> {
+        if let Some(a) = self.4.lock().ok()?.as_ref() {
+            return a.docs.get(index).cloned();
+        }
         if let Some(a) = self.3.lock().ok()?.as_ref() {
             return a.fixtures.get(index).map(|(p, _, _)| p.clone());
         }
@@ -315,6 +429,21 @@ impl SmokeState {
             .and_then(|v| v.parse().ok())
             .unwrap_or(0u64)
             .min(10_000);
+        if let Some(a) = self.4.lock().ok()?.as_ref() {
+            return Some(p::SmokePlan {
+                insert_text: String::new(),
+                expect_preview: true,
+                inspector_value: None,
+                theme: None,
+                syntax_align_hold_ms: 0,
+                create: None,
+                pick: None,
+                gizmo: None,
+                texture: Some(p::TextureSmoke {
+                    fixtures: a.fixtures.clone(),
+                }),
+            });
+        }
         if let Some(a) = self.3.lock().ok()?.as_ref() {
             return Some(p::SmokePlan {
                 insert_text: String::new(),
@@ -330,6 +459,7 @@ impl SmokeState {
                     hold_ms: hold,
                     real_pointer: real_pointer_env().is_ok(),
                 }),
+                texture: None,
             });
         }
         if let Some(a) = self.2.lock().ok()?.as_ref() {
@@ -341,6 +471,7 @@ impl SmokeState {
                 syntax_align_hold_ms: 0,
                 create: None,
                 gizmo: None,
+                texture: None,
                 pick: Some(p::PickSmoke {
                     fixtures: a.fixtures.clone(),
                     themes: p::theme::THEMES.iter().map(|t| t.id.to_string()).collect(),
@@ -364,6 +495,7 @@ impl SmokeState {
                 }),
                 pick: None,
                 gizmo: None,
+                texture: None,
             });
         }
         self.0.lock().ok()?.as_ref().map(|pl| p::SmokePlan {
@@ -376,6 +508,7 @@ impl SmokeState {
             create: None,
             pick: None,
             gizmo: None,
+            texture: None,
         })
     }
 }
@@ -513,6 +646,25 @@ pub fn expected_text(original: &str) -> String {
 pub fn finish(app: &AppHandle, report: p::SmokeReport) {
     use tauri::Manager;
     let state = app.state::<SmokeState>();
+    if let Some(arm) = state.4.lock().unwrap().take() {
+        crate::resources::TEST_DELAY_MS.store(0, std::sync::atomic::Ordering::Relaxed);
+        let mut steps = report.steps;
+        steps.extend(verify_texture(&arm));
+        let all = steps.iter().all(|s| s.ok);
+        let json = serde_json::to_string_pretty(&serde_json::json!({
+            "pass": all,
+            "file": "texture-local-1",
+            "steps": steps,
+            "resourceLog": crate::resources::log_snapshot(),
+        }))
+        .unwrap();
+        println!("{json}");
+        if let Some(rp) = arm.report_path {
+            let _ = std::fs::write(rp, &json);
+        }
+        app.exit(if all { 0 } else { 1 });
+        return;
+    }
     if let Some(arm) = state.3.lock().unwrap().take() {
         let mut steps = report.steps;
         steps.extend(verify_move(&arm));
@@ -1110,4 +1262,39 @@ mod tests {
         assert_eq!(expected_text("a\nb"), format!("a\n{INSERT}\nb"));
         assert_eq!(expected_text("a"), format!("a\n{INSERT}"));
     }
+}
+
+/// Rust's own TEXTURE-LOCAL-1 checks: no fixture file changed, and no file
+/// outside its document folder was ever served (traversal / symlink cases).
+fn verify_texture(arm: &TextureArm) -> Vec<p::SmokeStep> {
+    let changed: Vec<String> = arm
+        .files
+        .iter()
+        .filter(|(path, bytes)| std::fs::read(path).ok().as_deref() != Some(&bytes[..]))
+        .map(|(path, _)| {
+            path.strip_prefix(&arm.dir)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    let log = crate::resources::log_snapshot();
+    let escaped: Vec<&p::ResourceLogEntry> = log
+        .iter()
+        .filter(|e| e.status == 200 && (e.name.contains("outside") || e.name.contains("link")))
+        .collect();
+    let served = log.iter().filter(|e| e.status == 200).count();
+    vec![
+        p::SmokeStep {
+            name: "rust: every fixture file (documents and images) is byte-identical after the run"
+                .into(),
+            ok: changed.is_empty(),
+            detail: format!("{} files checked; changed: {changed:?}", arm.files.len()),
+        },
+        p::SmokeStep {
+            name: "rust: no file outside a document folder was served".into(),
+            ok: escaped.is_empty() && served > 0,
+            detail: format!("{served} served, {} requests logged; escaped: {escaped:?}", log.len()),
+        },
+    ]
 }

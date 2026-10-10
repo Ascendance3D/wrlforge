@@ -8,6 +8,7 @@
 pub mod commands;
 pub mod files;
 pub mod native;
+pub mod resources;
 pub mod service;
 pub mod settings;
 pub mod smoke;
@@ -28,6 +29,8 @@ struct Args {
     smoke_pick: Option<PathBuf>,
     /// `--smoke-move <dir>`: the VISUAL-3A translation-gizmo run.
     smoke_move: Option<PathBuf>,
+    /// `--smoke-texture <dir>`: the TEXTURE-LOCAL-1 local texture run.
+    smoke_texture: Option<PathBuf>,
     smoke_no_preview: bool,
     smoke_inspector: bool,
     smoke_theme: Option<p::ThemeSmoke>,
@@ -51,6 +54,7 @@ fn parse_args() -> Args {
         smoke_create: None,
         smoke_pick: None,
         smoke_move: None,
+        smoke_texture: None,
         smoke_no_preview: false,
         smoke_inspector: false,
         smoke_theme: None,
@@ -71,6 +75,7 @@ fn parse_args() -> Args {
             Some("--smoke-create") => a.smoke_create = it.next().map(PathBuf::from),
             Some("--smoke-pick") => a.smoke_pick = it.next().map(PathBuf::from),
             Some("--smoke-move") => a.smoke_move = it.next().map(PathBuf::from),
+            Some("--smoke-texture") => a.smoke_texture = it.next().map(PathBuf::from),
             Some("--smoke-no-preview") => a.smoke_no_preview = true,
             Some("--smoke-inspector") => a.smoke_inspector = true,
             Some("--smoke-theme") => theme_final = it.next().and_then(|s| s.into_string().ok()),
@@ -112,6 +117,36 @@ pub fn run() {
         .manage(commands::Startup::default())
         .manage(smoke::SmokeState::default())
         .manage(native::Native::default())
+        // TEXTURE-LOCAL-1: read-only preview resources (see resources.rs).
+        // The WebView names a token, never a folder; Rust decides the file.
+        .register_asynchronous_uri_scheme_protocol(resources::SCHEME, |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            let path = request.uri().path().to_string();
+            let origin = request
+                .headers()
+                .get("origin")
+                .and_then(|o| o.to_str().ok())
+                .filter(|o| matches!(*o, "tauri://localhost" | "http://tauri.localhost"))
+                .map(str::to_string);
+            std::thread::spawn(move || {
+                let served = resources::serve(&app.state::<service::Service>(), &path);
+                let mut b = tauri::http::Response::builder()
+                    .status(served.status)
+                    .header("Content-Type", served.mime)
+                    .header("Cache-Control", "no-store")
+                    .header("X-Content-Type-Options", "nosniff");
+                if let Some(o) = origin {
+                    b = b.header("Access-Control-Allow-Origin", o);
+                }
+                let resp = b.body(served.body).unwrap_or_else(|_| {
+                    tauri::http::Response::builder()
+                        .status(500)
+                        .body(Vec::new())
+                        .unwrap()
+                });
+                responder.respond(resp);
+            });
+        })
         .setup(move |app| {
             // Application preferences: Tauri's per-app config directory.
             let store = match args.config_dir.clone() {
@@ -145,6 +180,11 @@ pub fn run() {
                 app.state::<smoke::SmokeState>()
                     .arm_move(&dir, args.smoke_report.clone())
                     .map_err(|e| format!("smoke-move: {e}"))?;
+            }
+            if let Some(dir) = args.smoke_texture.clone() {
+                app.state::<smoke::SmokeState>()
+                    .arm_texture(&dir, args.smoke_report.clone())
+                    .map_err(|e| format!("smoke-texture: {e}"))?;
             }
             if let Some(path) = args.smoke.clone() {
                 app.state::<smoke::SmokeState>()
@@ -226,6 +266,9 @@ pub fn run() {
             commands::smoke_real_pointer,
             commands::smoke_real_resize,
             commands::smoke_finish,
+            commands::smoke_texture_delay,
+            commands::smoke_texture_capture,
+            commands::smoke_resource_log,
         ])
         .build(context)
         .expect("error while building WRL Forge")

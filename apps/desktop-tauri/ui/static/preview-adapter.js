@@ -6,8 +6,13 @@
 // The adapter receives TEXT (the canonical buffer the Rust backend returned)
 // and never a path. It has no Tauri/IPC access of its own beyond what the
 // page has, and the CSP blocks every remote origin, so remote URLs inside a
-// world are never fetched. Relative textures resolve against the app origin
-// and are simply not found (texture serving is not migrated yet).
+// world are never fetched.
+//
+// TEXTURE-LOCAL-1: relative URLs (ImageTexture) resolve against the base URL
+// Rust issued for this generation (`wrlres://localhost/<token>/`); the
+// Rust scheme handler serves only image files inside the document folder
+// while that token is current. The text is passed through unchanged, so
+// provenance spans are exactly the source's.
 //
 // VISUAL-2 picking: every PRIVATE X_ITE picking access lives in
 // xite-pick-adapter.js (the WD2-D adapter, copied verbatim at build time from
@@ -28,6 +33,34 @@
 // draws a frame of it.
 (function () {
   'use strict';
+
+  // TEXTURE-LOCAL-1: X_ITE 15.1.10 workaround. FileLoader.setScene waits for
+  // the new scene's loadCount through an interest whose ONLY reference to
+  // the FileLoader is a WeakRef. When a texture is still loading after the
+  // parse, nothing else holds the FileLoader; if the collector runs first
+  // the interest is dropped and createX3DFromString never settles (measured:
+  // the preview stuck on "updating", for wrlres AND data: textures alike).
+  // Only objects with X_ITE's `set_loadCount__` method are held strongly,
+  // and only for the life of the WeakRef, which X_ITE drops when the
+  // interest is removed (set_loadCount__ runs) or its scene is discarded.
+  // Every other WeakRef is untouched.
+  (function () {
+    var Native = window.WeakRef;
+    if (typeof Native !== 'function') return;
+    function HeldWeakRef(target) {
+      var ref = Reflect.construct(Native, [target], new.target || HeldWeakRef);
+      if (target && typeof target.set_loadCount__ === 'function') heldTargets.set(ref, target);
+      return ref;
+    }
+    var heldTargets = new WeakMap();
+    HeldWeakRef.prototype = Object.create(Native.prototype, { constructor: { value: HeldWeakRef } });
+    HeldWeakRef.prototype.deref = function () {
+      return heldTargets.has(this) ? heldTargets.get(this) : Native.prototype.deref.call(this);
+    };
+    Object.setPrototypeOf(HeldWeakRef, Native);
+    window.WeakRef = HeldWeakRef;
+  })();
+
   function canvas() { return document.getElementById('viewport'); }
 
   // ---- picking state ---------------------------------------------------------
@@ -255,16 +288,53 @@
       gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
       return [px[0], px[1], px[2]];
     },
+    // Tests: the newest load's phase ('parse' / 'replace' / 'done'), JSON.
+    loadState: function () {
+      return JSON.stringify({ phase: pick.phase || null, now: Math.round(performance.now()) });
+    },
+    // Read-only (TEXTURE-LOCAL-1 tests): the drawn frame as PNG bytes
+    // (Uint8Array) after the next frame, or null.
+    capture: async function () {
+      var c = canvas();
+      if (!c || !c.browser) return null;
+      var b = c.browser;
+      await b.nextFrame();
+      var gl = b.getContext();
+      if (!gl) return null;
+      var w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+      var px = new Uint8Array(w * h * 4);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      var out = document.createElement('canvas');
+      out.width = w;
+      out.height = h;
+      var ctx = out.getContext('2d');
+      var img = ctx.createImageData(w, h);
+      for (var y = 0; y < h; y++) {
+        var src = (h - 1 - y) * w * 4;
+        img.data.set(px.subarray(src, src + w * 4), y * w * 4);
+        for (var x = 0; x < w; x++) img.data[y * w * 4 + x * 4 + 3] = 255;
+      }
+      ctx.putImageData(img, 0, 0);
+      var blob = await new Promise(function (res) { out.toBlob(res, 'image/png'); });
+      return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
+    },
     // `meta` names the generation: {session, revision, hash, seq} from the
     // UI, or null for a scene that is not a document (the empty world after
     // Close). The previous generation is retired before anything else, so a
     // pick during the load is stale, never a hit on the old scene.
-    load: async function (text, meta) {
+    load: async function (text, meta, base) {
       var c = canvas();
       if (!c || !c.browser) return 'unavailable: X_ITE canvas not initialized';
       var browser = c.browser;
+      // Only a Rust-issued wrlres base is accepted; anything else (or none)
+      // gets the never-valid token, so relative URLs are refused by Rust.
+      var b = String(base || '');
+      browser.baseURL = /^wrlres:\/\/localhost\/[A-Za-z0-9]+\/$/.test(b) ? b : 'wrlres://localhost/none/';
       var a = adapterFor(browser);
       var mine = ++pick.loadSeq;
+      var phase = function (ph) { pick.phase = { seq: mine, phase: ph, t: Math.round(performance.now()) }; };
+      phase('parse');
       retire('preview-scene-replaced');
       try {
         var scene, generation = null;
@@ -278,6 +348,7 @@
           scene = await browser.createX3DFromString(String(text == null ? '' : text));
         }
         var carry = cameraPlan(browser, meta, mine, scene, generation);
+        phase('replace');
         try {
           await browser.replaceWorld(scene);
         } finally {
@@ -289,6 +360,7 @@
           pick.scene = scene;
           pick.generation = generation;
         }
+        phase('done');
         return 'loaded: ' + scene.rootNodes.length + ' root node(s)';
       } catch (e) {
         // Keep the last valid scene on screen (the JS preview-state rule);

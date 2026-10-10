@@ -1,0 +1,29 @@
+== toolchain on the test system
+cargo: absent
+rustc: absent
+rustup: absent
+node: absent
+npm: absent
+== install the .deb
+apt install exit=0
+Package: wrl-forge
+Status: install ok installed
+Version: 0.1.0
+test tools (xvfb, xdotool) exit=0
+== tests: installed /usr/bin/wrl-forge
+open-pkg-test-basic.wrl: exit=0 pass=true
+open-pkg-test-basic-gzip.wrl: exit=0 pass=true
+create: exit=0 pass=true
+pick: exit=0 pass=true
+texture: exit=0 pass=true
+deb tests exit=0
+== AppImage on the same clean system (extract-and-run, no FUSE)
+open-pkg-test-basic.wrl: exit=0 pass=true
+open-pkg-test-basic-gzip.wrl: exit=0 pass=true
+create: exit=0 pass=true
+pick: exit=0 pass=true
+texture: exit=0 pass=true
+appimage tests exit=0
+== uninstall
+apt remove exit=0
+ls: cannot access '/usr/bin/wrl-forge': No such file or directory

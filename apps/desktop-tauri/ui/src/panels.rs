@@ -420,6 +420,15 @@ pub fn Viewport() -> impl IntoView {
                 </svg>
             </div>
             <div class="preview-status" id="preview-status">{move || format!("Preview: {}", u.preview_status.get())}</div>
+            <div class="preview-status texture-warning" id="texture-warnings" role="status" aria-live="polite"
+                hidden=move || u.texture_warnings.with(|w| w.is_empty())
+                title=move || u.texture_warnings.with(|w| w.iter().map(|t| format!("line {} · {}: {}", t.line, t.node, t.detail)).collect::<Vec<_>>().join("\n"))>
+                {move || u.texture_warnings.with(|w| match w.first() {
+                    None => String::new(),
+                    Some(t) => format!("⚠ {} texture{} not loaded · line {} · {}: {}{}", w.len(), if w.len() == 1 { "" } else { "s" },
+                        t.line, t.node, t.detail, if w.len() > 1 { " · hover for all" } else { "" }),
+                })}
+            </div>
             <div class="preview-status native-status" id="native-status" hidden=move || !u.native.with(|s| s.requested && s.reason.is_some())>
                 {move || u.native.with(|s| s.reason.clone().unwrap_or_default())}
             </div>
