@@ -69,7 +69,8 @@ workspace; `crates/Cargo.lock` gained only their two path entries.
 | `src/editor/editor-locator.js` (VSCodium) | — | PENDING | Optional integration. |
 | `src/preview/preview-scheduler.js` | `ui/src/ui.rs` (700 ms debounce) | MIGRATED | Skips revisions already on screen. |
 | `src/preview/preview-state.js` | adapter keeps the last valid scene | PARTIAL | No explicit state machine. |
-| `src/preview/buffer-overlay.js`, `mall-preview-bridge.js`, `world-preview-bridge.js`, `texture-base.js`, `url-policy.js` | — | PENDING | Preview receives text only; relative textures are not served; CSP blocks remote origins. |
+| `src/preview/texture-base.js` (relative textures) | `src-tauri/src/resources.rs` | PORTED (TEXTURE-LOCAL-1) | Read-only `wrlres` scheme; per-generation token bound to the Rust session; image files inside the document folder only; 32 MiB cap; static `ImageTexture` URL check → preview warnings. |
+| `src/preview/buffer-overlay.js`, `mall-preview-bridge.js`, `world-preview-bridge.js`, `url-policy.js` | — | PENDING | Preview receives text plus a Rust-issued resource base; `Inline`/movie/audio resources are not served; CSP blocks remote origins. |
 | `fit-math.js`, `extrusion-bounds.js`, `bbox-traversal.js`, `guides.js`, `viewpoint-preserve.js` | — | PENDING | Mall Fit preview not ported. |
 | X_ITE 15.1.10 (renderer) | `ui/static/preview-adapter.js` (JS) | BLOCKED | X_ITE stays as the temporary renderer; a custom Rust renderer is the approved direction but not started (see below and [PRODUCT_VISION](../PRODUCT_VISION.md)). |
 | `validator.js`, `src/mall/*` | — | PENDING | Mall Item profile (80 KiB cap, rules, repack) not ported. `safe_save` already has the `max_bytes` ceiling. |

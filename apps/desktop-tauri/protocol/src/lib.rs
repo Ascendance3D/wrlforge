@@ -490,6 +490,39 @@ pub struct PreviewSource {
     /// preview generation rendered by this hash plus `revision`.
     #[serde(default)]
     pub hash: u64,
+    /// TEXTURE-LOCAL-1: the base URL X_ITE resolves relative URLs against
+    /// (`wrlres://localhost/<token>/`). Rust issues a new token for every
+    /// generation; a document without a folder gets one that is never
+    /// valid. The text itself is never rewritten.
+    #[serde(default)]
+    pub resource_base: String,
+    /// `ImageTexture` nodes with no URL the preview can load.
+    #[serde(default)]
+    pub texture_warnings: Vec<TextureWarning>,
+}
+
+/// One `ImageTexture` the preview cannot load (TEXTURE-LOCAL-1). `detail`
+/// names the authored URLs and why each failed; never an absolute path.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TextureWarning {
+    /// The node's source line (as the parser reports it).
+    pub line: u32,
+    /// `ImageTexture` or `ImageTexture <DEF name>`.
+    pub node: String,
+    pub detail: String,
+}
+
+/// One answered `wrlres` request (TEXTURE-LOCAL-1 smoke evidence). `name`
+/// is the path below the token, never a filesystem path.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceLogEntry {
+    pub session: Option<SessionId>,
+    pub name: String,
+    pub status: u16,
+    pub outcome: String,
+    pub bytes: u64,
 }
 
 /// The drift hash of a preview text (FNV-1a over its UTF-16 units, as
@@ -685,6 +718,36 @@ pub struct SmokePlan {
     /// `--smoke-move` (VISUAL-3A): translation-gizmo workflow.
     #[serde(default)]
     pub gizmo: Option<GizmoSmoke>,
+    /// `--smoke-texture` (TEXTURE-LOCAL-1): local texture fixture matrix.
+    #[serde(default)]
+    pub texture: Option<TextureSmoke>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TextureSmoke {
+    pub fixtures: Vec<TextureFixture>,
+}
+
+/// One `--smoke-texture` fixture: what the RENDERED viewport must show.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TextureFixture {
+    pub id: String,
+    pub label: String,
+    pub samples: Vec<TextureSample>,
+    /// `ImageTexture` nodes the Rust check must report as unloadable.
+    pub warnings: usize,
+}
+
+/// A viewport point (fractions of its size) and its expected color;
+/// `None` = the untextured surface (no image may be shown).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TextureSample {
+    pub x: f64,
+    pub y: f64,
+    pub color: Option<[u8; 3]>,
 }
 
 /// VISUAL-3A smoke plan. Fixture files stay on the Rust side; the UI opens

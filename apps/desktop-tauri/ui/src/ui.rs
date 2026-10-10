@@ -29,6 +29,9 @@ pub struct Ui {
     pub field_error: RwSignal<Option<String>>,
     pub conflict: RwSignal<Option<String>>,
     pub preview_status: RwSignal<String>,
+    /// TEXTURE-LOCAL-1: the Rust check of the previewed revision's
+    /// `ImageTexture` URLs (textures the preview cannot load).
+    pub texture_warnings: RwSignal<Vec<p::TextureWarning>>,
     pub preview_enabled: RwSignal<bool>,
     pub last_save: RwSignal<Option<String>>,
     /// X_ITE scene loads this run (lets tests prove a theme switch never
@@ -202,6 +205,7 @@ pub fn ui() -> Ui {
             field_error: RwSignal::new(None),
             conflict: RwSignal::new(None),
             preview_status: RwSignal::new("idle".into()),
+            texture_warnings: RwSignal::new(Vec::new()),
             preview_enabled: RwSignal::new(true),
             last_save: RwSignal::new(None),
             preview_loads: RwSignal::new(0),
@@ -522,7 +526,9 @@ pub async fn preview(force: bool) {
             // viewpoint (crate::camera); otherwise X_ITE's own binding stands.
             let (camera, why) = crate::camera::want(session, src.revision).await;
             let t0 = crate::editor::now();
-            let status = ipc::preview_load(&src.text, Some(&gen), camera).await;
+            let warnings = src.texture_warnings.clone();
+            let status =
+                ipc::preview_load(&src.text, Some(&gen), camera, &src.resource_base).await;
             let load_ms = crate::editor::now() - t0;
             crate::camera::LOAD_MS.with_borrow_mut(|v| v.push(load_ms));
             u.preview_loads.update(|n| *n += 1);
@@ -531,6 +537,7 @@ pub async fn preview(force: bool) {
                 if status.starts_with("loaded") {
                     crate::pick::loaded(gen);
                 }
+                u.texture_warnings.set(warnings);
                 let note = crate::camera::note(why);
                 u.preview_status
                     .set(format!("rev {} · {status}{note}", src.revision));
@@ -717,7 +724,8 @@ pub fn close() {
         crate::gizmo::reset("the document was closed");
         crate::pick::retire("preview-scene-replaced");
         // No document: the viewport shows an empty world, not the old one.
-        let status = ipc::preview_load("#VRML V2.0 utf8\n", None, None).await;
+        u.texture_warnings.set(Vec::new());
+        let status = ipc::preview_load("#VRML V2.0 utf8\n", None, None, "").await;
         u.preview_loads.update(|n| *n += 1);
         u.preview_status.set(format!("no document · {status}"));
         flash("Closed.");
@@ -766,6 +774,13 @@ pub async fn save_now(as_new: bool) -> Option<p::SaveOutcome> {
             };
             u.last_save.set(Some(m.clone()));
             flash(&m);
+            // TEXTURE-LOCAL-1: a Save As can give the document a (new)
+            // folder. Textures the preview could not load may load now, so
+            // the preview re-resolves them; later loads always use the
+            // session's current folder.
+            if cmd == "doc_save_as" && u.texture_warnings.with_untracked(|w| !w.is_empty()) {
+                preview(true).await;
+            }
         }
         Ok(p::SaveOutcome::Conflict { reason }) => {
             u.conflict.set(Some(reason.clone()));

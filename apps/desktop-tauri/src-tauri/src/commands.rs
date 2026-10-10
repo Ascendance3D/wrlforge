@@ -391,6 +391,38 @@ pub fn smoke_plan(smoke: State<'_, SmokeState>) -> Option<p::SmokePlan> {
     smoke.plan()
 }
 
+/// `--smoke-texture` only: hold every `wrlres` read `ms` (at most 5 s) so a
+/// document switch lands while a request is in flight.
+#[tauri::command]
+pub fn smoke_texture_delay(smoke: State<'_, SmokeState>, ms: u64) -> Result<(), String> {
+    if !smoke.texture_armed() {
+        return Err("no texture smoke run is armed".into());
+    }
+    crate::resources::TEST_DELAY_MS.store(ms.min(5_000), std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+
+/// `--smoke-texture` only: store a viewport capture (PNG bytes) as evidence.
+#[tauri::command]
+pub fn smoke_texture_capture(
+    smoke: State<'_, SmokeState>,
+    id: String,
+    png: Vec<u8>,
+) -> Result<String, String> {
+    smoke.texture_capture(&id, &png)
+}
+
+/// `--smoke-texture` only: the answered `wrlres` requests.
+#[tauri::command]
+pub fn smoke_resource_log(
+    smoke: State<'_, SmokeState>,
+) -> Result<Vec<p::ResourceLogEntry>, String> {
+    if !smoke.texture_armed() {
+        return Err("no texture smoke run is armed".into());
+    }
+    Ok(crate::resources::log_snapshot())
+}
+
 #[tauri::command]
 pub fn smoke_finish(app: AppHandle, report: p::SmokeReport) {
     crate::smoke::finish(&app, report);

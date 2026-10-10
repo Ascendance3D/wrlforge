@@ -20,7 +20,11 @@ extern "C" {
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = load, catch)]
-    async fn preview_load_js(text: &str, meta: JsValue) -> Result<JsValue, JsValue>;
+    async fn preview_load_js(text: &str, meta: JsValue, base: &str) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = loadState, catch)]
+    fn preview_load_state_js() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = capture, catch)]
+    async fn preview_capture_js() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = pick, catch)]
     fn preview_pick_js(client_x: f64, client_y: f64) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = retire, catch)]
@@ -268,11 +272,13 @@ pub fn camera_trace_stop() -> Option<CameraTrace> {
 
 /// Load `text` into X_ITE. `meta` names the preview generation (VISUAL-2
 /// picking); `None` for a scene that is not a document. `camera`: what the
-/// camera carry may restore onto (VISUAL-3A1).
+/// camera carry may restore onto (VISUAL-3A1). `base`: the Rust-issued
+/// resource base for relative URLs (TEXTURE-LOCAL-1); "" = none.
 pub async fn preview_load(
     text: &str,
     meta: Option<&crate::pick::Gen>,
     camera: Option<CameraWant>,
+    base: &str,
 ) -> String {
     #[derive(Serialize)]
     struct Meta<'a> {
@@ -284,7 +290,7 @@ pub async fn preview_load(
     let meta = meta
         .and_then(|gen| Meta { gen, camera }.serialize(&ser).ok())
         .unwrap_or(JsValue::NULL);
-    match preview_load_js(text, meta).await {
+    match preview_load_js(text, meta, base).await {
         Ok(v) => v
             .as_string()
             .unwrap_or_else(|| "error: non-string status".into()),
@@ -304,6 +310,20 @@ pub fn preview_pick(client_x: f64, client_y: f64) -> Result<String, String> {
 pub async fn preview_pixel(client_x: f64, client_y: f64) -> Option<Vec<u8>> {
     let v = preview_pixel_js(client_x, client_y).await.ok()?;
     serde_wasm_bindgen::from_value(v).ok()
+}
+
+/// The newest X_ITE load's phase, as JSON (TEXTURE-LOCAL-1 tests).
+pub fn preview_load_state() -> String {
+    preview_load_state_js()
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_default()
+}
+
+/// The drawn frame as PNG bytes (TEXTURE-LOCAL-1 tests).
+pub async fn preview_capture() -> Option<Vec<u8>> {
+    let v = preview_capture_js().await.ok()?;
+    v.dyn_into::<js_sys::Uint8Array>().ok().map(|a| a.to_vec())
 }
 
 /// Retire the generation on screen: it can no longer be picked.

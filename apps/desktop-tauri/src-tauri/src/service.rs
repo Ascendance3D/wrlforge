@@ -23,6 +23,7 @@ use wrlforge_text::Edit;
 use wrlforge_vrml::{create, field_edit, highlight, manipulate, scene};
 
 use crate::files::{self, FileError, Format, SaveOptions, Stamp};
+use crate::resources;
 
 pub struct Session {
     /// `None` for a new world that has no file yet (VISUAL-1). A path is
@@ -32,6 +33,10 @@ pub struct Session {
     /// The disk state at open / last save; `None` while untitled.
     stamp: Option<Stamp>,
     doc: Document,
+    /// TEXTURE-LOCAL-1: the `wrlres` token of the newest preview generation.
+    /// Only this token is served; a newer generation, a close or a reopen
+    /// (a new session) retires it.
+    resource_token: Option<String>,
 }
 
 /// The largest runtime graph a pick snapshot may carry (the adapter's own
@@ -280,6 +285,7 @@ impl Service {
             format: loaded.format,
             stamp: Some(loaded.stamp),
             doc: Document::new(loaded.text),
+            resource_token: None,
         })
     }
 
@@ -293,6 +299,7 @@ impl Service {
             format: Format::Plain,
             stamp: None,
             doc: Document::new(create::NEW_WORLD.into()),
+            resource_token: None,
         })
     }
 
@@ -982,16 +989,59 @@ impl Service {
     /// Preview input: the canonical text, minus a leading U+FEFF. X_ITE's
     /// VRML parser rejects a BOM before `#VRML`; stripping it here is a
     /// display projection only -- the document and the file keep the BOM.
+    ///
+    /// TEXTURE-LOCAL-1: every call starts a new preview generation with a
+    /// NEW resource token (the previous one stops being served) and checks
+    /// the text's `ImageTexture` URLs against the document folder. The text
+    /// is not changed: only X_ITE's base URL points at the token.
     pub fn preview_source(&self, id: p::SessionId) -> Result<p::PreviewSource, String> {
-        self.with(id, |s| {
+        let (text, revision, folder, token) = self.with(id, |s| {
             let t = s.doc.text();
             let text = t.strip_prefix('\u{FEFF}').unwrap_or(t).to_string();
-            p::PreviewSource {
-                revision: s.doc.revision(),
-                hash: p::preview_hash(&text),
-                text,
-            }
+            let folder = s.path.as_deref().and_then(Path::parent).map(Path::to_path_buf);
+            let token = folder.as_ref().map(|_| resources::new_token());
+            s.resource_token = token.clone();
+            (text, s.doc.revision(), folder, token)
+        })?;
+        // The URL check stats files: outside the session lock.
+        let texture_warnings = resources::check_textures(&text, folder.as_deref());
+        Ok(p::PreviewSource {
+            revision,
+            hash: p::preview_hash(&text),
+            text,
+            resource_base: resources::base_url(
+                token.as_deref().unwrap_or(resources::NO_FOLDER_TOKEN),
+            ),
+            texture_warnings,
         })
+    }
+
+    /// The folder `token` may read from: the document folder of the ONE open
+    /// session whose CURRENT token it is, looked up now (after a Save As it
+    /// is the new folder). Anything else is `Stale`.
+    pub fn resource_folder(&self, token: &str) -> Result<(p::SessionId, PathBuf), resources::Refusal> {
+        use resources::Refusal;
+        let map = self.sessions.lock().map_err(|_| Refusal::Unreadable)?;
+        let (id, s) = map
+            .iter()
+            .find(|(_, s)| s.resource_token.as_deref() == Some(token))
+            .ok_or(Refusal::Stale)?;
+        let folder = s
+            .path
+            .as_deref()
+            .and_then(Path::parent)
+            .ok_or(Refusal::Untitled)?;
+        Ok((*id, folder.to_path_buf()))
+    }
+
+    /// Whether `token` is still the current token of session `id` (checked
+    /// again after a read: a reply for a replaced generation is refused).
+    pub fn resource_token_current(&self, id: p::SessionId, token: &str) -> bool {
+        self.sessions
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&id).map(|s| s.resource_token.as_deref() == Some(token)))
+            .unwrap_or(false)
     }
 
     /// Resolve one viewport pick (VISUAL-2) against the document AS IT IS
@@ -1055,6 +1105,7 @@ impl Service {
             format: Format::Plain,
             stamp: None,
             doc: Document::new(text.into()),
+            resource_token: None,
         }) {
             p::OpenOutcome::Opened { doc } => doc.session,
             _ => panic!("open failed"),
@@ -2250,6 +2301,70 @@ mod tests {
             }
         );
         fs::remove_dir_all(&dir).ok();
+    }
+
+    /// TEXTURE-LOCAL-1: the resource token is per generation and per open
+    /// session; the folder follows Save As; preview text and source are
+    /// untouched; untitled documents get no folder.
+    #[test]
+    fn preview_resources_follow_the_session_and_never_touch_the_source() {
+        use crate::resources::{self, Refusal};
+        const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+        let a = tmp("res-a");
+        let b = tmp("res-b");
+        let text = "#VRML V2.0 utf8\nShape { appearance Appearance { texture ImageTexture { url \"t.png\" } } geometry Box { } }\n";
+        fs::write(a.join("w.wrl"), text).unwrap();
+        fs::write(a.join("t.png"), PNG).unwrap();
+        let bytes = fs::read(a.join("w.wrl")).unwrap();
+        let svc = Service::new(clock);
+        let id = opened(svc.open_path(&a.join("w.wrl"))).session;
+        let token = |src: &p::PreviewSource| {
+            src.resource_base
+                .strip_prefix("wrlres://localhost/")
+                .and_then(|r| r.strip_suffix('/'))
+                .unwrap()
+                .to_string()
+        };
+        let s1 = svc.preview_source(id).unwrap();
+        assert_eq!(s1.text, text, "the preview text is the source text");
+        assert!(s1.texture_warnings.is_empty(), "{:?}", s1.texture_warnings);
+        let t1 = token(&s1);
+        assert_eq!(svc.resource_folder(&t1).unwrap().1, a);
+        let served = resources::serve(&svc, &format!("/{t1}/t.png"));
+        assert_eq!((served.status, served.mime), (200, "image/png"));
+        assert_eq!(served.body, PNG);
+        // A newer generation retires the old token.
+        let t2 = token(&svc.preview_source(id).unwrap());
+        assert_ne!(t1, t2);
+        assert_eq!(svc.resource_folder(&t1).unwrap_err(), Refusal::Stale);
+        assert_eq!(resources::serve(&svc, &format!("/{t1}/t.png")).status, 403);
+        // Save As moves later loads to the new folder (no texture there).
+        match svc.save_as(id, &b.join("moved.wrl")) {
+            p::SaveOutcome::Saved { .. } => {}
+            o => panic!("{o:?}"),
+        }
+        assert_eq!(svc.resource_folder(&t2).unwrap().1, b);
+        assert_eq!(resources::serve(&svc, &format!("/{t2}/t.png")).status, 404);
+        let moved = svc.preview_source(id).unwrap();
+        assert_eq!(moved.texture_warnings.len(), 1);
+        fs::write(b.join("t.png"), PNG).unwrap();
+        let t3 = token(&svc.preview_source(id).unwrap());
+        assert_eq!(resources::serve(&svc, &format!("/{t3}/t.png")).status, 200);
+        // The source and its history are unchanged by any of it.
+        let info = svc.snapshot(id).unwrap();
+        assert_eq!((info.revision, info.dirty, info.can_undo), (0, false, false));
+        assert_eq!(svc.text(id).unwrap(), text);
+        assert_eq!(fs::read(a.join("w.wrl")).unwrap(), bytes);
+        // Closing the session revokes its token.
+        svc.close(id).unwrap();
+        assert_eq!(resources::serve(&svc, &format!("/{t3}/t.png")).status, 403);
+        // An untitled world has no folder: its base is never valid.
+        let nw = opened(svc.new_world()).session;
+        let src = svc.preview_source(nw).unwrap();
+        assert_eq!(src.resource_base, resources::base_url(resources::NO_FOLDER_TOKEN));
+        assert_eq!(resources::serve(&svc, "/none/t.png").status, 403);
+        fs::remove_dir_all(&a).unwrap();
+        fs::remove_dir_all(&b).unwrap();
     }
 
     fn svc_open(path: &Path) -> (p::OpenOutcome, Service) {
