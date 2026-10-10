@@ -12,8 +12,10 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use wrlforge_desktop_protocol as p;
 
+use crate::native::{Native, Shown};
 use crate::service::Service;
 use crate::settings::SettingsStore;
+use crate::viewport;
 use crate::smoke::SmokeState;
 
 /// The document opened from the launch argument, handed to the UI once.
@@ -266,6 +268,61 @@ pub async fn doc_pick(
     request: p::PickRequest,
 ) -> Result<p::PickOutcome, String> {
     svc.pick(&request)
+}
+
+/// NATIVE-RENDER-1: the native viewport's state (hidden; default off).
+#[tauri::command]
+pub fn native_state() -> p::NativeState {
+    viewport::state()
+}
+
+/// NATIVE-RENDER-1: project the session's current text and show it in the
+/// native viewport. Async: it parses. A damaged text keeps the last valid
+/// projection on screen.
+#[tauri::command]
+pub async fn native_show(
+    app: AppHandle,
+    svc: State<'_, Service>,
+    native: State<'_, Native>,
+    session: p::SessionId,
+) -> Result<p::NativeShown, String> {
+    if !native.active.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("the native viewport is off".into());
+    }
+    match native.show(&svc, session)? {
+        Shown::New(scene, info) => {
+            app.run_on_main_thread(move || viewport::set_scene(scene))
+                .map_err(|e| e.to_string())?;
+            Ok(info)
+        }
+        Shown::KeptLastValid(info) => Ok(info),
+    }
+}
+
+/// NATIVE-RENDER-1: highlight the Scene Tree selection (`item` of
+/// `revision`) in the native viewport. Display only.
+#[tauri::command]
+pub async fn native_select(
+    app: AppHandle,
+    svc: State<'_, Service>,
+    native: State<'_, Native>,
+    session: p::SessionId,
+    revision: u64,
+    item: Option<String>,
+) -> Result<u32, String> {
+    if !native.active.load(std::sync::atomic::Ordering::SeqCst) {
+        return Ok(0);
+    }
+    let (generation, ids) = native.selected_ids(&svc, session, revision, item.as_deref());
+    let n = ids.len() as u32;
+    app.run_on_main_thread(move || viewport::select(generation, ids))
+        .map_err(|e| e.to_string())?;
+    Ok(n)
+}
+
+#[tauri::command]
+pub fn native_reset_camera() {
+    viewport::reset_camera();
 }
 
 #[tauri::command]

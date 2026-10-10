@@ -1,0 +1,114 @@
+{
+ "checks": [
+  {
+   "detail": "Native viewport disabled: this Wayland compositor offers only FIFO presentation (fifo-only: no non-blocking present mode (modes [Fifo])). Using X_ITE.",
+   "name": "d8:fifo-only-disables-native",
+   "pass": true
+  },
+  {
+   "detail": "render threads 0",
+   "name": "d8:no-viewport-left",
+   "pass": true
+  },
+  {
+   "detail": "state failed",
+   "name": "d8:ui-shows-x_ite",
+   "pass": true
+  },
+  {
+   "detail": "n=32 p99=1.92ms max=1.92ms",
+   "name": "watchdog:startup (recorded, not gated)",
+   "pass": true
+  }
+ ],
+ "checks_total": 4,
+ "counters": {
+  "created": 1,
+  "destroyed": 1,
+  "frames_offscreen": 0,
+  "frames_presented": 0,
+  "joined": 1,
+  "last_render_thread_stats": "created=false panicked=false frames=0 offscreen=0 picks=0 uncaptured_errors=0 device_lost=false",
+  "parked": 0,
+  "picks_answered": 0,
+  "picks_busy": 0,
+  "picks_sent": 0,
+  "unrealized_before_destroyed": 0
+ },
+ "elapsed_ms": 165,
+ "failures": [],
+ "fifo_only_run": true,
+ "notes": {},
+ "pass": true,
+ "platform": {
+  "native_window": "wayland-subsurface",
+  "paned_position": 835,
+  "scale": 1,
+  "wayland": true
+ },
+ "state": {
+  "info": null,
+  "reason": "Native viewport disabled: this Wayland compositor offers only FIFO presentation (fifo-only: no non-blocking present mode (modes [Fifo])). Using X_ITE.",
+  "state": "failed"
+ },
+ "exit_code": 0,
+ "wall_s": 0.82,
+ "display_proof": {
+  "display_server": "weston",
+  "server_pid": 863315,
+  "socket": "/tmp/nr1-smoke-vh3w59r8/run/nr1-7b6c0b69",
+  "peer_pid": 863315,
+  "env_keys": [
+   "GDK_BACKEND",
+   "HOME",
+   "LANG",
+   "NO_AT_BRIDGE",
+   "PATH",
+   "WAYLAND_DISPLAY",
+   "WEBKIT_DISABLE_COMPOSITING_MODE",
+   "XDG_RUNTIME_DIR"
+  ]
+ },
+ "stderr_tail": [
+  "(xdg-desktop-portal-gtk:863365): Gdk-CRITICAL **: 04:36:30.969: gdk_seat_get_keyboard: assertion 'GDK_IS_SEAT (seat)' failed",
+  "dbus-daemon[863319]: [session uid=1000 pid=863319] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:863343): xdg-desktop-portal-WARNING **: 04:36:31.006: No skeleton to export",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:863343): xdg-desktop-portal-WARNING **: 04:36:31.006: Choosing gtk.portal for org.freedesktop.impl.portal.FileChooser as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:863343): xdg-desktop-portal-WARNING **: 04:36:31.006: Choosing gtk.portal for org.freedesktop.impl.portal.AppChooser as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:863343): xdg-desktop-portal-WARNING **: 04:36:31.007: Choosing gtk.portal for org.freedesktop.impl.portal.Print as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:863343): xdg-desktop-portal-WARNING **: 04:36:31.007: Choosing gtk.portal for org.freedesktop.impl.portal.Notification as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:863343): xdg-desktop-portal-WARNING **: 04:36:31.007: Choosing gtk.portal for org.freedesktop.impl.portal.Inhibit as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:863343): xdg-desktop-portal-WARNING **: 04:36:31.008: Choosing gtk.portal for org.freedesktop.impl.portal.Access as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:863343): xdg-desktop-portal-WARNING **: 04:36:31.010: Failed connect to PipeWire: Couldn't connect to PipeWire",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:863343): xdg-desktop-portal-WARNING **: 04:36:31.010: Choosing gtk.portal for org.freedesktop.impl.portal.Account as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:863343): xdg-desktop-portal-WARNING **: 04:36:31.011: Choosing gtk.portal for org.freedesktop.impl.portal.Email as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:863343): xdg-desktop-portal-WARNING **: 04:36:31.011: Choosing gtk.portal for org.freedesktop.impl.portal.DynamicLauncher as a last-resort fallback",
+  "dbus-daemon[863319]: [session uid=1000 pid=863319] Successfully activated service 'org.freedesktop.portal.Desktop'",
+  "",
+  "(wrl-forge:863320): Gdk-CRITICAL **: 04:36:31.034: gdk_seat_get_keyboard: assertion 'GDK_IS_SEAT (seat)' failed",
+  "dbus-daemon[863319]: [session uid=1000 pid=863319] Activating service name='org.a11y.Bus' requested by ':1.0' (uid=1000 pid=863320 comm=\"~/Projects/cybertown/.worktrees/wrlforge/\" label=\"unconfined\")",
+  "dbus-daemon[863319]: [session uid=1000 pid=863319] Successfully activated service 'org.a11y.Bus'",
+  "libEGL warning: failed to get driver name for fd -1",
+  "",
+  "libEGL warning: MESA-LOADER: failed to retrieve device information",
+  "",
+  "libEGL warning: failed to get driver name for fd -1",
+  "",
+  "",
+  "(wrl-forge:863320): Gdk-CRITICAL **: 04:36:31.482: gdk_seat_get_keyboard: assertion 'GDK_IS_SEAT (seat)' failed",
+  "dbus-daemon[863390]: Activating service name='org.a11y.atspi.Registry' requested by ':1.0' (uid=1000 pid=863391 comm=\"/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWeb\" label=\"unconfined\")",
+  "dbus-daemon[863390]: Successfully activated service 'org.a11y.atspi.Registry'",
+  "A connection to the bus can't be made"
+ ]
+}

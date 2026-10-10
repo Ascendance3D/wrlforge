@@ -594,6 +594,68 @@ impl PickOutcome {
     }
 }
 
+/// NATIVE-RENDER-1: the native viewport's state. Hidden: it is on only when
+/// `settings.json` has `"viewport": {"renderer": "native-experimental"}` or the app was
+/// launched with `--native-viewport`. X_ITE stays the default and the
+/// fallback (FIFO-only Wayland, device loss, any start failure).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeState {
+    /// The native viewport was requested for this run.
+    pub requested: bool,
+    /// `off` | `starting` | `ready` | `failed`. The UI shows the X_ITE
+    /// preview in every state except `starting` and `ready`.
+    pub state: String,
+    pub reason: Option<String>,
+    /// Adapter / backend / present mode, for the status line.
+    pub info: Option<String>,
+}
+
+impl NativeState {
+    pub fn native_shown(&self) -> bool {
+        self.requested && (self.state == "starting" || self.state == "ready")
+    }
+}
+
+/// A node the native viewport does not draw (canonical UTF-16 span).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeNotShown {
+    pub node_type: String,
+    pub from: u64,
+    pub to: u64,
+    pub reason: String,
+}
+
+/// The reply to `native_show`: which projection is on screen now.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeShown {
+    pub generation: u64,
+    pub revision: u64,
+    pub hash: u64,
+    pub objects: u32,
+    pub not_shown: Vec<NativeNotShown>,
+    /// The current text has syntax errors: the previous valid projection
+    /// stays on screen (picks against it are refused as stale).
+    pub kept_last_valid: bool,
+}
+
+/// Rust -> WebView event `native-viewport`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum NativeEvent {
+    /// A resolved viewport click. The UI applies it exactly like a
+    /// `doc_pick` reply (late and stale replies are refused there too).
+    Pick { session: SessionId, pick: PickOutcome },
+    /// Escape in the native viewport: clear the selection.
+    Cleared { session: Option<SessionId> },
+    State { state: NativeState },
+}
+
+/// The Tauri event name that carries `NativeEvent`.
+pub const NATIVE_EVENT: &str = "native-viewport";
+
 /// Launch-time smoke test plan (`--smoke`), consumed by the UI. Never set in a
 /// normal launch.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

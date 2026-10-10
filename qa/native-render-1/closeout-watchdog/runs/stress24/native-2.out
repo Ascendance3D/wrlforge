@@ -1,0 +1,27 @@
+{
+ "pass": false,
+ "exit": 1,
+ "checks": 46,
+ "failures": [
+  "watchdog:blocked-present: n=451 p99=82.66ms max=92.76ms",
+  "watchdog:cleanup: n=591 p99=106.87ms max=122.02ms",
+  "watchdog:gpu-load: n=1623 p99=296.06ms max=350.22ms"
+ ],
+ "proof": {
+  "output_scale": "1.5",
+  "display_server": "kwin",
+  "server_pid": 955926,
+  "socket": "/tmp/nr1-smoke-petul4zl/run/nr1-b8064494",
+  "peer_pid": 955926,
+  "env_keys": [
+   "GDK_BACKEND",
+   "HOME",
+   "LANG",
+   "NO_AT_BRIDGE",
+   "PATH",
+   "WAYLAND_DISPLAY",
+   "WEBKIT_DISABLE_COMPOSITING_MODE",
+   "XDG_RUNTIME_DIR"
+  ]
+ }
+}

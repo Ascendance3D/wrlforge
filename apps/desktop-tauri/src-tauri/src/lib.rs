@@ -7,9 +7,11 @@
 
 pub mod commands;
 pub mod files;
+pub mod native;
 pub mod service;
 pub mod settings;
 pub mod smoke;
+pub mod viewport;
 
 use std::path::PathBuf;
 
@@ -31,6 +33,14 @@ struct Args {
     smoke_theme: Option<p::ThemeSmoke>,
     /// Override the settings directory (tests only; never the user's).
     config_dir: Option<PathBuf>,
+    /// NATIVE-RENDER-1 test flag: start the hidden native viewport.
+    native_viewport: bool,
+    /// Test flag: pretend the surface offers only FIFO (D8 path).
+    native_fifo_only: bool,
+    /// `--smoke-native <dir>`: the NATIVE-RENDER-1 self-test run.
+    smoke_native: Option<PathBuf>,
+    /// With `--smoke-native`: the X_ITE-only control (no native viewport).
+    smoke_native_control: bool,
 }
 
 fn parse_args() -> Args {
@@ -45,6 +55,10 @@ fn parse_args() -> Args {
         smoke_inspector: false,
         smoke_theme: None,
         config_dir: None,
+        native_viewport: false,
+        native_fifo_only: false,
+        smoke_native: None,
+        smoke_native_control: false,
     };
     let mut theme_final = None;
     let mut theme_expect = None;
@@ -66,6 +80,10 @@ fn parse_args() -> Args {
             Some("--smoke-theme-notice") => theme_notice = true,
             Some("--smoke-theme-save-fails") => theme_fails = true,
             Some("--config-dir") => a.config_dir = it.next().map(PathBuf::from),
+            Some("--native-viewport") => a.native_viewport = true,
+            Some("--native-force-fifo-only") => a.native_fifo_only = true,
+            Some("--smoke-native") => a.smoke_native = it.next().map(PathBuf::from),
+            Some("--smoke-native-control") => a.smoke_native_control = true,
             _ if a.open.is_none() => a.open = Some(PathBuf::from(arg)),
             _ => {}
         }
@@ -81,11 +99,19 @@ fn parse_args() -> Args {
 
 pub fn run() {
     let args = parse_args();
+    let mut context = tauri::generate_context!();
+    if args.smoke_native.is_some() {
+        // TEST-ONLY: a native self-test never takes the keyboard focus.
+        for w in context.config_mut().app.windows.iter_mut() {
+            w.focus = false;
+        }
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(service::Service::default())
         .manage(commands::Startup::default())
         .manage(smoke::SmokeState::default())
+        .manage(native::Native::default())
         .setup(move |app| {
             // Application preferences: Tauri's per-app config directory.
             let store = match args.config_dir.clone() {
@@ -96,6 +122,9 @@ pub fn run() {
                 },
             };
             let settings_path = store.path();
+            let native_requested =
+                (args.native_viewport || args.smoke_native.is_some() || store.native_viewport())
+                    && !args.smoke_native_control;
             app.manage(store);
             let target = args.smoke.clone().or(args.open.clone());
             if let Some(path) = target {
@@ -129,7 +158,37 @@ pub fn run() {
                     )
                     .map_err(|e| format!("smoke: {e}"))?;
             }
+            // NATIVE-RENDER-1 (hidden): last, so the window layout exists.
+            let installed = viewport::install(
+                app.handle(),
+                viewport::Options {
+                    requested: native_requested,
+                    force_fifo_only: args.native_fifo_only,
+                },
+            );
+            app.state::<native::Native>()
+                .active
+                .store(installed, std::sync::atomic::Ordering::SeqCst);
+            if let Some(dir) = args.smoke_native.clone() {
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                viewport::smoke::arm(
+                    app.handle(),
+                    dir,
+                    args.smoke_report.clone(),
+                    args.smoke_native_control,
+                );
+                #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+                let _ = dir;
+            }
             Ok(())
+        })
+        .on_window_event(|_window, event| {
+            // The native viewport's window must outlive its render thread.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if viewport::defer_close(0) {
+                    api.prevent_close();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::startup_document,
@@ -149,6 +208,10 @@ pub fn run() {
             commands::doc_inspect,
             commands::doc_edit_field,
             commands::doc_preview_source,
+            commands::native_state,
+            commands::native_show,
+            commands::native_select,
+            commands::native_reset_camera,
             commands::doc_pick,
             commands::doc_translate_target,
             commands::doc_translate_prove,
@@ -164,6 +227,13 @@ pub fn run() {
             commands::smoke_real_resize,
             commands::smoke_finish,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running WRL Forge");
+        .build(context)
+        .expect("error while building WRL Forge")
+        .run(|_app, event| {
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+                if viewport::defer_close(code.unwrap_or(0)) {
+                    api.prevent_exit();
+                }
+            }
+        });
 }

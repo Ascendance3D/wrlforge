@@ -1,0 +1,344 @@
+{
+ "checks": [
+  {
+   "detail": "NVIDIA GeForce RTX 3060 Ti \u00b7 Vulkan \u00b7 Mailbox \u00b7 MSAA 4\u00d7 \u00b7 wayland subsurface \u00b7 init 704 ms",
+   "name": "native-ready",
+   "pass": true
+  },
+  {
+   "detail": "NVIDIA GeForce RTX 3060 Ti \u00b7 Vulkan \u00b7 Mailbox \u00b7 MSAA 4\u00d7 \u00b7 wayland subsurface \u00b7 init 704 ms",
+   "name": "wayland:non-blocking-present",
+   "pass": true
+  },
+  {
+   "detail": "7",
+   "name": "projection:objects",
+   "pass": true
+  },
+  {
+   "detail": "USE:use-not-drawn, Group:node-type-not-in-native-scope",
+   "name": "projection:not-shown-listed",
+   "pass": true
+  },
+  {
+   "detail": "created 1 destroyed 0 live true",
+   "name": "render-thread:one",
+   "pass": true
+  },
+  {
+   "detail": "highlight requests since pick: [(1, [1])]",
+   "name": "ui-adopted:box",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Object(1) oracle=Some(Object(1)) gpu=Some(Ok(1)) status=PROVEN reason=shape-promoted-to-proven-simple-object item=Some(\"node-67-227\") frame=Some((1, 1, 0)) ms=27.15",
+   "name": "pick:box",
+   "pass": true
+  },
+  {
+   "detail": "highlight requests since pick: [(1, [2])]",
+   "name": "ui-adopted:sphere",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Object(2) oracle=Some(Object(2)) gpu=Some(Ok(2)) status=PROVEN reason=shape-promoted-to-proven-simple-object item=Some(\"node-228-418\") frame=Some((2, 1, 0)) ms=1.65",
+   "name": "pick:sphere",
+   "pass": true
+  },
+  {
+   "detail": "highlight requests since pick: [(1, [3])]",
+   "name": "ui-adopted:cylinder",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Object(3) oracle=Some(Object(3)) gpu=Some(Ok(3)) status=PROVEN reason=shape-promoted-to-proven-simple-object item=Some(\"node-419-607\") frame=Some((3, 1, 0)) ms=4.42",
+   "name": "pick:cylinder",
+   "pass": true
+  },
+  {
+   "detail": "highlight requests since pick: [(1, [4])]",
+   "name": "ui-adopted:mirrored cone",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Object(4) oracle=Some(Object(4)) gpu=Some(Ok(4)) status=PROVEN reason=shape-promoted-to-proven-simple-object item=Some(\"node-608-794\") frame=Some((4, 1, 0)) ms=4.29",
+   "name": "pick:mirrored cone",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Object(5) oracle=Some(Object(5)) gpu=Some(Ok(5)) status=REFUSED_SENSOR_CONFLICT reason=pointing-device-sensor-under-pointer item=None frame=Some((5, 1, 0)) ms=6.03",
+   "name": "pick:box beside a TouchSensor",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Object(6) oracle=Some(Object(6)) gpu=Some(Ok(6)) status=REFUSED_AMBIGUOUS reason=runtime-node-has-several-live-parents item=None frame=Some((5, 1, 0)) ms=2.38",
+   "name": "pick:DEF/USE sphere (transparent)",
+   "pass": true
+  },
+  {
+   "detail": "highlight requests since pick: [(1, [7])]",
+   "name": "ui-adopted:scaled backdrop",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Object(7) oracle=Some(Object(7)) gpu=Some(Ok(7)) status=PROVEN reason=shape-promoted-to-proven-simple-object item=Some(\"node-1186-1341\") frame=Some((5, 1, 0)) ms=1.64",
+   "name": "pick:scaled backdrop",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Background oracle=Some(Background) gpu=Some(Ok(0)) status=NO_HIT reason=no-geometry-under-pointer item=None frame=Some((6, 1, 0)) ms=1.13",
+   "name": "pick:background",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Refused(\"pick-near-object-edge\") oracle=Some(Refused(\"pick-near-object-edge\")) gpu=Some(Ok(0)) status=REFUSED_AMBIGUOUS reason=pick-near-object-edge item=None frame=Some((6, 1, 0)) ms=7.78",
+   "name": "pick:edge-band",
+   "pass": true
+  },
+  {
+   "detail": "empty highlight requested after Escape",
+   "name": "escape-clears-ui-selection",
+   "pass": true
+  },
+  {
+   "detail": "Sweep { req: 1, frame: Some(FrameStamp { seq: 7, session: 1, revision: 0, generation: 1, text_hash: 3985855723387866, width: 1200, height: 1800, view: View { view: DMat4 { x_axis: DVec4(1.0, 0.0, -0.0, 0.0), y_axis: DVec4(-0.0, 1.0, -0.0, 0.0), z_axis: DVec4(0.0, 0.0, 1.0, 0.0), w_axis: DVec4(-0.0, -0.0, -24.658615669697493, 1.0) }, proj: DMat4 { x_axis: DVec4(3.621321180370484, 0.0, 0.0, 0.0), y_axis: DVec4(0.0, 2.414214120246989, 0.0, 0.0), z_axis: DVec4(0.0, 0.0, -1.0036185822728403, -1.0), w_axis: DVec4(0.0, 0.0, -0.262770445104012, 0.0) }, width: 1200, height: 1800 }, scale: 2.0 }), samples: 60000, agree_object: 7907, agree_background: 51959, refused_band: 134, disagree: 0, error: None }",
+   "name": "sweep:gpu-cpu-agree",
+   "pass": true
+  },
+  {
+   "detail": "0.22% of samples refused by the band",
+   "name": "sweep:band-is-thin",
+   "pass": true
+  },
+  {
+   "detail": "offscreen frames 1",
+   "name": "hidden:no-present",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Refused(\"frame-not-shown\") oracle=None gpu=None status=REFUSED_STALE reason=frame-not-shown item=None frame=Some((8, 1, 0)) ms=0.00",
+   "name": "pick:while-hidden",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Refused(\"gpu-cpu-pick-disagree\") oracle=Some(Object(1)) gpu=Some(Ok(2)) status=UNSUPPORTED reason=gpu-cpu-pick-disagree item=None frame=Some((9, 1, 0)) ms=1.96",
+   "name": "pick:forced-disagreement",
+   "pass": true
+  },
+  {
+   "detail": "4 / 3",
+   "name": "cleanup:created==destroyed+1",
+   "pass": true
+  },
+  {
+   "detail": "3 / 3",
+   "name": "cleanup:threads-joined",
+   "pass": true
+  },
+  {
+   "detail": "0",
+   "name": "cleanup:native-window-never-destroyed-before-Destroyed",
+   "pass": true
+  },
+  {
+   "detail": "Live",
+   "name": "cleanup:one-live-viewport",
+   "pass": true
+  },
+  {
+   "detail": "Ok(Applied { state: DocState { revision: 1, dirty: true, view_len: 1343, view_hash: 3332485786855886, caret: 1343, can_undo: true, can_redo: false }, item: None })",
+   "name": "stale:edit-applied",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Object(1) oracle=Some(Object(1)) gpu=Some(Ok(1)) status=REFUSED_STALE reason=source-changed-since-preview item=None frame=Some((2, 1, 0)) ms=24.36",
+   "name": "pick:after-edit",
+   "pass": true
+  },
+  {
+   "detail": "destroyed after 1354 ms",
+   "name": "blocked:parked-then-destroyed",
+   "pass": true
+  },
+  {
+   "detail": "1354 ms",
+   "name": "blocked:destroyed-within-deadline",
+   "pass": true
+  },
+  {
+   "detail": "Native viewport stopped: the GPU device was lost (device lost: Destroyed: ). Using X_ITE; restart the app to try again.",
+   "name": "d9:device-loss-reported",
+   "pass": true
+  },
+  {
+   "detail": "created 5 destroyed 5 live false",
+   "name": "d9:no-restart",
+   "pass": true
+  },
+  {
+   "detail": "0 after 16 ms",
+   "name": "no-render-thread-left",
+   "pass": true
+  },
+  {
+   "detail": "n=535 p99=195.06ms max=196.66ms",
+   "name": "watchdog:baseline-idle (recorded, not gated)",
+   "pass": true
+  },
+  {
+   "detail": "n=523 p99=49.50ms max=74.72ms",
+   "name": "watchdog:blocked-present",
+   "pass": true
+  },
+  {
+   "detail": "n=449 p99=98.83ms max=109.79ms",
+   "name": "watchdog:cleanup",
+   "pass": false
+  },
+  {
+   "detail": "n=38 p99=67.54ms max=67.54ms",
+   "name": "watchdog:device-loss",
+   "pass": false
+  },
+  {
+   "detail": "n=66 p99=38.16ms max=38.16ms",
+   "name": "watchdog:fault (recorded, not gated)",
+   "pass": true
+  },
+  {
+   "detail": "n=1486 p99=282.23ms max=319.93ms",
+   "name": "watchdog:gpu-load",
+   "pass": false
+  },
+  {
+   "detail": "n=86 p99=0.03ms max=0.03ms",
+   "name": "watchdog:hidden",
+   "pass": true
+  },
+  {
+   "detail": "n=466 p99=351.52ms max=360.47ms",
+   "name": "watchdog:picks (recorded, not gated)",
+   "pass": true
+  },
+  {
+   "detail": "n=13 p99=0.25ms max=0.25ms",
+   "name": "watchdog:stale (recorded, not gated)",
+   "pass": true
+  },
+  {
+   "detail": "n=617 p99=62.12ms max=72.12ms",
+   "name": "watchdog:startup (recorded, not gated)",
+   "pass": true
+  }
+ ],
+ "checks_total": 46,
+ "control_run": false,
+ "counters": {
+  "created": 5,
+  "destroyed": 5,
+  "frames_offscreen": 1,
+  "frames_presented": 17,
+  "joined": 5,
+  "last_render_thread_stats": "created=true panicked=false frames=2 offscreen=0 picks=0 uncaptured_errors=0 device_lost=true",
+  "parked": 1,
+  "picks_answered": 12,
+  "picks_busy": 0,
+  "picks_sent": 12,
+  "unrealized_before_destroyed": 0
+ },
+ "elapsed_ms": 22108,
+ "failures": [
+  {
+   "detail": "n=449 p99=98.83ms max=109.79ms",
+   "name": "watchdog:cleanup",
+   "pass": false
+  },
+  {
+   "detail": "n=38 p99=67.54ms max=67.54ms",
+   "name": "watchdog:device-loss",
+   "pass": false
+  },
+  {
+   "detail": "n=1486 p99=282.23ms max=319.93ms",
+   "name": "watchdog:gpu-load",
+   "pass": false
+  }
+ ],
+ "fifo_only_run": false,
+ "notes": {
+  "refusal_band_share": 0.0022333333333333333
+ },
+ "pass": false,
+ "platform": {
+  "native_window": "wayland-subsurface",
+  "paned_position": 835,
+  "scale": 2,
+  "wayland": true
+ },
+ "state": {
+  "info": "NVIDIA GeForce RTX 3060 Ti \u00b7 Vulkan \u00b7 Mailbox \u00b7 MSAA 4\u00d7 \u00b7 wayland subsurface \u00b7 init 964 ms",
+  "reason": "Native viewport stopped: the GPU device was lost (device lost: Destroyed: ). Using X_ITE; restart the app to try again.",
+  "state": "failed"
+ },
+ "exit_code": 1,
+ "wall_s": 24.15,
+ "display_proof": {
+  "output_scale": "1.5",
+  "display_server": "kwin",
+  "server_pid": 955061,
+  "socket": "/tmp/nr1-smoke-4y15j1if/run/nr1-314e884f",
+  "peer_pid": 955061,
+  "env_keys": [
+   "GDK_BACKEND",
+   "HOME",
+   "LANG",
+   "NO_AT_BRIDGE",
+   "PATH",
+   "WAYLAND_DISPLAY",
+   "WEBKIT_DISABLE_COMPOSITING_MODE",
+   "XDG_RUNTIME_DIR"
+  ]
+ },
+ "stderr_tail": [
+  "dbus-daemon[955066]: [session uid=1000 pid=955066] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.0' (uid=1000 pid=955067 comm=\"/home/ryan/Projects/cybertown/.worktrees/wrlforge/\" label=\"unconfined\")",
+  "dbus-daemon[955066]: [session uid=1000 pid=955066] Activating service name='org.freedesktop.portal.Documents' requested by ':1.2' (uid=1000 pid=955091 comm=\"/usr/libexec/xdg-desktop-portal\" label=\"unconfined\")",
+  "dbus-daemon[955066]: [session uid=1000 pid=955066] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.4' (uid=1000 pid=955102 comm=\"/usr/libexec/xdg-document-portal\" label=\"unconfined\")",
+  "dbus-daemon[955066]: [session uid=1000 pid=955066] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'",
+  "dbus-daemon[955066]: [session uid=1000 pid=955066] Successfully activated service 'org.freedesktop.portal.Documents'",
+  "Ignoring invalid max threads value 4294967295 > max (100000).",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:955091): xdg-desktop-portal-WARNING **: 05:21:15.661: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:955091): xdg-desktop-portal-WARNING **: 05:21:15.661: The preferred method to match portal implementations to desktop environments is to use the portals.conf(5) configuration file",
+  "dbus-daemon[955066]: [session uid=1000 pid=955066] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.2' (uid=1000 pid=955091 comm=\"/usr/libexec/xdg-desktop-portal\" label=\"unconfined\")",
+  "dbus-daemon[955066]: [session uid=1000 pid=955066] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:955091): xdg-desktop-portal-WARNING **: 05:21:15.839: No skeleton to export",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:955091): xdg-desktop-portal-WARNING **: 05:21:15.839: Choosing gtk.portal for org.freedesktop.impl.portal.FileChooser as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:955091): xdg-desktop-portal-WARNING **: 05:21:15.841: Choosing gtk.portal for org.freedesktop.impl.portal.AppChooser as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:955091): xdg-desktop-portal-WARNING **: 05:21:15.843: Choosing gtk.portal for org.freedesktop.impl.portal.Print as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:955091): xdg-desktop-portal-WARNING **: 05:21:15.844: Choosing gtk.portal for org.freedesktop.impl.portal.Notification as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:955091): xdg-desktop-portal-WARNING **: 05:21:15.844: Choosing gtk.portal for org.freedesktop.impl.portal.Inhibit as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:955091): xdg-desktop-portal-WARNING **: 05:21:15.845: Choosing gtk.portal for org.freedesktop.impl.portal.Access as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:955091): xdg-desktop-portal-WARNING **: 05:21:15.850: Failed connect to PipeWire: Couldn't connect to PipeWire",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:955091): xdg-desktop-portal-WARNING **: 05:21:15.850: Choosing gtk.portal for org.freedesktop.impl.portal.Account as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:955091): xdg-desktop-portal-WARNING **: 05:21:15.851: Choosing gtk.portal for org.freedesktop.impl.portal.Email as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:955091): xdg-desktop-portal-WARNING **: 05:21:15.851: Choosing gtk.portal for org.freedesktop.impl.portal.DynamicLauncher as a last-resort fallback",
+  "dbus-daemon[955066]: [session uid=1000 pid=955066] Successfully activated service 'org.freedesktop.portal.Desktop'",
+  "dbus-daemon[955066]: [session uid=1000 pid=955066] Activating service name='org.a11y.Bus' requested by ':1.0' (uid=1000 pid=955067 comm=\"/home/ryan/Projects/cybertown/.worktrees/wrlforge/\" label=\"unconfined\")",
+  "dbus-daemon[955066]: [session uid=1000 pid=955066] Successfully activated service 'org.a11y.Bus'",
+  "dbus-daemon[955143]: Activating service name='org.a11y.atspi.Registry' requested by ':1.0' (uid=1000 pid=955144 comm=\"/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWeb\" label=\"unconfined\")",
+  "dbus-daemon[955143]: Successfully activated service 'org.a11y.atspi.Registry'",
+  "A connection to the bus can't be made"
+ ]
+}
