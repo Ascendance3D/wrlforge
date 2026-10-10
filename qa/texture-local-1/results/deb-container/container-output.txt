@@ -21,3 +21,9 @@ deb tests exit=0
 open-pkg-test-basic.wrl: exit=0 pass=true
 open-pkg-test-basic-gzip.wrl: exit=0 pass=true
 create: exit=0 pass=true
+pick: exit=0 pass=true
+texture: exit=0 pass=true
+appimage tests exit=0
+== uninstall
+apt remove exit=0
+ls: cannot access '/usr/bin/wrl-forge': No such file or directory

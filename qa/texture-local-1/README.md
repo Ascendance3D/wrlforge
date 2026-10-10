@@ -14,7 +14,7 @@ was served. Runner: `tools/run.sh BIN OUTDIR`; container: `tools/deb-in-containe
 | debug binary, 6 parallel Xvfb runs | 6/6 pass, 27/27 steps each (`results/debug-6x/`) |
 | AppImage, build host | 27/27 (`results/appimage-host/`, captures) |
 | `.deb` installed, clean Ubuntu 24.04 container (no Rust/Node/repo) | open plain, open gzip, create, pick, texture: all pass (`results/deb-container/`) |
-| AppImage, same container | open plain, open gzip, create pass; pick + texture were still running at commit time |
+| AppImage, same container (extract-and-run, no FUSE) | open plain, open gzip, create, pick, texture: all pass (`results/appimage-container/`) |
 | `cargo test -p wrl-forge-desktop` | 55 passed |
 
 Cases: JPG same folder; gzip `.wrl` + JPG; PNG; GIF; child folder; spaces;
