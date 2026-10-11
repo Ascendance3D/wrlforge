@@ -124,7 +124,38 @@ fn parse_args() -> Args {
     a
 }
 
+/// The X_ITE version pinned in `xite/PIN`: the default 3D renderer.
+pub fn xite_version() -> &'static str {
+    include_str!("../../xite/PIN")
+        .lines()
+        .find_map(|l| l.strip_prefix("version="))
+        .map(str::trim)
+        .unwrap_or("unknown")
+}
+
+/// APP-SHELL-0: what About shows. The version comes from Cargo; the
+/// `config_version` is what Tauri read from `tauri.conf.json`.
+pub fn app_info<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> p::command::AppInfo {
+    use p::command as c;
+    p::command::AppInfo {
+        name: c::APP_NAME.into(),
+        version: c::APP_VERSION.into(),
+        channel: c::APP_CHANNEL.into(),
+        display: c::app_display_name(),
+        config_version: app.package_info().version.to_string(),
+        identifier: app.config().identifier.clone(),
+        tauri_version: tauri::VERSION.into(),
+        renderer: format!("X_ITE {}", xite_version()),
+        license: "GPL-3.0-or-later".into(),
+    }
+}
+
 pub fn run() {
+    // APP-SHELL-0: report the identity without opening a window.
+    if std::env::args_os().nth(1).is_some_and(|a| a == "--version") {
+        println!("{}", p::command::app_display_name());
+        return;
+    }
     let args = parse_args();
     let mut context = tauri::generate_context!();
     if args.smoke_native.is_some() {
@@ -261,6 +292,11 @@ pub fn run() {
                     )
                     .map_err(|e| format!("smoke: {e}"))?;
             }
+            // APP-SHELL-0: the window shows the version until a document
+            // titles it (`window_title`).
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_title(&p::command::app_display_name());
+            }
             // NATIVE-RENDER-1 (hidden): last, so the window layout exists.
             let installed = viewport::install(
                 app.handle(),
@@ -336,6 +372,7 @@ pub fn run() {
             commands::doc_rotate,
             commands::doc_scale,
             commands::window_title,
+            commands::app_info,
             commands::theme_get,
             commands::theme_set,
             commands::smoke_plan,

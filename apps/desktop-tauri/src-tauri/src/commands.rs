@@ -473,14 +473,22 @@ pub fn smoke_finish(app: AppHandle, report: p::SmokeReport) {
     crate::smoke::finish(&app, report);
 }
 
-/// Title the main window from the session's own state: `● name — WRL Forge`.
+/// APP-SHELL-0: the version, channel and default renderer, for About.
+#[tauri::command]
+pub fn app_info(app: AppHandle) -> p::command::AppInfo {
+    crate::app_info(&app)
+}
+
+/// Title the main window from the session's own state:
+/// `● name — WRL Forge 1.4.5 (Beta)`.
 #[tauri::command]
 pub fn window_title(app: AppHandle, session: p::SessionId) -> Result<(), String> {
     let doc = app.state::<Service>().snapshot(session)?;
     let title = format!(
-        "{}{} — WRL Forge",
+        "{}{} — {}",
         if doc.dirty { "● " } else { "" },
-        doc.name
+        doc.name,
+        p::command::app_display_name()
     );
     if let Some(w) = app.get_webview_window("main") {
         w.set_title(&title).map_err(|e| e.to_string())?;

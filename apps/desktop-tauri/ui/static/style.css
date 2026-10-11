@@ -292,3 +292,16 @@ x3d-canvas.picking { cursor: crosshair; }
 .recovery-note { color: var(--wf-warning-fg); }
 .recovery-actions { display: flex; justify-content: flex-end; }
 
+
+/* APP-SHELL-0: Help → About (non-modal; same surface as the recovery dialog). */
+.about-dialog { position: fixed; left: 50%; top: 4.2rem; transform: translateX(-50%); z-index: 50; width: min(32rem, 92vw);
+  padding: .7rem .9rem; background: var(--wf-surface-raised); border: 1px solid var(--wf-border-control); border-radius: 4px;
+  box-shadow: 0 4px 18px var(--wf-gizmo-halo); color: var(--wf-text-primary); }
+.about-dialog h3 { margin: 0 0 .3rem; font-size: 1rem; color: var(--wf-text-heading); }
+.about-dialog p { margin: 0 0 .5rem; font-size: .86rem; }
+.about-identity { font-weight: 600; color: var(--wf-text-brand); }
+.about-facts { display: grid; grid-template-columns: max-content 1fr; gap: .15rem .8rem; margin: 0 0 .5rem; font-size: .84rem; }
+.about-facts dt { color: var(--wf-text-muted); }
+.about-facts dd { margin: 0; overflow-wrap: anywhere; }
+.about-warning { color: var(--wf-warning-fg); }
+.about-actions { display: flex; justify-content: flex-end; }

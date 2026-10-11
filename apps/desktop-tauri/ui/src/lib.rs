@@ -4,7 +4,9 @@
 //! The UI holds NO document authority: it renders projections the Rust
 //! backend computes and sends view edits back. See `editor.rs`.
 
+mod about;
 mod camera;
+mod command;
 mod create;
 mod editor;
 mod extrusion;
@@ -25,11 +27,16 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wrlforge_desktop_protocol as p;
 
+use crate::command::CommandButton;
 use crate::ui::ui;
+use wrlforge_desktop_protocol::command::{self as cmd, CommandId};
 
 #[wasm_bindgen(start)]
 pub fn start() {
     recovery::init();
+    // Before mount: the About state must not belong to a render effect
+    // (an effect re-run would dispose a signal it created).
+    about::about();
     leptos::mount::mount_to_body(App);
     pick::install();
     gizmo::install();
@@ -62,68 +69,35 @@ pub fn start() {
     });
 }
 
-fn on_keydown(ev: web_sys::KeyboardEvent) {
-    if !(ev.ctrl_key() || ev.meta_key()) {
-        return;
-    }
-    match ev.key().to_lowercase().as_str() {
-        "z" => {
-            ev.prevent_default();
-            spawn_local(editor::history(!ev.shift_key()));
-        }
-        "y" => {
-            ev.prevent_default();
-            spawn_local(editor::history(false));
-        }
-        "s" => {
-            ev.prevent_default();
-            ui::save(ev.shift_key());
-        }
-        "o" => {
-            ev.prevent_default();
-            ui::open();
-        }
-        "n" => {
-            ev.prevent_default();
-            ui::new_world();
-        }
-        _ => {}
-    }
-}
-
-/// Native textarea undo would edit the widget behind the document's back.
+/// Native textarea undo would edit the widget behind the document's back:
+/// it runs the registry's Undo / Redo instead.
 fn on_beforeinput(ev: web_sys::InputEvent) {
-    match ev.input_type().as_str() {
-        "historyUndo" => {
-            ev.prevent_default();
-            spawn_local(editor::history(true));
-        }
-        "historyRedo" => {
-            ev.prevent_default();
-            spawn_local(editor::history(false));
-        }
-        _ => {}
-    }
+    let id = match ev.input_type().as_str() {
+        "historyUndo" => CommandId::EditUndo,
+        "historyRedo" => CommandId::EditRedo,
+        _ => return,
+    };
+    ev.prevent_default();
+    command::run(id);
 }
 
 #[component]
 fn App() -> impl IntoView {
     let u = ui();
     let has_doc = move || u.doc.with(|d| d.is_some());
+    // APP-SHELL-0: every File / Edit button runs through the registry.
     view! {
         <div class="app">
             <header class="toolbar" role="toolbar" aria-label="File and edit commands">
-                <span class="brand">"WRL Forge"</span>
-                <button id="btn-new" title="Start a new, empty VRML97 world (Ctrl+N)" on:click=move |_| ui::new_world()>"New World"</button>
-                <button id="btn-open" title="Open a .wrl / .wrz file (Ctrl+O)" on:click=move |_| ui::open()>"Open…"</button>
-                <button id="btn-save" disabled=move || !has_doc() on:click=move |_| ui::save(false)>"Save"</button>
-                <button id="btn-save-as" class="secondary" disabled=move || !has_doc() on:click=move |_| ui::save(true)>"Save As…"</button>
-                <button id="btn-close" class="secondary" title="Close the document (refused while it has unsaved changes)" disabled=move || !has_doc() on:click=move |_| ui::close()>"Close"</button>
+                <span class="brand" id="app-identity">{cmd::app_display_name()}</span>
+                <CommandButton command=CommandId::FileNewWorld dom_id="btn-new"/>
+                <CommandButton command=CommandId::FileOpen dom_id="btn-open"/>
+                <CommandButton command=CommandId::FileSave dom_id="btn-save"/>
+                <CommandButton command=CommandId::FileSaveAs dom_id="btn-save-as" secondary=true/>
+                <CommandButton command=CommandId::FileClose dom_id="btn-close" secondary=true/>
                 <span class="sep"></span>
-                <button id="btn-undo" class="secondary" disabled=move || !u.can_undo.get()
-                    on:click=move |_| spawn_local(editor::history(true))>"Undo"</button>
-                <button id="btn-redo" class="secondary" disabled=move || !u.can_redo.get()
-                    on:click=move |_| spawn_local(editor::history(false))>"Redo"</button>
+                <CommandButton command=CommandId::EditUndo dom_id="btn-undo" secondary=true/>
+                <CommandButton command=CommandId::EditRedo dom_id="btn-redo" secondary=true/>
                 <span class="sep"></span>
                 <create::CreateMenu/>
                 <span class="spacer"></span>
@@ -132,12 +106,14 @@ fn App() -> impl IntoView {
                 <span class="profile" title="Profiles are not yet migrated to Rust">
                     "Profile: Generic VRML97 · Mall / World profiles not migrated"
                 </span>
+                <span class="sep"></span>
+                <CommandButton command=CommandId::HelpAbout dom_id="btn-about" secondary=true text="About"/>
             </header>
             {move || u.conflict.get().map(|reason| view! {
                 <div class="banner" role="alert">
                     <span>{format!("The file changed on disk ({reason}). Your buffer was NOT written.")}</span>
-                    <button on:click=move |_| ui::reload()>"Reload from disk (discard my edits)"</button>
-                    <button class="secondary" on:click=move |_| ui::save(true)>"Save mine As…"</button>
+                    <CommandButton command=CommandId::FileReload dom_id="btn-reload" text="Reload from disk (discard my edits)"/>
+                    <CommandButton command=CommandId::FileSaveAs dom_id="btn-conflict-save-as" secondary=true text="Save mine As…"/>
                     <button class="secondary" on:click=move |_| u.conflict.set(None)>"Dismiss"</button>
                 </div>
             })}
@@ -160,7 +136,7 @@ fn App() -> impl IntoView {
                             readonly=move || !has_doc()
                             on:input=move |_| editor::on_input()
                             on:beforeinput=on_beforeinput
-                            on:keydown=on_keydown
+                            on:keydown=command::on_keydown
                             on:keyup=move |_| editor::update_cursor()
                             on:click=move |_| editor::update_cursor()
                             on:select=move |_| editor::update_cursor()
@@ -178,6 +154,8 @@ fn App() -> impl IntoView {
             <extrusion::OutlineEditor/>
             // RUST-STAB-1: the startup recovery choice (hidden when empty).
             <recovery::RecoveryDialog/>
+            // APP-SHELL-0: Help → About (hidden until opened).
+            <about::AboutDialog/>
             <footer class="statusbar" role="status">
                 <span>{move || u.doc.with(|d| d.as_ref().map(|d| d.name.clone()).unwrap_or_else(|| "No document".into()))}</span>
                 <span>{move || if u.dirty.get() { "● Modified" } else { "Saved" }}</span>
