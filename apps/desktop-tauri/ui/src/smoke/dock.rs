@@ -98,6 +98,14 @@ pub(super) fn probes_ok() -> bool {
     })
 }
 
+fn active_id() -> String {
+    web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.active_element())
+        .map(|e| e.id())
+        .unwrap_or_default()
+}
+
 fn layout() -> Layout {
     dock::dock().layout.get_untracked()
 }
@@ -566,6 +574,13 @@ async fn main_phase(c: &Plan, r: &mut R) -> Option<()> {
             && host_state(PanelId::Viewport) == "inactive",
         format!("{:?}", l.group_of(PanelId::Viewport)),
     );
+    // UI-MENU-1 (PR #142 review): the moved tab keeps the keyboard focus.
+    let moved = wait_ms(1000, || (active_id() == "dock-tab-inspector").then_some(())).await;
+    r.step(
+        "after a drop the moved tab (Inspector) has the keyboard focus, not the document body",
+        moved.is_some(),
+        active_id(),
+    );
     let k = keep().await?;
     r.step(
         "center drop: text, revision, dirty, history, selections, scroll, canvas, preview unchanged",
@@ -958,9 +973,28 @@ async fn main_phase(c: &Plan, r: &mut R) -> Option<()> {
     let rev = CORE.with_borrow(|c| c.revision);
     let tab: HtmlElement = crate::element_by_id("dock-tab-inspector")?;
     let _ = tab.focus();
+    let group: Vec<PanelId> = layout()
+        .group_of(PanelId::Inspector)
+        .map(|(g, _)| g)
+        .unwrap_or_default();
     key("Delete").await?;
     let hidden =
         !layout().is_visible(PanelId::Inspector) && host_state(PanelId::Inspector) == "hidden";
+    // UI-MENU-1 (PR #142 review): the focus goes to the group's new active
+    // tab (or the Source tab when the group is gone), never to the body.
+    let now = active_id();
+    let next_ok = now.strip_prefix("dock-tab-").is_some_and(|slug| {
+        group
+            .iter()
+            .filter(|p| **p != PanelId::Inspector)
+            .any(|p| p.slug() == slug && layout().is_on_screen(*p))
+            || (slug == PanelId::Source.slug() && group.len() == 1)
+    });
+    r.step(
+        "Delete on a focused tab moves the focus to the tab now active in its group (not the document body)",
+        hidden && next_ok,
+        format!("group {group:?} focus {now:?}"),
+    );
     menu("layout-panel-inspector").await?;
     let input2: web_sys::HtmlInputElement = el("tr[data-field=\"translation\"] input")?
         .dyn_into()

@@ -429,6 +429,49 @@ async fn activation(r: &mut R) -> Option<()> {
             && probes_ok(),
         st(&after),
     );
+    tab_focus(r).await?;
+    Some(())
+}
+
+/// PR #142 review: hiding a panel whose tab has the focus moves the focus to
+/// the tab now active in the same group (Delete key and View menu).
+async fn tab_focus(r: &mut R) -> Option<()> {
+    use p::layout::PanelId;
+    let before = doc_state().await;
+    choose("view", CommandId::ViewPresetModeling).await?;
+    ipc::sleep(300).await;
+    // Modeling: Diagnostics and Source share one tab group.
+    let tab: HtmlElement = crate::element_by_id("dock-tab-diagnostics")?;
+    let _ = tab.focus();
+    key("Delete").await?;
+    let by_key = active_id();
+    crate::command::run(CommandId::ViewShowDiagnostics);
+    ipc::sleep(300).await;
+    let tab: HtmlElement = crate::element_by_id("dock-tab-diagnostics")?;
+    let _ = tab.focus();
+    open_click("view").await?;
+    real_click_id("mi-panel-diagnostics").await?;
+    ipc::sleep(300).await;
+    let by_menu = active_id();
+    let hidden = !crate::dock::shown_untracked().contains(PanelId::Diagnostics);
+    crate::command::run(CommandId::ViewShowDiagnostics);
+    choose("view", CommandId::ViewPresetSource).await?;
+    ipc::sleep(300).await;
+    settle().await;
+    let after = doc_state().await;
+    r.step(
+        "a focused tab hidden by Delete or by View → Diagnostics passes the focus to the group's new active tab (Source), not the body",
+        by_key == "dock-tab-source" && by_menu == "dock-tab-source" && hidden,
+        format!("key {by_key:?} menu {by_menu:?}"),
+    );
+    r.step(
+        "preset changes and tab hiding change no document state; no panel object is recreated",
+        before.as_ref().map(|d| (d.revision, d.view_hash, d.dirty))
+            == after.as_ref().map(|d| (d.revision, d.view_hash, d.dirty))
+            && probes_ok(),
+        st(&after),
+    );
+    let _ = textarea()?.focus();
     Some(())
 }
 

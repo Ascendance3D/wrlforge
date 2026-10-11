@@ -273,10 +273,37 @@ pub fn show(p: PanelId) {
 }
 
 /// `view.hidePanel.*`. The panel stays mounted; nothing is applied.
+///
+/// UI-MENU-1 (PR #142 review): when a tab of the hidden panel's group had
+/// the keyboard focus, the re-keyed tab strip destroys that element. The
+/// focus then goes to the tab that is now active in the same group, never to
+/// the document body; if the group is gone, to the Source tab.
 pub fn hide(p: PanelId) {
+    let focused = focused_tab_panel();
+    let siblings: Vec<PanelId> = dock()
+        .layout
+        .with_untracked(|l| l.group_of(p).map(|(g, _)| g).unwrap_or_default());
+    let had_focus = focused.is_some_and(|f| siblings.contains(&f));
     if let Err(e) = change(|l| l.hide(p)) {
         crate::ui::flash(&format!("{} not hidden: {e}.", p.title()));
+        return;
     }
+    if had_focus {
+        let next = dock().layout.with_untracked(|l| {
+            siblings
+                .iter()
+                .filter(|s| **s != p)
+                .find_map(|s| l.group_of(*s).map(|(_, active)| active))
+        });
+        focus_panel_tab(next.unwrap_or(PanelId::Source));
+    }
+}
+
+/// The panel whose dock tab has the keyboard focus, if any.
+fn focused_tab_panel() -> Option<PanelId> {
+    let id = web_sys::window()?.document()?.active_element()?.id();
+    let slug = id.strip_prefix("dock-tab-")?;
+    PanelId::ALL.into_iter().find(|p| p.slug() == slug)
 }
 
 /// `view.focus.*`: bring the panel's tab to the front and focus it.
@@ -579,6 +606,9 @@ fn on_tab_up(ev: PointerEvent) {
         Some(Ok(n)) => {
             STATS.with_borrow_mut(|s| s.drops += 1);
             apply(n, true);
+            // UI-MENU-1 (PR #142 review): the drop re-keys the tab strips and
+            // destroys the tab that held the focus; give it to the moved tab.
+            focus_panel_tab(t.panel);
         }
         _ => {
             // Invalid or no target: the layout is unchanged.
