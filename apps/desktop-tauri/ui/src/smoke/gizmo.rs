@@ -97,7 +97,7 @@ fn cam_detail(t: &Option<ipc::CameraTrace>, res: &Option<ipc::CameraResult>) -> 
 }
 
 /// An empty viewport point (no object, no handle) for navigation input.
-fn empty_point() -> Option<(f64, f64)> {
+pub(super) fn empty_point() -> Option<(f64, f64)> {
     let vp = viewport()?.get_bounding_client_rect();
     Some((vp.left() + vp.width() * 0.15, vp.top() + vp.height() * 0.2))
 }
@@ -154,7 +154,7 @@ async fn resize(w: i32, h: i32) -> Option<()> {
 }
 
 /// One REAL X input action at client point (`x`, `y`), calibrated.
-async fn real(action: &str, x: f64, y: f64) -> Result<String, String> {
+pub(super) async fn real(action: &str, x: f64, y: f64) -> Result<String, String> {
     let (dx, dy) = REAL.get().ok_or("real pointer input is not calibrated")?;
     #[derive(serde::Serialize)]
     struct A<'a> {
@@ -175,16 +175,16 @@ async fn real(action: &str, x: f64, y: f64) -> Result<String, String> {
 
 /// The source state a drag must not touch until it is released.
 #[derive(Debug, PartialEq, Clone)]
-struct Source {
-    revision: u64,
-    dirty: bool,
-    can_undo: bool,
-    can_redo: bool,
-    text: String,
-    view_hash: u64,
+pub(super) struct Source {
+    pub(super) revision: u64,
+    pub(super) dirty: bool,
+    pub(super) can_undo: bool,
+    pub(super) can_redo: bool,
+    pub(super) text: String,
+    pub(super) view_hash: u64,
 }
 
-async fn source() -> Option<Source> {
+pub(super) async fn source() -> Option<Source> {
     let s = snapshot().await?;
     Some(Source {
         revision: s.revision,
@@ -221,7 +221,7 @@ async fn gz_ready(ms: u32) -> Option<crate::gizmo::Target> {
 
 /// Wait until the camera has not moved for a few frames (a preview reload
 /// re-binds the viewpoint with X_ITE's transition animation).
-async fn still_camera() -> Option<()> {
+pub(super) async fn still_camera() -> Option<()> {
     let mut last = ipc::gizmo_camera()?;
     let mut same = 0;
     for _ in 0..80 {
@@ -242,7 +242,7 @@ async fn still_camera() -> Option<()> {
 
 /// Orbit the camera with a REAL drag on empty viewport space (Examine
 /// navigation), then wait until it is still. Returns (before, after).
-async fn orbit() -> Option<(gz::Camera, gz::Camera)> {
+pub(super) async fn orbit() -> Option<(gz::Camera, gz::Camera)> {
     ipc::sleep(REAL_CLICK_GAP_MS).await;
     still_camera().await?;
     let vp = viewport()?.get_bounding_client_rect();
@@ -269,18 +269,18 @@ fn rendered() -> Option<[f64; 3]> {
     crate::gizmo::rendered()
 }
 
-async fn pixel(x: f64, y: f64) -> Option<[u8; 3]> {
+pub(super) async fn pixel(x: f64, y: f64) -> Option<[u8; 3]> {
     let v = ipc::preview_pixel(x, y).await?;
     (v.len() == 3).then(|| [v[0], v[1], v[2]])
 }
 
 /// The scene background: a viewport point far from every object.
-async fn background() -> Option<[u8; 3]> {
+pub(super) async fn background() -> Option<[u8; 3]> {
     let r = viewport()?.get_bounding_client_rect();
     pixel(r.left() + 6.0, r.top() + 6.0).await
 }
 
-fn differs(a: [u8; 3], b: [u8; 3]) -> bool {
+pub(super) fn differs(a: [u8; 3], b: [u8; 3]) -> bool {
     a.iter()
         .zip(b)
         .map(|(x, y)| (*x as i32 - y as i32).abs())
@@ -288,7 +288,7 @@ fn differs(a: [u8; 3], b: [u8; 3]) -> bool {
         > 24
 }
 
-fn class_of(id: &str) -> String {
+pub(super) fn class_of(id: &str) -> String {
     crate::element_by_id::<web_sys::Element>(id)
         .and_then(|e| e.get_attribute("class"))
         .unwrap_or_default()
@@ -551,7 +551,7 @@ async fn drag_commit(
     st
 }
 
-async fn new_world_with_box(tag: &str, r: &mut R) -> Option<()> {
+pub(super) async fn new_world_with_box(tag: &str, r: &mut R) -> Option<()> {
     let u = ui();
     let old = CORE.with_borrow(|c| c.session);
     click("btn-new")?;
@@ -1493,7 +1493,7 @@ async fn twins_and_viewpoint(tag: &str, r: &mut R) -> Option<()> {
 
 /// Click the Scene Tree item `label` of the CURRENT analysis (tree_select
 /// refuses an outdated one), retrying while the tree catches up.
-async fn tree_click(label: &str, until: impl Fn() -> bool) -> bool {
+pub(super) async fn tree_click(label: &str, until: impl Fn() -> bool) -> bool {
     let rev = CORE.with_borrow(|c| c.revision);
     for _ in 0..3 {
         wait_ms(3000, || {

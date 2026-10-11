@@ -158,6 +158,23 @@ pub(crate) fn pick_outcome(
 
 /// UTF-16 units the canonical text has before its preview text: 1 for a
 /// leading U+FEFF (the preview omits it), else 0.
+/// The protocol's gizmo tool / axis as the planner's.
+fn manip_tool(t: p::gizmo::Tool) -> manipulate::Tool {
+    match t {
+        p::gizmo::Tool::Move => manipulate::Tool::Move,
+        p::gizmo::Tool::Rotate => manipulate::Tool::Rotate,
+        p::gizmo::Tool::Scale => manipulate::Tool::Scale,
+    }
+}
+
+fn manip_axis(a: p::gizmo::Axis) -> manipulate::Axis {
+    match a {
+        p::gizmo::Axis::X => manipulate::Axis::X,
+        p::gizmo::Axis::Y => manipulate::Axis::Y,
+        p::gizmo::Axis::Z => manipulate::Axis::Z,
+    }
+}
+
 fn preview_offset(text: &str) -> u64 {
     u64::from(text.starts_with('\u{FEFF}'))
 }
@@ -920,6 +937,7 @@ impl Service {
                     p::AddFieldValue::Bool { value } => mf_edit::AddValue::Bool(*value),
                     p::AddFieldValue::Number { value } => mf_edit::AddValue::Number(value.clone()),
                     p::AddFieldValue::List { tuples } => mf_edit::AddValue::List(tuples.clone()),
+                    p::AddFieldValue::Tuple { values } => mf_edit::AddValue::Tuple(values.clone()),
                 },
             };
             let plan = mf_edit::plan_add_field(s.doc.text(), &req);
@@ -986,19 +1004,30 @@ impl Service {
         let Some((from, to)) = node_span(&r.item) else {
             return Ok(p::TranslateTargetOutcome::Refused {
                 reason: field_edit::reason::NOT_A_NODE.into(),
-                message: "Select an object (a Transform) to move it.".into(),
+                message: "Select an object (a Transform) to change it.".into(),
             });
         };
-        Ok(match manipulate::translate_target(&text, from, to) {
-            Ok(t) => p::TranslateTargetOutcome::Ready {
-                revision: current,
-                item: r.item.clone(),
-                def_name: t.def,
-                root_index: t.root_index as u32,
-                preview_from: from - preview_offset(&text),
-                preview_to: to - preview_offset(&text),
-                translation: t.translation,
-                origin: t.origin,
+        Ok(
+            match manipulate::manip_target(&text, from, to, manip_tool(r.tool)) {
+                Ok(t) => p::TranslateTargetOutcome::Ready {
+                    revision: current,
+                    item: r.item.clone(),
+                    def_name: t.def,
+                    root_index: t.root_index as u32,
+                    preview_from: from - preview_offset(&text),
+                    preview_to: to - preview_offset(&text),
+                    translation: t.translation,
+                    origin: t.origin,
+                    rotation: t.rotation,
+                    scale: t.scale,
+                    scale_orientation: t.scale_orientation,
+                    center: t.center,
+                    pivot: t.pivot,
+                },
+                Err(e) => p::TranslateTargetOutcome::Refused {
+                    reason: e.reason.into(),
+                    message: e.message,
+                },
             },
             Err(e) => p::TranslateTargetOutcome::Refused {
                 reason: e.reason.into(),
@@ -1033,10 +1062,10 @@ impl Service {
         let Some((from, to)) = node_span(&r.item) else {
             return Ok(refused(field_edit::reason::NOT_A_NODE, "Not an object."));
         };
-        if let Err(e) = manipulate::translate_target(&text, from, to) {
+        if let Err(e) = manipulate::manip_target(&text, from, to, manip_tool(r.tool)) {
             return Ok(refused(e.reason, &e.message));
         }
-        let unprovable = "The preview cannot prove which rendered object is this Transform, so it cannot be moved here. Use the Inspector.";
+        let unprovable = "The preview cannot prove which rendered object is this Transform, so it cannot be changed here. Use the Inspector.";
         let snap = &r.snapshot;
         let (Some(shape), "found", 1..=MAX_PICK_GRAPH) = (
             snap.shape.as_deref(),
@@ -1119,57 +1148,129 @@ impl Service {
             let Some((node_from, node_to)) = node_span(&r.item) else {
                 return refused(field_edit::reason::NOT_A_NODE, "Not an object.".into());
             };
-            let axis = match r.axis {
-                p::gizmo::Axis::X => manipulate::Axis::X,
-                p::gizmo::Axis::Y => manipulate::Axis::Y,
-                p::gizmo::Axis::Z => manipulate::Axis::Z,
-            };
             let (plan, text) = manipulate::plan_translate(
                 s.doc.text(),
                 node_from,
                 node_to,
-                axis,
+                manip_axis(r.axis),
                 r.value,
                 r.decimals,
             );
-            match plan {
-                field_edit::Plan::Unchanged => p::TranslateOutcome::Unchanged,
-                field_edit::Plan::Refused {
-                    reason, message, ..
-                } => refused(reason, message.unwrap_or_else(|| reason.to_string())),
-                field_edit::Plan::Ready {
-                    edits, new_text, ..
-                } => {
-                    // The edit lies inside the node: its start is fixed and
-                    // its end moves by the length change.
-                    let delta: i64 = edits
-                        .iter()
-                        .map(|e| e.insert.encode_utf16().count() as i64 - (e.to - e.from) as i64)
-                        .sum();
-                    let item = format!("node-{node_from}-{}", node_to as i64 + delta);
-                    let edits: Vec<Edit> = edits
-                        .into_iter()
-                        .map(|e| Edit {
-                            from: e.from,
-                            to: e.to,
-                            insert: e.insert,
-                        })
-                        .collect();
-                    match s
-                        .doc
-                        .apply_source_transaction(r.base_revision, &edits, &new_text)
-                    {
-                        Ok(a) => p::TranslateOutcome::Applied {
-                            state: Self::state(s, a),
-                            view: s.doc.view(),
-                            item,
-                            text: text.unwrap_or_default(),
-                        },
-                        Err(e) => refused(field_edit::reason::TRANSACTION_REJECTED, e.to_string()),
-                    }
+            Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text)
+        })
+    }
+
+    /// VISUAL-4B: commit one rotation drag (`rotation := Rot(axis, delta) ·
+    /// rotation`, about the pivot). Same proof and transaction rules as
+    /// `translate`.
+    pub fn rotate(&self, r: &p::RotateRequest) -> Result<p::TranslateOutcome, String> {
+        self.with(r.session, |s| {
+            let (node_from, node_to) = match Self::manip_preflight(s, r.base_revision, &r.item) {
+                Ok(span) => span,
+                Err(o) => return o,
+            };
+            let (plan, text) = manipulate::plan_rotate(
+                s.doc.text(),
+                node_from,
+                node_to,
+                manip_axis(r.axis),
+                r.delta,
+            );
+            Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text)
+        })
+    }
+
+    /// VISUAL-4B: commit one scale drag (one component or uniform).
+    pub fn scale(&self, r: &p::ScaleRequest) -> Result<p::TranslateOutcome, String> {
+        self.with(r.session, |s| {
+            let (node_from, node_to) = match Self::manip_preflight(s, r.base_revision, &r.item) {
+                Ok(span) => span,
+                Err(o) => return o,
+            };
+            let (plan, text) = manipulate::plan_scale(
+                s.doc.text(),
+                node_from,
+                node_to,
+                r.axis.map(manip_axis),
+                r.factor,
+            );
+            Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text)
+        })
+    }
+
+    /// The revision and item checks every gizmo commit starts with.
+    fn manip_preflight(
+        s: &Session,
+        base_revision: u64,
+        item: &str,
+    ) -> Result<(u64, u64), p::TranslateOutcome> {
+        if base_revision != s.doc.revision() {
+            return Err(p::TranslateOutcome::Refused {
+                reason: "parse-session-is-stale".into(),
+                message: format!(
+                    "The document changed (revision {} → {}); the object was not changed.",
+                    base_revision,
+                    s.doc.revision()
+                ),
+            });
+        }
+        node_span(item).ok_or_else(|| p::TranslateOutcome::Refused {
+            reason: field_edit::reason::NOT_A_NODE.into(),
+            message: "Not an object.".into(),
+        })
+    }
+
+    /// Apply a gizmo plan as ONE transaction whose result must equal the
+    /// planned, round-trip-verified text.
+    fn apply_manip(
+        s: &mut Session,
+        base_revision: u64,
+        node_from: u64,
+        node_to: u64,
+        plan: field_edit::Plan,
+        text: Option<String>,
+    ) -> p::TranslateOutcome {
+        let refused = |reason: &str, message: String| p::TranslateOutcome::Refused {
+            reason: reason.into(),
+            message,
+        };
+        match plan {
+            field_edit::Plan::Unchanged => p::TranslateOutcome::Unchanged,
+            field_edit::Plan::Refused {
+                reason, message, ..
+            } => refused(reason, message.unwrap_or_else(|| reason.to_string())),
+            field_edit::Plan::Ready {
+                edits, new_text, ..
+            } => {
+                // The edits lie inside the node: its start is fixed and its
+                // end moves by the length change.
+                let delta: i64 = edits
+                    .iter()
+                    .map(|e| e.insert.encode_utf16().count() as i64 - (e.to - e.from) as i64)
+                    .sum();
+                let item = format!("node-{node_from}-{}", node_to as i64 + delta);
+                let edits: Vec<Edit> = edits
+                    .into_iter()
+                    .map(|e| Edit {
+                        from: e.from,
+                        to: e.to,
+                        insert: e.insert,
+                    })
+                    .collect();
+                match s
+                    .doc
+                    .apply_source_transaction(base_revision, &edits, &new_text)
+                {
+                    Ok(a) => p::TranslateOutcome::Applied {
+                        state: Self::state(s, a),
+                        view: s.doc.view(),
+                        item,
+                        text: text.unwrap_or_default(),
+                    },
+                    Err(e) => refused(field_edit::reason::TRANSACTION_REJECTED, e.to_string()),
                 }
             }
-        })
+        }
     }
 
     /// Preview input: the canonical text, minus a leading U+FEFF. X_ITE's
@@ -2579,8 +2680,326 @@ mod tests {
             session: id,
             revision: rev,
             item: item.into(),
+            tool: p::gizmo::Tool::Move,
         })
         .unwrap()
+    }
+
+    // ---- VISUAL-4B: rotate and scale ----------------------------------------
+
+    fn target_for(
+        svc: &Service,
+        id: u64,
+        rev: u64,
+        item: &str,
+        tool: p::gizmo::Tool,
+    ) -> p::TranslateTargetOutcome {
+        svc.translate_target(&p::TranslateTargetRequest {
+            session: id,
+            revision: rev,
+            item: item.into(),
+            tool,
+        })
+        .unwrap()
+    }
+
+    /// A Ready target with its revision set to 0 (to compare two sessions).
+    fn at_rev0(o: p::TranslateTargetOutcome) -> p::TranslateTargetOutcome {
+        match o {
+            p::TranslateTargetOutcome::Ready {
+                item,
+                def_name,
+                root_index,
+                preview_from,
+                preview_to,
+                translation,
+                origin,
+                rotation,
+                scale,
+                scale_orientation,
+                center,
+                pivot,
+                ..
+            } => p::TranslateTargetOutcome::Ready {
+                revision: 0,
+                item,
+                def_name,
+                root_index,
+                preview_from,
+                preview_to,
+                translation,
+                origin,
+                rotation,
+                scale,
+                scale_orientation,
+                center,
+                pivot,
+            },
+            other => other,
+        }
+    }
+
+    fn rot(
+        svc: &Service,
+        id: u64,
+        rev: u64,
+        item: &str,
+        axis: p::gizmo::Axis,
+        d: f64,
+    ) -> p::TranslateOutcome {
+        svc.rotate(&p::RotateRequest {
+            session: id,
+            base_revision: rev,
+            item: item.into(),
+            axis,
+            delta: d,
+        })
+        .unwrap()
+    }
+
+    fn scl(
+        svc: &Service,
+        id: u64,
+        rev: u64,
+        item: &str,
+        axis: Option<p::gizmo::Axis>,
+        f: f64,
+    ) -> p::TranslateOutcome {
+        svc.scale(&p::ScaleRequest {
+            session: id,
+            base_revision: rev,
+            item: item.into(),
+            axis,
+            factor: f,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn ui_preview_rotation_equals_the_committed_rule() {
+        // The UI shows `protocol::gizmo::rotate_about` while dragging; Rust
+        // commits `manipulate::rotate_about`. They must be the same rule.
+        use p::gizmo::Axis as A;
+        for old in [
+            [0.0, 1.0, 0.0, 0.0],
+            [1.0, 2.0, -0.5, 0.8],
+            [0.0, 0.0, -1.0, 3.0],
+        ] {
+            for (pa, ma) in [
+                (A::X, manipulate::Axis::X),
+                (A::Y, manipulate::Axis::Y),
+                (A::Z, manipulate::Axis::Z),
+            ] {
+                for d in [-2.0, 0.3, 4.0] {
+                    let a = p::gizmo::rotate_about(old, pa, d).unwrap();
+                    let b = manipulate::rotate_about(old, ma, d).unwrap();
+                    assert!(
+                        a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-12),
+                        "{a:?} {b:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rotate_scale_undo_redo_save_reopen_is_exact() {
+        use p::gizmo::{Axis as A, Tool};
+        let dir = tmp("visual4b");
+        let bodies = [
+            ("lf", "#VRML V2.0 utf8\n# keep me\nDEF Kept Group {}\n"),
+            (
+                "crlf",
+                "#VRML V2.0 utf8\r\n# keep me ✓\r\nDEF Kept Group {}\r\n",
+            ),
+            (
+                "bom",
+                "\u{FEFF}#VRML V2.0 utf8\r\n# Tëst 😀\r\nDEF Kept Group {}\r\n",
+            ),
+        ];
+        for (tag, src) in bodies {
+            let path = dir.join(format!("{tag}.wrl"));
+            fs::write(&path, src).unwrap();
+            let svc = Service::new(clock);
+            let id = opened(svc.open_path(&path)).session;
+            let (st, item, _) = created(create(&svc, id, 0, p::Primitive::Box));
+            let created_text = svc.text(id).unwrap();
+            let mut rev = st.revision;
+            let mut item = item;
+            let p::TranslateTargetOutcome::Ready {
+                rotation,
+                scale,
+                pivot,
+                ..
+            } = target_for(&svc, id, rev, &item, Tool::Rotate)
+            else {
+                panic!("not a rotate target")
+            };
+            assert_eq!(
+                (rotation, scale, pivot),
+                ([0.0, 1.0, 0.0, 0.0], [1.0; 3], [0.0; 3])
+            );
+            let mut texts = vec![svc.text(id).unwrap()];
+            type Step = fn(&Service, u64, u64, &str) -> p::TranslateOutcome;
+            let steps: [Step; 7] = [
+                |s, id, r, i| rot(s, id, r, i, A::Y, 0.5),
+                |s, id, r, i| rot(s, id, r, i, A::X, 0.25),
+                |s, id, r, i| rot(s, id, r, i, A::Z, -1.0),
+                |s, id, r, i| scl(s, id, r, i, Some(A::X), 2.0),
+                |s, id, r, i| scl(s, id, r, i, Some(A::Y), 0.5),
+                |s, id, r, i| scl(s, id, r, i, Some(A::Z), 3.0),
+                |s, id, r, i| scl(s, id, r, i, None, 1.5),
+            ];
+            for step in steps {
+                let (st, it, _) = moved(step(&svc, id, rev, &item));
+                assert_eq!(st.revision, rev + 1, "one revision per drag");
+                rev = st.revision;
+                item = it;
+                texts.push(svc.text(id).unwrap());
+            }
+            let fin = svc.text(id).unwrap();
+            assert!(fin.contains("scale 3 0.75 4.5"), "{fin}");
+            assert!(fin.contains("translation 0 0 0"));
+            // Only the Box's rotation and scale lines changed.
+            let changed: Vec<_> = created_text
+                .split_inclusive('\n')
+                .zip(fin.split_inclusive('\n'))
+                .filter(|(a, b)| a != b)
+                .map(|(a, _)| a.trim().split(' ').next().unwrap().to_string())
+                .collect();
+            assert_eq!(changed, ["rotation", "scale"]);
+            // Stale revision: refused, nothing changes.
+            assert!(matches!(
+                rot(&svc, id, rev - 1, &item, A::X, 1.0),
+                p::TranslateOutcome::Refused { .. }
+            ));
+            assert!(matches!(
+                scl(&svc, id, rev - 1, &item, None, 2.0),
+                p::TranslateOutcome::Refused { .. }
+            ));
+            assert_eq!(svc.text(id).unwrap(), fin);
+            // One undo step per drag, each restoring the exact previous text.
+            for want in texts.iter().rev().skip(1) {
+                svc.undo(id).unwrap();
+                assert_eq!(&svc.text(id).unwrap(), want);
+            }
+            svc.undo(id).unwrap();
+            assert_eq!(svc.text(id).unwrap(), src);
+            svc.redo(id).unwrap();
+            for want in texts.iter().skip(1) {
+                svc.redo(id).unwrap();
+                assert_eq!(&svc.text(id).unwrap(), want);
+            }
+            // Save As → reopen: the same bytes and the same frame.
+            let out = dir.join(format!("{tag}-saved.wrl"));
+            assert!(matches!(
+                svc.save_as(id, &out),
+                p::SaveOutcome::Saved { .. }
+            ));
+            assert_eq!(fs::read_to_string(&out).unwrap(), fin);
+            assert_eq!(fs::read_to_string(&path).unwrap(), src);
+            let svc2 = Service::new(clock);
+            let d2 = opened(svc2.open_path(&out));
+            assert_eq!(
+                target_for(&svc2, d2.session, 0, &item, Tool::Scale),
+                at_rev0(target_for(
+                    &svc,
+                    id,
+                    svc.snapshot(id).unwrap().revision,
+                    &item,
+                    Tool::Scale
+                ))
+            );
+        }
+    }
+
+    #[test]
+    fn rotate_scale_refusals_change_nothing() {
+        use p::gizmo::{Axis as A, Tool};
+        let dir = tmp("visual4b-refuse");
+        let src = "#VRML V2.0 utf8\nDEF A Transform { translation 1 0 0 }\nDEF B Transform { rotation 0 1 0 0 scale 1 -1 1 }\nDEF C Transform { rotation 0 1 0 0 scale 1 1 1 }\nGroup { children USE C }\nTransform { children DEF N Transform { rotation 0 0 1 0 scale 1 1 1 } }\n";
+        let path = dir.join("r.wrl");
+        fs::write(&path, src).unwrap();
+        let svc = Service::new(clock);
+        let id = opened(svc.open_path(&path)).session;
+        // Item ids are exact UTF-16 node spans.
+        let item = |def: &str| {
+            let at = src.find(&format!("DEF {def} Transform")).unwrap();
+            let mut depth = 0;
+            let mut end = at;
+            for (i, c) in src[at..].char_indices() {
+                match c {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = at + i + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            format!("node-{at}-{end}")
+        };
+        let refused = |o: p::TranslateTargetOutcome| match o {
+            p::TranslateTargetOutcome::Refused { reason, .. } => reason,
+            other => panic!("not refused: {other:?}"),
+        };
+        let t = |d: &str, tool| target_for(&svc, id, 0, &item(d), tool);
+        assert_eq!(
+            refused(t("A", Tool::Rotate)),
+            "rotation-not-explicitly-authored"
+        );
+        assert_eq!(
+            refused(t("A", Tool::Scale)),
+            "scale-not-explicitly-authored"
+        );
+        assert_eq!(refused(t("B", Tool::Scale)), "scale-not-positive");
+        assert!(matches!(
+            t("B", Tool::Rotate),
+            p::TranslateTargetOutcome::Ready { .. }
+        ));
+        assert_eq!(refused(t("C", Tool::Rotate)), "transform-is-used-elsewhere");
+        assert_eq!(refused(t("N", Tool::Scale)), "transform-is-not-top-level");
+        for o in [
+            rot(&svc, id, 0, &item("A"), A::X, 1.0),
+            scl(&svc, id, 0, &item("B"), None, 2.0),
+            rot(&svc, id, 0, &item("C"), A::Y, 1.0),
+            scl(&svc, id, 0, &item("N"), Some(A::X), 2.0),
+            rot(&svc, id, 0, "node-1-2", A::X, 1.0),
+        ] {
+            assert!(matches!(o, p::TranslateOutcome::Refused { .. }), "{o:?}");
+        }
+        assert!(matches!(
+            target_for(&svc, id, 5, &item("A"), Tool::Rotate),
+            p::TranslateTargetOutcome::Stale { current: 0 }
+        ));
+        assert_eq!(svc.text(id).unwrap(), src);
+        assert_eq!(svc.snapshot(id).unwrap().revision, 0);
+        // The explicit authoring workflow: write rotation, then rotate.
+        let (st, it) = applied(
+            svc.add_field(&p::AddFieldRequest {
+                session: id,
+                base_revision: 0,
+                item: item("A"),
+                field_name: "rotation".into(),
+                value: p::AddFieldValue::Tuple {
+                    values: vec!["0".into(), "0".into(), "1".into(), "0".into()],
+                },
+            })
+            .unwrap(),
+        );
+        assert_eq!(
+            svc.text(id).unwrap(),
+            src.replacen(
+                "translation 1 0 0 }",
+                "translation 1 0 0 rotation 0 0 1 0 }",
+                1
+            )
+        );
+        let (_, _, text) = moved(rot(&svc, id, st.revision, &it, A::Z, 0.5));
+        assert_eq!(text, "0 0 1 0.5");
     }
 
     fn mv(
@@ -2666,6 +3085,7 @@ mod tests {
                 generation: 1,
                 item: format!("node-{f}-{t}"),
                 snapshot: snap,
+                tool: p::gizmo::Tool::Move,
             })
             .unwrap()
         };

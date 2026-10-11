@@ -183,6 +183,76 @@ pub fn extrusion_fixture_expected(original: &str) -> String {
     original.replacen("[ 1 0, 0 -1, -1 0,", "[ 1 0, 0 -1.5, -1 0,", 1)
 }
 
+/// `--smoke-rotscale <dir>` (VISUAL-4B). Rust writes the fixtures into the
+/// disposable `dir`; the UI opens them by INDEX.
+struct RotScaleArm {
+    report_path: Option<PathBuf>,
+    save_path: PathBuf,
+    /// (path, original bytes, label, line indexes the run may change).
+    fixtures: Vec<(PathBuf, Vec<u8>, String, Vec<usize>)>,
+}
+
+pub const ROTSCALE_FILE: &str = "visual4b-world.wrl";
+
+/// (file, label, text, changeable line indexes): a translated, rotated and
+/// centered `Turn`, an instanced `Shared` (refused), a `Bare` Transform
+/// without rotation (written explicitly in the first fixture only), a PROTO,
+/// comments and Unicode, in LF, BOM + CRLF and lone-CR forms.
+pub fn rotscale_fixtures() -> Vec<(&'static str, &'static str, String, Vec<usize>)> {
+    let lines = [
+        "#VRML V2.0 utf8",
+        "# VISUAL-4B fixture ✓ — größe 😀",
+        "PROTO Keep [ field SFFloat k 1 ] { Group {} }",
+        "DEF Turn Transform {",
+        "  translation 1 0.5 0 # placed ✓",
+        "  rotation 0 0 1 0.5",
+        "  scale 1 1.5 1",
+        "  center 0.25 0 0",
+        "  children [",
+        "    Shape { appearance Appearance { material Material { diffuseColor 0.9 0.5 0.2 } } geometry Box { size 1 1 1 } }",
+        "  ]",
+        "}",
+        "DEF Shared Transform { translation -2.5 0 0 rotation 0 1 0 0 scale 1 1 1 children [ Shape { geometry Sphere { radius 0.5 } } ] }",
+        "Transform { translation -2.5 2 0 children [ USE Shared ] }",
+        "DEF Bare Transform { translation 2.5 -1.5 0 children [ Shape { appearance Appearance { material Material { diffuseColor 0.2 0.8 0.3 } } geometry Cone { bottomRadius 0.5 height 1 } } ] }",
+        "Keep { k 2 }",
+        "# fin ✓",
+        "",
+    ];
+    let doc = |bom: &str, eol: &str| lines.join(eol).replacen('#', &format!("{bom}#"), 1);
+    vec![
+        (
+            "fx-rs-lf.wrl",
+            "LF + comments + DEF/USE + PROTO",
+            doc("", "\n"),
+            vec![5, 6, 14],
+        ),
+        (
+            "fx-rs-crlf-bom.wrl",
+            "BOM + CRLF + Unicode",
+            doc("\u{feff}", "\r\n"),
+            vec![5, 6],
+        ),
+        ("fx-rs-cr.wrl", "lone CR", doc("", "\r"), vec![5, 6]),
+    ]
+}
+
+/// Whether `after` differs from `before` only on the lines `allowed`
+/// (same line endings, same BOM, same line count), each changed line keeping
+/// its leading field name.
+pub fn only_lines_changed(before: &str, after: &str, eol: &str, allowed: &[usize]) -> bool {
+    let (a, b): (Vec<_>, Vec<_>) = (before.split(eol).collect(), after.split(eol).collect());
+    if a.len() != b.len() || before.starts_with('\u{feff}') != after.starts_with('\u{feff}') {
+        return false;
+    }
+    a.iter().zip(&b).enumerate().all(|(i, (x, y))| {
+        x == y
+            || (allowed.contains(&i)
+                && x.split_whitespace().next() == y.split_whitespace().next()
+                && wrlforge_vrml::parse(after).diagnostics.is_empty())
+    }) && a != b
+}
+
 /// Every regular file below `dir` (symlinks are not followed).
 fn regular_files(dir: &Path, out: &mut Vec<(PathBuf, Vec<u8>)>) -> Result<(), String> {
     let mut entries: Vec<_> = std::fs::read_dir(dir)
@@ -258,6 +328,7 @@ pub struct SmokeState(
     Mutex<Option<MoveArm>>,
     Mutex<Option<TextureArm>>,
     Mutex<Option<ExtrusionArm>>,
+    Mutex<Option<RotScaleArm>>,
 );
 
 impl SmokeState {
@@ -492,6 +563,30 @@ impl SmokeState {
         Ok(())
     }
 
+    /// Arm the VISUAL-4B run in the temporary `dir`.
+    pub fn arm_rotscale(&self, dir: &Path, report_path: Option<PathBuf>) -> Result<(), String> {
+        let dir = temp_dir_checked(dir)?;
+        let save_path = dir.join(ROTSCALE_FILE);
+        if save_path.exists() {
+            return Err(format!("{} already exists", save_path.display()));
+        }
+        let mut fixtures = Vec::new();
+        for (file, label, text, allowed) in rotscale_fixtures() {
+            let path = dir.join(file);
+            if path.exists() {
+                return Err(format!("{} already exists", path.display()));
+            }
+            std::fs::write(&path, text.as_bytes()).map_err(|e| e.to_string())?;
+            fixtures.push((path, text.into_bytes(), label.to_string(), allowed));
+        }
+        *self.6.lock().unwrap() = Some(RotScaleArm {
+            report_path,
+            save_path,
+            fixtures,
+        });
+        Ok(())
+    }
+
     /// `--smoke-extrusion` only (inside the harness Xvfb): a whole-screen
     /// capture as evidence, `<dir>/captures/<id>.png`.
     pub fn window_capture(&self, id: &str) -> Result<String, String> {
@@ -549,6 +644,9 @@ impl SmokeState {
 
     /// Smoke only: fixture `index` of the picking or gizmo run.
     pub fn pick_fixture(&self, index: usize) -> Option<PathBuf> {
+        if let Some(a) = self.6.lock().ok()?.as_ref() {
+            return a.fixtures.get(index).map(|f| f.0.clone());
+        }
         if let Some(a) = self.5.lock().ok()?.as_ref() {
             let fx = a.fixtures.iter().map(|f| f.0.clone());
             return fx.chain(a.research.iter().map(|r| r.0.clone())).nth(index);
@@ -565,6 +663,9 @@ impl SmokeState {
 
     /// Smoke only: the Save As destination (instead of the native dialog).
     pub fn save_as_override(&self) -> Option<PathBuf> {
+        if let Some(p) = self.6.lock().ok()?.as_ref().map(|a| a.save_path.clone()) {
+            return Some(p);
+        }
         if let Some(p) = self.5.lock().ok()?.as_ref().map(|a| a.save_path.clone()) {
             return Some(p);
         }
@@ -579,6 +680,9 @@ impl SmokeState {
 
     /// Smoke only: the Open choice -- the file this run saved, once it exists.
     pub fn open_override(&self) -> Option<PathBuf> {
+        if let Some(p) = self.6.lock().ok()?.as_ref().map(|a| a.save_path.clone()) {
+            return Some(p).filter(|p| p.exists());
+        }
         if let Some(p) = self.5.lock().ok()?.as_ref().map(|a| a.save_path.clone()) {
             return Some(p).filter(|p| p.exists());
         }
@@ -597,6 +701,7 @@ impl SmokeState {
         if self.2.lock().ok()?.is_some()
             || self.3.lock().ok()?.is_some()
             || self.5.lock().ok()?.is_some()
+            || self.6.lock().ok()?.is_some()
         {
             return Some(true);
         }
@@ -612,6 +717,24 @@ impl SmokeState {
             .and_then(|v| v.parse().ok())
             .unwrap_or(0u64)
             .min(10_000);
+        if let Some(a) = self.6.lock().ok()?.as_ref() {
+            return Some(p::SmokePlan {
+                insert_text: String::new(),
+                expect_preview: true,
+                inspector_value: None,
+                theme: None,
+                syntax_align_hold_ms: 0,
+                create: None,
+                pick: None,
+                gizmo: None,
+                texture: None,
+                extrusion: None,
+                rotscale: Some(p::RotScaleSmoke {
+                    fixtures: a.fixtures.iter().map(|f| f.2.clone()).collect(),
+                    real_pointer: real_pointer_env().is_ok(),
+                }),
+            });
+        }
         if let Some(a) = self.5.lock().ok()?.as_ref() {
             return Some(p::SmokePlan {
                 insert_text: String::new(),
@@ -629,6 +752,7 @@ impl SmokeState {
                     hold_ms: hold,
                     window_capture: real_pointer_env().is_ok(),
                 }),
+                rotscale: None,
             });
         }
         if let Some(a) = self.4.lock().ok()?.as_ref() {
@@ -645,6 +769,7 @@ impl SmokeState {
                     fixtures: a.fixtures.clone(),
                 }),
                 extrusion: None,
+                rotscale: None,
             });
         }
         if let Some(a) = self.3.lock().ok()?.as_ref() {
@@ -664,6 +789,7 @@ impl SmokeState {
                 }),
                 texture: None,
                 extrusion: None,
+                rotscale: None,
             });
         }
         if let Some(a) = self.2.lock().ok()?.as_ref() {
@@ -677,6 +803,7 @@ impl SmokeState {
                 gizmo: None,
                 texture: None,
                 extrusion: None,
+                rotscale: None,
                 pick: Some(p::PickSmoke {
                     fixtures: a.fixtures.clone(),
                     themes: p::theme::THEMES.iter().map(|t| t.id.to_string()).collect(),
@@ -702,6 +829,7 @@ impl SmokeState {
                 gizmo: None,
                 texture: None,
                 extrusion: None,
+                rotscale: None,
             });
         }
         self.0.lock().ok()?.as_ref().map(|pl| p::SmokePlan {
@@ -716,6 +844,7 @@ impl SmokeState {
             gizmo: None,
             texture: None,
             extrusion: None,
+            rotscale: None,
         })
     }
 }
@@ -770,7 +899,8 @@ impl SmokeState {
     /// (OUR window to x by y px). Same guards as a click.
     pub fn real_pointer(&self, action: &str, x: i32, y: i32) -> Result<String, String> {
         let armed = self.2.lock().map_err(|e| e.to_string())?.is_some()
-            || self.3.lock().map_err(|e| e.to_string())?.is_some();
+            || self.3.lock().map_err(|e| e.to_string())?.is_some()
+            || self.6.lock().map_err(|e| e.to_string())?.is_some();
         if !armed {
             return Err("no picking or gizmo smoke run is armed".into());
         }
@@ -853,6 +983,21 @@ pub fn expected_text(original: &str) -> String {
 pub fn finish(app: &AppHandle, report: p::SmokeReport) {
     use tauri::Manager;
     let state = app.state::<SmokeState>();
+    if let Some(arm) = state.6.lock().unwrap().take() {
+        let mut steps = report.steps;
+        steps.extend(verify_rotscale(&arm));
+        let all = steps.iter().all(|s| s.ok);
+        let json = serde_json::to_string_pretty(
+            &serde_json::json!({ "pass": all, "file": ROTSCALE_FILE, "steps": steps }),
+        )
+        .unwrap();
+        println!("{json}");
+        if let Some(rp) = arm.report_path {
+            let _ = std::fs::write(rp, &json);
+        }
+        app.exit(if all { 0 } else { 1 });
+        return;
+    }
     if let Some(arm) = state.5.lock().unwrap().take() {
         let mut steps = report.steps;
         steps.extend(verify_extrusion(&arm));
@@ -1083,6 +1228,69 @@ fn backups_of(path: &Path) -> Vec<PathBuf> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn verify_rotscale(arm: &RotScaleArm) -> Vec<p::SmokeStep> {
+    use wrlforge_vrml::create::{plan_create, Plan, Primitive, NEW_WORLD};
+    let mut steps = Vec::new();
+    let saved = std::fs::read(&arm.save_path)
+        .ok()
+        .and_then(|b| files::decode(&b).ok())
+        .map(|(t, _)| t);
+    let created = match plan_create(NEW_WORLD, Primitive::Box) {
+        Plan::Ready { new_text, .. } => new_text,
+        _ => String::new(),
+    };
+    // Box_1's rotation and scale lines (template lines 3 and 4 after the
+    // header line).
+    let allowed: Vec<usize> = created
+        .split('\n')
+        .enumerate()
+        .filter(|(_, l)| l.starts_with("  rotation ") || l.starts_with("  scale "))
+        .map(|(i, _)| i)
+        .collect();
+    steps.push(p::SmokeStep {
+        name:
+            "rust: the saved world equals Create Box with ONLY its rotation and scale lines changed"
+                .into(),
+        ok: saved
+            .as_deref()
+            .is_some_and(|t| allowed.len() == 2 && only_lines_changed(&created, t, "\n", &allowed)),
+        detail: format!(
+            "{:?}",
+            saved.as_deref().map(|t| t
+                .lines()
+                .filter(|l| l.starts_with("  rotation") || l.starts_with("  scale"))
+                .collect::<Vec<_>>())
+        ),
+    });
+    for (path, original, label, allowed) in &arm.fixtures {
+        let disk = std::fs::read(path).unwrap_or_default();
+        let (o, d) = (
+            String::from_utf8_lossy(original),
+            String::from_utf8_lossy(&disk),
+        );
+        let eol = if o.contains("\r\n") {
+            "\r\n"
+        } else if o.contains('\n') {
+            "\n"
+        } else {
+            "\r"
+        };
+        let b = backups_of(path);
+        let backup_ok = b.len() == 1 && std::fs::read(&b[0]).ok().as_deref() == Some(&original[..]);
+        let angle_only = d
+            .split(eol)
+            .nth(5)
+            .is_some_and(|l| l.starts_with("  rotation 0 0 1 ") && l != "  rotation 0 0 1 0.5");
+        steps.push(p::SmokeStep {
+            name: format!("rust: {label} fixture on disk changed only the allowed rotation / scale lines (angle token only for Turn); one backup holds the original bytes"),
+            ok: only_lines_changed(&o, &d, eol, allowed) && angle_only && backup_ok,
+            detail: format!("{} bytes, {} backup(s), changed: {:?}", disk.len(), b.len(),
+                o.split(eol).zip(d.split(eol)).filter(|(x, y)| x != y).map(|(_, y)| y.to_string()).collect::<Vec<_>>()),
+        });
+    }
+    steps
 }
 
 fn verify_extrusion(arm: &ExtrusionArm) -> Vec<p::SmokeStep> {

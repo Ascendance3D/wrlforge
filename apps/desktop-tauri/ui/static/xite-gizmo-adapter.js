@@ -10,11 +10,11 @@
 //      last drew them (PRIVATE X_ITE 15.1.10 surfaces: getActiveLayer,
 //      getViewpoint, getViewMatrix, getProjectionMatrix, getViewport,
 //      getRectangle). The gizmo math is Rust (protocol::gizmo).
-//   2. TEMPORARY TRANSLATION. During a drag, the bound Transform's rendered
-//      translation is overridden through the PUBLIC SAI (an SFNode over the
-//      proven runtime node; its translation field). The source document is
-//      not touched; the override belongs to one scene and is restored on
-//      cancel.
+//   2. TEMPORARY FRAME. During a drag, the bound Transform's rendered
+//      translation, rotation or scale (VISUAL-4B) is overridden through the
+//      PUBLIC SAI (an SFNode over the proven runtime node; that field). The
+//      source document is not touched; the override belongs to one scene and
+//      is restored on cancel.
 //   3. CAMERA CARRY (VISUAL-3A1). The bound viewpoint's user offsets -- what
 //      orbit, pan and zoom change (PRIVATE: positionOffset,
 //      orientationOffset, scaleOffset, scaleOrientationOffset,
@@ -54,8 +54,10 @@
   function createXiteGizmoAdapter(opts) {
     var X3D = opts && opts.X3D;
     var browser = opts && opts.browser;
-    // {scene, node, field, original:[3], overridden}
+    // {scene, node, verify, original:{translation, rotation, scale} (SF
+    //  copies), overridden:{name: true}}
     var bound = null;
+    var FIELDS = ['translation', 'rotation', 'scale'];
 
     function compatibility() {
       if (!X3D || !browser || typeof X3D.SFVec3f !== 'function') return { ok: false, reason: 'adapter-unavailable' };
@@ -145,7 +147,17 @@
       if (!t || !same(Number(t.x), expected[0]) || !same(Number(t.y), expected[1]) || !same(Number(t.z), expected[2])) {
         return { ok: false, reason: 'preview-position-differs-from-source' };
       }
-      bound = { scene: scene, node: sf, verify: verify, original: [Number(t.x), Number(t.y), Number(t.z)], overridden: false };
+      var original = {};
+      try {
+        for (var i = 0; i < FIELDS.length; i++) {
+          var f = sf[FIELDS[i]];
+          if (!f || typeof f.copy !== 'function') return { ok: false, reason: 'runtime-node-not-proven' };
+          original[FIELDS[i]] = f.copy();
+        }
+      } catch (e) {
+        return { ok: false, reason: 'runtime-node-not-proven' };
+      }
+      bound = { scene: scene, node: sf, verify: verify, original: original, overridden: {} };
       return { ok: true };
     }
 
@@ -156,21 +168,36 @@
 
     // Temporary rendered translation (never the document).
     function set(x, y, z) {
-      if (!live()) return false;
-      var v = [Number(x), Number(y), Number(z)];
+      return setField('translation', [x, y, z]);
+    }
+
+    // VISUAL-4B: a temporary rendered translation / rotation (x y z angle)
+    // / scale of the bound node (never the document).
+    function setField(name, values) {
+      if (!live() || FIELDS.indexOf(name) < 0 || !values) return false;
+      var v = Array.prototype.map.call(values, Number);
       if (!v.every(Number.isFinite)) return false;
-      bound.node.translation = new X3D.SFVec3f(v[0], v[1], v[2]);
-      bound.overridden = true;
+      if (name === 'rotation') {
+        if (v.length !== 4 || typeof X3D.SFRotation !== 'function') return false;
+        bound.node.rotation = new X3D.SFRotation(v[0], v[1], v[2], v[3]);
+      } else {
+        if (v.length !== 3) return false;
+        bound.node[name] = new X3D.SFVec3f(v[0], v[1], v[2]);
+      }
+      bound.overridden[name] = true;
       return true;
     }
 
-    // Put back the rendered translation the scene had at bind time.
+    // Put back every rendered field the scene had at bind time.
     function restore() {
       var b = bound;
-      if (b && b.overridden && browser.currentScene === b.scene) {
-        try { b.node.translation = new X3D.SFVec3f(b.original[0], b.original[1], b.original[2]); } catch (e) { /* scene gone */ }
+      if (b && browser.currentScene === b.scene) {
+        for (var i = 0; i < FIELDS.length; i++) {
+          if (!b.overridden[FIELDS[i]]) continue;
+          try { b.node[FIELDS[i]] = b.original[FIELDS[i]].copy(); } catch (e) { /* scene gone */ }
+        }
       }
-      if (b) b.overridden = false;
+      if (b) b.overridden = {};
     }
 
     // Forget the binding WITHOUT restoring: a committed move stays drawn until
@@ -275,8 +302,25 @@
       return [Number(t.x), Number(t.y), Number(t.z)];
     }
 
+    // VISUAL-4B: the bound node's rendered frame as plain numbers, or null.
+    // Rust compares it with the source (a secondary assertion only).
+    function frame() {
+      if (!live()) return null;
+      try {
+        var t = bound.node.translation, r = bound.node.rotation, s = bound.node.scale;
+        var out = {
+          translation: [t.x, t.y, t.z].map(Number),
+          rotation: [r.x, r.y, r.z, r.angle].map(Number),
+          scale: [s.x, s.y, s.z].map(Number),
+        };
+        return finiteAll(out.translation.concat(out.rotation, out.scale)) ? out : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
     return Object.freeze({
-      compatibility: compatibility, camera: camera, bind: bind, set: set, restore: restore, release: release, unbind: unbind, rendered: rendered,
+      compatibility: compatibility, camera: camera, bind: bind, set: set, setField: setField, restore: restore, release: release, unbind: unbind, rendered: rendered, frame: frame,
       boundViewpoint: boundViewpoint, readCamera: readCamera, writeCamera: writeCamera, viewMatrix: viewMatrix, cameraState: cameraState,
     });
   }

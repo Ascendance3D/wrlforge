@@ -279,6 +279,24 @@ pub fn doc_translate(
     svc.translate(&request)
 }
 
+/// VISUAL-4B: commit one rotation drag (one undo step).
+#[tauri::command]
+pub fn doc_rotate(
+    svc: State<'_, Service>,
+    request: p::RotateRequest,
+) -> Result<p::TranslateOutcome, String> {
+    svc.rotate(&request)
+}
+
+/// VISUAL-4B: commit one scale drag (one undo step).
+#[tauri::command]
+pub fn doc_scale(
+    svc: State<'_, Service>,
+    request: p::ScaleRequest,
+) -> Result<p::TranslateOutcome, String> {
+    svc.scale(&request)
+}
+
 /// Resolve one viewport pick (VISUAL-2). Read-only; async like
 /// `doc_analyze` because it parses.
 #[tauri::command]

@@ -344,6 +344,10 @@ pub enum AddFieldValue {
     Bool { value: bool },
     Number { value: String },
     List { tuples: Vec<Vec<String>> },
+    /// VISUAL-4B: one SFVec2f / SFVec3f / SFRotation value.
+    Tuple {
+        values: Vec<String>,
+    },
 }
 
 /// VISUAL-4A: write one ABSENT field into the node, because the user asked.
@@ -462,6 +466,9 @@ pub struct TranslateTargetRequest {
     pub session: SessionId,
     pub revision: u64,
     pub item: String,
+    /// VISUAL-4B: the tool asking. Each tool needs its own field authored.
+    #[serde(default)]
+    pub tool: gizmo::Tool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -484,6 +491,18 @@ pub enum TranslateTargetOutcome {
         translation: [f64; 3],
         /// World position of the Transform's local origin.
         origin: [f64; 3],
+        /// VISUAL-4B: the effective frame (authored, or ISO defaults).
+        #[serde(default)]
+        rotation: [f64; 4],
+        #[serde(default)]
+        scale: [f64; 3],
+        #[serde(default)]
+        scale_orientation: [f64; 4],
+        #[serde(default)]
+        center: [f64; 3],
+        /// World position of the rotation / scale pivot (`T + C`).
+        #[serde(default)]
+        pivot: [f64; 3],
     },
     Refused {
         reason: String,
@@ -508,6 +527,9 @@ pub struct TranslateProveRequest {
     pub generation: u64,
     pub item: String,
     pub snapshot: PickSnapshot,
+    /// VISUAL-4B: the tool the binding is for (its target gate is re-run).
+    #[serde(default)]
+    pub tool: gizmo::Tool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -564,11 +586,37 @@ pub struct TranslateRequest {
     pub decimals: u8,
 }
 
+/// VISUAL-4B: one completed rotation drag. `delta` (radians) turns the
+/// Transform about the parent (world) `axis` through its pivot; Rust composes
+/// `Rot(axis, delta) · rotation`, formats, re-proves and writes it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RotateRequest {
+    pub session: SessionId,
+    pub base_revision: u64,
+    pub item: String,
+    pub axis: gizmo::Axis,
+    pub delta: f64,
+}
+
+/// VISUAL-4B: one completed scale drag: `scale[axis] *= factor`, or every
+/// component when `axis` is `None` (uniform).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ScaleRequest {
+    pub session: SessionId,
+    pub base_revision: u64,
+    pub item: String,
+    pub axis: Option<gizmo::Axis>,
+    pub factor: f64,
+}
+
+/// The outcome of a Move, Rotate or Scale commit.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum TranslateOutcome {
     /// Applied as ONE undo step. `item` is the same Transform in the NEW
-    /// revision; `text` is the token written.
+    /// revision; `text` is the value written (one token for Move).
     Applied {
         state: DocState,
         view: String,
@@ -825,6 +873,18 @@ pub struct SmokePlan {
     /// `--smoke-extrusion` (VISUAL-4A).
     #[serde(default)]
     pub extrusion: Option<ExtrusionSmoke>,
+    /// `--smoke-rotscale` (VISUAL-4B).
+    #[serde(default)]
+    pub rotscale: Option<RotScaleSmoke>,
+}
+
+/// VISUAL-4B: the Rotate / Scale run. Fixtures are opened by index.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RotScaleSmoke {
+    pub fixtures: Vec<String>,
+    /// Real X pointer input is available (the harness's own Xvfb).
+    pub real_pointer: bool,
 }
 
 /// VISUAL-4A: the Extrusion run. Fixtures and research files are opened by

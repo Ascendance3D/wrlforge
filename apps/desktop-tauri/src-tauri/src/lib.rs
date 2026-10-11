@@ -33,6 +33,8 @@ struct Args {
     smoke_texture: Option<PathBuf>,
     /// `--smoke-extrusion <dir>`: the VISUAL-4A Extrusion run.
     smoke_extrusion: Option<PathBuf>,
+    /// `--smoke-rotscale <dir>`: the VISUAL-4B Rotate / Scale run.
+    smoke_rotscale: Option<PathBuf>,
     smoke_no_preview: bool,
     smoke_inspector: bool,
     smoke_theme: Option<p::ThemeSmoke>,
@@ -58,6 +60,7 @@ fn parse_args() -> Args {
         smoke_move: None,
         smoke_texture: None,
         smoke_extrusion: None,
+        smoke_rotscale: None,
         smoke_no_preview: false,
         smoke_inspector: false,
         smoke_theme: None,
@@ -80,6 +83,7 @@ fn parse_args() -> Args {
             Some("--smoke-move") => a.smoke_move = it.next().map(PathBuf::from),
             Some("--smoke-texture") => a.smoke_texture = it.next().map(PathBuf::from),
             Some("--smoke-extrusion") => a.smoke_extrusion = it.next().map(PathBuf::from),
+            Some("--smoke-rotscale") => a.smoke_rotscale = it.next().map(PathBuf::from),
             Some("--smoke-no-preview") => a.smoke_no_preview = true,
             Some("--smoke-inspector") => a.smoke_inspector = true,
             Some("--smoke-theme") => theme_final = it.next().and_then(|s| s.into_string().ok()),
@@ -190,6 +194,11 @@ pub fn run() {
                     .arm_extrusion(&dir, args.smoke_report.clone())
                     .map_err(|e| format!("smoke-extrusion: {e}"))?;
             }
+            if let Some(dir) = args.smoke_rotscale.clone() {
+                app.state::<smoke::SmokeState>()
+                    .arm_rotscale(&dir, args.smoke_report.clone())
+                    .map_err(|e| format!("smoke-rotscale: {e}"))?;
+            }
             if let Some(dir) = args.smoke_texture.clone() {
                 app.state::<smoke::SmokeState>()
                     .arm_texture(&dir, args.smoke_report.clone())
@@ -268,6 +277,8 @@ pub fn run() {
             commands::doc_translate_prove,
             commands::doc_preview_carry,
             commands::doc_translate,
+            commands::doc_rotate,
+            commands::doc_scale,
             commands::window_title,
             commands::theme_get,
             commands::theme_set,

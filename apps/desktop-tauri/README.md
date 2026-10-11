@@ -58,6 +58,7 @@ cargo test -p wrl-forge-desktop                       # file + session services
 ./smoke.sh --headless --pick                          # VISUAL-2: viewport picking (node: oracle plan; xdotool: real clicks in Xvfb)
 ./smoke.sh --headless --move                          # VISUAL-3A: translation gizmo (xdotool: real drags in Xvfb)
 ./smoke.sh --headless --extrusion [--research DIR]    # VISUAL-4A: Create Extrusion, Extrusion Inspector, outline editor
+./smoke.sh --headless --rotscale                      # VISUAL-4B: Rotate / Scale tools (xdotool: real drags in Xvfb)
 ./smoke.sh --headless --theme tokyo-night-light file.wrl...   # drives the theme selector (UI-THEME-1)
 d=$(mktemp -d) && python3 smoke-texture-plan.py "$d" && \
   xvfb-run -a ./target/debug/wrl-forge --smoke-texture "$d" --smoke-report "$d/report.json"

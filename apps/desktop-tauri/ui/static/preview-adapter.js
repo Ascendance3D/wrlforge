@@ -441,6 +441,12 @@
       return JSON.stringify(pick.gizmo.bind(pick.scene, node, Number(index), String(name || ''), [Number(x), Number(y), Number(z)], verify));
     },
     gizmoSet: function (x, y, z) { return !!pick.gizmo && pick.gizmo.set(x, y, z); },
+    // VISUAL-4B: name is translation / rotation / scale; values a number array.
+    gizmoSetField: function (name, values) { return !!pick.gizmo && pick.gizmo.setField(String(name), values); },
+    gizmoFrame: function () {
+      var f = pick.gizmo ? pick.gizmo.frame() : null;
+      return f ? JSON.stringify(f) : null;
+    },
     gizmoRestore: function () { if (pick.gizmo) pick.gizmo.restore(); },
     gizmoRelease: function () { if (pick.gizmo) pick.gizmo.release(); },
     gizmoUnbind: function () { if (pick.gizmo) pick.gizmo.unbind(); },

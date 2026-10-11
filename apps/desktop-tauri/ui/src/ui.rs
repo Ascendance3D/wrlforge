@@ -46,6 +46,9 @@ pub struct Ui {
     /// VISUAL-3A: the viewport Move tool (translation gizmo). One viewport
     /// tool at a time: Select and Move exclude each other.
     pub move_mode: RwSignal<bool>,
+    /// VISUAL-4B: the Rotate and Scale tools (exclusive with Select / Move).
+    pub rotate_mode: RwSignal<bool>,
+    pub scale_mode: RwSignal<bool>,
     /// The Move tool's status line: (`ok` | `none` | `refused`, text).
     pub gizmo_message: RwSignal<Option<(String, String)>>,
     /// NATIVE-RENDER-1: the hidden native viewport's state (default off).
@@ -213,6 +216,8 @@ pub fn ui() -> Ui {
             pick_mode: RwSignal::new(false),
             pick_message: RwSignal::new(None),
             move_mode: RwSignal::new(false),
+            rotate_mode: RwSignal::new(false),
+            scale_mode: RwSignal::new(false),
             gizmo_message: RwSignal::new(None),
             native: RwSignal::new(p::NativeState::default()),
         })

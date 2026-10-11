@@ -397,7 +397,11 @@ pub fn Viewport() -> impl IntoView {
                     disabled=move || u.doc.with(|d| d.is_none())
                     on:click=move |_| {
                         u.pick_mode.update(|m| *m = !*m);
-                        if u.pick_mode.get_untracked() { u.move_mode.set(false); }
+                        if u.pick_mode.get_untracked() {
+                            u.move_mode.set(false);
+                            u.rotate_mode.set(false);
+                            u.scale_mode.set(false);
+                        }
                         if !u.pick_mode.get_untracked() { u.pick_message.set(None); }
                     }>"Select"</button>
                 // VISUAL-3A: the Move tool. Drag an axis handle to move the
@@ -411,27 +415,74 @@ pub fn Viewport() -> impl IntoView {
                         u.move_mode.update(|m| *m = !*m);
                         if u.move_mode.get_untracked() {
                             u.pick_mode.set(false);
+                            u.rotate_mode.set(false);
+                            u.scale_mode.set(false);
                             crate::gizmo::start();
                         } else {
                             u.gizmo_message.set(None);
                         }
                     }>"Move"</button>
+                // VISUAL-4B: Rotate (rings about the world axes through the
+                // object's center) and Scale (its own scale axes + uniform).
+                <button id="btn-rotate" class="secondary small" hidden=move || u.native.with(|s| s.native_shown())
+                    title="Rotate: drag the X (red), Y (green) or Z (blue) ring of the selected object (world axes, about its center). Shift snaps to 15°. Esc cancels."
+                    aria-pressed=move || if u.rotate_mode.get() { "true" } else { "false" }
+                    disabled=move || u.doc.with(|d| d.is_none())
+                    on:click=move |_| {
+                        u.rotate_mode.update(|m| *m = !*m);
+                        if u.rotate_mode.get_untracked() {
+                            u.pick_mode.set(false);
+                            u.move_mode.set(false);
+                            u.scale_mode.set(false);
+                            crate::gizmo::start();
+                        } else {
+                            u.gizmo_message.set(None);
+                        }
+                    }>"Rotate"</button>
+                <button id="btn-scale" class="secondary small" hidden=move || u.native.with(|s| s.native_shown())
+                    title="Scale: drag the X, Y or Z handle (the object's own scale axes) or the center square (uniform). Esc cancels."
+                    aria-pressed=move || if u.scale_mode.get() { "true" } else { "false" }
+                    disabled=move || u.doc.with(|d| d.is_none())
+                    on:click=move |_| {
+                        u.scale_mode.update(|m| *m = !*m);
+                        if u.scale_mode.get_untracked() {
+                            u.pick_mode.set(false);
+                            u.move_mode.set(false);
+                            u.rotate_mode.set(false);
+                            crate::gizmo::start();
+                        } else {
+                            u.gizmo_message.set(None);
+                        }
+                    }>"Scale"</button>
             </div>
             <div class="viewport-stage" hidden=move || u.native.with(|s| s.native_shown())>
-                <x3d-canvas id="viewport" class:picking=move || u.pick_mode.get() || u.move_mode.get() splashScreen="false" contextMenu="false" notifications="false"
+                <x3d-canvas id="viewport" class:picking=move || u.pick_mode.get() || u.move_mode.get() || u.rotate_mode.get() || u.scale_mode.get() splashScreen="false" contextMenu="false" notifications="false"
                     timings="false" cache="false"></x3d-canvas>
                 // The gizmo overlay. Drawn from the renderer's camera by
                 // `gizmo.rs`; only the handles take pointer input.
-                <svg id="gizmo" class="gizmo" data-state="hidden" role="group" aria-label="Translation handles">
+                <svg id="gizmo" class="gizmo" data-state="hidden" data-tool="move" role="group" aria-label="Manipulation handles">
                     {[("x", "X"), ("y", "Y"), ("z", "Z")].into_iter().map(|(a, l)| view! {
-                        <g id=format!("gz-{a}") class="gz-handle" data-axis=a role="button" aria-disabled="true"
-                            aria-label=format!("Move along {l}: drag")>
+                        <g id=format!("gz-r{a}") class="gz-handle gz-ring" data-axis=a role="button" aria-disabled="true"
+                            aria-label=format!("Rotate about {l}: drag")>
+                            <polyline id=format!("gz-r{a}-hit") class="gz-hit"></polyline>
+                            <polyline id=format!("gz-r{a}-halo") class="gz-halo"></polyline>
+                            <polyline id=format!("gz-r{a}-line") class="gz-line"></polyline>
+                        </g>
+                    }).collect_view()}
+                    {[("x", "X"), ("y", "Y"), ("z", "Z")].into_iter().map(|(a, l)| view! {
+                        <g id=format!("gz-{a}") class="gz-handle gz-axis" data-axis=a role="button" aria-disabled="true"
+                            aria-label=format!("Move or scale along {l}: drag")>
                             <line id=format!("gz-{a}-hit") class="gz-hit"></line>
                             <line id=format!("gz-{a}-halo") class="gz-halo"></line>
                             <line id=format!("gz-{a}-line") class="gz-line"></line>
                             <circle id=format!("gz-{a}-tip") class="gz-tip" r="7"></circle>
+                            <rect id=format!("gz-{a}-box") class="gz-box" width="12" height="12"></rect>
                         </g>
                     }).collect_view()}
+                    <g id="gz-u" class="gz-handle gz-uniform" role="button" aria-disabled="true" aria-label="Scale uniformly: drag up or down">
+                        <rect id="gz-u-hit" class="gz-hit" width="24" height="24"></rect>
+                        <rect id="gz-u-box" class="gz-box" width="14" height="14"></rect>
+                    </g>
                     <circle id="gz-origin" class="gz-origin" r="4"></circle>
                 </svg>
             </div>
@@ -450,8 +501,21 @@ pub fn Viewport() -> impl IntoView {
             </div>
             <div class="pick-status gizmo-status" id="gizmo-status" role="status" aria-live="polite"
                 data-kind=move || u.gizmo_message.with(|m| m.as_ref().map(|m| m.0.clone()).unwrap_or_default())
-                hidden=move || !u.move_mode.get() || u.gizmo_message.with(|m| m.is_none())>
+                hidden=move || !(u.move_mode.get() || u.rotate_mode.get() || u.scale_mode.get()) || u.gizmo_message.with(|m| m.is_none())>
                 {move || u.gizmo_message.with(|m| m.as_ref().map(|m| m.1.clone()).unwrap_or_default())}
+                // VISUAL-4B: the explicit authoring action for a missing
+                // rotation / scale field (one undo step, only on request).
+                {move || {
+                    u.gizmo_message.track();
+                    crate::gizmo::GIZMO.with_borrow(|g| g.missing_field).map(|f| view! {
+                        " "
+                        <button id="gz-write-field" class="secondary small"
+                            title=format!("Write the VRML97 default {f} value into this Transform (one undo step)")
+                            on:click=move |_| spawn_local(crate::gizmo::write_missing_field())>
+                            {format!("Write {f}")}
+                        </button>
+                    })
+                }}
             </div>
             <div class="pick-status" id="pick-status" role="status" aria-live="polite"
                 data-kind=move || u.pick_message.with(|m| m.as_ref().map(|m| m.0.clone()).unwrap_or_default())

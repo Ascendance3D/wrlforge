@@ -54,8 +54,10 @@ extern "C" {
         y: f64,
         z: f64,
     ) -> Result<JsValue, JsValue>;
-    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = gizmoSet, catch)]
-    fn gizmo_set_js(x: f64, y: f64, z: f64) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = gizmoSetField, catch)]
+    fn gizmo_set_field_js(name: &str, values: Vec<f64>) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = gizmoFrame, catch)]
+    fn gizmo_frame_js() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = gizmoRestore, catch)]
     fn gizmo_restore_js() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = gizmoRelease, catch)]
@@ -129,15 +131,29 @@ pub fn gizmo_bind(
     }
 }
 
-/// Temporary rendered translation of the bound node (never the document).
-pub fn gizmo_set(t: [f64; 3]) -> bool {
-    gizmo_set_js(t[0], t[1], t[2])
+/// VISUAL-4B: a temporary rendered `rotation` (x y z angle) or `scale`
+/// (or `translation`) of the bound node (never the document).
+pub fn gizmo_set_field(name: &str, values: &[f64]) -> bool {
+    gizmo_set_field_js(name, values.to_vec())
         .ok()
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
 }
 
-/// Put back the bound node's rendered translation.
+/// The bound node's rendered frame, as plain numbers.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize)]
+pub struct RenderedFrame {
+    pub translation: [f64; 3],
+    pub rotation: [f64; 4],
+    pub scale: [f64; 3],
+}
+
+pub fn gizmo_frame() -> Option<RenderedFrame> {
+    let s = gizmo_frame_js().ok()?.as_string()?;
+    serde_json::from_str(&s).ok()
+}
+
+/// Put back the bound node's rendered frame.
 pub fn gizmo_restore() {
     let _ = gizmo_restore_js();
 }
