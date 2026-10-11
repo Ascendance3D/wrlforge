@@ -249,6 +249,21 @@ pub struct EditableField {
     pub value_excerpt: String,
     pub view_from: u64,
     pub view_to: u64,
+    /// VISUAL-4A: an editable `MFVec2f` / `MFVec3f` / `MFRotation` list.
+    #[serde(default)]
+    pub list: Option<ListField>,
+}
+
+/// An editable list value, tuple by tuple, as exact source lexemes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ListField {
+    /// Component labels (`X Y`, `X Y Z` or `X Y Z Angle`).
+    pub labels: Vec<String>,
+    pub rotation: bool,
+    /// "bracketed" | "bare"
+    pub form: String,
+    pub tuples: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -258,6 +273,88 @@ pub struct NodeFields {
     pub reason: String,
     pub node_type: Option<String>,
     pub fields: Vec<EditableField>,
+    /// VISUAL-4A: the Extrusion view (authored values and defaults).
+    #[serde(default)]
+    pub extrusion: Option<ExtrusionInfo>,
+}
+
+/// One Extrusion field: authored or default, never written automatically.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtrusionField {
+    pub name: String,
+    pub field_type: String,
+    pub authored: bool,
+    /// Index into the node's body statements when authored.
+    pub field_index: Option<u32>,
+    /// The effective tuples (lists) -- authored, else the VRML97 default.
+    pub tuples: Option<Vec<Vec<String>>>,
+    /// The effective single value (SFBool / SFFloat).
+    pub single: Option<String>,
+    pub default_text: Option<String>,
+    /// Why an authored value is read-only, if so.
+    pub problem: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtrusionNote {
+    /// "info" | "warning" | "error"
+    pub level: String,
+    pub field: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtrusionInfo {
+    pub fields: Vec<ExtrusionField>,
+    pub notes: Vec<ExtrusionNote>,
+    pub outline_closed: bool,
+}
+
+/// One list operation; indices are of the list as the previous operation
+/// left it. Components are raw user text: Rust validates them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "op", rename_all = "camelCase")]
+pub enum ListOp {
+    Set { index: u32, components: Vec<String> },
+    Insert { index: u32, components: Vec<String> },
+    Delete { index: u32 },
+}
+
+/// VISUAL-4A: a list-field edit (one Inspector action or one whole outline
+/// editing session). Applied as ONE transaction, so one undo step.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ListEditRequest {
+    pub session: SessionId,
+    pub base_revision: u64,
+    pub item: String,
+    pub field_index: u32,
+    pub field_name: String,
+    /// The number of tuples the UI showed.
+    pub expected_count: u32,
+    pub ops: Vec<ListOp>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum AddFieldValue {
+    Bool { value: bool },
+    Number { value: String },
+    List { tuples: Vec<Vec<String>> },
+}
+
+/// VISUAL-4A: write one ABSENT field into the node, because the user asked.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AddFieldRequest {
+    pub session: SessionId,
+    pub base_revision: u64,
+    pub item: String,
+    pub field_name: String,
+    pub value: AddFieldValue,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -310,14 +407,17 @@ pub enum Primitive {
     Sphere,
     Cylinder,
     Cone,
+    /// VISUAL-4A.
+    Extrusion,
 }
 
 impl Primitive {
-    pub const ALL: [Primitive; 4] = [
+    pub const ALL: [Primitive; 5] = [
         Primitive::Box,
         Primitive::Sphere,
         Primitive::Cylinder,
         Primitive::Cone,
+        Primitive::Extrusion,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -325,6 +425,7 @@ impl Primitive {
             Primitive::Sphere => "Sphere",
             Primitive::Cylinder => "Cylinder",
             Primitive::Cone => "Cone",
+            Primitive::Extrusion => "Extrusion",
         }
     }
 }
@@ -721,6 +822,21 @@ pub struct SmokePlan {
     /// `--smoke-texture` (TEXTURE-LOCAL-1): local texture fixture matrix.
     #[serde(default)]
     pub texture: Option<TextureSmoke>,
+    /// `--smoke-extrusion` (VISUAL-4A).
+    #[serde(default)]
+    pub extrusion: Option<ExtrusionSmoke>,
+}
+
+/// VISUAL-4A: the Extrusion run. Fixtures and research files are opened by
+/// index (fixtures first, then research files).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtrusionSmoke {
+    pub fixtures: Vec<String>,
+    pub research: Vec<String>,
+    pub hold_ms: u64,
+    /// Whole-screen captures are possible (inside the harness Xvfb).
+    pub window_capture: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

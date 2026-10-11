@@ -207,15 +207,28 @@ fn node_fields(n: p::NodeFields, session: u64, rev: u64) -> impl IntoView {
             </p>
         }
     });
-    let empty = n.fields.is_empty().then(|| {
+    // VISUAL-4A: an Extrusion gets its own sections (authored values and
+    // VRML97 defaults); the generic table lists only its other fields.
+    let extrusion = n
+        .extrusion
+        .clone()
+        .map(|e| crate::extrusion::panel(e, &n.fields, rev, n.editable));
+    let is_x = n.extrusion.is_some();
+    let fields: Vec<p::EditableField> = n
+        .fields
+        .into_iter()
+        .filter(|f| !(is_x && crate::extrusion::is_extrusion_field(&f.name)))
+        .collect();
+    let empty = (fields.is_empty() && !is_x).then(|| {
         view! { <p class="empty">"No explicitly authored fields (defaults are not listed)."</p> }
     });
     view! {
         {banner}
+        {extrusion}
         {empty}
         <table class="fields editable">
             <tbody>
-            {n.fields.into_iter().map(|f| field_row(f, session, rev)).collect_view()}
+            {fields.into_iter().map(|f| field_row(f, session, rev)).collect_view()}
             </tbody>
         </table>
     }
@@ -233,7 +246,10 @@ fn field_row(f: p::EditableField, session: u64, rev: u64) -> impl IntoView {
     .flatten()
     .collect::<Vec<_>>()
     .join(" · ");
-    let value = if f.editable {
+    let value = if let (true, Some(list)) = (f.editable, f.list.clone()) {
+        // VISUAL-4A: an editable MFVec2f / MFVec3f / MFRotation list.
+        crate::extrusion::list_table(&f.name, f.index, &list, rev).into_any()
+    } else if f.editable {
         let idx = f.index;
         let kind = f.kind.clone().unwrap_or_default();
         let arity = f.components.len();

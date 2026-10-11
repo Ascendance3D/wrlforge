@@ -52,6 +52,7 @@ option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
 .create-item .glyph-box { border-radius: 1px; }
 .create-item .glyph-sphere { border-radius: 50%; }
 .create-item .glyph-cylinder { border-radius: 40% / 18%; }
+.create-item .glyph-extrusion { clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); background: var(--wf-icon-active); border: none; }
 .create-item .glyph-cone { width: 0; height: 0; border-width: 0 .5rem .9rem .5rem; border-color: transparent transparent var(--wf-icon-active) transparent; }
 .create-error { color: var(--wf-error-fg); background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); border-radius: 3px; padding: .1rem .45rem; font-size: .85rem; max-width: 28rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -213,3 +214,48 @@ x3d-canvas.picking { cursor: crosshair; }
    WebView, so the in-page viewport keeps only its title and status lines. */
 .viewport.native { flex: 0 0 auto; }
 .viewport-stage[hidden], .viewport .badge[hidden], .viewport button[hidden], .viewport .sep[hidden], .native-status[hidden] { display: none; }
+
+/* VISUAL-4A: Extrusion Inspector and the 2D outline editor. */
+.extrusion { margin: 0 .6rem .5rem; font-size: .86rem; }
+.extrusion h4 { margin: .6rem 0 .25rem; font-size: .9rem; color: var(--wf-text-heading); }
+.xnotes { list-style: none; margin: .2rem 0; padding: 0; }
+.xnotes li { margin: .1rem 0; color: var(--wf-text-secondary); }
+.xnotes li.warning { color: var(--wf-warning-fg); }
+.xnotes li.error { color: var(--wf-error-fg); }
+.xnotes .sev { font-weight: 600; margin-right: .35rem; }
+.xfield { margin: .15rem 0 .45rem; }
+.xfield-head { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
+.xfield-head code { font-family: var(--wf-font-mono); color: var(--wf-text-primary); }
+.xfield-head .kind { color: var(--wf-tree-kind); font-size: .78rem; }
+.xstatus { font-size: .76rem; color: var(--wf-text-muted); }
+.xstatus.authored { color: var(--wf-text-secondary); }
+.xlist { border-collapse: collapse; margin: .2rem 0; font-size: .82rem; }
+.xlist th { text-align: right; padding: .1rem .3rem; color: var(--wf-text-muted); font-weight: 500; }
+.xlist td { padding: .08rem .2rem; }
+.xlist input.num { width: 4.6rem; padding: .1rem .25rem; font-family: var(--wf-font-mono); font-size: 12px; }
+.xlist.default code { color: var(--wf-text-muted); font-family: var(--wf-font-mono); font-size: 12px; }
+.xrow-actions { white-space: nowrap; }
+.xexcerpt { display: block; font-family: var(--wf-font-mono); font-size: 12px; color: var(--wf-text-editor); }
+.outline-editor { position: fixed; left: 19rem; top: 4.2rem; z-index: 40; width: 23rem; padding: .5rem .6rem;
+  background: var(--wf-surface-raised); border: 1px solid var(--wf-border-control); border-radius: 4px;
+  box-shadow: 0 4px 18px var(--wf-gizmo-halo); }
+.outline-editor[hidden] { display: none; }
+.outline-head h3 { margin: 0 0 .1rem; font-size: .95rem; color: var(--wf-text-heading); }
+.outline-head .muted { font-size: .76rem; }
+.outline-svg { display: block; width: 320px; height: 320px; margin: .35rem auto; background: var(--wf-surface-editor);
+  border: 1px solid var(--wf-border); touch-action: none; }
+.outline-svg:focus-visible { outline: 2px solid var(--wf-focus-ring); }
+.outline-svg line.grid { stroke: var(--wf-border-subtle); stroke-width: 1; }
+.outline-svg line.axis { stroke: var(--wf-text-muted); stroke-width: 1.5; }
+.outline-svg .axis-label { fill: var(--wf-text-secondary); font-size: 11px; }
+.outline-svg line.seg { stroke: var(--wf-accent); stroke-width: 2; }
+.outline-svg line.seg-hit { stroke: transparent; stroke-width: 12; cursor: copy; }
+.outline-svg circle.pt { fill: var(--wf-icon-active); stroke: var(--wf-surface-editor); stroke-width: 2; cursor: grab; }
+.outline-svg circle.pt.selected { fill: var(--wf-gizmo-active); }
+.outline-svg .pt-label { fill: var(--wf-text-secondary); font-size: 10px; pointer-events: none; }
+.outline-status { font-size: .8rem; color: var(--wf-text-secondary); }
+.outline-message { margin: .25rem 0; padding: .2rem .4rem; font-size: .8rem; color: var(--wf-error-fg);
+  background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); border-radius: 3px; }
+.outline-stale { font-size: .8rem; color: var(--wf-warning-fg); }
+.outline-editor .controls { display: flex; flex-wrap: wrap; gap: .3rem .4rem; align-items: center; margin-top: .3rem; }
+.outline-editor .comp input.num { width: 5.5rem; padding: .1rem .25rem; font-family: var(--wf-font-mono); font-size: 12px; }

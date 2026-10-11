@@ -7,6 +7,7 @@
 mod camera;
 mod create;
 mod editor;
+mod extrusion;
 mod gizmo;
 mod ipc;
 mod native;
@@ -162,6 +163,8 @@ fn App() -> impl IntoView {
                     <panels::Inspector/>
                 </section>
             </main>
+            // VISUAL-4A: the non-modal outline editor (hidden until opened).
+            <extrusion::OutlineEditor/>
             <footer class="statusbar" role="status">
                 <span>{move || u.doc.with(|d| d.as_ref().map(|d| d.name.clone()).unwrap_or_else(|| "No document".into()))}</span>
                 <span>{move || if u.dirty.get() { "● Modified" } else { "Saved" }}</span>

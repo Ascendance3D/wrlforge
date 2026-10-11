@@ -31,6 +31,8 @@ struct Args {
     smoke_move: Option<PathBuf>,
     /// `--smoke-texture <dir>`: the TEXTURE-LOCAL-1 local texture run.
     smoke_texture: Option<PathBuf>,
+    /// `--smoke-extrusion <dir>`: the VISUAL-4A Extrusion run.
+    smoke_extrusion: Option<PathBuf>,
     smoke_no_preview: bool,
     smoke_inspector: bool,
     smoke_theme: Option<p::ThemeSmoke>,
@@ -55,6 +57,7 @@ fn parse_args() -> Args {
         smoke_pick: None,
         smoke_move: None,
         smoke_texture: None,
+        smoke_extrusion: None,
         smoke_no_preview: false,
         smoke_inspector: false,
         smoke_theme: None,
@@ -76,6 +79,7 @@ fn parse_args() -> Args {
             Some("--smoke-pick") => a.smoke_pick = it.next().map(PathBuf::from),
             Some("--smoke-move") => a.smoke_move = it.next().map(PathBuf::from),
             Some("--smoke-texture") => a.smoke_texture = it.next().map(PathBuf::from),
+            Some("--smoke-extrusion") => a.smoke_extrusion = it.next().map(PathBuf::from),
             Some("--smoke-no-preview") => a.smoke_no_preview = true,
             Some("--smoke-inspector") => a.smoke_inspector = true,
             Some("--smoke-theme") => theme_final = it.next().and_then(|s| s.into_string().ok()),
@@ -181,6 +185,11 @@ pub fn run() {
                     .arm_move(&dir, args.smoke_report.clone())
                     .map_err(|e| format!("smoke-move: {e}"))?;
             }
+            if let Some(dir) = args.smoke_extrusion.clone() {
+                app.state::<smoke::SmokeState>()
+                    .arm_extrusion(&dir, args.smoke_report.clone())
+                    .map_err(|e| format!("smoke-extrusion: {e}"))?;
+            }
             if let Some(dir) = args.smoke_texture.clone() {
                 app.state::<smoke::SmokeState>()
                     .arm_texture(&dir, args.smoke_report.clone())
@@ -247,6 +256,8 @@ pub fn run() {
             commands::doc_analyze,
             commands::doc_inspect,
             commands::doc_edit_field,
+            commands::doc_edit_list,
+            commands::doc_add_field,
             commands::doc_preview_source,
             commands::native_state,
             commands::native_show,
@@ -266,6 +277,7 @@ pub fn run() {
             commands::smoke_real_pointer,
             commands::smoke_real_resize,
             commands::smoke_finish,
+            commands::smoke_window_capture,
             commands::smoke_texture_delay,
             commands::smoke_texture_capture,
             commands::smoke_resource_log,

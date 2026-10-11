@@ -220,6 +220,25 @@ pub fn doc_edit_field(
     svc.edit_field(&request)
 }
 
+/// VISUAL-4A: a list-field edit (one Inspector action or one outline
+/// session). Synchronous like `doc_edit_field`.
+#[tauri::command]
+pub fn doc_edit_list(
+    svc: State<'_, Service>,
+    request: p::ListEditRequest,
+) -> Result<p::FieldEditOutcome, String> {
+    svc.edit_list(&request)
+}
+
+/// VISUAL-4A: write one absent field because the user asked.
+#[tauri::command]
+pub fn doc_add_field(
+    svc: State<'_, Service>,
+    request: p::AddFieldRequest,
+) -> Result<p::FieldEditOutcome, String> {
+    svc.add_field(&request)
+}
+
 /// VISUAL-3A: whether the gizmo may move an item. Read-only; async like
 /// `doc_inspect` because it parses.
 #[tauri::command]
@@ -421,6 +440,12 @@ pub fn smoke_resource_log(
         return Err("no texture smoke run is armed".into());
     }
     Ok(crate::resources::log_snapshot())
+}
+
+/// `--smoke-extrusion` only (inside the harness Xvfb): a whole-screen PNG.
+#[tauri::command]
+pub async fn smoke_window_capture(app: AppHandle, id: String) -> Result<String, String> {
+    app.state::<SmokeState>().window_capture(&id)
 }
 
 #[tauri::command]

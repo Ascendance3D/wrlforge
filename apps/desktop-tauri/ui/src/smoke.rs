@@ -12,6 +12,7 @@ use crate::ipc::{self, call, Session};
 use crate::ui::{self, ui};
 
 mod create;
+mod extrusion;
 mod gizmo;
 mod pick;
 mod selection;
@@ -76,6 +77,9 @@ async fn settle() {
 pub async fn run(plan: p::SmokePlan) {
     let mut r = R(vec![]);
     let done = match (&plan.create, &plan.pick, &plan.gizmo) {
+        _ if plan.extrusion.is_some() => {
+            extrusion::run(plan.extrusion.as_ref().unwrap(), &mut r).await
+        }
         _ if plan.texture.is_some() => texture::run(plan.texture.as_ref().unwrap(), &mut r).await,
         (Some(c), _, _) => create::run(c, &mut r).await,
         (None, Some(pk), _) => pick::run(pk, &mut r).await,

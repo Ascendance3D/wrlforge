@@ -419,21 +419,9 @@ pub fn apply_inspection(seq: u64, sel: &Selected, o: p::InspectOutcome) -> bool 
 /// item id of the revision the Inspector was built from; Rust refuses it if
 /// the document moved on. The UI adopts nothing until Rust applies it.
 pub async fn edit_field(field_index: u32, field_name: String, components: Vec<p::FieldInput>) {
-    editor::idle().await;
-    let u = ui();
-    let (Some(session), Some(insp)) = (
-        CORE.with_borrow(|c| c.session),
-        u.inspection.get_untracked(),
-    ) else {
+    let Some((session, insp)) = field_target(&field_name).await else {
         return;
     };
-    // Fields of an older revision are not sent (Rust would refuse them too).
-    if let Some(why) = stale_reason(session, insp.revision) {
-        let m = format!("Not changed — {field_name}: the Inspector is updating ({why}).");
-        u.field_error.set(Some(m.clone()));
-        flash(&m);
-        return;
-    }
     #[derive(serde::Serialize)]
     struct A {
         request: p::FieldEditRequest,
@@ -446,7 +434,88 @@ pub async fn edit_field(field_index: u32, field_name: String, components: Vec<p:
         field_name: field_name.clone(),
         components,
     };
-    match call::<p::FieldEditOutcome>("doc_edit_field", A { request }).await {
+    let o = call::<p::FieldEditOutcome>("doc_edit_field", A { request }).await;
+    field_outcome(session, &field_name, o).await;
+}
+
+/// VISUAL-4A: one list-field change (`ops` is one Inspector action or one
+/// whole outline-editing session). Rust plans, proves and applies it as ONE
+/// undo step. Returns whether the document changed.
+pub async fn edit_list(
+    field_index: u32,
+    field_name: String,
+    expected_count: u32,
+    ops: Vec<p::ListOp>,
+) -> bool {
+    let Some((session, insp)) = field_target(&field_name).await else {
+        return false;
+    };
+    #[derive(serde::Serialize)]
+    struct A {
+        request: p::ListEditRequest,
+    }
+    let request = p::ListEditRequest {
+        session,
+        base_revision: insp.revision,
+        item: insp.id.clone(),
+        field_index,
+        field_name: field_name.clone(),
+        expected_count,
+        ops,
+    };
+    let o = call::<p::FieldEditOutcome>("doc_edit_list", A { request }).await;
+    field_outcome(session, &field_name, o).await
+}
+
+/// VISUAL-4A: write one absent field because the user asked for it.
+pub async fn add_field(field_name: String, value: p::AddFieldValue) -> bool {
+    let Some((session, insp)) = field_target(&field_name).await else {
+        return false;
+    };
+    #[derive(serde::Serialize)]
+    struct A {
+        request: p::AddFieldRequest,
+    }
+    let request = p::AddFieldRequest {
+        session,
+        base_revision: insp.revision,
+        item: insp.id.clone(),
+        field_name: field_name.clone(),
+        value,
+    };
+    let o = call::<p::FieldEditOutcome>("doc_add_field", A { request }).await;
+    field_outcome(session, &field_name, o).await
+}
+
+/// The session and the Inspector a field change is sent against, or `None`
+/// (with a visible reason) while the Inspector is not of the current text.
+async fn field_target(field_name: &str) -> Option<(u64, p::Inspection)> {
+    editor::idle().await;
+    let u = ui();
+    let (Some(session), Some(insp)) = (
+        CORE.with_borrow(|c| c.session),
+        u.inspection.get_untracked(),
+    ) else {
+        return None;
+    };
+    // Fields of an older revision are not sent (Rust would refuse them too).
+    if let Some(why) = stale_reason(session, insp.revision) {
+        let m = format!("Not changed — {field_name}: the Inspector is updating ({why}).");
+        u.field_error.set(Some(m.clone()));
+        flash(&m);
+        return None;
+    }
+    Some((session, insp))
+}
+
+/// Adopt Rust's answer to a field change. Returns whether it applied.
+async fn field_outcome(
+    session: u64,
+    field_name: &str,
+    o: Result<p::FieldEditOutcome, String>,
+) -> bool {
+    let u = ui();
+    match o {
         Ok(p::FieldEditOutcome::Applied {
             state, view, item, ..
         }) => {
@@ -463,8 +532,12 @@ pub async fn edit_field(field_index: u32, field_name: String, components: Vec<p:
                 "{field_name} changed (revision {}).",
                 state.revision
             ));
+            true
         }
-        Ok(p::FieldEditOutcome::Unchanged) => flash(&format!("{field_name}: no change.")),
+        Ok(p::FieldEditOutcome::Unchanged) => {
+            flash(&format!("{field_name}: no change."));
+            false
+        }
         Ok(p::FieldEditOutcome::Refused {
             reason,
             message,
@@ -479,10 +552,12 @@ pub async fn edit_field(field_index: u32, field_name: String, components: Vec<p:
             );
             u.field_error.set(Some(format!("{m} [{reason}]")));
             flash(&m);
+            false
         }
         Err(e) => {
             u.field_error.set(Some(format!("Field edit failed: {e}")));
             flash(&format!("Field edit failed: {e}"));
+            false
         }
     }
 }

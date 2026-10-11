@@ -34,6 +34,9 @@ fn hint(prim: p::Primitive) -> &'static str {
         p::Primitive::Cone => {
             "Add a Cone (bottom radius 1, height 2) inside a new Transform at the origin"
         }
+        p::Primitive::Extrusion => {
+            "Add an Extrusion (a closed hexagon outline swept along a 2-point spine, height 2) inside a new Transform at the origin"
+        }
     }
 }
 

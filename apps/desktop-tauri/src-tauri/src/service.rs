@@ -20,7 +20,7 @@ use std::time::SystemTime;
 use wrlforge_desktop_protocol as p;
 use wrlforge_document::{map_span, view_of, Applied, Document, SpanChange, ViewEdit};
 use wrlforge_text::Edit;
-use wrlforge_vrml::{create, field_edit, highlight, manipulate, scene};
+use wrlforge_vrml::{create, extrusion, field_edit, highlight, manipulate, mf_edit, scene};
 
 use crate::files::{self, FileError, Format, SaveOptions, Stamp};
 use crate::resources;
@@ -170,8 +170,49 @@ pub fn node_span(item: &str) -> Option<(u64, u64)> {
     (from < to).then_some((from, to))
 }
 
-fn node_fields(n: field_edit::NodeFields, vm: &ViewMap) -> p::NodeFields {
+fn extrusion_info(i: extrusion::Info) -> p::ExtrusionInfo {
+    p::ExtrusionInfo {
+        fields: i
+            .fields
+            .into_iter()
+            .map(|f| {
+                let (tuples, single) = match f.effective {
+                    Some(extrusion::Effective::List(l)) => (Some(l), None),
+                    Some(extrusion::Effective::Single(s)) => (None, Some(s)),
+                    None => (None, None),
+                };
+                p::ExtrusionField {
+                    name: f.name.into(),
+                    field_type: f.field_type.into(),
+                    authored: f.authored,
+                    field_index: f.index.map(|i| i as u32),
+                    tuples,
+                    single,
+                    default_text: f.default_text.map(Into::into),
+                    problem: f.problem.map(Into::into),
+                }
+            })
+            .collect(),
+        notes: i
+            .notes
+            .into_iter()
+            .map(|n| p::ExtrusionNote {
+                level: n.level.as_str().into(),
+                field: n.field.into(),
+                text: n.text,
+            })
+            .collect(),
+        outline_closed: i.outline_closed,
+    }
+}
+
+fn node_fields(
+    n: field_edit::NodeFields,
+    vm: &ViewMap,
+    extrusion: Option<extrusion::Info>,
+) -> p::NodeFields {
     p::NodeFields {
+        extrusion: extrusion.map(extrusion_info),
         editable: n.editable,
         reason: n.reason.into(),
         node_type: n.node_type,
@@ -203,9 +244,40 @@ fn node_fields(n: field_edit::NodeFields, vm: &ViewMap) -> p::NodeFields {
                 value_excerpt: f.value_excerpt,
                 view_from: vm.view(f.from),
                 view_to: vm.view(f.to),
+                list: f.list.map(|l| p::ListField {
+                    labels: l.spec.labels.iter().map(|s| s.to_string()).collect(),
+                    rotation: l.spec.rotation,
+                    form: match l.form {
+                        mf_edit::Form::Bracketed { .. } => "bracketed".into(),
+                        mf_edit::Form::Bare => "bare".into(),
+                    },
+                    tuples: l.lexemes(),
+                }),
             })
             .collect(),
     }
+}
+
+fn refused_field(
+    reason: &str,
+    message: Option<String>,
+    component: Option<u32>,
+) -> p::FieldEditOutcome {
+    p::FieldEditOutcome::Refused {
+        reason: reason.into(),
+        message,
+        component_index: component,
+    }
+}
+
+fn stale_field(base: u64, current: u64) -> p::FieldEditOutcome {
+    refused_field(
+        "parse-session-is-stale",
+        Some(format!(
+            "The document changed (revision {base} → {current}); re-select the node."
+        )),
+        None,
+    )
 }
 
 fn err(m: impl std::fmt::Display) -> String {
@@ -608,6 +680,7 @@ impl Service {
                 node_fields(
                     field_edit::inspect_node_fields(&parsed, text, from, to),
                     &vm,
+                    extrusion::inspect_at(&parsed, text, from, to),
                 )
             });
             let found = scene::inspect(&parsed.tree, text, item).map(|i| p::Inspection {
@@ -747,6 +820,7 @@ impl Service {
                 p::Primitive::Sphere => create::Primitive::Sphere,
                 p::Primitive::Cylinder => create::Primitive::Cylinder,
                 p::Primitive::Cone => create::Primitive::Cone,
+                p::Primitive::Extrusion => create::Primitive::Extrusion,
             };
             match create::plan_create(s.doc.text(), prim) {
                 create::Plan::Refused { reason, message } => p::CreateOutcome::Refused {
@@ -784,6 +858,118 @@ impl Service {
                 }
             }
         })
+    }
+
+    /// VISUAL-4A: a list-field edit (`MFVec2f` / `MFVec3f` / `MFRotation`).
+    /// Rust re-proves the revision, the node at the item's span, the field and
+    /// the tuple count; plans every operation on the text the previous one
+    /// produced; and applies the ONE resulting span edit as ONE transaction
+    /// (one undo step) whose result must equal the planned text.
+    pub fn edit_list(&self, r: &p::ListEditRequest) -> Result<p::FieldEditOutcome, String> {
+        self.with(r.session, |s| {
+            if r.base_revision != s.doc.revision() {
+                return stale_field(r.base_revision, s.doc.revision());
+            }
+            let Some((node_from, node_to)) = node_span(&r.item) else {
+                return refused_field(field_edit::reason::NOT_A_NODE, None, None);
+            };
+            let req = mf_edit::Request {
+                node_from,
+                node_to,
+                field_index: r.field_index as usize,
+                field_name: r.field_name.clone(),
+                expected_count: r.expected_count as usize,
+                ops: r
+                    .ops
+                    .iter()
+                    .map(|o| match o {
+                        p::ListOp::Set { index, components } => mf_edit::Op::Set {
+                            index: *index as usize,
+                            components: components.clone(),
+                        },
+                        p::ListOp::Insert { index, components } => mf_edit::Op::Insert {
+                            index: *index as usize,
+                            components: components.clone(),
+                        },
+                        p::ListOp::Delete { index } => mf_edit::Op::Delete {
+                            index: *index as usize,
+                        },
+                    })
+                    .collect(),
+            };
+            let plan = mf_edit::plan_list_edit(s.doc.text(), &req);
+            Self::apply_list_plan(s, r.base_revision, plan)
+        })
+    }
+
+    /// VISUAL-4A: write one ABSENT field into the node because the user asked
+    /// (never automatically). One transaction, one undo step.
+    pub fn add_field(&self, r: &p::AddFieldRequest) -> Result<p::FieldEditOutcome, String> {
+        self.with(r.session, |s| {
+            if r.base_revision != s.doc.revision() {
+                return stale_field(r.base_revision, s.doc.revision());
+            }
+            let Some((node_from, node_to)) = node_span(&r.item) else {
+                return refused_field(field_edit::reason::NOT_A_NODE, None, None);
+            };
+            let req = mf_edit::AddRequest {
+                node_from,
+                node_to,
+                field_name: r.field_name.clone(),
+                value: match &r.value {
+                    p::AddFieldValue::Bool { value } => mf_edit::AddValue::Bool(*value),
+                    p::AddFieldValue::Number { value } => mf_edit::AddValue::Number(value.clone()),
+                    p::AddFieldValue::List { tuples } => mf_edit::AddValue::List(tuples.clone()),
+                },
+            };
+            let plan = mf_edit::plan_add_field(s.doc.text(), &req);
+            Self::apply_list_plan(s, r.base_revision, plan)
+        })
+    }
+
+    fn apply_list_plan(s: &mut Session, base: u64, plan: mf_edit::Plan) -> p::FieldEditOutcome {
+        match plan {
+            mf_edit::Plan::Unchanged => p::FieldEditOutcome::Unchanged,
+            mf_edit::Plan::Refused {
+                reason,
+                message,
+                op_index,
+                component_index,
+            } => refused_field(
+                reason,
+                Some(match op_index {
+                    Some(i) if i > 0 => format!("step {}: {message}", i + 1),
+                    _ => message,
+                }),
+                component_index.map(|i| i as u32),
+            ),
+            mf_edit::Plan::Ready {
+                edit,
+                new_text,
+                node_from,
+                node_to,
+                ..
+            } => {
+                let edit = Edit {
+                    from: edit.from,
+                    to: edit.to,
+                    insert: edit.insert,
+                };
+                match s.doc.apply_source_transaction(base, &[edit], &new_text) {
+                    Ok(a) => p::FieldEditOutcome::Applied {
+                        state: Self::state(s, a),
+                        view: s.doc.view(),
+                        changed: Vec::new(),
+                        item: format!("node-{node_from}-{node_to}"),
+                    },
+                    Err(e) => refused_field(
+                        field_edit::reason::TRANSACTION_REJECTED,
+                        Some(e.to_string()),
+                        None,
+                    ),
+                }
+            }
+        }
     }
 
     /// VISUAL-3A: whether the translation gizmo may move `item` as it is in
@@ -1783,6 +1969,333 @@ mod tests {
 
     /// Creating in an existing file changes nothing but the appended object:
     /// BOM, CRLF, a lone CR, non-ASCII text and comments stay byte-exact.
+    /// The single differing region of `a` → `b`: (removed, inserted).
+    fn diff(a: &str, b: &str) -> (String, String) {
+        let (x, y): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+        let mut pre = 0;
+        while pre < x.len() && pre < y.len() && x[pre] == y[pre] {
+            pre += 1;
+        }
+        let mut suf = 0;
+        while suf < x.len() - pre
+            && suf < y.len() - pre
+            && x[x.len() - 1 - suf] == y[y.len() - 1 - suf]
+        {
+            suf += 1;
+        }
+        (
+            x[pre..x.len() - suf].iter().collect(),
+            y[pre..y.len() - suf].iter().collect(),
+        )
+    }
+
+    fn list_edit(
+        svc: &Service,
+        id: u64,
+        rev: u64,
+        item: &str,
+        f: &p::ExtrusionField,
+        ops: Vec<p::ListOp>,
+    ) -> p::FieldEditOutcome {
+        svc.edit_list(&p::ListEditRequest {
+            session: id,
+            base_revision: rev,
+            item: item.into(),
+            field_index: f.field_index.expect("authored"),
+            field_name: f.name.clone(),
+            expected_count: f.tuples.as_ref().map(|t| t.len() as u32).unwrap_or(0),
+            ops,
+        })
+        .unwrap()
+    }
+
+    fn applied(o: p::FieldEditOutcome) -> (p::DocState, String) {
+        match o {
+            p::FieldEditOutcome::Applied { state, item, .. } => (state, item),
+            other => panic!("not applied: {other:?}"),
+        }
+    }
+
+    /// The Extrusion item of the current revision and its Inspector view.
+    fn extrusion(svc: &Service, id: u64) -> (u64, String, p::ExtrusionInfo) {
+        let a = svc.analyze(id).unwrap();
+        let item = a
+            .items
+            .iter()
+            .find(|i| i.label.starts_with("Extrusion"))
+            .expect("an Extrusion item")
+            .id
+            .clone();
+        let ins = found(svc.inspect(id, &item, a.revision));
+        let node = ins.node.expect("node fields");
+        assert!(node.editable, "{}", node.reason);
+        (a.revision, item, node.extrusion.expect("extrusion view"))
+    }
+
+    fn xf<'a>(e: &'a p::ExtrusionInfo, name: &str) -> &'a p::ExtrusionField {
+        e.fields.iter().find(|f| f.name == name).unwrap()
+    }
+
+    /// VISUAL-4A: Create Extrusion → edit outline, spine, scale, orientation
+    /// (each one undo step, each diff exactly the intended tokens) → stale
+    /// refusal → Undo all → Redo all → Save As → reopen, in LF, CRLF and
+    /// BOM + CRLF documents with comments, DEF/USE and a PROTO.
+    #[test]
+    fn extrusion_create_edit_undo_redo_save_reopen_is_exact() {
+        let dir = tmp("visual4a");
+        let bodies = [
+            ("lf", "#VRML V2.0 utf8\n# keep me\nPROTO Keep [ field SFFloat k 1 ] { Group {} }\nDEF Ä Transform { translation 1 2 3 }\nTransform { children [ USE Ä ] }\nKeep { k 2 }\n"),
+            ("crlf", "#VRML V2.0 utf8\r\n# keep me ✓\r\nDEF A Group {}\r\nGroup { children [ USE A ] }\r\n"),
+            ("bom", "\u{FEFF}#VRML V2.0 utf8\r\n# Tëst 😀\r\nDEF A Group {}\r\n"),
+        ];
+        for (tag, src) in bodies {
+            let path = dir.join(format!("{tag}.wrl"));
+            fs::write(&path, src).unwrap();
+            let svc = Service::new(clock);
+            let doc = opened(svc.open_path(&path));
+            let id = doc.session;
+            let (st, _, name) = created(create(&svc, id, 0, p::Primitive::Extrusion));
+            assert_eq!((st.revision, name.as_str()), (1, "Extrusion_1"));
+            let after_create = svc.text(id).unwrap();
+            assert!(after_create.starts_with(src));
+            let eol = if tag == "lf" { "\n" } else { "\r\n" };
+            assert!(after_create[src.len()..].contains(&format!("geometry Extrusion {{{eol}")));
+
+            let (rev, item, e) = extrusion(&svc, id);
+            assert_eq!(rev, 1);
+            assert_eq!(xf(&e, "crossSection").tuples.as_ref().unwrap().len(), 7);
+            assert!(e.outline_closed);
+            assert!(!xf(&e, "scale").authored && !xf(&e, "solid").authored);
+            assert_eq!(xf(&e, "solid").single.as_deref(), Some("TRUE"));
+            assert_eq!(
+                xf(&e, "scale").tuples,
+                Some(vec![vec!["1".to_string(), "1".to_string()]])
+            );
+
+            // 1. One cross-section coordinate.
+            let before = svc.text(id).unwrap();
+            let (st, item) = applied(list_edit(
+                &svc,
+                id,
+                rev,
+                &item,
+                xf(&e, "crossSection"),
+                vec![p::ListOp::Set {
+                    index: 1,
+                    components: vec!["0.5".into(), "-0.9".into()],
+                }],
+            ));
+            assert_eq!(st.revision, 2);
+            assert_eq!(
+                svc.text(id).unwrap(),
+                before.replacen("0.5 -0.866,", "0.5 -0.9,", 1)
+            );
+            assert_eq!(
+                diff(&before, &svc.text(id).unwrap()),
+                ("866".into(), "9".into())
+            );
+            // 2. One spine coordinate.
+            let (rev, _, e) = extrusion(&svc, id);
+            let before = svc.text(id).unwrap();
+            let (_, item) = applied(list_edit(
+                &svc,
+                id,
+                rev,
+                &item,
+                xf(&e, "spine"),
+                vec![p::ListOp::Set {
+                    index: 1,
+                    components: vec!["0".into(), "3".into(), "0".into()],
+                }],
+            ));
+            assert_eq!(
+                svc.text(id).unwrap(),
+                before.replacen("spine [ 0 -1 0, 0 1 0 ]", "spine [ 0 -1 0, 0 3 0 ]", 1)
+            );
+            // 3. Scale: explicitly authored, then edited.
+            let (rev, _, _) = extrusion(&svc, id);
+            let before = svc.text(id).unwrap();
+            let (_, item) = applied(
+                svc.add_field(&p::AddFieldRequest {
+                    session: id,
+                    base_revision: rev,
+                    item: item.clone(),
+                    field_name: "scale".into(),
+                    value: p::AddFieldValue::List {
+                        tuples: vec![vec!["1".into(), "1".into()], vec!["1".into(), "1".into()]],
+                    },
+                })
+                .unwrap(),
+            );
+            assert_eq!(
+                svc.text(id).unwrap(),
+                before.replacen(
+                    "0 3 0 ]",
+                    &format!("0 3 0 ]{eol}        scale [ 1 1, 1 1 ]"),
+                    1
+                )
+            );
+            let (rev, _, e) = extrusion(&svc, id);
+            let before = svc.text(id).unwrap();
+            let (_, item) = applied(list_edit(
+                &svc,
+                id,
+                rev,
+                &item,
+                xf(&e, "scale"),
+                vec![p::ListOp::Set {
+                    index: 1,
+                    components: vec!["0.25".into(), "1".into()],
+                }],
+            ));
+            assert_eq!(
+                svc.text(id).unwrap(),
+                before.replacen("scale [ 1 1, 1 1 ]", "scale [ 1 1, 0.25 1 ]", 1)
+            );
+            // 4. Orientation: authored, then edited.
+            let (rev, _, _) = extrusion(&svc, id);
+            let (_, item) = applied(
+                svc.add_field(&p::AddFieldRequest {
+                    session: id,
+                    base_revision: rev,
+                    item: item.clone(),
+                    field_name: "orientation".into(),
+                    value: p::AddFieldValue::List {
+                        tuples: vec![vec!["0".into(), "0".into(), "1".into(), "0".into()]],
+                    },
+                })
+                .unwrap(),
+            );
+            let (rev, _, e) = extrusion(&svc, id);
+            let before = svc.text(id).unwrap();
+            let (_, item) = applied(list_edit(
+                &svc,
+                id,
+                rev,
+                &item,
+                xf(&e, "orientation"),
+                vec![p::ListOp::Set {
+                    index: 0,
+                    components: vec!["0".into(), "1".into(), "0".into(), "0.785398".into()],
+                }],
+            ));
+            assert_eq!(
+                svc.text(id).unwrap(),
+                before.replacen(
+                    "orientation [ 0 0 1 0 ]",
+                    "orientation [ 0 1 0 0.785398 ]",
+                    1
+                )
+            );
+            // 5. An outline session: add, move, delete = ONE undo step.
+            let (rev, _, e) = extrusion(&svc, id);
+            let before = svc.text(id).unwrap();
+            let (st, item) = applied(list_edit(
+                &svc,
+                id,
+                rev,
+                &item,
+                xf(&e, "crossSection"),
+                vec![
+                    p::ListOp::Insert {
+                        index: 2,
+                        components: vec!["0".into(), "-1.2".into()],
+                    },
+                    p::ListOp::Set {
+                        index: 2,
+                        components: vec!["0".into(), "-1.3".into()],
+                    },
+                    p::ListOp::Delete { index: 4 },
+                ],
+            ));
+            assert_eq!(st.revision, rev + 1);
+            let (rev2, _, e2) = extrusion(&svc, id);
+            assert_eq!(xf(&e2, "crossSection").tuples.as_ref().unwrap().len(), 7);
+            svc.undo(id).unwrap();
+            assert_eq!(svc.text(id).unwrap(), before);
+            svc.redo(id).unwrap();
+            // 6. Stale revision and stale count are refused; nothing changes.
+            let now = svc.text(id).unwrap();
+            assert!(matches!(
+                list_edit(
+                    &svc,
+                    id,
+                    rev,
+                    &item,
+                    xf(&e2, "spine"),
+                    vec![p::ListOp::Delete { index: 0 }]
+                ),
+                p::FieldEditOutcome::Refused { .. }
+            ));
+            let mut f = xf(&e2, "spine").clone();
+            f.tuples = Some(vec![]);
+            assert!(matches!(
+                list_edit(
+                    &svc,
+                    id,
+                    rev2 + 1,
+                    &item,
+                    &f,
+                    vec![p::ListOp::Delete { index: 0 }]
+                ),
+                p::FieldEditOutcome::Refused { .. }
+            ));
+            // 7. Malformed number and outline rules.
+            assert!(matches!(
+                list_edit(
+                    &svc,
+                    id,
+                    rev2 + 1,
+                    &item,
+                    xf(&e2, "crossSection"),
+                    vec![p::ListOp::Set {
+                        index: 1,
+                        components: vec!["1..0".into(), "0".into()]
+                    }]
+                ),
+                p::FieldEditOutcome::Refused { .. }
+            ));
+            assert!(matches!(
+                list_edit(
+                    &svc,
+                    id,
+                    rev2 + 1,
+                    &item,
+                    xf(&e2, "crossSection"),
+                    vec![p::ListOp::Delete { index: 0 }]
+                ),
+                p::FieldEditOutcome::Refused { .. }
+            ));
+            assert_eq!(svc.text(id).unwrap(), now);
+            let final_text = now;
+            // Undo everything (create + 7 edits) → the original bytes.
+            let mut undos = 0;
+            while matches!(svc.undo(id).unwrap(), p::HistoryOutcome::Applied { .. }) {
+                undos += 1;
+            }
+            assert_eq!((undos, svc.text(id).unwrap().as_str()), (8, src));
+            while matches!(svc.redo(id).unwrap(), p::HistoryOutcome::Applied { .. }) {}
+            assert_eq!(svc.text(id).unwrap(), final_text);
+            // Save As → reopen: the same bytes and the same Extrusion view.
+            let out = dir.join(format!("{tag}-saved.wrl"));
+            assert!(matches!(
+                svc.save_as(id, &out),
+                p::SaveOutcome::Saved { .. }
+            ));
+            assert_eq!(fs::read_to_string(&out).unwrap(), final_text);
+            assert_eq!(
+                fs::read_to_string(&path).unwrap(),
+                src,
+                "the original file is untouched"
+            );
+            let svc2 = Service::new(clock);
+            let d2 = opened(svc2.open_path(&out));
+            let (_, _, e3) = extrusion(&svc2, d2.session);
+            let (_, _, e4) = extrusion(&svc, id);
+            assert_eq!(e3, e4);
+        }
+    }
+
     #[test]
     fn create_in_existing_file_is_exact_and_refusals_change_nothing() {
         let dir = tmp("visual1-exist");
@@ -1820,8 +2333,8 @@ mod tests {
             .text(doc.session)
             .unwrap()
             .contains("DEF Box_2 Transform"));
-        // Four creates, four undo steps, back to the exact original.
-        for _ in 0..4 {
+        // One undo step per create, back to the exact original.
+        for _ in 0..p::Primitive::ALL.len() {
             svc.undo(doc.session).unwrap();
         }
         assert_eq!(svc.text(doc.session).unwrap(), src);
