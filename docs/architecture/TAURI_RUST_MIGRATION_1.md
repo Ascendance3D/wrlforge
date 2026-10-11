@@ -51,7 +51,8 @@ workspace; `crates/Cargo.lock` gained only their two path entries.
 | `src/vrml/node-identity.js`, `document-transaction.js` (WD1.4) | span proof in `field_edit` + `wrlforge-document::{apply_source_transaction, map_span}` | PARTIAL | Edits require exactly one node at the exact span of the current revision, re-proved after re-parse. Selections survive undo/redo only through exact change mapping. No Tier-2 DEF identity. |
 | `src/vrml/node-schema.js` | `wrlforge-vrml::node_schema` | MIGRATED | Generated field-for-field from the committed JS schema (`scripts/build-rust-node-schema.js`, `--check`); `scripts/check-rust-node-schema-parity.js` proves value equality (54 nodes, 544 fields, 10 classes). |
 | `src/vrml/field-edit.js` (WD2-B) | `wrlforge-vrml::field_edit` | MIGRATED | Same nine types, reason ids, lexical gates and round-trip proof. Stricter: nodes in PROTO/EXTERNPROTO/interface scope refuse; SFString line breaks refuse. |
-| `structure-edit.js`, `inspector-edit.js`, `first-object.js`, `simple-object.js`, `node-templates.js` | — | PENDING | No structural editing yet. |
+| `structure-edit.js`, `inspector-edit.js`, `first-object.js`, `simple-object.js`, `node-templates.js` | — | PENDING | No structural editing yet (VISUAL-4A adds only "write one absent field"). |
+| — (no JS equivalent) | `wrlforge-vrml::{mf_edit, extrusion}` + `doc_edit_list` / `doc_add_field` + `ui/src/extrusion.rs` | NEW | VISUAL-4A: `MFVec2f` / `MFVec3f` / `MFRotation` list editing, the Extrusion Inspector and the 2D outline editor. See [VISUAL_4A_EXTRUSION](VISUAL_4A_EXTRUSION.md). |
 | `compatibility.js`, `semantic-findings.js`, `messages.js`, `containment.js`, `proto-*.js`, `asset-refs.js` | — | PENDING | |
 | `src/editor/wrl-document.js` | `wrlforge-document::Document` | MIGRATED | One canonical buffer; dirty, revision, undo/redo are Rust-owned. |
 | `src/editor/file-io.js` | `src-tauri/src/files.rs` | MIGRATED | Same 7-step order. Stricter: refuses invalid UTF-8; exact byte stamp instead of SHA-1. |
@@ -440,6 +441,19 @@ the camera must survive every Move.
   `replaceWorld`) 42–44 / 55–62; camera carry (SHUTDOWN read → restore
   written) 9 / 10–11; release → final preview bound and gizmo re-bound
   71 / 75–87. Every traced commit: max view-matrix Δ 0.
+
+### VISUAL-4A — source-safe Extrusion authoring
+
+- Create gains **Extrusion** (closed hexagon outline, two-point spine, one
+  undo step). The Extrusion Inspector shows authored values and VRML97
+  defaults, edits list fields one operation at a time, and writes a missing
+  field only on an explicit request. The outline editor applies a whole
+  session as ONE `doc_edit_list` request (one undo step); Cancel sends
+  nothing. Contract, safety rules, tests and limits:
+  [VISUAL_4A_EXTRUSION](VISUAL_4A_EXTRUSION.md).
+- Smoke: `./smoke.sh --headless --extrusion [--research DIR]` (70 steps;
+  research files are copied to the run's temp directory and rendered
+  read-only).
 
 ### Known issues
 
