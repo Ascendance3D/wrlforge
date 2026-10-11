@@ -416,3 +416,26 @@ The smoke command `smoke_menu_native` (menu runs only) drives
   `command::run`) is tested on Linux. The NSMenu installation and its click
   events need a check on a Mac.
 
+
+### Follow-up gate
+
+Gate on `d19744f` (the follow-up code): a new clean worktree, the script
+`/tmp/uimenu1/verify.sh`, Xvfb per GUI run. Total time: 791 s.
+
+| check | result |
+|---|---|
+| Release Wasm build (`build-ui.sh`) | pass |
+| Desktop backend build | pass; `--version` = `WRL Forge 1.4.5 (Beta)` |
+| `cargo test --workspace` (apps) | 203 pass, 0 fail (+1 registry test) |
+| `cargo test --workspace` (crates) | 193 pass, 0 fail |
+| Menu (`--menu`) | pass, 62 of 62 steps (14 new); `WRONG_SOURCE_SELECTIONS = 0` |
+| Dock (main, restore, damaged) | pass |
+| Pick (37 fixtures, 152 real clicks) | pass |
+| Move, Rotate/Scale, Create, Extrusion, Texture, Recovery | pass |
+| Settings / theme | pass |
+| Native self-test | pass (46 checks) |
+| Files `fx58` / `fxqa` | 47/11/0 and 50/8/0; 0 differences from UI-DOCK-1 |
+| Inspector `fx58` / `fxqa` | 18/38/2 and 11/45/2; 0 differences from UI-DOCK-1 |
+
+The Files and Inspector failures and timeouts are the known baseline. They are
+the same files and the same failing steps as on UI-DOCK-1.
