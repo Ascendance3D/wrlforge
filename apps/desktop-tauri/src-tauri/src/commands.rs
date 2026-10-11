@@ -159,6 +159,13 @@ pub async fn doc_save_as(app: AppHandle, session: p::SessionId) -> p::SaveOutcom
     if let Some(path) = app.state::<SmokeState>().save_as_override() {
         return app.state::<Service>().save_as(session, &path);
     }
+    // UI-MENU-1 smoke: a planned Save As choice, or a canceled dialog.
+    if let Some(choice) = crate::smoke_menu::save_as_choice() {
+        return match choice {
+            Some(path) => app.state::<Service>().save_as(session, &path),
+            None => p::SaveOutcome::Canceled,
+        };
+    }
     let picked = app
         .dialog()
         .file()
@@ -619,6 +626,38 @@ pub fn smoke_request_close(app: AppHandle) -> Result<(), String> {
     }
     let w = app.get_webview_window("main").ok_or("no main window")?;
     w.close().map_err(|e| e.to_string())
+}
+
+/// UI-MENU-1: File → Quit, Ctrl+Q (⌘Q) and the macOS application menu.
+/// It closes the main window exactly like the title-bar button, so the
+/// `CloseRequested` handler and its [`CloseGate`] decide: unsaved work is
+/// asked about, and Cancel keeps the application open and the recovery
+/// records as they are. There is no second close path.
+#[tauri::command]
+pub fn app_quit(app: AppHandle) -> Result<(), String> {
+    let w = app.get_webview_window("main").ok_or("no main window")?;
+    w.close().map_err(|e| e.to_string())
+}
+
+/// UI-MENU-1: the menu smoke plan (`--smoke-menu` only).
+#[tauri::command]
+pub fn smoke_menu_plan() -> Option<crate::smoke_menu::Plan> {
+    crate::smoke_menu::plan()
+}
+
+/// UI-MENU-1 smoke: the recovery records (name, length, hash).
+#[tauri::command]
+pub fn smoke_menu_recovery_digest() -> Result<Vec<(String, u64, String)>, String> {
+    if !crate::smoke_menu::armed() {
+        return Err("not a menu smoke run".into());
+    }
+    Ok(crate::smoke_menu::recovery_digest())
+}
+
+/// UI-MENU-1 smoke: a file of the run as it is on disk.
+#[tauri::command]
+pub fn smoke_menu_disk(name: String) -> Result<crate::smoke_menu::Disk, String> {
+    crate::smoke_menu::disk(&name)
 }
 
 /// Window close with unsaved documents: ask once; Discard removes their

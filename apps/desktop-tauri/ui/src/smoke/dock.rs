@@ -48,8 +48,8 @@ pub struct Plan {
 }
 
 thread_local! {
-    static WRONG: Cell<u64> = const { Cell::new(0) };
-    static PICKS: Cell<u64> = const { Cell::new(0) };
+    pub(super) static WRONG: Cell<u64> = const { Cell::new(0) };
+    pub(super) static PICKS: Cell<u64> = const { Cell::new(0) };
 }
 
 const PROBE: &str = "__wfDockProbe";
@@ -80,7 +80,7 @@ async fn keep() -> Option<Keep> {
 }
 
 /// Mark the textarea and the canvas OBJECTS: a re-created element has no mark.
-fn set_probes() {
+pub(super) fn set_probes() {
     for id in ["source", "viewport"] {
         if let Some(e) = crate::element_by_id::<web_sys::Element>(id) {
             let _ = js_sys::Reflect::set(&e, &PROBE.into(), &id.into());
@@ -88,7 +88,7 @@ fn set_probes() {
     }
 }
 
-fn probes_ok() -> bool {
+pub(super) fn probes_ok() -> bool {
     ["source", "viewport"].iter().all(|id| {
         crate::element_by_id::<web_sys::Element>(id)
             .and_then(|e| js_sys::Reflect::get(&e, &PROBE.into()).ok())
@@ -159,7 +159,7 @@ async fn release(at: (f64, f64)) -> Option<()> {
     Some(())
 }
 
-async fn key(name: &str) -> Option<()> {
+pub(super) async fn key(name: &str) -> Option<()> {
     real(&format!("key-{name}"), 0.0, 0.0).await.ok()?;
     ipc::sleep(150).await;
     Some(())
@@ -201,7 +201,7 @@ async fn dock_drag(
 
 /// A real Select-tool click on the world point `w`: must select exactly
 /// `want` (an item label). Counts wrong selections.
-async fn pick_check(tag: &str, w: [f64; 3], want: &str, r: &mut R) -> Option<()> {
+pub(super) async fn pick_check(tag: &str, w: [f64; 3], want: &str, r: &mut R) -> Option<()> {
     let u = ui();
     if !u.pick_mode.get_untracked() {
         click("btn-select")?;
@@ -443,7 +443,7 @@ fn pressed(id: &str) -> bool {
         == Some("true")
 }
 
-async fn open_fixture(r: &mut R) -> Option<()> {
+pub(super) async fn open_fixture(r: &mut R) -> Option<()> {
     #[derive(serde::Serialize)]
     struct A {
         index: usize,

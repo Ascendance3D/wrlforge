@@ -647,6 +647,9 @@ impl SmokeState {
         if crate::smoke_dock::armed() {
             return crate::smoke_dock::fixture(index);
         }
+        if crate::smoke_menu::armed() {
+            return crate::smoke_menu::fixture(index);
+        }
         if let Some(a) = self.6.lock().ok()?.as_ref() {
             return a.fixtures.get(index).map(|f| f.0.clone());
         }
@@ -705,6 +708,9 @@ impl SmokeState {
     pub fn confirm_override(&self) -> Option<bool> {
         if crate::smoke_recovery::armed() {
             return crate::smoke_recovery::confirm_override();
+        }
+        if crate::smoke_menu::armed() {
+            return crate::smoke_menu::confirm();
         }
         // The picking and gizmo runs start a fresh New World per theme: discard.
         if self.2.lock().ok()?.is_some()
@@ -915,7 +921,8 @@ impl SmokeState {
         let armed = self.2.lock().map_err(|e| e.to_string())?.is_some()
             || self.3.lock().map_err(|e| e.to_string())?.is_some()
             || self.6.lock().map_err(|e| e.to_string())?.is_some()
-            || crate::smoke_dock::armed();
+            || crate::smoke_dock::armed()
+            || crate::smoke_menu::armed();
         if !armed {
             return Err("no picking or gizmo smoke run is armed".into());
         }
@@ -970,6 +977,24 @@ impl SmokeState {
                     "Delete",
                     "Return",
                     "Tab",
+                    // UI-MENU-1: menu access, menu navigation and the
+                    // application shortcuts (Ctrl+Alt = AltGr must not run one).
+                    "F10",
+                    "alt",
+                    "alt+f",
+                    "alt+e",
+                    "alt+v",
+                    "alt+t",
+                    "Escape",
+                    "space",
+                    "ctrl+s",
+                    "ctrl+z",
+                    "ctrl+y",
+                    "ctrl+q",
+                    "ctrl+alt+s",
+                    "ctrl+alt+z",
+                    "a",
+                    "b",
                 ];
                 if !KEYS.contains(&name) {
                     return Err(format!("key {name:?} is not in the smoke key set"));
@@ -1022,6 +1047,9 @@ pub fn finish(app: &AppHandle, report: p::SmokeReport) {
         return;
     }
     if crate::smoke_dock::finish(app, &report) {
+        return;
+    }
+    if crate::smoke_menu::finish(app, &report) {
         return;
     }
     let state = app.state::<SmokeState>();

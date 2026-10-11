@@ -12,6 +12,8 @@
 #                   write, then Restore / Discard / Later in two new processes)
 #        ./smoke.sh [--headless] --dock      (UI-DOCK-1: docking, tabs, dividers, presets and
 #                   source safety with real X input; then a restart and a damaged layout)
+#        ./smoke.sh [--headless] --menu      (UI-MENU-1: menu bar, shortcuts, clipboard, Quit
+#                   and menu / toolbar equivalence with real X input)
 #        ./smoke.sh [--headless] [--no-preview] [--inspector]
 #                   [--theme FINAL_ID [--theme-expect ID] [--theme-notice] [--theme-save-fails]]
 #                   [--config-dir DIR] file.wrl...
@@ -20,7 +22,7 @@
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 bin="${WRLFORGE_BIN:-$here/target/debug/wrl-forge}"
-xvfb=(); extra=(); cfg=""; create=0; pick=0; move=0; extrusion=0; rotscale=0; recovery=0; dock=0; research=""
+xvfb=(); extra=(); cfg=""; create=0; pick=0; move=0; extrusion=0; rotscale=0; recovery=0; dock=0; menu=0; research=""
 while [[ "${1:-}" == --* ]]; do
   case "$1" in
     --headless) xvfb=(xvfb-run -a -s "-screen 0 1600x1000x24");;
@@ -38,6 +40,7 @@ while [[ "${1:-}" == --* ]]; do
     --rotscale) rotscale=1;;
     --recovery) recovery=1;;
     --dock) dock=1;;
+    --menu) menu=1;;
     --research) research="$2"; shift;;
   esac; shift
 done
@@ -162,6 +165,17 @@ JSON
     # above); keep it as evidence, out of the restart's way.
     [[ -d "$d/config/recovery" ]] && mv "$d/config/recovery" "$d/recovery-$phase"
   done
+fi
+if [[ $menu -eq 1 ]]; then
+  # One disposable run dir and its own config dir (the recovery records the
+  # canceled Quit must keep live there).
+  d="$work/menu.d"; mkdir -p "$d/run" "$d/config"
+  marker=(); [[ ${#xvfb[@]} -gt 0 ]] && marker=(env WRLFORGE_SMOKE_XVFB=1)
+  timeout 400 "${xvfb[@]}" "${marker[@]}" "$bin" --smoke-menu "$d/run" --smoke-report "$d/report.json" --config-dir "$d/config" >"$d/stdout.txt" 2>"$d/stderr.txt"
+  code=$?
+  pass=$(sed -n 's/.*"pass": *\(true\|false\).*/\1/p' "$d/report.json" 2>/dev/null | head -1)
+  echo "menu: exit=$code pass=${pass:-none} report=$d/report.json"
+  [[ $code -eq 0 && "$pass" == "true" ]] || fail=1
 fi
 for src in "$@"; do
   d="$work/$(basename "$src").d"; mkdir -p "$d"; cp "$src" "$d/"

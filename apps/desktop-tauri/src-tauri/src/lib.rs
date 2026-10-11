@@ -14,6 +14,8 @@ pub mod service;
 pub mod settings;
 pub mod smoke;
 pub mod smoke_dock;
+pub mod smoke_menu;
+mod app_menu;
 pub mod smoke_recovery;
 pub mod viewport;
 
@@ -55,6 +57,8 @@ struct Args {
     smoke_recovery: Option<(smoke_recovery::Phase, PathBuf)>,
     /// UI-DOCK-1: `--smoke-dock[-restore|-damaged] <dir>`.
     smoke_dock: Option<(smoke_dock::Phase, PathBuf)>,
+    /// UI-MENU-1: `--smoke-menu <dir>`.
+    smoke_menu: Option<PathBuf>,
 }
 
 fn parse_args() -> Args {
@@ -78,6 +82,7 @@ fn parse_args() -> Args {
         smoke_native_control: false,
         smoke_recovery: None,
         smoke_dock: None,
+        smoke_menu: None,
     };
     let mut theme_final = None;
     let mut theme_expect = None;
@@ -121,6 +126,7 @@ fn parse_args() -> Args {
                     .next()
                     .map(|d| (smoke_dock::Phase::Damaged, PathBuf::from(d)))
             }
+            Some("--smoke-menu") => a.smoke_menu = it.next().map(PathBuf::from),
             Some("--smoke-recovery-crash") => {
                 a.smoke_recovery = it.next().map(|d| (smoke_recovery::Phase::Crash, d.into()))
             }
@@ -309,6 +315,19 @@ pub fn run() {
                 )
                 .map_err(|e| format!("smoke-dock: {e}"))?;
             }
+            if let Some(dir) = args.smoke_menu.clone() {
+                smoke_menu::arm(&dir, args.smoke_report.clone(), args.config_dir.clone())
+                    .map_err(|e| format!("smoke-menu: {e}"))?;
+            }
+            // UI-MENU-1: the standard macOS application menu (About, Hide,
+            // Quit; Edit with the platform clipboard items). Other platforms
+            // use the in-window menu bar only.
+            #[cfg(target_os = "macos")]
+            {
+                let menu = app_menu::build(app.handle())?;
+                app.set_menu(menu)?;
+                app.on_menu_event(app_menu::on_event);
+            }
             if let Some(path) = args.smoke.clone() {
                 app.state::<smoke::SmokeState>()
                     .arm(
@@ -424,6 +443,11 @@ pub fn run() {
             commands::smoke_dock_plan,
             commands::smoke_recovery_check,
             commands::smoke_request_close,
+            // UI-MENU-1.
+            commands::app_quit,
+            commands::smoke_menu_plan,
+            commands::smoke_menu_recovery_digest,
+            commands::smoke_menu_disk,
         ])
         .build(context)
         .expect("error while building WRL Forge")
