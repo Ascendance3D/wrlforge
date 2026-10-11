@@ -1396,6 +1396,7 @@ impl Service {
         })?;
         // The URL check stats files: outside the session lock.
         let texture_warnings = resources::check_textures(&text, folder.as_deref());
+        let route_warnings = invalid_routes(&text);
         Ok(p::PreviewSource {
             revision,
             hash: p::preview_hash(&text),
@@ -1404,6 +1405,7 @@ impl Service {
                 token.as_deref().unwrap_or(resources::NO_FOLDER_TOKEN),
             ),
             texture_warnings,
+            route_warnings,
         })
     }
 
@@ -1667,6 +1669,37 @@ impl Service {
     }
 }
 
+/// XITE-16-UPGRADE-2: the ROUTEs the scope graph PROVES invalid in `text`
+/// (the exact preview text). X_ITE 16.5.0 drops such a ROUTE and renders the
+/// rest; 15.1.10 rejected the scene. Only a whole-ROUTE verdict of
+/// `Unresolved` or `Invalid` counts: an ambiguous, recovered or unsupported
+/// answer proves nothing and is never reported. Nothing is inferred from what
+/// X_ITE drew, and the text is not changed.
+fn invalid_routes(text: &str) -> Vec<p::RouteWarning> {
+    let parsed = wrlforge_vrml::parse(text);
+    let graph = wrlforge_vrml::scope::build(&parsed);
+    let findings = graph.diagnostics();
+    graph
+        .routes
+        .iter()
+        .filter(|r| r.status.class() == "unresolved")
+        .map(|r| {
+            let inside = |d: &&wrlforge_vrml::scope::ScopeDiagnostic| {
+                d.range.start.offset >= r.range.start.offset
+                    && d.range.end.offset <= r.range.end.offset
+            };
+            p::RouteWarning {
+                line: r.range.start.line,
+                detail: findings
+                    .iter()
+                    .find(inside)
+                    .map(|d| format!("{}: {}", d.code, d.message))
+                    .unwrap_or_else(|| r.reason.to_string()),
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1695,6 +1728,85 @@ mod tests {
             p::OpenOutcome::Opened { doc } => doc,
             other => panic!("not opened: {other:?}"),
         }
+    }
+
+    /// XITE-16-UPGRADE-2: the preview's ROUTE warning comes only from a
+    /// PROVEN whole-ROUTE defect in the exact preview text. Uncertain answers
+    /// never warn, the source and its history are untouched, and Save works.
+    #[test]
+    fn route_warnings_report_only_proven_invalid_routes() {
+        let lines = |t: &str| invalid_routes(t).iter().map(|w| w.line).collect::<Vec<_>>();
+        // The two fixtures X_ITE 16.5.0 now renders partially.
+        let m6 =
+            include_str!("../tests/fixtures/flux-regression/malformed/m6_route_before_def.wrl");
+        let w = invalid_routes(m6);
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert_eq!(w[0].line, 4);
+        assert!(w[0].detail.starts_with("SCOPE003: "), "{w:?}");
+        let inv = include_str!("../../../../test/fixtures/vrml/invalid-route.wrl");
+        let w = invalid_routes(inv);
+        assert_eq!(lines(inv), [4, 5], "{w:?}");
+        assert!(
+            w.iter().all(|w| w.detail.starts_with("SCOPE001: ")),
+            "{w:?}"
+        );
+        // Proven event, direction and type defects warn too.
+        let head = "#VRML V2.0 utf8\nDEF T TimeSensor { }\nDEF P PositionInterpolator { }\n";
+        for (route, code) in [
+            ("ROUTE T.nosuch TO P.set_fraction\n", "SCOPE101"),
+            ("ROUTE P.set_fraction TO T.set_enabled\n", "SCOPE102"),
+            ("ROUTE T.fraction_changed TO P.value_changed\n", "SCOPE103"),
+            ("ROUTE P.value_changed TO T.set_cycleInterval\n", "SCOPE104"),
+        ] {
+            let w = invalid_routes(&format!("{head}{route}"));
+            assert_eq!(w.len(), 1, "{route}: {w:?}");
+            assert!(w[0].detail.starts_with(code), "{route}: {w:?}");
+        }
+        // Valid ROUTEs (including the 4.10.2 shorthand) never warn.
+        let ok = format!(
+            "{head}ROUTE T.fraction_changed TO P.set_fraction\nROUTE T.isActive TO T.enabled\n"
+        );
+        assert!(invalid_routes(&ok).is_empty(), "{:?}", invalid_routes(&ok));
+        // Uncertain answers prove nothing: an ambiguous DEF, a damaged parse,
+        // an EXTERNPROTO the URL would decide.
+        let amb = "#VRML V2.0 utf8\nDEF T TimeSensor { }\nDEF T TimeSensor { }\nDEF P PositionInterpolator { }\nROUTE T.fraction_changed TO P.set_fraction\n";
+        assert!(invalid_routes(amb).is_empty(), "{:?}", invalid_routes(amb));
+        let damaged = "#VRML V2.0 utf8\nDEF P PositionInterpolator { }\nROUTE Ghost.fraction_changed TO P.set_fraction\nGroup { children [\n";
+        assert!(
+            invalid_routes(damaged).is_empty(),
+            "{:?}",
+            invalid_routes(damaged)
+        );
+        let ext = "#VRML V2.0 utf8\nEXTERNPROTO E [ eventOut SFFloat out ] \"e.wrl\"\nDEF A E { }\nDEF P PositionInterpolator { }\nROUTE A.other TO P.set_fraction\n";
+        assert!(invalid_routes(ext).is_empty(), "{:?}", invalid_routes(ext));
+        // Through the service: BOM + CRLF source, the preview text is the
+        // source minus the BOM, the warning arrives, nothing else changes.
+        let d = tmp("route-warn");
+        let src = format!("\u{FEFF}{}", inv.replace('\n', "\r\n"));
+        fs::write(d.join("r.wrl"), &src).unwrap();
+        let bytes = fs::read(d.join("r.wrl")).unwrap();
+        let svc = Service::new(clock);
+        let id = opened(svc.open_path(&d.join("r.wrl"))).session;
+        let ps = svc.preview_source(id).unwrap();
+        assert_eq!(ps.text, src.trim_start_matches('\u{FEFF}'));
+        assert_eq!(
+            ps.route_warnings.iter().map(|w| w.line).collect::<Vec<_>>(),
+            [4, 5]
+        );
+        let info = svc.snapshot(id).unwrap();
+        assert_eq!(
+            (info.revision, info.dirty, info.can_undo),
+            (0, false, false)
+        );
+        assert_eq!(svc.text(id).unwrap(), src);
+        // Advisory only: Save As writes the exact bytes.
+        match svc.save_as(id, &d.join("copy.wrl")) {
+            p::SaveOutcome::Saved { .. } => {}
+            o => panic!("{o:?}"),
+        }
+        assert_eq!(fs::read(d.join("copy.wrl")).unwrap(), bytes);
+        assert_eq!(fs::read(d.join("r.wrl")).unwrap(), bytes);
+        let _ = fs::remove_dir_all(&d);
     }
 
     fn found(r: Result<p::InspectOutcome, String>) -> p::Inspection {

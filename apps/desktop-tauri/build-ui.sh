@@ -3,8 +3,10 @@
 # Build the Rust/Wasm UI into dist/ for the Tauri app. No Node.js is used.
 #   ./build-ui.sh            release wasm (default)
 #   ./build-ui.sh --debug    debug wasm
-# X_ITE is copied verbatim from the repository's pinned node_modules (15.1.10);
-# set X_ITE_DIST to point elsewhere. The version is checked, never changed.
+# X_ITE is the build pinned in xite/PIN (16.5.0), fetched and verified by
+# fetch-xite.sh into target/xite/ -- NOT the root node_modules, which is the
+# Electron app's 15.1.10. X_ITE_DIST may point at another copy, but every copy
+# must pass the same version + per-file SHA-256 check. Nothing is changed.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 profile=release; flag=--release
@@ -18,16 +20,21 @@ cp "$here/ui/static/"* "$here/dist/"
 # VISUAL-2: the WD2-D X_ITE picking adapter, verbatim (one source of truth;
 # every private X_ITE access stays in that one file).
 cp "$here/../../src/preview/xite-pick-adapter.js" "$here/dist/xite-pick-adapter.js"
+ver="$(sed -n 's/^version=//p' "$here/xite/PIN" | head -1)"
 xite="${X_ITE_DIST:-}"
 if [[ -z "$xite" ]]; then
-  for c in "$here/../../node_modules/x_ite/dist" "$here/../../../../../wrlforge/node_modules/x_ite/dist"; do
-    [[ -f "$c/x_ite.min.js" ]] && { xite="$c"; break; }
-  done
+  xite="$here/target/xite/$ver/dist"
+  [[ -d "$xite" ]] || "$here/fetch-xite.sh"
 fi
-[[ -n "$xite" && -f "$xite/x_ite.min.js" ]] || { echo "X_ITE dist not found; set X_ITE_DIST" >&2; exit 3; }
-ver="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$xite/../package.json" | head -1)"
-[[ "$ver" == "15.1.10" ]] || { echo "X_ITE version $ver != pinned 15.1.10; refusing" >&2; exit 4; }
-mkdir -p "$here/dist/vendor/x_ite"
-cp "$xite/x_ite.min.js" "$xite/x_ite.css" "$xite/LICENSE.md" "$here/dist/vendor/x_ite/"
-cp -r "$xite/assets" "$here/dist/vendor/x_ite/"
+"$here/fetch-xite.sh" --verify "$xite" || exit 4
+# Both adapters must accept exactly this build (their own runtime gate stays).
+grep -q "'$ver'" "$here/../../src/preview/xite-pick-adapter.js" || { echo "xite-pick-adapter.js does not list X_ITE $ver; refusing" >&2; exit 4; }
+grep -q "var XITE_VERSION = '$ver';" "$here/ui/static/xite-gizmo-adapter.js" || { echo "xite-gizmo-adapter.js is not pinned to X_ITE $ver; refusing" >&2; exit 4; }
+# Exactly the verified manifest files (x_ite.min.js, x_ite.css, LICENSE.md,
+# assets/): nothing unlisted is embedded, even from a fuller X_ITE_DIST.
+manifest="$here/xite/$(sed -n 's/^manifest=//p' "$here/xite/PIN" | head -1)"
+while read -r _ f; do
+  mkdir -p "$here/dist/vendor/x_ite/$(dirname "$f")"
+  cp "$xite/$f" "$here/dist/vendor/x_ite/$f"
+done < <(tr -d '\r' < "$manifest")
 echo "dist ready: $(du -sh "$here/dist" | cut -f1) (X_ITE $ver from $xite)"

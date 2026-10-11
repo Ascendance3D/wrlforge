@@ -481,7 +481,7 @@ pub fn Viewport() -> impl IntoView {
         <section class="viewport" class:native=move || u.native.with(|s| s.native_shown()) aria-label="3D Viewport">
             <div class="pane-title">"3D Viewport"
                 <span class="badge" hidden=move || u.native.with(|s| s.native_shown())
-                    title="X_ITE is a JavaScript renderer hosted through a narrow adapter">"X_ITE 15.1.10 (JavaScript) · temporary"</span>
+                    title="X_ITE is a JavaScript renderer hosted through a narrow adapter">"X_ITE 16.5.0 (JavaScript) · temporary"</span>
                 // NATIVE-RENDER-1 (hidden): the native viewport is the pane
                 // beside this window. Click selects, drag orbits, wheel zooms,
                 // Escape clears, Home resets the view. Selection only.
@@ -602,6 +602,16 @@ pub fn Viewport() -> impl IntoView {
                     None => String::new(),
                     Some(t) => format!("⚠ {} texture{} not loaded · line {} · {}: {}{}", w.len(), if w.len() == 1 { "" } else { "s" },
                         t.line, t.node, t.detail, if w.len() > 1 { " · hover for all" } else { "" }),
+                })}
+            </div>
+            // XITE-16-UPGRADE-2: Rust diagnostics, not the picture, decide this.
+            <div class="preview-status route-warning" id="route-warning" role="status" aria-live="polite"
+                hidden=move || u.route_warnings.with(|w| w.is_empty()) || u.native.with(|s| s.native_shown())
+                title=move || u.route_warnings.with(|w| w.iter().map(|r| format!("line {} · {}", r.line, r.detail)).collect::<Vec<_>>().join("\n"))>
+                {move || u.route_warnings.with(|w| match w.first() {
+                    None => String::new(),
+                    Some(r) => format!("⚠ The preview may be incomplete because one or more ROUTEs are invalid. · line {}{}",
+                        r.line, if w.len() > 1 { format!(" · {} ROUTEs · hover for all", w.len()) } else { String::new() }),
                 })}
             </div>
             <div class="preview-status native-status" id="native-status" hidden=move || !u.native.with(|s| s.requested && s.reason.is_some())>

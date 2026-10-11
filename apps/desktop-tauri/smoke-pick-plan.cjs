@@ -44,6 +44,16 @@ const VARIANTS = {
       map: (t, o) => (o >= HEADER.length ? o + note.length : o),
     };
   })(),
+  // XITE-16-UPGRADE-2: an INVALID ROUTE (neither node exists) before every
+  // node. X_ITE 16.5.0 drops it and renders the rest (15.1.10 rejected the
+  // scene); every pick on that partial scene must stay exact or refuse.
+  badroute: (() => {
+    const route = 'ROUTE XiteGhostA.fraction_changed TO XiteGhostB.set_fraction\n';
+    return {
+      text: (t) => HEADER + route + t.slice(HEADER.length),
+      map: (t, o) => (o >= HEADER.length ? o + route.length : o),
+    };
+  })(),
 };
 
 // Clicks the Tauri harness cannot reproduce faithfully are listed with the
@@ -91,7 +101,7 @@ for (const fx of C0.build()) {
 }
 // Every source form over fixtures with multi-line and repeated structure.
 for (const fx of C0.build().filter((f) => ['P3-wd2c-first-object', 'P4-box-and-sphere', 'P7-nested-twins'].includes(f.id))) {
-  for (const variant of ['crlf', 'cr', 'bom', 'unicode']) add(fx, variant);
+  for (const variant of ['crlf', 'cr', 'bom', 'unicode', 'badroute']) add(fx, variant);
 }
 
 fs.writeFileSync(path.join(real, 'plan.json'), JSON.stringify({ fixtures }, null, 1));

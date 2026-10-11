@@ -396,8 +396,40 @@ async fn run_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
         r.step(
             "X_ITE preview loaded the unsaved buffer",
             status.contains("loaded:"),
-            status,
+            status.clone(),
         );
+        // XITE-16-UPGRADE-2: the ROUTE notice is shown exactly when Rust
+        // proved an invalid ROUTE in the revision on screen, and each one is
+        // also a scope finding on that line in this revision's analysis.
+        if status.contains("loaded:") {
+            let routes = ui().route_warnings.get_untracked();
+            let el = doc_el().and_then(|d| d.get_element_by_id("route-warning"));
+            let shown = el.as_ref().is_some_and(|e| !e.has_attribute("hidden"));
+            let text = el.and_then(|e| e.text_content()).unwrap_or_default();
+            let a = ui().analysis.get_untracked();
+            let backed = routes.iter().all(|w| {
+                a.as_ref().is_some_and(|a| {
+                    a.scope_diagnostics
+                        .iter()
+                        .any(|d| d.line >= w.line && w.detail.starts_with(&format!("{}: ", d.code)))
+                })
+            });
+            let ok = shown == !routes.is_empty()
+                && backed
+                && (routes.is_empty()
+                    || text.contains(
+                        "The preview may be incomplete because one or more ROUTEs are invalid.",
+                    ));
+            r.step(
+                "ROUTE notice matches the Rust-proven invalid ROUTEs",
+                ok,
+                format!(
+                    "route_warnings {} shown {shown} backed {backed} lines {:?}",
+                    routes.len(),
+                    routes.iter().map(|w| w.line).collect::<Vec<_>>()
+                ),
+            );
+        }
     }
     syntax::reload_steps(r).await?;
     Some(())
