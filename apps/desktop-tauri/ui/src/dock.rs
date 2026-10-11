@@ -253,6 +253,8 @@ pub async fn load() {
 fn change(f: impl FnOnce(&Layout) -> Result<Layout, lay::LayoutError>) -> Result<(), String> {
     let cur = dock().layout.get_untracked();
     match f(&cur) {
+        // Nothing to change: no gizmo cancel, no save.
+        Ok(n) if n == cur => Ok(()),
         Ok(n) => {
             apply(n, true);
             Ok(())
