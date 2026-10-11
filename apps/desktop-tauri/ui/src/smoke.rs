@@ -15,6 +15,7 @@ mod create;
 mod extrusion;
 mod gizmo;
 mod pick;
+mod recovery;
 mod rotscale;
 mod selection;
 mod syntax;
@@ -91,6 +92,25 @@ pub async fn run(plan: p::SmokePlan) {
         (None, None, None) => run_steps(&plan, &mut r).await,
     };
     if done.is_none() {
+        r.step(
+            "smoke script ran to completion",
+            false,
+            "a required DOM element or reply was missing",
+        );
+    }
+    let _ = call::<()>(
+        "smoke_finish",
+        serde_json::json!({ "report": p::SmokeReport { steps: r.0 } }),
+    )
+    .await;
+}
+
+/// RUST-STAB-1: the recovery smoke phases (`smoke_recovery_plan`).
+pub use recovery::Plan as RecoveryPlan;
+
+pub async fn run_recovery(plan: recovery::Plan) {
+    let mut r = R(vec![]);
+    if recovery::run(&plan, &mut r).await.is_none() {
         r.step(
             "smoke script ran to completion",
             false,

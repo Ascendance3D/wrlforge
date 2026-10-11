@@ -663,6 +663,9 @@ impl SmokeState {
 
     /// Smoke only: the Save As destination (instead of the native dialog).
     pub fn save_as_override(&self) -> Option<PathBuf> {
+        if crate::smoke_recovery::armed() {
+            return crate::smoke_recovery::save_as_override();
+        }
         if let Some(p) = self.6.lock().ok()?.as_ref().map(|a| a.save_path.clone()) {
             return Some(p);
         }
@@ -697,6 +700,9 @@ impl SmokeState {
     /// Smoke only: the discard-confirmation answer. An unplanned question
     /// is answered Cancel (never discards).
     pub fn confirm_override(&self) -> Option<bool> {
+        if crate::smoke_recovery::armed() {
+            return crate::smoke_recovery::confirm_override();
+        }
         // The picking and gizmo runs start a fresh New World per theme: discard.
         if self.2.lock().ok()?.is_some()
             || self.3.lock().ok()?.is_some()
@@ -982,6 +988,9 @@ pub fn expected_text(original: &str) -> String {
 
 pub fn finish(app: &AppHandle, report: p::SmokeReport) {
     use tauri::Manager;
+    if crate::smoke_recovery::finish(app, &report) {
+        return;
+    }
     let state = app.state::<SmokeState>();
     if let Some(arm) = state.6.lock().unwrap().take() {
         let mut steps = report.steps;

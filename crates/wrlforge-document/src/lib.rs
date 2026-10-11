@@ -193,6 +193,10 @@ pub struct Document {
     revision: u64,
     /// The text last loaded from or saved to disk.
     saved: String,
+    /// RUST-STAB-1: the text has never been on disk in this session (a
+    /// restored recovery record). Dirty until a verified save, whatever the
+    /// text becomes.
+    unsaved: bool,
     eol: Eol,
     undo: Vec<Group>,
     redo: Vec<Group>,
@@ -284,6 +288,7 @@ impl Document {
         let eol = EolCounts::of(&text).dominant();
         Document {
             saved: text.clone(),
+            unsaved: false,
             text,
             revision: 0,
             eol,
@@ -334,7 +339,7 @@ impl Document {
         self.revision
     }
     pub fn dirty(&self) -> bool {
-        self.text != self.saved
+        self.unsaved || self.text != self.saved
     }
     pub fn eol(&self) -> Eol {
         self.eol
@@ -352,9 +357,18 @@ impl Document {
         !self.redo.is_empty()
     }
 
+    /// A document whose text is NOT on disk anywhere (RUST-STAB-1 restore):
+    /// the exact text, an empty history, and dirty until a verified save.
+    pub fn new_unsaved(text: String) -> Self {
+        let mut d = Document::new(text);
+        d.unsaved = true;
+        d
+    }
+
     /// The text on disk now equals the buffer (after a verified save).
     pub fn mark_saved(&mut self) {
         self.saved = self.text.clone();
+        self.unsaved = false;
     }
 
     /// Replace the whole buffer from disk (Reload). Clears history; the
@@ -677,6 +691,25 @@ mod tests {
         assert!(!d.dirty());
         d.redo().unwrap();
         assert_eq!(d.text(), want);
+    }
+
+    #[test]
+    fn new_unsaved_is_exact_dirty_and_undoable_until_saved() {
+        let text = "\u{FEFF}#VRML V2.0 utf8\r\nA {}\rB {}\n\u{e9}".to_string();
+        let mut d = Document::new_unsaved(text.clone());
+        assert_eq!(d.text(), text);
+        assert!(d.dirty(), "restored text is not on disk");
+        assert!(!d.can_undo(), "a restore has no history");
+        let len = utf16_len(&d.view());
+        let a = d
+            .apply_view_edit(0, &ViewEdit { from: len, to: len, insert: "C".into() })
+            .unwrap();
+        assert_eq!(a.revision, 1);
+        d.undo().unwrap();
+        assert_eq!(d.text(), text, "undo returns the exact restored text");
+        assert!(d.dirty(), "still not on disk after undo");
+        d.mark_saved();
+        assert!(!d.dirty());
     }
 
     #[test]

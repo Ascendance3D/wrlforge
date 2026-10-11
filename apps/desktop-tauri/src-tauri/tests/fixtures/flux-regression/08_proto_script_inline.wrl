@@ -1,0 +1,34 @@
+#VRML V2.0 utf8
+# original WRL Forge test fixture (RUST-STAB-1)
+# PROTO with interface fields and IS, an instance, a Script with ROUTEs, and an Inline.
+
+PROTO Pulse [
+  field SFFloat size 1
+  field SFColor tint 1 0 0
+  eventIn SFFloat setSize
+  exposedField SFBool enabled TRUE
+]
+{
+  Shape {
+    appearance Appearance { material Material { diffuseColor IS tint } }
+    geometry Box { size IS size }
+  }
+}
+
+# A comment between statements
+DEF Clk TimeSensor { cycleInterval 3 loop TRUE }
+DEF Ctl Script {
+  eventIn SFBool go
+  eventOut SFFloat grow
+  field SFFloat rate 2
+  url "javascript: function go(value, time) { grow = value * rate; }"
+}
+DEF Probe ScalarInterpolator {
+  key [ 0 1 ]
+  keyValue [ 0 1 ]
+}
+DEF Inst Pulse { size 2 tint 0 1 0 }
+Inline { url "child.wrl" }
+
+ROUTE Clk.isActive TO Ctl.go
+ROUTE Ctl.grow TO Probe.set_fraction

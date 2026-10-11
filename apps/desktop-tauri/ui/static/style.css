@@ -274,3 +274,19 @@ x3d-canvas.picking { cursor: crosshair; }
 .outline-stale { font-size: .8rem; color: var(--wf-warning-fg); }
 .outline-editor .controls { display: flex; flex-wrap: wrap; gap: .3rem .4rem; align-items: center; margin-top: .3rem; }
 .outline-editor .comp input.num { width: 5.5rem; padding: .1rem .25rem; font-family: var(--wf-font-mono); font-size: 12px; }
+
+/* RUST-STAB-1: the startup recovery choice. */
+.recovery-dialog { position: fixed; left: 50%; top: 4.2rem; transform: translateX(-50%); z-index: 50; width: min(40rem, 92vw);
+  max-height: 70vh; overflow: auto; padding: .7rem .9rem;
+  background: var(--wf-surface-raised); border: 1px solid var(--wf-border-control); border-radius: 4px;
+  box-shadow: 0 4px 18px var(--wf-gizmo-halo); color: var(--wf-text-primary); }
+.recovery-dialog h3 { margin: 0 0 .3rem; font-size: 1rem; color: var(--wf-text-heading); }
+.recovery-dialog p { margin: 0 0 .5rem; font-size: .86rem; }
+.recovery-list { list-style: none; margin: 0 0 .5rem; padding: 0; }
+.recovery-entry { display: flex; gap: .5rem; align-items: center; padding: .35rem 0; border-top: 1px solid var(--wf-border-subtle); }
+.recovery-text { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; }
+.recovery-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recovery-text .muted, .recovery-note { font-size: .8rem; }
+.recovery-note { color: var(--wf-warning-fg); }
+.recovery-actions { display: flex; justify-content: flex-end; }
+

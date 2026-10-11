@@ -13,6 +13,7 @@ mod ipc;
 mod native;
 mod panels;
 mod pick;
+mod recovery;
 mod smoke;
 mod syntax;
 mod theme;
@@ -28,6 +29,7 @@ use crate::ui::ui;
 
 #[wasm_bindgen(start)]
 pub fn start() {
+    recovery::init();
     leptos::mount::mount_to_body(App);
     pick::install();
     gizmo::install();
@@ -44,10 +46,18 @@ pub fn start() {
         {
             ui::apply_open(o, "Opened").await;
         }
+        // RUST-STAB-1: offer work left by a WRL Forge that did not exit
+        // cleanly. Nothing is restored without the user's choice.
+        recovery::check().await;
+        recovery::start_watch();
         if let Ok(Some(plan)) =
             ipc::call::<Option<p::SmokePlan>>("smoke_plan", ipc::NoArgs {}).await
         {
             smoke::run(plan).await;
+        } else if let Ok(Some(plan)) =
+            ipc::call::<Option<smoke::RecoveryPlan>>("smoke_recovery_plan", ipc::NoArgs {}).await
+        {
+            smoke::run_recovery(plan).await;
         }
     });
 }
@@ -131,6 +141,7 @@ fn App() -> impl IntoView {
                     <button class="secondary" on:click=move |_| u.conflict.set(None)>"Dismiss"</button>
                 </div>
             })}
+            <recovery::RecoveryWarning/>
             <main class="workspace">
                 <panels::SceneTree/>
                 <section class="editor-col" aria-label="Source editor">
@@ -165,6 +176,8 @@ fn App() -> impl IntoView {
             </main>
             // VISUAL-4A: the non-modal outline editor (hidden until opened).
             <extrusion::OutlineEditor/>
+            // RUST-STAB-1: the startup recovery choice (hidden when empty).
+            <recovery::RecoveryDialog/>
             <footer class="statusbar" role="status">
                 <span>{move || u.doc.with(|d| d.as_ref().map(|d| d.name.clone()).unwrap_or_else(|| "No document".into()))}</span>
                 <span>{move || if u.dirty.get() { "● Modified" } else { "Saved" }}</span>

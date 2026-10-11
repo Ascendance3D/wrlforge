@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 use wrlforge_desktop_protocol as p;
@@ -23,6 +23,7 @@ use wrlforge_text::Edit;
 use wrlforge_vrml::{create, extrusion, field_edit, highlight, manipulate, mf_edit, scene};
 
 use crate::files::{self, FileError, Format, SaveOptions, Stamp};
+use crate::recovery::{self, Recovery};
 use crate::resources;
 
 pub struct Session {
@@ -37,6 +38,28 @@ pub struct Session {
     /// Only this token is served; a newer generation, a close or a reopen
     /// (a new session) retires it.
     resource_token: Option<String>,
+    /// RUST-STAB-1: this session's recovery record id. The record exists on
+    /// disk only while the document is dirty (and a write has completed).
+    recovery_id: String,
+    /// The recovery change sequence of the current state.
+    recovery_seq: u64,
+    /// RUST-STAB-1: the safe file name of a restored record (untitled).
+    recovered_name: Option<String>,
+}
+
+impl Session {
+    fn new(path: Option<PathBuf>, format: Format, stamp: Option<Stamp>, doc: Document) -> Self {
+        Session {
+            path,
+            format,
+            stamp,
+            doc,
+            resource_token: None,
+            recovery_id: recovery::new_id(),
+            recovery_seq: 0,
+            recovered_name: None,
+        }
+    }
 }
 
 /// The largest runtime graph a pick snapshot may carry (the adapter's own
@@ -50,6 +73,8 @@ pub struct Service {
     sessions: Mutex<HashMap<p::SessionId, Session>>,
     next: AtomicU64,
     clock: fn() -> SystemTime,
+    /// RUST-STAB-1: crash recovery; absent until the app attaches it.
+    recovery: OnceLock<Arc<Recovery>>,
 }
 
 impl Default for Service {
@@ -307,31 +332,60 @@ impl Service {
             sessions: Mutex::new(HashMap::new()),
             next: AtomicU64::new(1),
             clock,
+            recovery: OnceLock::new(),
         }
     }
 
+    /// Attach crash recovery (once, at startup).
+    pub fn attach_recovery(&self, rec: Arc<Recovery>) {
+        let _ = self.recovery.set(rec);
+    }
+
+    pub fn recovery(&self) -> Option<&Arc<Recovery>> {
+        self.recovery.get()
+    }
+
+    /// Every session access goes through here, so EVERY committed change
+    /// (typing, Inspector, Create, Move / Rotate / Scale, Extrusion, list
+    /// edits, Undo / Redo, Reload) reaches recovery: a new revision is a
+    /// new recovery state. The canonical document is never touched by it.
     fn with<R>(&self, id: p::SessionId, f: impl FnOnce(&mut Session) -> R) -> Result<R, String> {
         let mut map = self.sessions.lock().map_err(err)?;
         let s = map
             .get_mut(&id)
             .ok_or_else(|| format!("unknown document session {id}"))?;
-        Ok(f(s))
+        let revision = s.doc.revision();
+        let out = f(s);
+        if s.doc.revision() != revision {
+            self.recovery_note(id, s);
+        }
+        Ok(out)
+    }
+
+    /// The session reached a new state: a dirty one is scheduled for a
+    /// recovery write; a clean one (saved, reloaded, undone to the saved
+    /// text) has its record removed NOW, which also blocks any delayed write.
+    fn recovery_note(&self, id: p::SessionId, s: &mut Session) {
+        let Some(rec) = self.recovery.get() else {
+            return;
+        };
+        s.recovery_seq = rec.next_seq();
+        if s.doc.dirty() {
+            rec.mark(id);
+        } else {
+            let _ = rec.retire(&s.recovery_id, s.recovery_seq);
+        }
     }
 
     fn info(id: p::SessionId, s: &Session) -> p::DocumentInfo {
         let counts = s.doc.eol_counts();
         p::DocumentInfo {
             session: id,
-            name: match &s.path {
-                Some(p) => p
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-                None => UNTITLED_NAME.into(),
-            },
-            display_path: match &s.path {
-                Some(p) => p.display().to_string(),
-                None => "New world (not saved yet)".into(),
+            name: Self::name(s),
+            display_path: match (&s.path, &s.recovered_name) {
+                (Some(p), _) => p.display().to_string(),
+                (None, Some(_)) => "Recovered work (not saved yet; use Save As)".into(),
+                (None, None) => "New world (not saved yet)".into(),
             },
             format: s.format.as_str().into(),
             view: s.doc.view(),
@@ -344,6 +398,18 @@ impl Service {
             can_undo: s.doc.can_undo(),
             can_redo: s.doc.can_redo(),
             untitled: s.path.is_none(),
+            recovered: s.path.is_none() && s.recovered_name.is_some(),
+        }
+    }
+
+    fn name(s: &Session) -> String {
+        match (&s.path, &s.recovered_name) {
+            (Some(p), _) => p
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            (None, Some(n)) => n.clone(),
+            (None, None) => UNTITLED_NAME.into(),
         }
     }
 
@@ -369,13 +435,12 @@ impl Service {
                 }
             }
         };
-        self.insert(Session {
-            path: Some(path.to_path_buf()),
-            format: loaded.format,
-            stamp: Some(loaded.stamp),
-            doc: Document::new(loaded.text),
-            resource_token: None,
-        })
+        self.insert(Session::new(
+            Some(path.to_path_buf()),
+            loaded.format,
+            Some(loaded.stamp),
+            Document::new(loaded.text),
+        ))
     }
 
     /// A new, empty VRML97 world in a new session. It has NO path and no
@@ -383,13 +448,12 @@ impl Service {
     /// It is in the canonical document engine like any opened file, and is
     /// not dirty until it is changed.
     pub fn new_world(&self) -> p::OpenOutcome {
-        self.insert(Session {
-            path: None,
-            format: Format::Plain,
-            stamp: None,
-            doc: Document::new(create::NEW_WORLD.into()),
-            resource_token: None,
-        })
+        self.insert(Session::new(
+            None,
+            Format::Plain,
+            None,
+            Document::new(create::NEW_WORLD.into()),
+        ))
     }
 
     /// Whether `id` holds changes that are not on disk (the New World
@@ -512,7 +576,11 @@ impl Service {
                 ..Default::default()
             };
             let result = files::safe_save(&path, s.doc.text(), s.format, Some(stamp), opts, now);
-            Self::after_save(id, s, result)
+            let out = Self::after_save(id, s, result);
+            if matches!(out, p::SaveOutcome::Saved { .. }) {
+                self.recovery_note(id, s);
+            }
+            out
         });
         r.unwrap_or_else(|m| p::SaveOutcome::Failed { message: m })
     }
@@ -531,7 +599,11 @@ impl Service {
             if result.is_ok() {
                 s.path = Some(path.to_path_buf());
             }
-            Self::after_save(id, s, result)
+            let out = Self::after_save(id, s, result);
+            if matches!(out, p::SaveOutcome::Saved { .. }) {
+                self.recovery_note(id, s);
+            }
+            out
         });
         r.unwrap_or_else(|m| p::SaveOutcome::Failed { message: m })
     }
@@ -1379,17 +1451,173 @@ impl Service {
     }
 }
 
+/// RUST-STAB-1: the recovery side of the service. Kept apart from the Save
+/// path: nothing here writes a document file or changes undo history.
+impl Service {
+    /// Write every session with an unwritten dirty state. The text is copied
+    /// under the session lock; the disk write runs without it. Returns the
+    /// number of records replaced.
+    pub fn recovery_pass(&self) -> usize {
+        let Some(rec) = self.recovery.get() else {
+            return 0;
+        };
+        let mut written = 0;
+        for id in rec.take_pending() {
+            let snap = self.with(id, |s| {
+                s.doc.dirty().then(|| recovery::Snapshot {
+                    record: s.recovery_id.clone(),
+                    sequence: s.recovery_seq,
+                    revision: s.doc.revision(),
+                    format: s.format.as_str(),
+                    name: Self::name(s),
+                    original: s
+                        .path
+                        .as_ref()
+                        .zip(s.stamp.as_ref())
+                        .map(|(p, st)| recovery::Original::of(p, &st.bytes, st.mtime)),
+                    text: s.doc.text().to_string(),
+                })
+            });
+            // A closed session or a clean one has nothing to write.
+            if let Ok(Some(snap)) = snap {
+                if rec.write(&snap) == Ok(true) {
+                    written += 1;
+                }
+            }
+        }
+        written
+    }
+
+    /// The user explicitly discarded `id`'s unsaved changes (New World →
+    /// Discard, quit → Discard): remove its record now.
+    pub fn discard_recovery(&self, id: p::SessionId) -> Result<(), String> {
+        let Some(rec) = self.recovery.get() else {
+            return Ok(());
+        };
+        let record = self.with(id, |s| s.recovery_id.clone())?;
+        rec.retire(&record, rec.next_seq())
+    }
+
+    /// Sessions holding unsaved changes, with their display names.
+    pub fn dirty_sessions(&self) -> Vec<(p::SessionId, String)> {
+        let Ok(map) = self.sessions.lock() else {
+            return vec![];
+        };
+        let mut v: Vec<_> = map
+            .iter()
+            .filter(|(_, s)| s.doc.dirty())
+            .map(|(&id, s)| (id, Self::name(s)))
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// Records left by a WRL Forge process that exited without saving.
+    pub fn recovery_list(&self) -> p::RecoveryList {
+        let Some(rec) = self.recovery.get() else {
+            return p::RecoveryList::default();
+        };
+        let warning = rec.warning();
+        let Some(store) = rec.store() else {
+            return p::RecoveryList {
+                warning,
+                ..Default::default()
+            };
+        };
+        let scan = store.scan();
+        p::RecoveryList {
+            entries: scan
+                .offered
+                .into_iter()
+                .map(|o| p::RecoveryEntry {
+                    id: o.header.record,
+                    name: o.header.name,
+                    untitled: o.header.untitled,
+                    format: o.header.format,
+                    saved_at_ms: o.header.saved_at_ms,
+                    bytes: o.header.text_bytes,
+                    original_now: o.original_now.map(str::to_string),
+                })
+                .collect(),
+            damaged: scan
+                .damaged
+                .into_iter()
+                .map(|d| p::RecoveryDamaged {
+                    id: d.id,
+                    reason: d.reason,
+                })
+                .collect(),
+            warning,
+        }
+    }
+
+    /// Restore: the record's exact text in a NEW untitled, dirty session in
+    /// the record's format. Nothing on disk is written except the record
+    /// itself (re-owned by this process, same text), so the original file
+    /// is untouched and only Save As can give the work a file.
+    pub fn recovery_restore(&self, record: &str) -> p::OpenOutcome {
+        let failed = |m: String| p::OpenOutcome::Failed { message: m };
+        let Some(rec) = self.recovery.get() else {
+            return failed("crash recovery is not available".into());
+        };
+        let Some(store) = rec.store() else {
+            return failed("crash recovery is not available".into());
+        };
+        if !store.scan().offered.iter().any(|o| o.header.record == record) {
+            return failed("that recovery record is not available to restore".into());
+        }
+        let (h, text) = match store.read(record) {
+            Ok(r) => r,
+            Err(e) => return failed(format!("the recovery record cannot be read: {e}")),
+        };
+        let format = if h.format == "gzip" {
+            Format::Gzip
+        } else {
+            Format::Plain
+        };
+        let mut s = Session::new(None, format, None, Document::new_unsaved(text));
+        s.recovery_id = h.record.clone();
+        s.recovery_seq = rec.next_seq();
+        s.recovered_name = Some(recovery::safe_name(&h.name));
+        // Take ownership of the record (same exact text), so no other
+        // window offers it while this one holds the work.
+        let snap = recovery::Snapshot {
+            record: h.record,
+            sequence: s.recovery_seq,
+            revision: s.doc.revision(),
+            format: format.as_str(),
+            name: h.name,
+            original: h.original,
+            text: s.doc.text().to_string(),
+        };
+        match rec.write(&snap) {
+            Ok(true) => self.insert(s),
+            Ok(false) => failed("that recovery record changed while it was restored".into()),
+            Err(e) => failed(format!("the recovery record cannot be re-owned: {e}")),
+        }
+    }
+
+    /// The text of `id`'s own recovery record on disk, if one exists
+    /// (read-only; smoke evidence).
+    pub fn recovery_record_text(&self, id: p::SessionId) -> Option<String> {
+        let rec = self.recovery.get()?;
+        let record = self.with(id, |s| s.recovery_id.clone()).ok()?;
+        rec.store()?.read(&record).ok().map(|(_, t)| t)
+    }
+
+    /// Discard one record offered at startup (after the user confirmed).
+    pub fn recovery_discard(&self, record: &str) -> Result<(), String> {
+        let rec = self.recovery.get().ok_or("crash recovery is not available")?;
+        let store = rec.store().ok_or("crash recovery is not available")?;
+        store.remove_orphan(record)
+    }
+}
+
 #[cfg(test)]
 impl Service {
     /// A session holding `text` (no path), for tests in other modules.
     pub(crate) fn open_text_for_test(&self, text: &str) -> p::SessionId {
-        match self.insert(Session {
-            path: None,
-            format: Format::Plain,
-            stamp: None,
-            doc: Document::new(text.into()),
-            resource_token: None,
-        }) {
+        match self.insert(Session::new(None, Format::Plain, None, Document::new(text.into()))) {
             p::OpenOutcome::Opened { doc } => doc.session,
             _ => panic!("open failed"),
         }
@@ -3496,3 +3724,362 @@ mod tests {
         }
     }
 }
+
+/// RUST-STAB-1: recovery through the real service paths.
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use crate::recovery::{Recovery, Schedule};
+    use std::fs;
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "wrlforge-tauri-rec-{tag}-{}-{}",
+            std::process::id(),
+            recovery::new_id()
+        ));
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// One "process": a service with recovery in `dir/recovery`. Dropping
+    /// it releases the instance lock exactly like a process exit.
+    fn process(dir: &Path) -> Service {
+        let svc = Service::default();
+        let rec = Recovery::open(&dir.join("recovery"), Schedule::default());
+        assert!(rec.warning().is_none(), "{:?}", rec.warning());
+        svc.attach_recovery(Arc::new(rec));
+        svc
+    }
+
+    fn opened(o: p::OpenOutcome) -> p::DocumentInfo {
+        match o {
+            p::OpenOutcome::Opened { doc } => doc,
+            other => panic!("not opened: {other:?}"),
+        }
+    }
+
+    fn edit(svc: &Service, id: u64, at: u64, ins: &str) -> p::DocState {
+        let rev = svc.snapshot(id).unwrap().revision;
+        match svc
+            .edit(&p::EditRequest {
+                session: id,
+                base_revision: rev,
+                from: at,
+                to: at,
+                insert: ins.into(),
+                item: None,
+            })
+            .unwrap()
+        {
+            p::EditOutcome::Applied { state, .. } => state,
+            other => panic!("refused: {other:?}"),
+        }
+    }
+
+    fn records(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = fs::read_dir(dir.join("recovery"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("rec-"))
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// The text of the single record for session `id`, read from disk.
+    fn on_disk(svc: &Service, id: u64) -> Option<String> {
+        let rec = svc.recovery().unwrap();
+        let rid = svc.with(id, |s| s.recovery_id.clone()).unwrap();
+        rec.store().unwrap().read(&rid).ok().map(|(_, t)| t)
+    }
+
+    const TRICKY: &str = "\u{FEFF}#VRML V2.0 utf8\r\n# caf\u{e9} \u{1F600}\r\nDEF A Transform { translation 0 0 0 }\rUSE A\n";
+
+    #[test]
+    fn crash_then_restore_is_exact_for_every_form_and_untitled() {
+        let d = tmp("restore");
+        let docs = d.join("docs");
+        fs::create_dir_all(&docs).unwrap();
+        let plain = docs.join("plain.wrl");
+        let gz = docs.join("packed.wrl");
+        let crlf = docs.join("tricky.wrl");
+        fs::write(&plain, "#VRML V2.0 utf8\nShape { geometry Box {} }\n").unwrap();
+        fs::write(&gz, files::encode("#VRML V2.0 utf8\nGroup {}\n", Format::Gzip).unwrap()).unwrap();
+        fs::write(&crlf, TRICKY).unwrap();
+        let originals: Vec<Vec<u8>> = [&plain, &gz, &crlf].iter().map(|p| fs::read(p).unwrap()).collect();
+
+        let mut expected: Vec<(String, String, bool)> = vec![];
+        {
+            let svc = process(&d);
+            for (path, at, ins) in [(&plain, 16u64, "# one\n"), (&gz, 0, "#x"), (&crlf, 1, "\u{2603}")] {
+                let doc = opened(svc.open_path(path));
+                edit(&svc, doc.session, at, ins);
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                expected.push((name, svc.text(doc.session).unwrap(), false));
+            }
+            // A new world, never saved, with a created object.
+            let nw = opened(svc.new_world());
+            let o = svc
+                .create(&p::CreateRequest {
+                    session: nw.session,
+                    base_revision: nw.revision,
+                    primitive: p::Primitive::Box,
+                })
+                .unwrap();
+            assert!(matches!(o, p::CreateOutcome::Applied { .. }));
+            expected.push((UNTITLED_NAME.into(), svc.text(nw.session).unwrap(), true));
+            // A clean document never produces a record.
+            opened(svc.open_path(&plain));
+            assert_eq!(svc.recovery_pass(), 4);
+            assert_eq!(records(&d).len(), 4);
+            // The process dies here (no save, no clean shutdown path).
+        }
+        let svc = process(&d);
+        let list = svc.recovery_list();
+        assert!(list.damaged.is_empty(), "{:?}", list.damaged);
+        assert_eq!(list.entries.len(), 4);
+        for (name, text, untitled) in &expected {
+            let e = list.entries.iter().find(|e| &e.name == name).unwrap();
+            assert_eq!(e.untitled, *untitled);
+            assert!(!e.name.contains('/'));
+            assert_eq!(e.bytes, text.len() as u64);
+            if !untitled {
+                assert_eq!(e.original_now.as_deref(), Some("unchanged"));
+            }
+            let doc = opened(svc.recovery_restore(&e.id));
+            assert!(doc.untitled && doc.recovered && doc.dirty, "{doc:?}");
+            assert_eq!(doc.name, *name);
+            assert_eq!(doc.format, if name == "packed.wrl" { "gzip" } else { "plain" });
+            assert_eq!(svc.text(doc.session).unwrap().as_bytes(), text.as_bytes(), "{name}");
+            // Restoring twice is refused: this window owns it now.
+            assert!(matches!(svc.recovery_restore(&e.id), p::OpenOutcome::Failed { .. }));
+            // A plain Save cannot reach any file: Save As is required.
+            assert!(matches!(svc.save(doc.session), p::SaveOutcome::Failed { .. }));
+        }
+        // The originals are still byte-identical.
+        for (p, b) in [&plain, &gz, &crlf].iter().zip(&originals) {
+            assert_eq!(&fs::read(p).unwrap(), b);
+        }
+        assert_eq!(records(&d).len(), 4, "records stay until Save As or Discard");
+        // Nothing is offered to this process for its own restored work.
+        assert!(svc.recovery_list().entries.is_empty());
+    }
+
+    #[test]
+    fn restored_work_edits_undoes_and_saves_as_its_own_format() {
+        let d = tmp("saveas");
+        let gz = d.join("item.wrl");
+        let text = "#VRML V2.0 utf8\r\nGroup { }\r\n";
+        fs::write(&gz, files::encode(text, Format::Gzip).unwrap()).unwrap();
+        let before = fs::read(&gz).unwrap();
+        let typed;
+        {
+            let svc = process(&d);
+            let doc = opened(svc.open_path(&gz));
+            edit(&svc, doc.session, 0, "# kept\n");
+            assert!(svc.text(doc.session).unwrap().starts_with("# kept\r\n"));
+            typed = svc.text(doc.session).unwrap();
+            svc.recovery_pass();
+        }
+        let svc = process(&d);
+        let e = svc.recovery_list().entries.remove(0);
+        let doc = opened(svc.recovery_restore(&e.id));
+        let id = doc.session;
+        // Normal editing and Undo on the recovered text.
+        edit(&svc, id, 0, "X");
+        assert_ne!(svc.text(id).unwrap(), typed);
+        assert!(matches!(svc.undo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), typed);
+        assert!(svc.snapshot(id).unwrap().dirty, "undo does not make it saved");
+        svc.recovery_pass();
+        assert_eq!(on_disk(&svc, id).unwrap(), typed, "the record follows the newest revision");
+        // Save As writes gzip, then the record is complete (removed).
+        let out = d.join("out.wrl");
+        assert!(matches!(svc.save_as(id, &out), p::SaveOutcome::Saved { .. }));
+        let raw = fs::read(&out).unwrap();
+        assert!(files::is_gzip(&raw));
+        assert_eq!(files::decode(&raw).unwrap().0, typed);
+        assert!(records(&d).is_empty());
+        assert_eq!(fs::read(&gz).unwrap(), before, "the original never changed");
+    }
+
+    #[test]
+    fn every_document_change_reaches_recovery_and_save_completes_it() {
+        let d = tmp("changes");
+        let svc = process(&d);
+        let nw = opened(svc.new_world());
+        let id = nw.session;
+        assert_eq!(svc.recovery_pass(), 0, "an unchanged new world is clean");
+        let (state, item) = match svc
+            .create(&p::CreateRequest { session: id, base_revision: 0, primitive: p::Primitive::Box })
+            .unwrap()
+        {
+            p::CreateOutcome::Applied { state, item, .. } => (state, item),
+            other => panic!("{other:?}"),
+        };
+        let check = |what: &str| {
+            assert_eq!(svc.recovery_pass(), 1, "{what} scheduled a write");
+            assert_eq!(on_disk(&svc, id).unwrap(), svc.text(id).unwrap(), "{what}");
+        };
+        check("create");
+        let o = svc
+            .translate(&p::TranslateRequest {
+                session: id,
+                base_revision: state.revision,
+                item: item.clone(),
+                axis: p::gizmo::Axis::X,
+                value: 1.5,
+                decimals: 3,
+            })
+            .unwrap();
+        let (rev, item) = match o {
+            p::TranslateOutcome::Applied { state, item, .. } => (state.revision, item),
+            other => panic!("{other:?}"),
+        };
+        check("move");
+        for (what, o) in [
+            (
+                "rotate",
+                svc.rotate(&p::RotateRequest { session: id, base_revision: rev, item: item.clone(), axis: p::gizmo::Axis::Y, delta: 0.5 }),
+            ),
+        ] {
+            match o.unwrap() {
+                p::TranslateOutcome::Applied { .. } => check(what),
+                // A created Box may lack the field: a refusal changes nothing.
+                _ => assert_eq!(svc.recovery_pass(), 0),
+            }
+        }
+        assert!(matches!(svc.undo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        check("undo");
+        assert!(matches!(svc.redo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        check("redo");
+        edit(&svc, id, 0, "#");
+        check("typing");
+        // Writing a record never changes the document or its history.
+        let info = svc.snapshot(id).unwrap();
+        svc.recovery_pass();
+        assert_eq!(svc.snapshot(id).unwrap(), info);
+        // A pending write that runs after Save cannot recreate the record.
+        edit(&svc, id, 0, "#");
+        let path = d.join("w.wrl");
+        assert!(matches!(svc.save_as(id, &path), p::SaveOutcome::Saved { .. }));
+        assert!(records(&d).is_empty(), "save completes the record at once");
+        assert_eq!(svc.recovery_pass(), 0);
+        assert!(records(&d).is_empty());
+        // Undo back to the saved text is clean: no record; redo is dirty.
+        edit(&svc, id, 0, "#");
+        svc.recovery_pass();
+        assert_eq!(records(&d).len(), 1);
+        svc.undo(id).unwrap();
+        assert!(records(&d).is_empty(), "back at the saved text");
+    }
+
+    #[test]
+    fn failed_save_conflict_and_cancel_keep_the_record() {
+        let d = tmp("keep");
+        let path = d.join("a.wrl");
+        fs::write(&path, "#VRML V2.0 utf8\n").unwrap();
+        let svc = process(&d);
+        let id = opened(svc.open_path(&path)).session;
+        edit(&svc, id, 0, "# mine\n");
+        svc.recovery_pass();
+        let mine = svc.text(id).unwrap();
+        // An outside change: Save is a conflict, the record stays.
+        fs::write(&path, "#VRML V2.0 utf8\n# theirs\n").unwrap();
+        assert_eq!(svc.check_external(id).unwrap().changed, true);
+        assert!(matches!(svc.save(id), p::SaveOutcome::Conflict { .. }));
+        assert_eq!(on_disk(&svc, id).unwrap(), mine);
+        // A failed write (read-only folder): the record stays.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let ro = d.join("ro");
+            fs::create_dir_all(&ro).unwrap();
+            fs::set_permissions(&ro, fs::Permissions::from_mode(0o500)).unwrap();
+            let r = svc.save_as(id, &ro.join("b.wrl"));
+            fs::set_permissions(&ro, fs::Permissions::from_mode(0o700)).unwrap();
+            assert!(matches!(r, p::SaveOutcome::Failed { .. }), "{r:?}");
+            assert_eq!(on_disk(&svc, id).unwrap(), mine);
+        }
+        // Closing without a decision (or a canceled quit) keeps the record.
+        svc.close(id).unwrap();
+        assert_eq!(records(&d).len(), 1);
+        drop(svc);
+        let svc = process(&d);
+        assert_eq!(svc.recovery_list().entries.len(), 1);
+        // Later: nothing changes; the next start offers it again.
+        drop(svc);
+        let svc = process(&d);
+        let e = svc.recovery_list().entries.remove(0);
+        assert_eq!(e.original_now.as_deref(), Some("changed"));
+        // Discard removes ONLY that record.
+        let other = opened(svc.new_world()).session;
+        edit(&svc, other, 0, "#");
+        svc.recovery_pass();
+        svc.recovery_discard(&e.id).unwrap();
+        assert_eq!(records(&d).len(), 1, "this window's record is untouched");
+        assert!(svc.recovery_list().entries.is_empty());
+        // An explicit discard of open work removes its record.
+        svc.discard_recovery(other).unwrap();
+        assert!(records(&d).is_empty());
+    }
+
+    #[test]
+    fn a_failed_recovery_write_warns_and_changes_nothing() {
+        let d = tmp("warn");
+        let svc = process(&d);
+        let id = opened(svc.new_world()).session;
+        edit(&svc, id, 0, "# a\n");
+        svc.recovery_pass();
+        let first = on_disk(&svc, id).unwrap();
+        let info = svc.snapshot(id).unwrap();
+        svc.recovery().unwrap().store().unwrap().fail_next_writes(1);
+        edit(&svc, id, 0, "# b\n");
+        let info2 = svc.snapshot(id).unwrap();
+        assert_eq!(svc.recovery_pass(), 0);
+        assert_eq!(svc.snapshot(id).unwrap(), info2, "the document is unchanged by the failure");
+        assert_ne!(info, info2);
+        assert_eq!(on_disk(&svc, id).unwrap(), first, "the older record is kept");
+        assert!(svc.recovery_list().warning.unwrap().contains("could not save"));
+        // The next change writes again and clears the warning.
+        edit(&svc, id, 0, "# c\n");
+        assert_eq!(svc.recovery_pass(), 1);
+        assert!(svc.recovery_list().warning.is_none());
+        // Unavailable storage: editing still works, with a warning.
+        let svc2 = Service::default();
+        svc2.attach_recovery(Arc::new(Recovery::unavailable("test")));
+        let id2 = opened(svc2.new_world()).session;
+        edit(&svc2, id2, 0, "#");
+        assert_eq!(svc2.recovery_pass(), 0);
+        assert!(svc2.recovery_list().warning.unwrap().contains("unavailable"));
+    }
+
+    #[test]
+    fn a_damaged_record_is_reported_and_not_restorable() {
+        let d = tmp("damaged");
+        {
+            let svc = process(&d);
+            let id = opened(svc.new_world()).session;
+            edit(&svc, id, 0, "#");
+            svc.recovery_pass();
+        }
+        let name = records(&d).remove(0);
+        let p = d.join("recovery").join(&name);
+        let mut b = fs::read(&p).unwrap();
+        let n = b.len();
+        b[n - 1] ^= 0x20;
+        fs::write(&p, &b).unwrap();
+        let svc = process(&d);
+        let l = svc.recovery_list();
+        assert!(l.entries.is_empty());
+        assert_eq!(l.damaged.len(), 1);
+        assert!(l.damaged[0].reason.contains("checksum"), "{}", l.damaged[0].reason);
+        assert!(matches!(svc.recovery_restore(&l.damaged[0].id), p::OpenOutcome::Failed { .. }));
+        assert!(p.exists(), "never deleted without the user");
+        svc.recovery_discard(&l.damaged[0].id).unwrap();
+        assert!(!p.exists());
+    }
+}
+

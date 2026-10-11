@@ -64,7 +64,7 @@ workspace; `crates/Cargo.lock` gained only their two path entries.
 | `src/files/vrml-file.js` (`isGzip`), `backups.js`, `src/preview/wrl-source.js` | `files.rs` | MIGRATED | `editPathFor` (Mall `.edit.wrl`) not ported. |
 | `src/editor/session.js`, `session-store.js`, `editor-controller.js`, `path-authorizer.js` | `src-tauri/src/service.rs` + `commands.rs` | PARTIAL | Rust-owned sessions; paths only from native dialogs or the launch argument. No multi-document UI. No World-graph authorization. |
 | `src/editor/language.js` + CodeMirror 6 | `wrlforge-vrml::highlight` + `protocol::syntax` + `<textarea>` with `ui/src/syntax.rs` color layer | PARTIAL | UI-SYNTAX-1: parser-derived syntax colors and diagnostic underlines from the same parse and revision as the Diagnostics panel. Highlight parity with `language.js`: 65/65 committed fixtures, 328/328 approved real items. No gutter, no folding, no outline pane. CodeMirror is NOT used. |
-| `src/editor/recovery-store.js`, `recovery-controller.js` | — | PENDING | No crash recovery. |
+| `src/editor/recovery-store.js`, `recovery-controller.js` | `src-tauri/src/recovery.rs` + `service.rs` recovery hooks + `ui/src/recovery.rs` | MIGRATED (RUST-STAB-1) | Persistent, Rust-owned crash recovery with a startup Restore / Discard / Later choice; passed a SIGKILL smoke. Not a port: binary-checked records, atomic writes, owner locks. See [RUST_STAB_1_RECOVERY](RUST_STAB_1_RECOVERY.md). |
 | `src/editor/ui-state.js` (zoom, themes) | `protocol::theme` + `ui/src/theme.rs` + `ui/static/themes.css` | PARTIAL | UI-THEME-1: three built-in Tokyo Night themes (`tokyo-night` default, `tokyo-night-storm`, `tokyo-night-light`), toolbar selector, persisted. No zoom, High Contrast or Follow System yet. |
 | `src/editor/command-registry.js`, `panel-registry.js`, `workspace-presets.js`, `src/shell/*` | — | PENDING | Fixed layout; toolbar and shortcuts only. |
 | `src/editor/scene-selection.js` | `ui/src/ui.rs` `adopt_selection` (Scene Tree and viewport) | PARTIAL | One selection authority for tree and viewport clicks. No multi-selection. |
@@ -472,6 +472,17 @@ the camera must survive every Move.
   `doc_add_field`. Contract, geometry, source rules, tests and limits:
   [VISUAL_4B_ROTATE_SCALE](VISUAL_4B_ROTATE_SCALE.md).
 - Smoke: `./smoke.sh --headless --rotscale` (71 steps, real X input).
+
+### RUST-STAB-1 — crash recovery and source safety
+
+- Crash recovery is **complete**: the startup Restore workflow passed after a
+  real SIGKILL (`./smoke.sh --headless --recovery`, three processes). Window
+  close now asks before it discards unsaved work. Format, safety rules,
+  lifecycle, tests and limits: [RUST_STAB_1_RECOVERY](RUST_STAB_1_RECOVERY.md).
+- Source preservation regressions from the corrected Flux Studio research:
+  `cargo test -p wrl-forge-desktop --test flux_regression`.
+- The PR #136 head (`96aef4f`) did not compile; this lane's first commit fixes
+  the two VISUAL-4B build breaks.
 
 ### Known issues
 

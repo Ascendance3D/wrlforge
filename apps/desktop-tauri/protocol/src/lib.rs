@@ -39,6 +39,10 @@ pub struct DocumentInfo {
     /// As, and `display_path` is a label, not a path.
     #[serde(default)]
     pub untitled: bool,
+    /// RUST-STAB-1: restored from a recovery record. Untitled until Save As;
+    /// the recovery record stays until that save or an explicit discard.
+    #[serde(default)]
+    pub recovered: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -130,6 +134,48 @@ pub enum SaveOutcome {
 pub struct ExternalStatus {
     pub changed: bool,
     pub reason: String,
+}
+
+/// RUST-STAB-1: one recovery record offered at startup. Carries a safe
+/// file name only; never a path.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryEntry {
+    /// Opaque record id (32 hex digits).
+    pub id: String,
+    pub name: String,
+    pub untitled: bool,
+    pub format: String,
+    /// When the recovery copy was written (ms since the Unix epoch).
+    pub saved_at_ms: u64,
+    pub bytes: u64,
+    /// `None` for a new world; else `"unchanged"`, `"changed"` or
+    /// `"missing"`: the original file now, versus when it was opened.
+    pub original_now: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryDamaged {
+    pub id: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryList {
+    pub entries: Vec<RecoveryEntry>,
+    pub damaged: Vec<RecoveryDamaged>,
+    /// Shown when recovery storage is unavailable or a write failed.
+    pub warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum RecoveryDiscardOutcome {
+    Discarded,
+    Canceled,
+    Failed { message: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

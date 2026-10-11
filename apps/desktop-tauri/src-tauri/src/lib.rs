@@ -8,10 +8,12 @@
 pub mod commands;
 pub mod files;
 pub mod native;
+pub mod recovery;
 pub mod resources;
 pub mod service;
 pub mod settings;
 pub mod smoke;
+pub mod smoke_recovery;
 pub mod viewport;
 
 use std::path::PathBuf;
@@ -48,6 +50,8 @@ struct Args {
     smoke_native: Option<PathBuf>,
     /// With `--smoke-native`: the X_ITE-only control (no native viewport).
     smoke_native_control: bool,
+    /// RUST-STAB-1: `--smoke-recovery-{crash,restore,later} <dir>`.
+    smoke_recovery: Option<(smoke_recovery::Phase, PathBuf)>,
 }
 
 fn parse_args() -> Args {
@@ -69,6 +73,7 @@ fn parse_args() -> Args {
         native_fifo_only: false,
         smoke_native: None,
         smoke_native_control: false,
+        smoke_recovery: None,
     };
     let mut theme_final = None;
     let mut theme_expect = None;
@@ -97,6 +102,15 @@ fn parse_args() -> Args {
             Some("--native-force-fifo-only") => a.native_fifo_only = true,
             Some("--smoke-native") => a.smoke_native = it.next().map(PathBuf::from),
             Some("--smoke-native-control") => a.smoke_native_control = true,
+            Some("--smoke-recovery-crash") => {
+                a.smoke_recovery = it.next().map(|d| (smoke_recovery::Phase::Crash, d.into()))
+            }
+            Some("--smoke-recovery-restore") => {
+                a.smoke_recovery = it.next().map(|d| (smoke_recovery::Phase::Restore, d.into()))
+            }
+            Some("--smoke-recovery-later") => {
+                a.smoke_recovery = it.next().map(|d| (smoke_recovery::Phase::Later, d.into()))
+            }
             _ if a.open.is_none() => a.open = Some(PathBuf::from(arg)),
             _ => {}
         }
@@ -125,6 +139,7 @@ pub fn run() {
         .manage(commands::Startup::default())
         .manage(smoke::SmokeState::default())
         .manage(native::Native::default())
+        .manage(commands::CloseGate::default())
         // TEXTURE-LOCAL-1: read-only preview resources (see resources.rs).
         // The WebView names a token, never a folder; Rust decides the file.
         .register_asynchronous_uri_scheme_protocol(resources::SCHEME, |ctx, request, responder| {
@@ -165,6 +180,36 @@ pub fn run() {
                 },
             };
             let settings_path = store.path();
+            // RUST-STAB-1: crash recovery in the app's private DATA dir (or
+            // `<config-dir>/recovery` for tests; never the user's).
+            let rec = match args.config_dir.clone() {
+                Some(d) => recovery::Recovery::open(&d.join(recovery::DIR_NAME), Default::default()),
+                None => match app.path().app_data_dir() {
+                    Ok(d) => recovery::Recovery::open(&d.join(recovery::DIR_NAME), Default::default()),
+                    Err(e) => recovery::Recovery::unavailable(&e.to_string()),
+                },
+            };
+            let rec = std::sync::Arc::new(rec);
+            app.state::<service::Service>().attach_recovery(rec.clone());
+            {
+                let handle = app.handle().clone();
+                std::thread::Builder::new()
+                    .name("wrlforge-recovery".into())
+                    .spawn(move || {
+                        while rec.wait_due() {
+                            handle.state::<service::Service>().recovery_pass();
+                        }
+                    })
+                    .map_err(|e| format!("recovery worker: {e}"))?;
+            }
+            if let Some((phase, dir)) = args.smoke_recovery.clone() {
+                smoke_recovery::arm(&dir, phase, args.smoke_report.clone())
+                    .map_err(|e| format!("smoke-recovery: {e}"))?;
+                if phase == smoke_recovery::Phase::Crash {
+                    let handle = app.handle().clone();
+                    std::thread::spawn(move || smoke_recovery::run_crash(handle));
+                }
+            }
             let native_requested =
                 (args.native_viewport || args.smoke_native.is_some() || store.native_viewport())
                     && !args.smoke_native_control;
@@ -240,9 +285,20 @@ pub fn run() {
             }
             Ok(())
         })
-        .on_window_event(|_window, event| {
-            // The native viewport's window must outlive its render thread.
+        .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // RUST-STAB-1: unsaved work is never closed away silently.
+                let app = window.app_handle();
+                if !app.state::<commands::CloseGate>().confirmed() {
+                    let dirty = app.state::<service::Service>().dirty_sessions();
+                    if !dirty.is_empty() {
+                        api.prevent_close();
+                        let w = window.clone();
+                        std::thread::spawn(move || commands::confirm_close(w, dirty));
+                        return;
+                    }
+                }
+                // The native viewport's window must outlive its render thread.
                 if viewport::defer_close(0) {
                     api.prevent_close();
                 }
@@ -292,14 +348,31 @@ pub fn run() {
             commands::smoke_texture_delay,
             commands::smoke_texture_capture,
             commands::smoke_resource_log,
+            commands::recovery_list,
+            commands::recovery_restore,
+            commands::recovery_discard,
+            commands::recovery_status,
+            commands::smoke_recovery_plan,
+            commands::smoke_recovery_check,
+            commands::smoke_request_close,
         ])
         .build(context)
         .expect("error while building WRL Forge")
-        .run(|_app, event| {
-            if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+        .run(|app, event| match event {
+            tauri::RunEvent::ExitRequested { api, code, .. } => {
                 if viewport::defer_close(code.unwrap_or(0)) {
                     api.prevent_exit();
                 }
             }
+            // RUST-STAB-1: a normal exit writes any scheduled recovery copy
+            // (unsaved work that was not explicitly discarded stays offered).
+            tauri::RunEvent::Exit => {
+                let svc = app.state::<service::Service>();
+                svc.recovery_pass();
+                if let Some(r) = svc.recovery() {
+                    r.stop();
+                }
+            }
+            _ => {}
         });
 }

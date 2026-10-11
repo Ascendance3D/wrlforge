@@ -82,6 +82,8 @@ pub async fn new_document(app: AppHandle, replace: Option<p::SessionId>) -> p::O
                 if !discard {
                     return p::OpenOutcome::Canceled;
                 }
+                // RUST-STAB-1: an explicit discard removes the recovery copy.
+                let _ = svc.discard_recovery(id);
             }
             Ok(false) => {}
             // An unknown session holds nothing to lose.
@@ -502,3 +504,140 @@ pub fn theme_set(
 ) -> p::theme::ThemeSetOutcome {
     settings.set_theme(&theme_id)
 }
+
+// ---- RUST-STAB-1: crash recovery -----------------------------------------
+
+/// Records left by a WRL Forge process that exited without saving.
+#[tauri::command]
+pub fn recovery_list(svc: State<'_, Service>) -> p::RecoveryList {
+    svc.recovery_list()
+}
+
+/// Restore one record into a new untitled, unsaved document.
+#[tauri::command]
+pub fn recovery_restore(svc: State<'_, Service>, id: String) -> p::OpenOutcome {
+    svc.recovery_restore(&id)
+}
+
+/// The recovery warning to show now (storage unavailable, failed write).
+#[tauri::command]
+pub fn recovery_status(svc: State<'_, Service>) -> Option<String> {
+    svc.recovery().and_then(|r| r.warning())
+}
+
+/// Discard one offered record, after a native confirmation.
+#[tauri::command]
+pub async fn recovery_discard(app: AppHandle, id: String) -> p::RecoveryDiscardOutcome {
+    let svc = app.state::<Service>();
+    let list = svc.recovery_list();
+    let what = if let Some(e) = list.entries.iter().find(|e| e.id == id) {
+        format!("the recovered work for \"{}\"", e.name)
+    } else if list.damaged.iter().any(|d| d.id == id) {
+        "this damaged recovery record".to_string()
+    } else {
+        return p::RecoveryDiscardOutcome::Failed {
+            message: "that recovery record is no longer offered".into(),
+        };
+    };
+    let yes = match app.state::<SmokeState>().confirm_override() {
+        Some(answer) => answer,
+        None => app
+            .dialog()
+            .message(format!("Discard {what}? This cannot be undone."))
+            .title("Discard recovered work")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Discard".into(),
+                "Cancel".into(),
+            ))
+            .blocking_show(),
+    };
+    if !yes {
+        return p::RecoveryDiscardOutcome::Canceled;
+    }
+    match svc.recovery_discard(&id) {
+        Ok(()) => p::RecoveryDiscardOutcome::Discarded,
+        Err(message) => p::RecoveryDiscardOutcome::Failed { message },
+    }
+}
+
+/// RUST-STAB-1 smoke only.
+#[tauri::command]
+pub fn smoke_recovery_plan() -> Option<crate::smoke_recovery::Plan> {
+    crate::smoke_recovery::plan()
+}
+
+#[tauri::command]
+pub fn smoke_recovery_check(
+    app: AppHandle,
+    session: Option<p::SessionId>,
+    what: String,
+    name: String,
+) -> Result<p::SmokeStep, String> {
+    if !crate::smoke_recovery::armed() {
+        return Err("not a recovery smoke run".into());
+    }
+    Ok(crate::smoke_recovery::check(&app, session, &what, &name))
+}
+
+/// Ask the main window to close, exactly like the title-bar button.
+#[tauri::command]
+pub fn smoke_request_close(app: AppHandle) -> Result<(), String> {
+    if !crate::smoke_recovery::armed() {
+        return Err("not a recovery smoke run".into());
+    }
+    let w = app.get_webview_window("main").ok_or("no main window")?;
+    w.close().map_err(|e| e.to_string())
+}
+
+/// Window close with unsaved documents: ask once; Discard removes their
+/// recovery copies and closes, Cancel keeps everything as it is.
+#[derive(Default)]
+pub struct CloseGate {
+    confirmed: std::sync::atomic::AtomicBool,
+    asking: std::sync::atomic::AtomicBool,
+}
+
+impl CloseGate {
+    pub fn confirmed(&self) -> bool {
+        self.confirmed.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+pub fn confirm_close(window: tauri::Window, dirty: Vec<(p::SessionId, String)>) {
+    use std::sync::atomic::Ordering;
+    let app = window.app_handle().clone();
+    let gate = app.state::<CloseGate>();
+    if gate.asking.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let names: Vec<String> = dirty.iter().map(|(_, n)| format!("\"{n}\"")).collect();
+    let yes = match app.state::<SmokeState>().confirm_override() {
+        Some(answer) => answer,
+        None => app
+            .dialog()
+            .message(format!(
+                "{} {} unsaved changes. Discard them and close WRL Forge?",
+                names.join(", "),
+                if names.len() == 1 { "has" } else { "have" }
+            ))
+            .title("Close WRL Forge")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Discard changes".into(),
+                "Cancel".into(),
+            ))
+            .blocking_show(),
+    };
+    crate::smoke_recovery::note_close_asked(yes);
+    if yes {
+        let svc = app.state::<Service>();
+        for (id, _) in &dirty {
+            let _ = svc.discard_recovery(*id);
+        }
+        gate.confirmed.store(true, Ordering::SeqCst);
+        let _ = window.close();
+    }
+    gate.asking.store(false, Ordering::SeqCst);
+}
+
