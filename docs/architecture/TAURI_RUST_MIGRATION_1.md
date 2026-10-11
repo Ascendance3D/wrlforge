@@ -47,10 +47,10 @@ workspace; `crates/Cargo.lock` gained only their two path entries.
 |---|---|---|---|
 | `src/vrml/tokenizer.js` | `wrlforge-vrml::tokenizer` | MIGRATED | Trivia arrays not kept (no consumer). Positions are `u32`. A leading U+FEFF is signature trivia (Migration-2; deliberate difference, see notes). |
 | `src/vrml/parser.js`, `ast.js`, `diagnostics.js` (syntax codes) | `wrlforge-vrml::{parser, ast, diagnostics}` | MIGRATED | Parity: 673/673 files identical (65 fixtures + 608 `new-items/item-categories`). |
-| `src/vrml/scene-tree.js` | `wrlforge-vrml::scene::{build_scene_tree, build_scene_tree_scoped}` | PARTIAL | Same inclusion rules and id format; no PROTO-instance flags, no read-only map API. The flat USE scope is **resolved** (RUST-STAB-2A): USE and ROUTE node names come from the lexical scope graph. |
+| `src/vrml/scene-tree.js` | `wrlforge-vrml::scene::{build_scene_tree, build_scene_tree_scoped}` | PARTIAL | Same inclusion rules and id format; no PROTO-instance flags, no read-only map API. The flat USE scope is **resolved** (RUST-STAB-2A): USE and ROUTE node names come from the lexical scope graph. ROUTE items carry a typed verdict and PROTO-instance nodes a type answer (RUST-STAB-2B, `SceneItem::typed`). |
 | inspector read side (`presentation.js`, `interface-query.js`) | `wrlforge-vrml::scene::inspect` + `field_edit::inspect_node_fields` | PARTIAL | Node items show schema-typed field descriptors; no messages catalog. |
-| `src/vrml/analyze.js` (VRML040–044) | `wrlforge-vrml::scope` advisories `SCOPE001`–`SCOPE010` (RUST-STAB-2A) | PARTIAL | Not a port: scope-correct DEF/USE and ROUTE-node findings replace the flat VRML041–043 meaning. Duplicate DEF is `info` (valid VRML97). No duplicate-ROUTE check (VRML044). |
-| `src/vrml/symbols.js`, `scope-graph.js` (WD1.5) | `wrlforge-vrml::scope` (RUST-STAB-2A) | PARTIAL | DEF/USE (P1) and ROUTE node names (P2C node half) built from the standard. Type, member and `IS` resolution (P2A/P2B) and ROUTE event/type checks (P2C event half) remain: RUST-STAB-2B. See [RUST_STAB_2A_SCOPE](RUST_STAB_2A_SCOPE.md). |
+| `src/vrml/analyze.js` (VRML040–044) | `wrlforge-vrml::scope` advisories `SCOPE001`–`SCOPE010` (RUST-STAB-2A) and `SCOPE101`–`SCOPE131` (RUST-STAB-2B) | PARTIAL | Not a port: scope-correct DEF/USE and ROUTE-node findings replace the flat VRML041–043 meaning. Duplicate DEF is `info` (valid VRML97). Typed ROUTE event/direction/type, `IS`, and node-type findings added in RUST-STAB-2B. No duplicate-ROUTE check (VRML044). |
+| `src/vrml/symbols.js`, `scope-graph.js` (WD1.5) | `wrlforge-vrml::scope` (RUST-STAB-2A) + `scope::typed` (RUST-STAB-2B) | BUILT (read-only, advisory) | DEF/USE (P1), PROTO/EXTERNPROTO type names (P2A), interface members and `IS` (P2B), and ROUTE nodes, events, directions and types (P2C) built from the standard. Not a port; no consumer API (WD1.6) yet. EXTERNPROTO URLs and Inline files are not loaded. See [RUST_STAB_2A_SCOPE](RUST_STAB_2A_SCOPE.md) and [RUST_STAB_2B_TYPED_REFERENCES](RUST_STAB_2B_TYPED_REFERENCES.md). |
 | `src/vrml/edit.js` (WD1.2) | `wrlforge-text::edit` (RUST-1) | MIGRATED | Used by `wrlforge-document` for every edit. |
 | `src/vrml/source-map.js` | `wrlforge-text` offsets + `ViewMap` | PARTIAL | Offset↔token lookup not exposed. |
 | `src/vrml/node-identity.js`, `document-transaction.js` (WD1.4) | span proof in `field_edit` + `wrlforge-document::{apply_source_transaction, map_span}` | PARTIAL | Edits require exactly one node at the exact span of the current revision, re-proved after re-parse. Selections survive undo/redo only through exact change mapping. No Tier-2 DEF identity. |
@@ -496,6 +496,26 @@ the camera must survive every Move.
   [RUST_STAB_2A_SCOPE](RUST_STAB_2A_SCOPE.md).
 - Tests: `cargo test -p wrlforge-vrml scope` and
   `cargo test -p wrl-forge-desktop --test scope_regression`.
+
+### RUST-STAB-2B — typed ROUTE, IS, and PROTO reference analysis
+
+- Read-only typed answers on the 2A graph: node-instance types (4.8.1, 4.8.4),
+  interface members (4.7, 4.9.2), ROUTE events, directions and exact types
+  (4.10.2), and `IS` connections (4.8.3, Table 4.4). Built-in Script rules
+  apply only to a node proven to be the built-in Script.
+- An unproven node, type or interface gives no event or type verdict. Findings
+  `SCOPE101`–`SCOPE131` are advisory and never block Save. Contract, codes,
+  tests and limits: [RUST_STAB_2B_TYPED_REFERENCES](RUST_STAB_2B_TYPED_REFERENCES.md).
+- The Flux fixture `08_proto_script_inline.wrl` is unchanged and is invalid
+  VRML97 (`SCOPE114`); its valid counterpart is
+  `corrected/08_proto_script_inline_valid.wrl`.
+- Tests: `cargo test -p wrlforge-vrml scope` and
+  `cargo test -p wrl-forge-desktop --test typed_regression`.
+- Not a full VRML97 or X3D conformance validator.
+
+### Future backlog
+
+- VrmlPad scripting compatibility. Not started; needs its own approved lane.
 
 ### Known issues
 

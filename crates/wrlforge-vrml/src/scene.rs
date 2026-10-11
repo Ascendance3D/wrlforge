@@ -60,6 +60,24 @@ pub struct Item {
     pub use_status: Option<&'static str>,
     /// Scope answers: one for a USE, two (source, destination) for a ROUTE.
     pub refs: Vec<RefSummary>,
+    /// RUST-STAB-2B typed answer: the whole-ROUTE verdict for a ROUTE, or the
+    /// type binding of a node whose type is not a proven built-in.
+    pub typed: Option<TypedSummary>,
+}
+
+/// One typed answer, projected for display. Never an edit target.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedSummary {
+    /// "route" | "type".
+    pub subject: &'static str,
+    /// `scope::Status::as_str`.
+    pub status: &'static str,
+    /// "proven" | "unresolved" | "uncertain".
+    pub class: &'static str,
+    pub reason: &'static str,
+    /// Display text: the event types of a ROUTE (`SFFloat -> SFFloat`) or the
+    /// declaration kind of a type (`PROTO Pulse`).
+    pub summary: Option<String>,
 }
 
 /// One reference answer, projected for display.
@@ -132,6 +150,7 @@ impl Ctx {
                         children: vec![],
                         use_status: None,
                         refs: vec![],
+                        typed: None,
                     },
                 );
             }
@@ -149,6 +168,7 @@ impl Ctx {
                         children: vec![],
                         use_status: None,
                         refs: vec![],
+                        typed: None,
                     },
                 );
                 for b in &p.body {
@@ -169,6 +189,7 @@ impl Ctx {
                         children: vec![],
                         use_status: None,
                         refs: vec![],
+                        typed: None,
                     },
                 );
             }
@@ -193,6 +214,7 @@ impl Ctx {
                         children: vec![],
                         use_status: None,
                         refs: vec![],
+                        typed: None,
                     },
                 );
             }
@@ -218,6 +240,7 @@ impl Ctx {
                 children: vec![],
                 use_status: None,
                 refs: vec![],
+                typed: None,
             },
         );
         for f in &n.fields {
@@ -265,6 +288,7 @@ pub fn build_scene_tree(doc: &Document, src: &str) -> SceneTree {
         children: vec![],
         use_status: None,
         refs: vec![],
+        typed: None,
     };
     let root_id = root.id.clone();
     let mut ctx = Ctx {
@@ -347,6 +371,57 @@ pub fn build_scene_tree_scoped(parse: &ParseResult, src: &str) -> (SceneTree, Sc
             it.use_status = r.first().map(|r| r.status);
         }
         it.refs = r;
+    }
+    // RUST-STAB-2B: typed answers, matched by exact statement span only.
+    let mut typed: HashMap<(u64, u64), TypedSummary> = HashMap::new();
+    for rc in &graph.routes {
+        let summary = match (&rc.source.field_type, &rc.destination.field_type) {
+            (Some(a), Some(b)) => Some(format!("{a} -> {b}")),
+            _ => None,
+        };
+        typed.insert(
+            (rc.range.start.offset as u64, rc.range.end.offset as u64),
+            TypedSummary {
+                subject: "route",
+                status: rc.status.as_str(),
+                class: rc.status.class(),
+                reason: rc.reason,
+                summary,
+            },
+        );
+    }
+    for t in graph.instances.iter().filter(|t| !t.builtin) {
+        let summary = t.target.map(|d| {
+            let decl = &graph.types[d];
+            let kw = match decl.kind {
+                scope::TypeKind::Proto => "PROTO",
+                scope::TypeKind::ExternProto => "EXTERNPROTO",
+            };
+            format!("{kw} {}", decl.name.as_deref().unwrap_or("?"))
+        });
+        typed.insert(
+            (
+                t.node_range.start.offset as u64,
+                t.node_range.end.offset as u64,
+            ),
+            TypedSummary {
+                subject: "type",
+                status: t.status.as_str(),
+                class: t.status.class(),
+                reason: t.reason,
+                summary,
+            },
+        );
+    }
+    for it in tree.items.values_mut() {
+        let want = match it.kind {
+            Kind::Route => "route",
+            Kind::Node => "type",
+            _ => continue,
+        };
+        if let Some(t) = typed.get(&(it.from, it.to)).filter(|t| t.subject == want) {
+            it.typed = Some(t.clone());
+        }
     }
     tree.resolution_scope = "lexical";
     (tree, graph)

@@ -27,7 +27,7 @@ pub fn SceneTree() -> impl IntoView {
     view! {
         <aside class="tree-col" aria-label="Scene Tree">
             <div class="pane-title">"Scene Tree"
-                <span class="muted" title="USE and ROUTE node names are resolved by the lexical scope graph (ISO 4.6.2, 4.8.4, 4.10.2). Read-only and advisory.">
+                <span class="muted" title="USE and ROUTE node names are resolved by the lexical scope graph (ISO 4.6.2, 4.8.4, 4.10.2). ROUTE events and PROTO types are checked by typed analysis (ISO 4.8, 4.10.2). Read-only and advisory.">
                     {move || u.analysis.with(|a| a.as_ref().map(|a| format!(" · {} items · {} scope", a.items.len(), a.resolution_scope)).unwrap_or_default())}
                 </span>
                 <span class="tree-updating" id="tree-updating">{move || stale().then_some(" · updating…")}</span>
@@ -50,8 +50,8 @@ pub fn SceneTree() -> impl IntoView {
                     let key2 = key.clone();
                     let (from, to) = (it.view_from, it.view_to);
                     let pad = format!("padding-left: {}rem", 0.4 + (it.depth.saturating_sub(1)) as f32 * 0.9);
-                    let class = format!("tree-item kind-{}{}", it.kind.to_lowercase(), ref_class(&it.refs));
-                    let title = ref_title(&it.refs, &a.items);
+                    let class = format!("tree-item kind-{}{}", it.kind.to_lowercase(), ref_class(&it.refs, it.typed.as_ref()));
+                    let title = typed_title(ref_title(&it.refs, &a.items), it.typed.as_ref());
                     // Offsets of THIS render's revision; tree_select refuses
                     // them unless that is still the document's revision.
                     let id2 = id.clone();
@@ -60,6 +60,7 @@ pub fn SceneTree() -> impl IntoView {
                     view! {
                         <li role="treeitem" class=class style=pad title=title data-id=id.clone() tabindex="-1"
                             data-ref=ref_data(&it.refs)
+                            data-typed=typed_data(it.typed.as_ref())
                             class:selected=move || sel.selected(&key)
                             aria-selected=move || if sel2.selected(&key2) { "true" } else { "false" }
                             on:click=move |_| act()
@@ -80,11 +81,17 @@ pub fn SceneTree() -> impl IntoView {
     }
 }
 
-/// The weakest reference class on an item: "" when proven or not a reference.
-fn ref_class(refs: &[p::SceneRef]) -> &'static str {
-    if refs.iter().any(|r| r.class == "unresolved") {
+/// The weakest reference class on an item, typed answer included: "" when
+/// proven or not a reference.
+fn ref_class(refs: &[p::SceneRef], typed: Option<&p::TypedCheck>) -> &'static str {
+    let classes = || {
+        refs.iter()
+            .map(|r| r.class.as_str())
+            .chain(typed.map(|t| t.class.as_str()))
+    };
+    if classes().any(|c| c == "unresolved") {
         " ref-unresolved"
-    } else if refs.iter().any(|r| r.class == "uncertain") {
+    } else if classes().any(|c| c == "uncertain") {
         " ref-uncertain"
     } else {
         ""
@@ -97,6 +104,32 @@ fn ref_data(refs: &[p::SceneRef]) -> String {
         .map(|r| format!("{}:{}:{}", r.role, r.status, r.reason))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// `subject:status:reason` of the typed answer, for tests and assistive tools.
+fn typed_data(t: Option<&p::TypedCheck>) -> String {
+    t.map(|t| format!("{}:{}:{}", t.subject, t.status, t.reason))
+        .unwrap_or_default()
+}
+
+/// Adds the typed answer to the hover text. Display only.
+fn typed_title(base: String, t: Option<&p::TypedCheck>) -> String {
+    let Some(t) = t else { return base };
+    let what = if t.subject == "route" {
+        "ROUTE events"
+    } else {
+        "Node type"
+    };
+    let line = match (t.class.as_str(), &t.summary) {
+        ("proven", Some(s)) => format!("{what}: proven ({s})"),
+        (c, Some(s)) => format!("{what}: {c}: {} ({}; {s})", t.status, t.reason),
+        (c, None) => format!("{what}: {c}: {} ({})", t.status, t.reason),
+    };
+    if base.is_empty() {
+        line
+    } else {
+        format!("{base}\n{line}")
+    }
 }
 
 /// Hover text. Display only: a target is named, never selected or edited.
@@ -391,7 +424,7 @@ pub fn Diagnostics() -> impl IntoView {
                 let (session, rev) = (a.session, a.revision);
                 view! {
                     <div class="diag-scope" id="diag-scope" data-revision=rev.to_string()
-                        title="Advisory scope findings (ISO 4.6.2, 4.8.4, 4.10.2). Never block Save; uncertain cases are not listed.">
+                        title="Advisory scope findings: node names SCOPE0xx (ISO 4.6.2, 4.8.4, 4.10.2) and typed references SCOPE1xx (ISO 4.8, Table 4.4, 4.10.2). Never block Save; uncertain cases are not listed.">
                         <div class="diag-head">{format!("Scope (advisory) · rev {rev}")}</div>
                         <ul>
                             {a.scope_diagnostics.iter().take(200).map(|d| {

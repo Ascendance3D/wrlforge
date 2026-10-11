@@ -717,6 +717,13 @@ impl Service {
                                 language_target: r.language_target.clone(),
                             })
                             .collect(),
+                        typed: it.typed.as_ref().map(|t| p::TypedCheck {
+                            subject: t.subject.into(),
+                            status: t.status.into(),
+                            class: t.class.into(),
+                            reason: t.reason.into(),
+                            summary: t.summary.clone(),
+                        }),
                     }
                 })
                 .collect();

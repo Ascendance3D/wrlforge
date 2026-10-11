@@ -320,6 +320,40 @@ async fn run_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
                 a.scope_diagnostics.len()
             ),
         );
+        // RUST-STAB-2B: typed answers reach the tree DOM unchanged, and the
+        // Diagnostics scope list shows THIS revision's findings.
+        let mut bad = Vec::new();
+        let typed: Vec<_> = a.items.iter().filter(|i| i.typed.is_some()).collect();
+        for it in &typed {
+            let t = it.typed.as_ref()?;
+            let want = format!("{}:{}:{}", t.subject, t.status, t.reason);
+            let got = doc
+                .query_selector(&format!("[data-id=\"{}\"]", it.id))
+                .ok()
+                .flatten()
+                .and_then(|e| e.get_attribute("data-typed"));
+            if got.as_deref() != Some(want.as_str()) {
+                bad.push(format!("{} dom {got:?}", it.id));
+            }
+        }
+        let shown = doc
+            .query_selector_all("#diag-scope li[data-code]")
+            .map(|l| l.length() as usize)
+            .unwrap_or(0);
+        let panel_rev = doc
+            .get_element_by_id("diag-scope")
+            .and_then(|e| e.get_attribute("data-revision"));
+        let want_shown = a.scope_diagnostics.len().min(200);
+        let rev_ok = want_shown == 0 || panel_rev == Some(a.revision.to_string());
+        r.step(
+            "Scene Tree typed answers and Diagnostics scope findings match the analysis",
+            bad.is_empty() && shown == want_shown && rev_ok,
+            format!(
+                "{} typed items, {shown}/{want_shown} findings shown, panel rev {panel_rev:?}, codes {:?}, problems {bad:?}",
+                typed.len(),
+                a.scope_diagnostics.iter().map(|d| d.code.as_str()).collect::<Vec<_>>()
+            ),
+        );
     }
     let first: HtmlElement = first?.dyn_into().ok()?;
     let item = ui().analysis.get_untracked()?.items.first()?.clone();

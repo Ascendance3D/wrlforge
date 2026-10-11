@@ -207,6 +207,26 @@ pub struct SceneItem {
     /// for a ROUTE, none otherwise. Read-only; never an edit by itself.
     #[serde(default)]
     pub refs: Vec<SceneRef>,
+    /// RUST-STAB-2B typed answer: a ROUTE's whole verdict, or a node's type
+    /// binding when the type is not a proven built-in. Display only.
+    #[serde(default)]
+    pub typed: Option<TypedCheck>,
+}
+
+/// One typed answer from the SAME parse as its Analysis. Codes:
+/// `docs/architecture/RUST_STAB_2B_TYPED_REFERENCES.md`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TypedCheck {
+    /// "route" | "type"
+    pub subject: String,
+    /// Same values as `SceneRef::status`.
+    pub status: String,
+    /// "proven" | "unresolved" | "uncertain"
+    pub class: String,
+    pub reason: String,
+    /// `SFFloat -> SFFloat` for a ROUTE, `PROTO Pulse` for a type.
+    pub summary: Option<String>,
 }
 
 /// One node-name reference answer from the lexical scope graph of the SAME
@@ -247,8 +267,9 @@ pub struct Analysis {
     /// Depth-first source order; the document root is omitted.
     pub items: Vec<SceneItem>,
     pub diagnostics: Vec<Diagnostic>,
-    /// RUST-STAB-2A advisory scope findings (`SCOPE0xx`, "warning" or
-    /// "info", never "error"). Same parse, revision and view mapping as
+    /// Advisory scope findings: RUST-STAB-2A node names (`SCOPE0xx`) and
+    /// RUST-STAB-2B typed references (`SCOPE1xx`). "warning" or "info",
+    /// never "error". Same parse, revision and view mapping as
     /// `diagnostics`; kept apart so they never mark the editor or block Save.
     #[serde(default)]
     pub scope_diagnostics: Vec<Diagnostic>,

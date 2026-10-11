@@ -141,7 +141,13 @@ fn fixtures_scope_answers_across_variants_and_save_is_unaffected() {
             assert_eq!(a.resolution_scope, "lexical");
             assert_eq!((a.session, a.revision), (doc.session, doc.revision));
             check_targets(name, &doc.view, &a);
-            for d in &a.scope_diagnostics {
+            // RUST-STAB-2B typed findings (SCOPE1xx) mark other ranges; they
+            // are checked in `typed_regression.rs`.
+            for d in a
+                .scope_diagnostics
+                .iter()
+                .filter(|d| d.code.starts_with("SCOPE0"))
+            {
                 // Each finding marks exactly its reference name token.
                 let token = view_slice(&doc.view, d.view_from, d.view_to);
                 assert!(
@@ -231,11 +237,17 @@ fn fixture_expectations_follow_the_standard() {
         .unwrap();
     assert_eq!(t.depth, 1, "the top-level DEF Floor");
 
-    // 08: four ROUTE endpoints, all proven.
+    // 08: four ROUTE endpoints, all proven. No node-name finding; its one
+    // typed finding (an IS type mismatch) is RUST-STAB-2B's.
     let (a, _) = analyze("08_proto_script_inline.wrl");
     assert_eq!(refs(&a).len(), 4);
     assert!(refs(&a).iter().all(|r| r.class == "proven"));
-    assert!(a.scope_diagnostics.is_empty());
+    let codes: Vec<_> = a
+        .scope_diagnostics
+        .iter()
+        .map(|d| d.code.as_str())
+        .collect();
+    assert_eq!(codes, ["SCOPE114"]);
 
     // m6: ROUTE before its DEFs (4.10.2): two SCOPE003 warnings.
     let (a, _) = analyze("malformed/m6_route_before_def.wrl");
