@@ -37,9 +37,10 @@ framework.
 
 ## Renderer direction
 
-A future custom Rust VRML97/X3D renderer is the approved direction. X_ITE stays
-as the temporary renderer until that lane is approved and built. Renderer
-implementation has not started.
+X_ITE remains the default renderer. The Rust (wgpu) renderer remains
+experimental: it exists behind an opt-in test switch (NATIVE_RENDER_1) and is
+disabled by default. No X_ITE removal is planned; X_ITE compatibility code is
+kept.
 
 ## Platforms
 
