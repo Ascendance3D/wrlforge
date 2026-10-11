@@ -568,3 +568,40 @@ fn defaults_come_from_the_schema() {
         Some(5)
     );
 }
+
+#[test]
+fn single_tuple_fields_are_added_only_on_request() {
+    // VISUAL-4B: a Transform without rotation / scale gets exactly the value
+    // the user asked for, as the last statement.
+    let src = "#VRML V2.0 utf8\nDEF A Transform {\n  translation 1 2 3\n  children [ ]\n}\n";
+    let (f, t) = (16u64, src.encode_utf16().count() as u64 - 1);
+    let req = |name: &str, v: &[&str]| AddRequest {
+        node_from: f,
+        node_to: t,
+        field_name: name.into(),
+        value: AddValue::Tuple(v.iter().map(|s| s.to_string()).collect()),
+    };
+    let Plan::Ready { new_text, .. } = plan_add_field(src, &req("rotation", &["0", "0", "1", "0"]))
+    else {
+        panic!("rotation not added");
+    };
+    assert_eq!(
+        new_text,
+        "#VRML V2.0 utf8\nDEF A Transform {\n  translation 1 2 3\n  children [ ]\n  rotation 0 0 1 0\n}\n"
+    );
+    assert!(matches!(
+        plan_add_field(src, &req("scale", &["1", "1", "1"])),
+        Plan::Ready { .. }
+    ));
+    for (name, v) in [
+        ("rotation", &["0", "0", "0", "1"][..]),
+        ("scale", &["1", "0", "1"][..]),
+        ("scale", &["1", "1"][..]),
+        ("translation", &["1", "1", "1"][..]),
+    ] {
+        assert!(
+            matches!(plan_add_field(src, &req(name, v)), Plan::Refused { .. }),
+            "{name} {v:?}"
+        );
+    }
+}
