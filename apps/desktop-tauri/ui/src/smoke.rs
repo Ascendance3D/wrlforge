@@ -280,6 +280,47 @@ async fn run_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
     if !r.step("Scene Tree items rendered in the DOM", first.is_some(), "") {
         return None;
     }
+    // RUST-STAB-2A: the tree DOM carries the scope graph's answers, and no
+    // uncertain reference carries a target.
+    {
+        let a = ui().analysis.get_untracked()?;
+        let doc = web_sys::window()?.document()?;
+        let mut bad = Vec::new();
+        let refs: Vec<_> = a.items.iter().filter(|i| !i.refs.is_empty()).collect();
+        for it in &refs {
+            let want = it
+                .refs
+                .iter()
+                .map(|r| format!("{}:{}:{}", r.role, r.status, r.reason))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let got = doc
+                .query_selector(&format!("[data-id=\"{}\"]", it.id))
+                .ok()
+                .flatten()
+                .and_then(|e| e.get_attribute("data-ref"));
+            if got.as_deref() != Some(want.as_str()) {
+                bad.push(format!("{} dom {got:?}", it.id));
+            }
+            if it
+                .refs
+                .iter()
+                .any(|r| r.class != "proven" && r.target.is_some())
+            {
+                bad.push(format!("{} uncertain target", it.id));
+            }
+        }
+        let advisory = a.scope_diagnostics.iter().all(|d| d.severity != "error");
+        r.step(
+            "Scene Tree shows lexical scope answers; uncertain ones carry no target",
+            a.resolution_scope == "lexical" && bad.is_empty() && advisory,
+            format!(
+                "{} reference items, {} scope findings, problems {bad:?}",
+                refs.len(),
+                a.scope_diagnostics.len()
+            ),
+        );
+    }
     let first: HtmlElement = first?.dyn_into().ok()?;
     let item = ui().analysis.get_untracked()?.items.first()?.clone();
     first.click();

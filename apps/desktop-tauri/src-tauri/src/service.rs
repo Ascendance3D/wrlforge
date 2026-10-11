@@ -684,7 +684,9 @@ impl Service {
         let text = text.as_str();
         {
             let parsed = wrlforge_vrml::parse(text);
-            let tree = scene::build_scene_tree(&parsed.tree, text);
+            // One parse: the tree, the scope graph and the diagnostics below
+            // all describe exactly this revision's text.
+            let (tree, graph) = scene::build_scene_tree_scoped(&parsed, text);
             let vm = ViewMap::new(text);
             let items = tree
                 .order
@@ -702,6 +704,19 @@ impl Service {
                         view_to: vm.view(it.to),
                         use_status: it.use_status.map(Into::into),
                         child_count: it.children.len() as u32,
+                        refs: it
+                            .refs
+                            .iter()
+                            .map(|r| p::SceneRef {
+                                role: r.role.into(),
+                                name: r.name.clone(),
+                                status: r.status.into(),
+                                class: r.class.into(),
+                                reason: r.reason.into(),
+                                target: r.target.clone(),
+                                language_target: r.language_target.clone(),
+                            })
+                            .collect(),
                     }
                 })
                 .collect();
@@ -712,6 +727,19 @@ impl Service {
                     code: d.code.as_str().into(),
                     severity: d.severity.as_str().into(),
                     message: d.message.clone(),
+                    line: d.range.start.line,
+                    column: d.range.start.column,
+                    view_from: vm.view(d.range.start.offset as u64),
+                    view_to: vm.view(d.range.end.offset as u64),
+                })
+                .collect();
+            let scope_diagnostics = graph
+                .diagnostics()
+                .into_iter()
+                .map(|d| p::Diagnostic {
+                    code: d.code.into(),
+                    severity: d.severity.into(),
+                    message: d.message,
                     line: d.range.start.line,
                     column: d.range.start.column,
                     view_from: vm.view(d.range.start.offset as u64),
@@ -742,6 +770,7 @@ impl Service {
                 highlights_truncated,
                 items,
                 diagnostics,
+                scope_diagnostics,
                 resolution_scope: tree.resolution_scope.into(),
                 truncated: parsed.truncated,
             })

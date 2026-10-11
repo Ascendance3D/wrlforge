@@ -47,10 +47,10 @@ workspace; `crates/Cargo.lock` gained only their two path entries.
 |---|---|---|---|
 | `src/vrml/tokenizer.js` | `wrlforge-vrml::tokenizer` | MIGRATED | Trivia arrays not kept (no consumer). Positions are `u32`. A leading U+FEFF is signature trivia (Migration-2; deliberate difference, see notes). |
 | `src/vrml/parser.js`, `ast.js`, `diagnostics.js` (syntax codes) | `wrlforge-vrml::{parser, ast, diagnostics}` | MIGRATED | Parity: 673/673 files identical (65 fixtures + 608 `new-items/item-categories`). |
-| `src/vrml/scene-tree.js` | `wrlforge-vrml::scene::build_scene_tree` | PARTIAL | Same inclusion rules and id format; no PROTO-instance flags, no read-only map API, flat USE scope only. |
+| `src/vrml/scene-tree.js` | `wrlforge-vrml::scene::{build_scene_tree, build_scene_tree_scoped}` | PARTIAL | Same inclusion rules and id format; no PROTO-instance flags, no read-only map API. The flat USE scope is **resolved** (RUST-STAB-2A): USE and ROUTE node names come from the lexical scope graph. |
 | inspector read side (`presentation.js`, `interface-query.js`) | `wrlforge-vrml::scene::inspect` + `field_edit::inspect_node_fields` | PARTIAL | Node items show schema-typed field descriptors; no messages catalog. |
-| `src/vrml/analyze.js` (VRML040–044) | — | PENDING | Advisory semantic diagnostics not ported. |
-| `src/vrml/symbols.js`, `scope-graph.js` (WD1.5) | — | PENDING | Largest remaining port (~4,600 lines). |
+| `src/vrml/analyze.js` (VRML040–044) | `wrlforge-vrml::scope` advisories `SCOPE001`–`SCOPE010` (RUST-STAB-2A) | PARTIAL | Not a port: scope-correct DEF/USE and ROUTE-node findings replace the flat VRML041–043 meaning. Duplicate DEF is `info` (valid VRML97). No duplicate-ROUTE check (VRML044). |
+| `src/vrml/symbols.js`, `scope-graph.js` (WD1.5) | `wrlforge-vrml::scope` (RUST-STAB-2A) | PARTIAL | DEF/USE (P1) and ROUTE node names (P2C node half) built from the standard. Type, member and `IS` resolution (P2A/P2B) and ROUTE event/type checks (P2C event half) remain: RUST-STAB-2B. See [RUST_STAB_2A_SCOPE](RUST_STAB_2A_SCOPE.md). |
 | `src/vrml/edit.js` (WD1.2) | `wrlforge-text::edit` (RUST-1) | MIGRATED | Used by `wrlforge-document` for every edit. |
 | `src/vrml/source-map.js` | `wrlforge-text` offsets + `ViewMap` | PARTIAL | Offset↔token lookup not exposed. |
 | `src/vrml/node-identity.js`, `document-transaction.js` (WD1.4) | span proof in `field_edit` + `wrlforge-document::{apply_source_transaction, map_span}` | PARTIAL | Edits require exactly one node at the exact span of the current revision, re-proved after re-parse. Selections survive undo/redo only through exact change mapping. No Tier-2 DEF identity. |
@@ -483,6 +483,19 @@ the camera must survive every Move.
   `cargo test -p wrl-forge-desktop --test flux_regression`.
 - The PR #136 head (`96aef4f`) did not compile; this lane's first commit fixes
   the two VISUAL-4B build breaks.
+
+### RUST-STAB-2A — scope graph and safe reference analysis
+
+- A read-only lexical scope graph (`wrlforge-vrml::scope`) resolves USE and
+  ROUTE node names under ISO 4.6.2, 4.8.4 and 4.10.2. It replaces the flat
+  Scene Tree lookup (`resolution_scope` is now `"lexical"`).
+- Edit identity and language meaning are separate answers. Repeated DEF names
+  are `ambiguous` with no edit target; the 4.6.2 closest DEF is display only.
+- Damaged source withholds answers (`recovered`). Advisory findings
+  `SCOPE001`–`SCOPE010` never block Save. Contract, codes, tests and limits:
+  [RUST_STAB_2A_SCOPE](RUST_STAB_2A_SCOPE.md).
+- Tests: `cargo test -p wrlforge-vrml scope` and
+  `cargo test -p wrl-forge-desktop --test scope_regression`.
 
 ### Known issues
 

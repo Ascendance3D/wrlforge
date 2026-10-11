@@ -7,13 +7,18 @@
 //! Ids are `<kind>-<startUtf16>-<endUtf16>`, exactly the JS format: session
 //! stable for one text, never persisted, never authoritative node identity.
 //!
-//! USE resolution is the FLAT, non-authoritative scope the JS scene tree also
-//! labels as such (`resolution_scope = "flat"`). The WD1.5 scope graph has not
-//! been translated; nothing here claims its answers.
+//! Reference status (USE and ROUTE node names) comes from the RUST-STAB-2A
+//! lexical scope graph (`crate::scope`) via `build_scene_tree_scoped`
+//! (`resolution_scope = "lexical"`). `build_scene_tree` alone gives the plain
+//! structure with no reference answers (`resolution_scope = "none"`). The old
+//! flat DEF table is gone. A reference target is an item id only when the
+//! graph proves exactly one DEF; it is never runtime object identity.
 
 use std::collections::HashMap;
 
 use crate::ast::*;
+use crate::parser::ParseResult;
+use crate::scope::{self, ScopeGraph};
 use crate::tokenizer::Range;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,8 +55,30 @@ pub struct Item {
     pub to: u64,
     pub depth: u32,
     pub children: Vec<String>,
-    /// For a USE: "resolved" | "unresolved" (flat scope, non-authoritative).
+    /// For a USE: the scope-graph status (`scope::Status::as_str`). `None`
+    /// until `build_scene_tree_scoped` annotates the tree.
     pub use_status: Option<&'static str>,
+    /// Scope answers: one for a USE, two (source, destination) for a ROUTE.
+    pub refs: Vec<RefSummary>,
+}
+
+/// One reference answer, projected for display.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RefSummary {
+    /// "use" | "route-source" | "route-destination".
+    pub role: &'static str,
+    pub name: Option<String>,
+    /// `scope::Status::as_str`.
+    pub status: &'static str,
+    /// "proven" | "unresolved" | "uncertain".
+    pub class: &'static str,
+    pub reason: &'static str,
+    /// The DEF node's item id. ONLY for a proven, unique reference whose
+    /// DEF node is a Scene Tree item. Never runtime object identity.
+    pub target: Option<String>,
+    /// The ISO 4.6.2 meaning (closest preceding DEF) as an item id, for
+    /// display only. Never a selection or edit target.
+    pub language_target: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -75,28 +102,6 @@ pub fn item_id(kind: Kind, range: Range) -> String {
 struct Ctx {
     order: Vec<String>,
     items: HashMap<String, Item>,
-    defs: HashMap<String, usize>,
-}
-
-fn collect_defs(ast: &Ast, defs: &mut HashMap<String, usize>) {
-    match ast {
-        Ast::Node(n) => {
-            if let Some(d) = &n.def {
-                *defs.entry(d.clone()).or_default() += 1;
-            }
-            for f in &n.fields {
-                collect_defs(f, defs);
-            }
-        }
-        Ast::Field(f) => {
-            if let Some(v) = &f.value {
-                collect_defs(v, defs);
-            }
-        }
-        Ast::Array { items, .. } => items.iter().for_each(|i| collect_defs(i, defs)),
-        Ast::Proto(p) => p.body.iter().for_each(|b| collect_defs(b, defs)),
-        _ => {}
-    }
 }
 
 impl Ctx {
@@ -114,10 +119,6 @@ impl Ctx {
         match ast {
             Ast::Node(n) => self.emit_node(n, parent, depth, src),
             Ast::Use { name, range, .. } => {
-                let status = match name {
-                    Some(nm) if self.defs.contains_key(nm) => "resolved",
-                    _ => "unresolved",
-                };
                 self.push(
                     parent,
                     Item {
@@ -129,7 +130,8 @@ impl Ctx {
                         to: range.end.offset as u64,
                         depth,
                         children: vec![],
-                        use_status: Some(status),
+                        use_status: None,
+                        refs: vec![],
                     },
                 );
             }
@@ -146,6 +148,7 @@ impl Ctx {
                         depth,
                         children: vec![],
                         use_status: None,
+                        refs: vec![],
                     },
                 );
                 for b in &p.body {
@@ -165,6 +168,7 @@ impl Ctx {
                         depth,
                         children: vec![],
                         use_status: None,
+                        refs: vec![],
                     },
                 );
             }
@@ -188,6 +192,7 @@ impl Ctx {
                         depth,
                         children: vec![],
                         use_status: None,
+                        refs: vec![],
                     },
                 );
             }
@@ -212,6 +217,7 @@ impl Ctx {
                 depth,
                 children: vec![],
                 use_status: None,
+                refs: vec![],
             },
         );
         for f in &n.fields {
@@ -248,10 +254,6 @@ impl Ctx {
 }
 
 pub fn build_scene_tree(doc: &Document, src: &str) -> SceneTree {
-    let mut defs = HashMap::new();
-    for s in &doc.statements {
-        collect_defs(s, &mut defs);
-    }
     let root = Item {
         id: item_id(Kind::Document, doc.range),
         kind: Kind::Document,
@@ -262,12 +264,12 @@ pub fn build_scene_tree(doc: &Document, src: &str) -> SceneTree {
         depth: 0,
         children: vec![],
         use_status: None,
+        refs: vec![],
     };
     let root_id = root.id.clone();
     let mut ctx = Ctx {
         order: vec![root_id.clone()],
         items: HashMap::from([(root_id.clone(), root)]),
-        defs,
     };
     for s in &doc.statements {
         ctx.emit(s, &root_id, 1, src);
@@ -276,8 +278,78 @@ pub fn build_scene_tree(doc: &Document, src: &str) -> SceneTree {
         root: root_id,
         order: ctx.order,
         items: ctx.items,
-        resolution_scope: "flat",
+        resolution_scope: "none",
     }
+}
+
+/// The Scene Tree plus the lexical scope graph of the SAME parse, with every
+/// USE and ROUTE item annotated from the graph.
+pub fn build_scene_tree_scoped(parse: &ParseResult, src: &str) -> (SceneTree, ScopeGraph) {
+    let mut tree = build_scene_tree(&parse.tree, src);
+    let graph = scope::build(parse);
+    let summary = |r: &scope::Reference, items: &HashMap<String, Item>| {
+        // A target is offered only when the graph proves it AND the DEF node
+        // is a real item of this tree.
+        let as_item = |d: Option<&scope::DefDecl>| {
+            d.map(|d| item_id(Kind::Node, d.node_range))
+                .filter(|id| items.contains_key(id))
+        };
+        RefSummary {
+            role: r.kind.as_str(),
+            name: r.name.clone(),
+            status: r.status.as_str(),
+            class: r.status.class(),
+            reason: r.reason,
+            target: as_item(graph.edit_target(r)),
+            language_target: as_item(graph.language_target(r)),
+        }
+    };
+    // Statement span -> reference indices (one USE, or a ROUTE's two).
+    let mut by_span: HashMap<(u64, u64), Vec<usize>> = HashMap::new();
+    for (i, r) in graph.references.iter().enumerate() {
+        let key = (
+            r.statement_range.start.offset as u64,
+            r.statement_range.end.offset as u64,
+        );
+        by_span.entry(key).or_default().push(i);
+    }
+    let mut refs: Vec<(String, Vec<RefSummary>)> = Vec::new();
+    for (id, it) in &tree.items {
+        let want: &[scope::RefKind] = match it.kind {
+            Kind::Use => &[scope::RefKind::Use],
+            Kind::Route => &[
+                scope::RefKind::RouteSource,
+                scope::RefKind::RouteDestination,
+            ],
+            _ => continue,
+        };
+        let Some(found) = by_span.get(&(it.from, it.to)) else {
+            continue;
+        };
+        let picked: Vec<RefSummary> = want
+            .iter()
+            .filter_map(|k| {
+                let mut m = found.iter().filter(|&&i| graph.references[i].kind == *k);
+                // Exactly one reference of this role at this span, or none.
+                match (m.next(), m.next()) {
+                    (Some(&i), None) => Some(summary(&graph.references[i], &tree.items)),
+                    _ => None,
+                }
+            })
+            .collect();
+        if picked.len() == want.len() {
+            refs.push((id.clone(), picked));
+        }
+    }
+    for (id, r) in refs {
+        let it = tree.items.get_mut(&id).expect("item id from this tree");
+        if it.kind == Kind::Use {
+            it.use_status = r.first().map(|r| r.status);
+        }
+        it.refs = r;
+    }
+    tree.resolution_scope = "lexical";
+    (tree, graph)
 }
 
 // --- inspector (read only) ---------------------------------------------------
@@ -433,7 +505,7 @@ mod tests {
     #[test]
     fn tree_follows_js_inclusion_rules() {
         let r = parse(SRC);
-        let t = build_scene_tree(&r.tree, SRC);
+        let (t, _) = build_scene_tree_scoped(&r, SRC);
         let labels: Vec<String> = t.order.iter().map(|i| t.items[i].label.clone()).collect();
         assert_eq!(
             labels,
@@ -454,7 +526,10 @@ mod tests {
             .iter()
             .filter_map(|i| t.items[i].use_status)
             .collect();
-        assert_eq!(uses, ["resolved", "unresolved"]);
+        // `USE T` sits inside `DEF T`: a self-reference (ISO 4.4.4), not a
+        // valid edit target. `USE Nope` names no DEF in scope.
+        assert_eq!(uses, ["invalid", "unresolved"]);
+        assert_eq!(t.resolution_scope, "lexical");
     }
 
     #[test]

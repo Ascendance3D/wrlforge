@@ -73,7 +73,9 @@ option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
 .tree-item.kind-route .label { color: var(--wf-tree-route); }
 .tree-item.kind-use .label { color: var(--wf-tree-use); }
 .tree-item.kind-proto .label, .tree-item.kind-externproto .label { color: var(--wf-tree-proto); }
-.tree-item.unresolved .label { color: var(--wf-tree-unresolved); text-decoration: underline wavy var(--wf-tree-unresolved); }
+.tree-item.ref-unresolved .label { color: var(--wf-tree-unresolved); text-decoration: underline wavy var(--wf-tree-unresolved); }
+/* RUST-STAB-2A: ambiguous / recovered / unsupported. Shape, not color alone. */
+.tree-item.ref-uncertain .label { text-decoration: underline dotted; }
 .empty { color: var(--wf-text-muted); padding: .6rem; margin: 0; }
 
 /* Source editor */

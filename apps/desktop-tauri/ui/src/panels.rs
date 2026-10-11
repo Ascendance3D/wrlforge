@@ -27,7 +27,7 @@ pub fn SceneTree() -> impl IntoView {
     view! {
         <aside class="tree-col" aria-label="Scene Tree">
             <div class="pane-title">"Scene Tree"
-                <span class="muted" title="USE resolution uses the flat, non-authoritative scope; the WD1.5 scope graph is not migrated yet">
+                <span class="muted" title="USE and ROUTE node names are resolved by the lexical scope graph (ISO 4.6.2, 4.8.4, 4.10.2). Read-only and advisory.">
                     {move || u.analysis.with(|a| a.as_ref().map(|a| format!(" · {} items · {} scope", a.items.len(), a.resolution_scope)).unwrap_or_default())}
                 </span>
                 <span class="tree-updating" id="tree-updating">{move || stale().then_some(" · updating…")}</span>
@@ -50,9 +50,8 @@ pub fn SceneTree() -> impl IntoView {
                     let key2 = key.clone();
                     let (from, to) = (it.view_from, it.view_to);
                     let pad = format!("padding-left: {}rem", 0.4 + (it.depth.saturating_sub(1)) as f32 * 0.9);
-                    let class = format!("tree-item kind-{}{}", it.kind.to_lowercase(),
-                        if it.use_status.as_deref() == Some("unresolved") { " unresolved" } else { "" });
-                    let title = it.use_status.clone().map(|s| format!("USE {s} (flat scope, non-authoritative)")).unwrap_or_default();
+                    let class = format!("tree-item kind-{}{}", it.kind.to_lowercase(), ref_class(&it.refs));
+                    let title = ref_title(&it.refs, &a.items);
                     // Offsets of THIS render's revision; tree_select refuses
                     // them unless that is still the document's revision.
                     let id2 = id.clone();
@@ -60,6 +59,7 @@ pub fn SceneTree() -> impl IntoView {
                     let act2 = act.clone();
                     view! {
                         <li role="treeitem" class=class style=pad title=title data-id=id.clone() tabindex="-1"
+                            data-ref=ref_data(&it.refs)
                             class:selected=move || sel.selected(&key)
                             aria-selected=move || if sel2.selected(&key2) { "true" } else { "false" }
                             on:click=move |_| act()
@@ -78,6 +78,60 @@ pub fn SceneTree() -> impl IntoView {
             {move || (u.doc.with(|d| d.is_none())).then(|| view! { <p class="empty">"Start a New World or open a file to see its scene."</p> })}
         </aside>
     }
+}
+
+/// The weakest reference class on an item: "" when proven or not a reference.
+fn ref_class(refs: &[p::SceneRef]) -> &'static str {
+    if refs.iter().any(|r| r.class == "unresolved") {
+        " ref-unresolved"
+    } else if refs.iter().any(|r| r.class == "uncertain") {
+        " ref-uncertain"
+    } else {
+        ""
+    }
+}
+
+/// `role:status:reason` per reference, for tests and assistive tools.
+fn ref_data(refs: &[p::SceneRef]) -> String {
+    refs.iter()
+        .map(|r| format!("{}:{}:{}", r.role, r.status, r.reason))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Hover text. Display only: a target is named, never selected or edited.
+fn ref_title(refs: &[p::SceneRef], items: &[p::SceneItem]) -> String {
+    let label = |id: &Option<String>| {
+        id.as_ref()
+            .and_then(|id| items.iter().find(|i| &i.id == id))
+            .map(|i| i.label.clone())
+    };
+    refs.iter()
+        .map(|r| {
+            let who = match r.role.as_str() {
+                "route-source" => "ROUTE source",
+                "route-destination" => "ROUTE destination",
+                _ => "USE",
+            };
+            let name = r.name.as_deref().unwrap_or("?");
+            let tail = match (
+                r.class.as_str(),
+                label(&r.target),
+                label(&r.language_target),
+            ) {
+                ("proven", Some(t), _) => format!("proven → {t}"),
+                (_, _, Some(l)) if r.status == "ambiguous" => {
+                    format!(
+                        "ambiguous ({}); VRML97 uses the closest: {l}; not an edit target",
+                        r.reason
+                    )
+                }
+                (c, _, _) => format!("{c}: {} ({})", r.status, r.reason),
+            };
+            format!("{who} {name}: {tail}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Arrow keys move focus between items (no selection change); Enter/Space
@@ -330,6 +384,27 @@ pub fn Diagnostics() -> impl IntoView {
                     <div class="diag-head" id="diag-head" data-revision=a.revision.to_string()>
                         {format!("Parser · rev {}", a.revision)}
                         {(!current).then_some(" · updating…")}
+                    </div>
+                }
+            }))}
+            {move || u.analysis.with(|a| a.as_ref().filter(|a| !a.scope_diagnostics.is_empty()).map(|a| {
+                let (session, rev) = (a.session, a.revision);
+                view! {
+                    <div class="diag-scope" id="diag-scope" data-revision=rev.to_string()
+                        title="Advisory scope findings (ISO 4.6.2, 4.8.4, 4.10.2). Never block Save; uncertain cases are not listed.">
+                        <div class="diag-head">{format!("Scope (advisory) · rev {rev}")}</div>
+                        <ul>
+                            {a.scope_diagnostics.iter().take(200).map(|d| {
+                                let (f, t) = (d.view_from, d.view_to);
+                                view! {
+                                    <li class=format!("diag {}", d.severity) data-code=d.code.clone()
+                                        on:click=move |_| { ui::select_from("Diagnostics", session, rev, f, t); }>
+                                        <span class="sev">{severity_label(&d.severity)}</span>
+                                        {format!("{}:{} {} {}", d.line, d.column, d.code, d.message)}
+                                    </li>
+                                }
+                            }).collect_view()}
+                        </ul>
                     </div>
                 }
             }))}

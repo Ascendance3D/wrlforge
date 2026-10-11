@@ -200,8 +200,35 @@ pub struct SceneItem {
     pub depth: u32,
     pub view_from: u64,
     pub view_to: u64,
+    /// A USE item's scope-graph status (`SceneRef::status`).
     pub use_status: Option<String>,
     pub child_count: u32,
+    /// RUST-STAB-2A scope answers: one for a USE, two (source, destination)
+    /// for a ROUTE, none otherwise. Read-only; never an edit by itself.
+    #[serde(default)]
+    pub refs: Vec<SceneRef>,
+}
+
+/// One node-name reference answer from the lexical scope graph of the SAME
+/// parse as its Analysis. Codes: `docs/architecture/RUST_STAB_2A_SCOPE.md`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SceneRef {
+    /// "use" | "route-source" | "route-destination"
+    pub role: String,
+    pub name: Option<String>,
+    /// "resolved" | "unresolved" | "ambiguous" | "invalid" | "recovered" |
+    /// "unsupported"
+    pub status: String,
+    /// "proven" | "unresolved" | "uncertain"
+    pub class: String,
+    pub reason: String,
+    /// The DEF node's Scene Tree item id, in this Analysis's revision. Set
+    /// ONLY for a proven unique reference. Never runtime object identity.
+    pub target: Option<String>,
+    /// The ISO 4.6.2 meaning (closest preceding DEF) as an item id. For
+    /// display only: never a selection or edit target.
+    pub language_target: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -220,7 +247,12 @@ pub struct Analysis {
     /// Depth-first source order; the document root is omitted.
     pub items: Vec<SceneItem>,
     pub diagnostics: Vec<Diagnostic>,
-    /// "flat": USE resolution is the non-authoritative flat scope.
+    /// RUST-STAB-2A advisory scope findings (`SCOPE0xx`, "warning" or
+    /// "info", never "error"). Same parse, revision and view mapping as
+    /// `diagnostics`; kept apart so they never mark the editor or block Save.
+    #[serde(default)]
+    pub scope_diagnostics: Vec<Diagnostic>,
+    /// "lexical": references come from the RUST-STAB-2A scope graph.
     pub resolution_scope: String,
     pub truncated: bool,
 }
