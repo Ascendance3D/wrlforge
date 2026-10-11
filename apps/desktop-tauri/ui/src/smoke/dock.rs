@@ -1025,9 +1025,21 @@ async fn main_phase(c: &Plan, r: &mut R) -> Option<()> {
         let (tok, tdetail) = tools_visible();
         let ws: HtmlElement = crate::element_by_id("workspace")?;
         let scroll = ws.scroll_width() >= d.geo.get_untracked().width as i32 - 1;
+        // The toolbar wraps: the page itself never scrolls sideways.
+        let page = web_sys::window()?.document()?.document_element()?;
+        let no_page_scroll = page.scroll_width() as f64 <= got.0 + 1.0;
+        // The preview status line is not pushed out of the viewport panel.
+        let host = rect_of("dock-panel-viewport")?;
+        let status = rect_of("preview-status")?;
+        let status_ok = status.height() > 0.0 && status.bottom() <= host.bottom() + 0.5;
         narrow.push((
-            ok && tok && scroll,
-            format!("{got:?}: {detail} · {tdetail}"),
+            ok && tok && scroll && no_page_scroll && status_ok,
+            format!(
+                "{got:?}: {detail} · {tdetail} · page {} · status bottom {:.0} / host {:.0}",
+                page.scroll_width(),
+                status.bottom(),
+                host.bottom()
+            ),
         ));
     }
     r.step(
