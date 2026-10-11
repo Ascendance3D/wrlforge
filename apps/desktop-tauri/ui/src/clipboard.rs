@@ -13,8 +13,15 @@
 //! any refusal). No other path writes the document; a text field other than
 //! Source is never edited from the menu (its own Ctrl+X / Ctrl+V stay).
 //! `document.execCommand` is not used: its `input` event is not guaranteed.
+//!
+//! The clipboard answers asynchronously, and the user can move the Source
+//! selection, type, or open another document while it does. Cut and Paste
+//! therefore take a [`Ticket`] BEFORE the clipboard call (document session,
+//! revision and generation, the target textarea, its selection and its
+//! text) and edit only if the ticket still holds AFTER it. A stale answer
+//! changes nothing: no widget text, no `doc_edit`, no undo entry.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use js_sys::{JsString, Promise, Reflect};
 use wasm_bindgen::{JsCast, JsValue};
@@ -22,11 +29,68 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{Element, HtmlElement, HtmlInputElement, HtmlTextAreaElement};
 use wrlforge_desktop_protocol::command::FocusKind;
 
-use crate::{editor, menu, ui};
+use crate::{editor, ipc, menu, ui};
 
 thread_local! {
     /// The last focused control outside the menu bar (None: nothing).
     static LAST: RefCell<Option<HtmlElement>> = const { RefCell::new(None) };
+    /// Test only: a controlled clipboard answer (None in production).
+    static HOLD: Cell<Option<TestHold>> = const { Cell::new(None) };
+    static STATS: Cell<Stats> = const { Cell::new(Stats { applied: 0, stale: 0 }) };
+}
+
+/// Test only (smoke): delay every clipboard answer by `delay_ms`, and fail
+/// it (as a canceled or refused clipboard does) when `fail` is set. The real
+/// clipboard and its permissions are unchanged.
+#[derive(Clone, Copy, Debug)]
+pub struct TestHold {
+    pub delay_ms: i32,
+    pub fail: bool,
+}
+
+pub fn set_test_hold(h: Option<TestHold>) {
+    HOLD.with(|c| c.set(h));
+}
+
+/// Cut / Paste edits applied, and refused as stale (test counters).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Stats {
+    pub applied: u64,
+    pub stale: u64,
+}
+
+pub fn stats() -> Stats {
+    STATS.with(|c| c.get())
+}
+
+fn count(applied: bool) {
+    STATS.with(|c| {
+        let mut s = c.get();
+        if applied {
+            s.applied += 1;
+        } else {
+            s.stale += 1;
+        }
+        c.set(s);
+    });
+}
+
+/// The test hold, before the clipboard call: `Err` when it must fail.
+async fn hold_before() -> Result<(), String> {
+    match HOLD.with(|c| c.get()) {
+        Some(h) if h.fail => {
+            ipc::sleep(h.delay_ms).await;
+            Err("the clipboard request was canceled (test)".into())
+        }
+        _ => Ok(()),
+    }
+}
+
+/// The test hold, after the clipboard answered: the late response.
+async fn hold_after() {
+    if let Some(h) = HOLD.with(|c| c.get()) {
+        ipc::sleep(h.delay_ms).await;
+    }
 }
 
 /// What a control is, for the registry's focus requirements.
@@ -133,18 +197,22 @@ async fn call_promise(target: &JsValue, method: &str, args: &[JsValue]) -> Resul
 
 /// Write `text` to the system clipboard.
 pub async fn write_text(text: &str) -> Result<(), String> {
+    hold_before().await?;
     let c = clipboard().ok_or("the clipboard API is not available")?;
-    call_promise(&c, "writeText", &[JsValue::from_str(text)])
+    let r = call_promise(&c, "writeText", &[JsValue::from_str(text)])
         .await
-        .map(|_| ())
+        .map(|_| ());
+    hold_after().await;
+    r
 }
 
 /// Read text from the system clipboard.
 pub async fn read_text() -> Result<String, String> {
+    hold_before().await?;
     let c = clipboard().ok_or("the clipboard API is not available")?;
-    call_promise(&c, "readText", &[])
-        .await?
-        .as_string()
+    let r = call_promise(&c, "readText", &[]).await;
+    hold_after().await;
+    r?.as_string()
         .ok_or_else(|| "the clipboard holds no text".into())
 }
 
@@ -153,16 +221,68 @@ fn source() -> Option<HtmlTextAreaElement> {
     (el.id() == "source").then(|| el.dyn_into().ok()).flatten()
 }
 
-/// Replace the Source selection with `text` in the widget, then hand the
-/// change to the editor's edit path exactly as a typed key does.
-fn replace_source_selection(ta: &HtmlTextAreaElement, text: &str) -> Result<(), String> {
-    if ta.read_only() {
+/// What a Cut or Paste was asked for, taken before the clipboard call.
+#[derive(Clone, PartialEq)]
+struct Ticket {
+    ta: HtmlTextAreaElement,
+    session: u64,
+    revision: u64,
+    generation: u64,
+    selection: (u32, u32),
+    text: String,
+}
+
+impl Ticket {
+    /// The Source state now. None: no document, an edit is still in flight,
+    /// or the widget holds text Rust has not acknowledged.
+    fn take() -> Option<Ticket> {
+        let ta = source()?;
+        let text = ta.value();
+        let (session, revision, generation, settled) = editor::CORE.with_borrow(|c| {
+            let settled = !c.busy && c.shown.iter().copied().eq(text.encode_utf16());
+            (c.session, c.revision, c.generation, settled)
+        });
+        let el: &HtmlElement = ta.unchecked_ref();
+        let selection = selection(el)?;
+        Some(Ticket {
+            session: session?,
+            revision,
+            generation,
+            selection,
+            text,
+            ta,
+        })
+        .filter(|_| settled)
+    }
+
+    /// Wait for a pending source edit, then take the ticket.
+    async fn take_settled() -> Option<Ticket> {
+        editor::idle().await;
+        Ticket::take()
+    }
+
+    /// The ticket still describes the Source the user sees: same control,
+    /// same document and revision, same selection, same text.
+    fn holds(&self) -> bool {
+        Ticket::take().is_some_and(|now| now == *self)
+    }
+}
+
+/// Replace the ticket's selection with `text` in the widget, then hand the
+/// change to the editor's edit path exactly as a typed key does. Refused
+/// (nothing changes) when the ticket no longer holds.
+fn replace_source_selection(t: &Ticket, text: &str) -> Result<(), String> {
+    if t.ta.read_only() {
         return Err("the Source editor is read-only".into());
     }
-    let a = ta.selection_start().ok().flatten().unwrap_or(0);
-    let b = ta.selection_end().ok().flatten().unwrap_or(a);
-    ta.set_range_text_with_start_and_end_and_mode(text, a, b, "end")
+    if !t.holds() {
+        count(false);
+        return Err("the Source selection or document changed while the clipboard answered".into());
+    }
+    let (a, b) = t.selection;
+    t.ta.set_range_text_with_start_and_end_and_mode(text, a, b, "end")
         .map_err(|e| format!("{e:?}"))?;
+    count(true);
     editor::on_input();
     editor::update_cursor();
     Ok(())
@@ -183,33 +303,41 @@ pub async fn copy() {
 
 pub async fn cut() {
     restore_focus();
-    let Some(ta) = source() else { return };
-    let el: HtmlElement = ta.clone().unchecked_into();
-    let Some(text) = selected_text(&el) else {
-        ui::flash("Cut: nothing is selected.");
+    if source().is_none() {
+        return;
+    }
+    let Some(t) = Ticket::take_settled().await else {
+        ui::flash("Cut refused: a Source edit is still being applied.");
         return;
     };
+    let (a, b) = t.selection;
+    if b <= a {
+        ui::flash("Cut: nothing is selected.");
+        return;
+    }
+    let text = String::from(JsString::from(t.text.as_str()).substring(a, b));
     // The text is removed only after the clipboard holds it.
     if let Err(e) = write_text(&text).await {
         ui::flash(&format!("Cut is not available: {e}. Use Ctrl+X."));
         return;
     }
-    if let Err(e) = replace_source_selection(&ta, "") {
+    if let Err(e) = replace_source_selection(&t, "") {
         ui::flash(&format!("Cut refused: {e}."));
     }
 }
 
 pub async fn paste() {
     restore_focus();
-    let Some(ta) = source() else { return };
+    if source().is_none() {
+        return;
+    }
+    let Some(t) = Ticket::take_settled().await else {
+        ui::flash("Paste refused: a Source edit is still being applied.");
+        return;
+    };
     match read_text().await {
         Ok(text) => {
-            // The selection may have moved while the clipboard answered:
-            // the focus record is the authority, so check it again.
-            if source().is_none() {
-                return;
-            }
-            if let Err(e) = replace_source_selection(&ta, &text) {
+            if let Err(e) = replace_source_selection(&t, &text) {
                 ui::flash(&format!("Paste refused: {e}."));
             }
         }

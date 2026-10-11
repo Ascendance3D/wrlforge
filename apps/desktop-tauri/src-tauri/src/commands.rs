@@ -654,6 +654,24 @@ pub fn smoke_menu_recovery_digest() -> Result<Vec<(String, u64, String)>, String
     Ok(crate::smoke_menu::recovery_digest())
 }
 
+/// UI-MENU-1 smoke: send a native application-menu event, as a macOS menu
+/// item does (`app_menu::forward`). `raw` sends the key unchecked, so the
+/// run proves the UI validates it too.
+#[tauri::command]
+pub fn smoke_menu_native(app: AppHandle, key: String, raw: bool) -> Result<bool, String> {
+    if !crate::smoke_menu::armed() {
+        return Err("not a menu smoke run".into());
+    }
+    if raw {
+        use tauri::Emitter;
+        return app
+            .emit(p::command::MENU_EVENT, key)
+            .map(|_| true)
+            .map_err(|e| e.to_string());
+    }
+    Ok(crate::app_menu::forward(&app, &key))
+}
+
 /// UI-MENU-1 smoke: a file of the run as it is on disk.
 #[tauri::command]
 pub fn smoke_menu_disk(name: String) -> Result<crate::smoke_menu::Disk, String> {

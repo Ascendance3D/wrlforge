@@ -1050,6 +1050,16 @@ pub struct MenuDef {
 /// active in two menus.
 pub const MAC_APP_MENU: &[CommandId] = &[CommandId::HelpAbout, CommandId::AppQuit];
 
+/// The event a native application-menu item sends to the UI. Its payload is
+/// the command key.
+pub const MENU_EVENT: &str = "menu-command";
+
+/// The command a native application-menu event may run: a registry key of
+/// [`MAC_APP_MENU`], nothing else.
+pub fn from_native_menu(key: &str) -> Option<CommandId> {
+    CommandId::from_key(key).filter(|c| MAC_APP_MENU.contains(c))
+}
+
 /// UI-MENU-1: the seven menus, in order.
 pub const MENUS: &[MenuDef] = {
     use CommandId::*;

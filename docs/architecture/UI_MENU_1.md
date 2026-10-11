@@ -241,7 +241,8 @@ Windows, `⌘…` on macOS. The clipboard items show their native keys
 
 On macOS, About and Quit in the application menu send the command key to the
 UI (`menu-command` event). The UI runs it through `command::run`, so macOS
-Quit also ends in `app_quit` → CloseGate.
+Quit also ends in `app_quit` → CloseGate. The UI listener was missing in the
+first commit of this lane; §13 records the fix.
 
 ## 8. Accessibility
 
@@ -267,6 +268,8 @@ Quit also ends in `app_quit` → CloseGate.
   recreated (object probes).
 - Cut and Paste reach Rust only through `doc_edit`. A text field other than
   Source is never edited from the menu.
+- A Cut or Paste edits only if the Source state that it captured before the
+  clipboard call is unchanged after the call (§13).
 - Quit uses the existing CloseGate only. Cancel keeps the application, the
   document and the recovery records.
 - `WRONG_SOURCE_SELECTIONS = 0`: the menu run checks real viewport picks
@@ -331,3 +334,85 @@ The menu run passed 3 of 3 times while it ran beside two other GUI runs.
 - The toolbar arrangement is unchanged. The menu bar adds one row above it.
 - `cargo fmt --check` already fails on the base. This lane formats its own
   files and hunks only.
+
+## 13. Follow-up: clipboard safety and native menu events
+
+### Clipboard safety
+
+Before, Cut and Paste waited for the clipboard and then edited the Source
+selection that was current at that time. If the user moved the selection,
+typed, or opened another document during the wait, the late answer edited the
+wrong place.
+
+Now `clipboard.rs` takes a `Ticket` before the clipboard call:
+
+- the Source textarea element (the focus record must still be Source);
+- the document session, revision and editor generation (the generation
+  changes on every acknowledged edit, undo, resync and document replacement);
+- the selection (UTF-16 offsets) and the full widget text.
+
+A ticket is taken only when no source edit is in flight and the widget text
+equals the text Rust acknowledged. A pending edit is waited for first
+(`editor::idle`, bounded). After the clipboard answers, the ticket is taken
+again and compared field by field. If any field changed, the operation is
+refused: the widget does not change, no `doc_edit` is sent, and no undo entry
+is made. If the ticket holds, the edit goes through `editor::on_input`, the
+existing revision-checked `doc_edit` path, as before. Rust stays the only
+document authority. There is no second history or save path.
+
+A stale Cut has already written its text to the clipboard. It does not
+remove the text from Source.
+
+### Test-only clipboard delay
+
+`clipboard::set_test_hold` delays every clipboard answer by a fixed time, or
+fails it as a canceled request. Only the menu smoke run sets it. Production
+never sets it, and the clipboard API and its permissions are unchanged.
+
+### Native menu events
+
+Before, the backend emitted `menu-command` for the macOS About and Quit items,
+but no UI code listened to it. The items did nothing.
+
+Now:
+
+- `protocol::command::from_native_menu` accepts a key only if it names a
+  command in `MAC_APP_MENU`. Both sides use it: `app_menu::forward` in the
+  backend, and `menu::listen_native` in the UI.
+- `menu::listen_native` subscribes once for the page life (a flag prevents a
+  second registration; layout and menu changes do not call it). It uses the
+  same `window.__TAURI__.event.listen` API as the native viewport events. The
+  capability stays `core:default`.
+- A valid key runs through `command::run`. There is no second dispatcher.
+  Quit therefore ends in `app_quit` → CloseGate.
+- An invalid key runs nothing and is counted as refused.
+
+The smoke command `smoke_menu_native` (menu runs only) drives
+`app_menu::forward`, or emits an unchecked key to prove the UI check.
+
+### New menu smoke steps
+
+| step | proves |
+|---|---|
+| Delayed Cut, selection moved | no text, revision or undo change; counted stale |
+| Delayed Paste, selection moved | the same |
+| Delayed Paste, user typed | only the typed edit stays |
+| Delayed Cut and Paste, document replaced | the new document stays clean, with no undo entry |
+| Canceled clipboard (Cut and Paste) | nothing changes; the message says why |
+| Rapid Cut, Cut, Paste | the first Cut is one edit (one Undo restores it); the other two are stale |
+| Paste during a pending source edit | it waits, then pastes once; two undo entries |
+| After the races | Rust text == editor text == saved document |
+| Native About event | runs About once through `command::run` |
+| Native About after a layout change | still runs once (one listener) |
+| Native events outside the app menu | refused by the backend and by the UI; nothing runs |
+| Native Quit event | asks through the CloseGate; Cancel keeps document and recovery records |
+
+### Platform status for this follow-up
+
+- Linux x64: tested (see the gate below).
+- Windows x64: not tested. The clipboard code has no platform branch.
+- macOS 15+ (Apple Silicon): not tested, not compile-verified. No macOS Rust
+  target is installed. The event path (`forward` → event → UI listener →
+  `command::run`) is tested on Linux. The NSMenu installation and its click
+  events need a check on a Mac.
+

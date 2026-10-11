@@ -18,6 +18,11 @@
 //!
 //! The bar is an overlay above the toolbar: opening it recreates no dock
 //! panel and never touches the X_ITE canvas.
+//!
+//! The macOS application menu is native: its About and Quit items reach the
+//! UI as a `menu-command` event ([`listen_native`]). The key is checked
+//! against the registry (`from_native_menu`) and run through `command::run`,
+//! the same path as this bar; Quit therefore ends in the CloseGate.
 
 use std::cell::Cell;
 use std::cell::OnceCell;
@@ -29,6 +34,7 @@ use web_sys::{Element, HtmlElement, KeyboardEvent};
 use wrlforge_desktop_protocol::command::{
     self as c, Availability, CommandId, MenuDef, MenuEntry, Platform, MAC_APP_MENU, MENUS,
 };
+use wrlforge_desktop_protocol::command::{from_native_menu, MENU_EVENT};
 
 use crate::{clipboard, command, dock};
 
@@ -512,4 +518,71 @@ pub fn install() {
     });
     let _ = w.add_event_listener_with_callback("blur", blur.as_ref().unchecked_ref());
     blur.forget();
+}
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"], js_name = listen, catch)]
+    async fn tauri_listen(
+        event: &str,
+        handler: &Closure<dyn FnMut(JsValue)>,
+    ) -> Result<JsValue, JsValue>;
+}
+
+/// Native menu events: received, run, refused (test counters).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NativeStats {
+    pub received: u64,
+    pub ran: u64,
+    pub refused: u64,
+}
+
+thread_local! {
+    /// Set once the `menu-command` listener is registered: never twice.
+    static NATIVE_LISTENING: Cell<bool> = const { Cell::new(false) };
+    static NATIVE_STATS: Cell<NativeStats> = const { Cell::new(NativeStats { received: 0, ran: 0, refused: 0 }) };
+}
+
+pub fn native_stats() -> NativeStats {
+    NATIVE_STATS.with(|s| s.get())
+}
+
+/// One native menu event: a registry key of the application menu runs
+/// through `command::run`; anything else is refused and runs nothing.
+fn on_native(payload: JsValue) {
+    let id = payload.as_string().as_deref().and_then(from_native_menu);
+    NATIVE_STATS.with(|s| {
+        let mut n = s.get();
+        n.received += 1;
+        if id.is_some() {
+            n.ran += 1;
+        } else {
+            n.refused += 1;
+        }
+        s.set(n);
+    });
+    match id {
+        Some(id) => command::run(id),
+        None => web_sys::console::warn_1(&format!("menu-command refused: {payload:?}").into()),
+    }
+}
+
+/// Subscribe to the native application menu's `menu-command` event, once
+/// for the life of the page (a menu or layout change does not call this).
+pub async fn listen_native() {
+    if NATIVE_LISTENING.with(|l| l.replace(true)) {
+        return;
+    }
+    let handler = Closure::<dyn FnMut(JsValue)>::new(|ev: JsValue| {
+        let payload = js_sys::Reflect::get(&ev, &JsValue::from_str("payload")).unwrap_or_default();
+        on_native(payload);
+    });
+    match tauri_listen(MENU_EVENT, &handler).await {
+        // The page lives as long as the listener: the handler is never freed.
+        Ok(_) => handler.forget(),
+        Err(e) => {
+            NATIVE_LISTENING.with(|l| l.set(false));
+            web_sys::console::warn_1(&format!("menu-command listener: {e:?}").into());
+        }
+    }
 }

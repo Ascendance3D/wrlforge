@@ -60,6 +60,8 @@ pub fn start() {
         dock::load().await;
         theme::init().await;
         native::install().await;
+        // UI-MENU-1: the macOS application menu's About / Quit (once).
+        menu::listen_native().await;
         if let Ok(Some(o)) =
             ipc::call::<Option<p::OpenOutcome>>("startup_document", ipc::NoArgs {}).await
         {

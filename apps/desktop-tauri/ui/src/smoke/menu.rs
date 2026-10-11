@@ -15,6 +15,13 @@
 //!   Create, the tools, the theme and Live Preview;
 //! * menu Cut / Copy / Paste reach the Rust document through the editor's
 //!   own edit path (or are reported as not available);
+//! * a Cut or Paste whose clipboard answer arrives late (a controlled
+//!   test-only delay) edits nothing when the Source selection, the text or
+//!   the document changed meanwhile, and a failed clipboard edits nothing;
+//! * a native application-menu event (`menu-command`, as the macOS About /
+//!   Quit items send) is validated against the registry and runs through
+//!   `command::run` once, also after a layout change; Quit asks through the
+//!   CloseGate;
 //! * World and reserved items never run;
 //! * Quit (menu and Ctrl+Q) asks through the CloseGate, Cancel keeps the
 //!   application, the document and the recovery records unchanged;
@@ -217,6 +224,8 @@ pub async fn run(plan: &Plan, r: &mut R) -> Option<()> {
     blocked(r).await?;
     equivalence(r).await?;
     clipboard(r).await?;
+    clipboard_races(r).await?;
+    native_menu(r).await?;
     tools_and_view(r).await?;
     world_and_reserved(r).await?;
     quit(r).await?;
@@ -834,6 +843,296 @@ async fn clipboard(r: &mut R) -> Option<()> {
     Some(())
 }
 
+/// The document content, without the selection (it moves in these tests):
+/// revision, dirty, Rust text, undo / redo, widget text.
+async fn content() -> Option<(u64, bool, String, bool, bool, String)> {
+    let s = snapshot().await?;
+    Some((
+        s.revision,
+        s.dirty,
+        s.view,
+        s.can_undo,
+        s.can_redo,
+        textarea()?.value(),
+    ))
+}
+
+fn hold(delay_ms: i32, fail: bool) {
+    crate::clipboard::set_test_hold(Some(crate::clipboard::TestHold { delay_ms, fail }));
+}
+
+fn no_hold() {
+    crate::clipboard::set_test_hold(None);
+}
+
+fn cstats() -> crate::clipboard::Stats {
+    crate::clipboard::stats()
+}
+
+/// Wait until the clipboard operations started so far have ended.
+async fn ops_done(before: crate::clipboard::Stats, n: u64, ms: u32) {
+    let _ = wait_ms(ms, || {
+        let s = cstats();
+        (s.applied + s.stale >= before.applied + before.stale + n).then_some(())
+    })
+    .await;
+    settle().await;
+}
+
+const HOLD_MS: i32 = 2500;
+
+/// Late clipboard answers: a stale Cut / Paste changes nothing.
+async fn clipboard_races(r: &mut R) -> Option<()> {
+    let _ = textarea()?.focus();
+    // 1. Cut, then the selection moves before the clipboard answers.
+    let (a, b) = find("UI-MENU-1 fixture")?;
+    select_source(a, b)?;
+    let c0 = content().await?;
+    let k0 = cstats();
+    hold(HOLD_MS, false);
+    choose("edit", CommandId::EditCut).await?;
+    let (x, y) = find("Crate")?;
+    select_source(x, y)?;
+    ops_done(k0, 1, 6000).await;
+    let c1 = content().await?;
+    let k1 = cstats();
+    r.step(
+        "a delayed Cut after the Source selection moved edits nothing (no text, no revision, no undo entry)",
+        c1 == c0 && k1.stale == k0.stale + 1 && k1.applied == k0.applied,
+        format!("{k0:?} -> {k1:?} rev {} -> {}", c0.0, c1.0),
+    );
+    // 2. Paste, then the selection moves.
+    let (_, e) = find("# fin")?;
+    select_source(e, e)?;
+    choose("edit", CommandId::EditPaste).await?;
+    select_source(0, 0)?;
+    ops_done(k1, 1, 6000).await;
+    let c2 = content().await?;
+    let k2 = cstats();
+    r.step(
+        "a delayed Paste after the Source selection moved edits nothing",
+        c2 == c0 && k2.stale == k1.stale + 1 && k2.applied == k1.applied,
+        format!("{k1:?} -> {k2:?}"),
+    );
+    // 3. Paste, then the user types (an edit of the same document).
+    select_source(e, e)?;
+    choose("edit", CommandId::EditPaste).await?;
+    type_edit(" typed").await?;
+    let typed = content().await?;
+    ops_done(k2, 1, 6000).await;
+    let c3 = content().await?;
+    let k3 = cstats();
+    r.step(
+        "a delayed Paste after a typed Source edit keeps the typed edit only",
+        c3 == typed
+            && typed.0 == c0.0 + 1
+            && c3.5 == c3.2
+            && !c3.2.contains("# finUI-MENU-1")
+            && k3.stale == k2.stale + 1,
+        format!("rev {} -> {} {k3:?}", c0.0, c3.0),
+    );
+    crate::command::run(CommandId::EditUndo);
+    settle().await;
+    let undone = content().await?;
+    // 4. Cut and Paste while the document is replaced (opened again).
+    crate::command::run(CommandId::FileSave);
+    wait_ms(4000, || (!ui().dirty.get_untracked()).then_some(())).await?;
+    let mut replaced_ok = true;
+    let mut detail = String::new();
+    for c in [CommandId::EditCut, CommandId::EditPaste] {
+        let (a, b) = find("UI-MENU-1 fixture")?;
+        select_source(a, b)?;
+        let k = cstats();
+        let s0 = CORE.with_borrow(|c| (c.session, c.generation));
+        choose("edit", c).await?;
+        #[derive(serde::Serialize)]
+        struct A {
+            index: usize,
+        }
+        let o = call::<p::OpenOutcome>("smoke_open_fixture", A { index: 0 })
+            .await
+            .ok()?;
+        crate::ui::apply_open(o, "Opened").await;
+        let replaced = content().await?;
+        let s1 = CORE.with_borrow(|c| (c.session, c.generation));
+        ops_done(k, 1, 6000).await;
+        let after = content().await?;
+        let k2 = cstats();
+        let ok = s1 != s0
+            && after == replaced
+            && after.5 == after.2
+            && !after.1
+            && !after.3
+            && k2.stale == k.stale + 1
+            && k2.applied == k.applied;
+        replaced_ok &= ok;
+        detail += &format!("{}: {ok} rev {} undo {}; ", c.key(), after.0, after.3);
+    }
+    r.step(
+        "a delayed Cut / Paste after the document was replaced edits nothing (new document clean, no undo entry)",
+        replaced_ok && undone.2 == c0.2,
+        detail,
+    );
+    // 5. A canceled clipboard: nothing changes, nothing is counted as applied.
+    hold(300, true);
+    let (a, b) = find("UI-MENU-1 fixture")?;
+    select_source(a, b)?;
+    let f0 = content().await?;
+    let k = cstats();
+    choose("edit", CommandId::EditCut).await?;
+    ipc::sleep(800).await;
+    let cut_msg = ui().message.get_untracked();
+    select_source(b, b)?;
+    choose("edit", CommandId::EditPaste).await?;
+    ipc::sleep(800).await;
+    let paste_msg = ui().message.get_untracked();
+    settle().await;
+    let f1 = content().await?;
+    r.step(
+        "a canceled / failed clipboard Cut or Paste edits nothing and says so",
+        f1 == f0
+            && cstats() == k
+            && cut_msg.contains("Cut is not available")
+            && paste_msg.contains("Paste is not available"),
+        format!("{cut_msg} | {paste_msg}"),
+    );
+    // 6. Rapid Cut, Cut, Paste: the first applies, the rest are stale.
+    hold(1800, false);
+    select_source(a, b)?;
+    let k = cstats();
+    choose("edit", CommandId::EditCut).await?;
+    choose("edit", CommandId::EditCut).await?;
+    choose("edit", CommandId::EditPaste).await?;
+    ops_done(k, 3, 9000).await;
+    let g1 = content().await?;
+    let k6 = cstats();
+    let expect: String = {
+        let v: Vec<u16> = f0.2.encode_utf16().collect();
+        String::from_utf16(&[&v[..a as usize], &v[b as usize..]].concat()).ok()?
+    };
+    let one_rev = g1.0 == f0.0 + 1 && g1.2 == expect && g1.5 == g1.2 && g1.3;
+    crate::command::run(CommandId::EditUndo);
+    settle().await;
+    let g2 = content().await?;
+    r.step(
+        "rapid Cut, Cut, Paste: the first Cut reaches Rust as ONE edit (one undo restores it), the later two are refused as stale",
+        one_rev && k6.applied == k.applied + 1 && k6.stale == k.stale + 2 && g2.2 == f0.2 && g2.5 == g2.2,
+        format!("{k:?} -> {k6:?} rev {} -> {} -> {}", f0.0, g1.0, g2.0),
+    );
+    // 7. A Paste chosen while a Source edit is still in flight waits for it,
+    // then pastes at the caret on the acknowledged text. The in-flight edit
+    // is held here by keeping the editor busy (test only), then released.
+    no_hold();
+    let (_, at) = find("# fin")?;
+    let ta = textarea()?;
+    let _ = ta.focus();
+    CORE.with_borrow_mut(|c| c.busy = true);
+    ta.set_range_text_with_start_and_end("!", at, at).ok()?;
+    ta.set_selection_range(at + 1, at + 1).ok()?;
+    let k = cstats();
+    let p0 = content().await?;
+    choose("edit", CommandId::EditPaste).await?;
+    ipc::sleep(400).await;
+    let waited = cstats() == k;
+    CORE.with_borrow_mut(|c| c.busy = false);
+    crate::editor::on_input();
+    ops_done(k, 1, 6000).await;
+    let p1 = content().await?;
+    let k7 = cstats();
+    let both = p1.2.contains("# fin!UI-MENU-1 fixture");
+    crate::command::run(CommandId::EditUndo);
+    settle().await;
+    let p2 = content().await?;
+    r.step(
+        "a Paste chosen during a pending Source edit waits for it, then edits once (pending edit and paste are two undo entries)",
+        waited
+            && both
+            && p1.0 == p0.0 + 2
+            && p1.5 == p1.2
+            && k7.applied == k.applied + 1
+            && p2.2.contains("# fin!")
+            && !p2.2.contains("# fin!UI-MENU-1"),
+        format!("rev {} -> {} -> {} {k7:?}", p0.0, p1.0, p2.0),
+    );
+    crate::command::run(CommandId::EditUndo);
+    settle().await;
+    let p3 = content().await?;
+    r.step(
+        "after the clipboard races, Rust text == editor text == the saved document",
+        p3.2 == f0.2 && p3.5 == p3.2,
+        format!("rev {}", p3.0),
+    );
+    crate::command::run(CommandId::FileSave);
+    wait_ms(4000, || (!ui().dirty.get_untracked()).then_some(())).await?;
+    Some(())
+}
+
+async fn native(key: &str, raw: bool) -> Option<bool> {
+    #[derive(serde::Serialize)]
+    struct A<'a> {
+        key: &'a str,
+        raw: bool,
+    }
+    call::<bool>("smoke_menu_native", A { key, raw }).await.ok()
+}
+
+/// The macOS application menu's event path (`menu-command`), driven by the
+/// backend's own `app_menu::forward`. The native NSMenu itself is not on
+/// Linux: this proves the event path, not the macOS menu.
+async fn native_menu(r: &mut R) -> Option<()> {
+    let s0 = crate::menu::native_stats();
+    let n0 = runs();
+    let sent = native(CommandId::HelpAbout.key(), false).await?;
+    let got = wait_ms(3000, || (active_id() == "about-close").then_some(())).await;
+    ipc::sleep(300).await;
+    let s1 = crate::menu::native_stats();
+    r.step(
+        "a native About menu event runs Help → About through command::run exactly once",
+        sent && got.is_some()
+            && s1.ran == s0.ran + 1
+            && s1.received == s0.received + 1
+            && runs() == n0 + 1,
+        format!("{s0:?} -> {s1:?} runs +{}", runs() - n0),
+    );
+    real("escape", 0.0, 0.0).await.ok()?;
+    ipc::sleep(300).await;
+    // A layout change does not add a listener: still one run per event.
+    crate::command::run(CommandId::ViewPresetSource);
+    settle().await;
+    crate::command::run(CommandId::ViewResetLayout);
+    settle().await;
+    let n1 = runs();
+    native(CommandId::HelpAbout.key(), false).await?;
+    let got = wait_ms(3000, || (active_id() == "about-close").then_some(())).await;
+    ipc::sleep(300).await;
+    let s2 = crate::menu::native_stats();
+    r.step(
+        "after a layout change a native menu event still runs once (one listener)",
+        got.is_some() && s2.ran == s1.ran + 1 && s2.received == s1.received + 1 && runs() == n1 + 1,
+        format!("{s1:?} -> {s2:?} runs +{}", runs() - n1),
+    );
+    real("escape", 0.0, 0.0).await.ok()?;
+    ipc::sleep(300).await;
+    // Keys outside the application menu: the backend does not send them, and
+    // the UI refuses them when they arrive anyway.
+    let c0 = content().await?;
+    let n2 = runs();
+    let fwd = native(CommandId::FileSave.key(), false).await?;
+    for k in [CommandId::FileSave.key(), "file.delete-everything", ""] {
+        native(k, true).await?;
+    }
+    ipc::sleep(600).await;
+    let s3 = crate::menu::native_stats();
+    let c1 = content().await?;
+    r.step(
+        "native menu events outside the application menu run nothing (backend and UI check the registry)",
+        !fwd && s3.received == s2.received + 3 && s3.refused == s2.refused + 3 && s3.ran == s2.ran && runs() == n2 && c1 == c0,
+        format!("{s2:?} -> {s3:?}"),
+    );
+    let _ = textarea()?.focus();
+    Some(())
+}
+
 /// Tools, theme and Live Preview: menu and toolbar show the same state.
 async fn tools_and_view(r: &mut R) -> Option<()> {
     let loads = ui().preview_loads.get_untracked();
@@ -1021,12 +1320,30 @@ async fn quit(r: &mut R) -> Option<()> {
     key("ctrl+q").await?;
     ipc::sleep(1500).await;
     let asked2 = disk(FIXTURE).await?.asked;
+    // The macOS application menu's Quit: the same event path.
+    let q0 = crate::menu::native_stats();
+    native(CommandId::AppQuit.key(), false).await?;
+    let mut asked3 = asked2;
+    for _ in 0..40 {
+        asked3 = disk(FIXTURE).await?.asked;
+        if asked3 > asked2 {
+            break;
+        }
+        ipc::sleep(100).await;
+    }
+    ipc::sleep(500).await;
+    let q1 = crate::menu::native_stats();
     let after = doc_state().await;
     let d3 = digest().await;
     r.step(
         "File → Quit and Ctrl+Q with unsaved edits each ask through the CloseGate; Cancel keeps the app running",
         asked1 == asked0 + 1 && asked2 == asked1 + 1,
         format!("asked {asked0} -> {asked1} -> {asked2}"),
+    );
+    r.step(
+        "a native Quit menu event runs Quit through command::run and asks through the CloseGate; Cancel keeps the app",
+        asked3 == asked2 + 1 && q1.ran == q0.ran + 1,
+        format!("asked {asked2} -> {asked3} {q0:?} -> {q1:?}"),
     );
     r.step(
         "after a canceled Quit the document is unchanged and still Modified",

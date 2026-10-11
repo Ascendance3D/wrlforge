@@ -549,3 +549,23 @@ fn every_disabled_state_has_a_reason() {
         }
     }
 }
+
+#[test]
+fn native_menu_events_accept_only_app_menu_keys() {
+    assert_eq!(MENU_EVENT, "menu-command");
+    for c in MAC_APP_MENU {
+        assert_eq!(from_native_menu(c.key()), Some(*c));
+    }
+    // A real registry command outside the application menu is refused.
+    assert_eq!(from_native_menu(CommandId::FileSave.key()), None);
+    assert_eq!(from_native_menu(CommandId::EditCut.key()), None);
+    for bad in [
+        "",
+        "app.quit ",
+        "APP.QUIT",
+        "help",
+        "file.delete-everything",
+    ] {
+        assert_eq!(from_native_menu(bad), None, "{bad:?}");
+    }
+}

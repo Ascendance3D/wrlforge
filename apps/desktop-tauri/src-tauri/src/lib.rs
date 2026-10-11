@@ -448,6 +448,7 @@ pub fn run() {
             commands::smoke_menu_plan,
             commands::smoke_menu_recovery_digest,
             commands::smoke_menu_disk,
+            commands::smoke_menu_native,
         ])
         .build(context)
         .expect("error while building WRL Forge")

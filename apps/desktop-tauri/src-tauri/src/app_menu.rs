@@ -17,10 +17,7 @@
 
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Runtime};
-use wrlforge_desktop_protocol::command::{CommandId, MAC_APP_MENU};
-
-/// The event the UI listens to (`ui/src/menu.rs`).
-pub const EVENT: &str = "menu-command";
+use wrlforge_desktop_protocol::command::{from_native_menu, CommandId, MENU_EVENT};
 
 /// The application menu (installed on macOS only, see `lib.rs`).
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -58,11 +55,20 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     Menu::with_items(app, &[&app_menu, &edit])
 }
 
-/// A menu item was chosen: send its registry key to the UI.
+/// A menu item was chosen: send its registry key to the UI. The predefined
+/// items (Hide, Cut, ...) are handled by the system and never reach here
+/// as commands.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn on_event<R: Runtime>(app: &AppHandle<R>, ev: MenuEvent) {
-    let key = ev.id().as_ref();
-    if MAC_APP_MENU.iter().any(|c| c.key() == key) {
-        let _ = app.emit(EVENT, key.to_string());
+    forward(app, ev.id().as_ref());
+}
+
+/// Send `key` to the UI as a `menu-command` event if it is an application
+/// menu command (the UI checks it again). The menu smoke run drives the
+/// same function on every platform.
+pub fn forward<R: Runtime>(app: &AppHandle<R>, key: &str) -> bool {
+    match from_native_menu(key) {
+        Some(c) => app.emit(MENU_EVENT, c.key()).is_ok(),
+        None => false,
     }
 }
