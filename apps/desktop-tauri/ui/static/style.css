@@ -14,7 +14,8 @@ html, body { height: 100%; margin: 0; }
 body { background: var(--wf-bg-app); color: var(--wf-text-primary); font-family: var(--wf-font-ui); }
 .app { height: 100%; display: flex; flex-direction: column; }
 .toolbar { display: flex; gap: .46rem; align-items: center; padding: .5rem .8rem; background: var(--wf-surface-chrome); border-bottom: 1px solid var(--wf-border); }
-.brand { font-weight: 700; color: var(--wf-text-brand); letter-spacing: .02em; margin-right: .6rem; }
+.toolbar button, .toolbar .theme-picker { white-space: nowrap; flex: none; }
+.brand { white-space: nowrap; font-weight: 700; color: var(--wf-text-brand); letter-spacing: .02em; margin-right: .6rem; }
 .toolbar .spacer, .statusbar .spacer { flex: 1 1 auto; }
 .sep { width: 1px; height: 1.4rem; background: var(--wf-separator); margin: 0 .3rem; }
 
@@ -39,7 +40,7 @@ input::placeholder, textarea::placeholder { color: var(--wf-text-placeholder); o
 input[type="checkbox"] { accent-color: var(--wf-accent); }
 option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
 
-.profile { color: var(--wf-text-muted); font-size: .9rem; }
+.profile { color: var(--wf-text-muted); font-size: .9rem; flex: 0 1 auto; min-width: 3rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .theme-picker { display: flex; gap: .35rem; align-items: center; color: var(--wf-text-muted); font-size: .9rem; }
 .theme-picker select { padding: .25rem .4rem; font-size: .9rem; }
 .theme-error { color: var(--wf-error-fg); background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); border-radius: 3px; padding: .1rem .45rem; font-size: .85rem; max-width: 24rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -57,13 +58,15 @@ option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
 .create-error { color: var(--wf-error-fg); background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); border-radius: 3px; padding: .1rem .45rem; font-size: .85rem; max-width: 28rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .banner { display: flex; gap: .6rem; align-items: center; padding: .5rem .8rem; background: var(--wf-warning-bg); border-bottom: 1px solid var(--wf-warning-border); color: var(--wf-warning-fg); }
-.workspace { flex: 1 1 auto; display: flex; min-height: 0; }
+/* UI-DOCK-1: the workspace scrolls when the window is smaller than the
+   layout's minimum; panels never collapse below their minimum sizes. */
+.workspace { flex: 1 1 auto; min-height: 0; min-width: 0; position: relative; overflow: auto; }
 .pane-title { padding: .35rem .6rem; background: var(--wf-surface-header); color: var(--wf-text-primary); border-bottom: 1px solid var(--wf-border); font-weight: 600; font-size: .92rem; display: flex; align-items: center; gap: .4rem; white-space: nowrap; overflow: hidden; }
 .muted { color: var(--wf-text-muted); font-weight: 400; }
 .badge { font-weight: 400; font-size: .78rem; color: var(--wf-badge-fg); background: var(--wf-badge-bg); border: 1px solid var(--wf-badge-border); border-radius: 3px; padding: 0 .35rem; }
 
 /* Scene Tree */
-.tree-col { flex: 0 0 18rem; display: flex; flex-direction: column; border-right: 1px solid var(--wf-border); min-width: 0; background: var(--wf-surface-panel); }
+.tree-col { display: flex; flex-direction: column; min-width: 0; background: var(--wf-surface-panel); }
 .tree { list-style: none; margin: 0; padding: .2rem 0; overflow: auto; flex: 1 1 auto; font-size: .92rem; }
 .tree-item { padding: .14rem .4rem; cursor: pointer; white-space: nowrap; display: flex; gap: .4rem; color: var(--wf-text-primary); }
 .tree-item:hover { background: var(--wf-tree-hover-bg); }
@@ -79,7 +82,7 @@ option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
 .empty { color: var(--wf-text-muted); padding: .6rem; margin: 0; }
 
 /* Source editor */
-.editor-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; background: var(--wf-surface-editor); }
+.editor-col { min-width: 0; display: flex; flex-direction: column; background: var(--wf-surface-editor); }
 /* Two layers with IDENTICAL text metrics (UI-SYNTAX-1): the textarea is the
    only editing control and paints caret + selection; its glyphs are
    transparent. The aria-hidden layer behind it paints the same text in
@@ -115,7 +118,7 @@ option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
    the color layer; any offset shows as doubled glyphs in a screenshot. */
 .source-wrap[data-align-check] .source { -webkit-text-fill-color: var(--wf-syntax-invalid); color: var(--wf-syntax-invalid); }
 .diag-head { color: var(--wf-text-muted); font-size: .8rem; margin-bottom: .15rem; }
-.diagnostics { flex: 0 0 auto; max-height: 8.5rem; overflow: auto; border-top: 1px solid var(--wf-border); background: var(--wf-surface-panel); color: var(--wf-text-secondary); padding: .3rem .6rem; font-size: .88rem; }
+.diagnostics { overflow: auto; background: var(--wf-surface-panel); color: var(--wf-text-secondary); padding: .3rem .6rem; font-size: .88rem; }
 .diagnostics ul { margin: 0; padding: 0; list-style: none; }
 .diag { cursor: pointer; padding: .05rem 0; }
 .diag .sev { font-weight: 700; margin-right: .35rem; }
@@ -124,9 +127,8 @@ option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
 .diag.info { color: var(--wf-info-fg); }
 .ok { color: var(--wf-success-fg); }
 
-/* Right column: viewport + Inspector */
-.right-col { flex: 0 0 34%; min-width: 22rem; display: flex; flex-direction: column; border-left: 1px solid var(--wf-border); }
-.viewport { flex: 1 1 55%; display: flex; flex-direction: column; min-height: 0; background: var(--wf-viewport-bg); }
+/* Viewport + Inspector */
+.viewport { display: flex; flex-direction: column; min-height: 0; background: var(--wf-viewport-bg); }
 .viewport .pane-title { background: var(--wf-viewport-header-bg); border-bottom-color: var(--wf-viewport-border); }
 /* The canvas element's own background shows only before X_ITE paints; the
    scene's authored Background is never overridden. */
@@ -134,7 +136,7 @@ x3d-canvas#viewport { flex: 1 1 auto; width: 100%; min-height: 12rem; display: b
 .preview-status.texture-warning, .preview-status.route-warning { color: var(--wf-warning-fg); }
 .preview-status { font-size: .82rem; color: var(--wf-viewport-status-fg); padding: .2rem .6rem; border-top: 1px solid var(--wf-viewport-border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .toggle { font-weight: 400; font-size: .85rem; display: flex; gap: .2rem; align-items: center; margin-left: auto; }
-.inspector { flex: 1 1 45%; overflow: auto; border-top: 1px solid var(--wf-border); background: var(--wf-surface-panel); }
+.inspector { overflow: auto; background: var(--wf-surface-panel); }
 .inspector h3 { margin: .5rem .6rem; font-size: 1rem; color: var(--wf-text-heading); }
 .fields { border-collapse: collapse; width: 100%; font-size: .88rem; }
 .fields tr { cursor: pointer; }
@@ -229,7 +231,7 @@ x3d-canvas.picking { cursor: crosshair; }
 
 /* NATIVE-RENDER-1 (hidden): the native viewport is a sibling pane of this
    WebView, so the in-page viewport keeps only its title and status lines. */
-.viewport.native { flex: 0 0 auto; }
+.viewport.native .viewport-stage { display: none; }
 .viewport-stage[hidden], .viewport .badge[hidden], .viewport button[hidden], .viewport .sep[hidden], .native-status[hidden] { display: none; }
 
 /* VISUAL-4A: Extrusion Inspector and the 2D outline editor. */
@@ -305,3 +307,49 @@ x3d-canvas.picking { cursor: crosshair; }
 .about-facts dd { margin: 0; overflow-wrap: anywhere; }
 .about-warning { color: var(--wf-warning-fg); }
 .about-actions { display: flex; justify-content: flex-end; }
+
+/* UI-DOCK-1: the dockable workspace. Panel hosts are mounted once and only
+   positioned; an inactive tab or a closed panel keeps its box but is not
+   painted (visibility), so its state is never torn down. The tab strip
+   height (30px) and divider thickness (6px) match protocol::layout. */
+.dock { position: relative; }
+.dock-panel { position: absolute; display: flex; flex-direction: column; overflow: hidden; min-width: 0; min-height: 0; }
+.dock-panel > * { flex: 1 1 auto; min-width: 0; min-height: 0; width: 100%; }
+.dock-panel[data-state="inactive"], .dock-panel[data-state="hidden"] { visibility: hidden; pointer-events: none; }
+.dock-strip { position: absolute; display: flex; align-items: stretch; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin;
+  background: var(--wf-tab-inactive-bg); border-bottom: 1px solid var(--wf-border); }
+.dock-tab { display: flex; align-items: center; gap: .3rem; padding: 0 .4rem 0 .7rem; white-space: nowrap; flex: none;
+  background: var(--wf-tab-inactive-bg); color: var(--wf-tab-inactive-fg); border-right: 1px solid var(--wf-border);
+  font-size: .88rem; font-weight: 600; cursor: grab; user-select: none; -webkit-user-select: none; touch-action: none; }
+.dock-tab:hover { background: var(--wf-surface-hover); }
+/* Active by color AND a top bar, never color alone. */
+.dock-tab[aria-selected="true"] { background: var(--wf-tab-active-bg); color: var(--wf-tab-active-fg); box-shadow: inset 0 2px 0 var(--wf-tab-active-border); }
+.dock-tab:focus-visible { outline: 3px solid var(--wf-focus-ring); outline-offset: -3px; }
+.dock-tab-close { background: transparent; color: inherit; padding: 0 .3rem; font-size: 1rem; line-height: 1.2; border-radius: 3px; }
+.dock-tab-close:hover { background: var(--wf-btn-secondary-hover-bg); color: var(--wf-text-primary); }
+.dock-divider { position: absolute; z-index: 5; background: var(--wf-separator); touch-action: none; }
+.dock-divider[aria-orientation="vertical"] { cursor: col-resize; }
+.dock-divider[aria-orientation="horizontal"] { cursor: row-resize; }
+.dock-divider:hover, .dock-divider[data-dragging="true"] { background: var(--wf-accent); }
+.dock-divider:focus-visible { outline: 3px solid var(--wf-focus-ring); outline-offset: 0; background: var(--wf-accent); }
+/* Drag guides: every drop area, the zone compass, and the snap guide. */
+.dock-overlay { position: absolute; inset: 0; z-index: 30; pointer-events: none; }
+.dock-target { position: absolute; border: 2px dashed var(--wf-border-control); border-radius: 4px; }
+.dock-target[data-hover="true"] { border-color: var(--wf-accent); }
+.dock-guide { position: absolute; border: 3px solid var(--wf-accent); border-radius: 4px; background: var(--wf-surface-selected); opacity: .55; }
+.dock-guide[data-valid="false"] { border-color: var(--wf-error-border); background: var(--wf-error-bg); border-style: dashed; }
+.dock-zone-tile { position: absolute; width: 32px; height: 32px; border: 2px solid var(--wf-border-control); border-radius: 4px; background: var(--wf-surface-raised); }
+.dock-zone-tile[data-valid="false"] { opacity: .35; border-style: dashed; }
+.dock-zone-tile[data-selected="true"] { background: var(--wf-accent); border-color: var(--wf-focus-ring); }
+.dock-ghost { position: absolute; transform: translate(14px, 14px); padding: .2rem .55rem; white-space: nowrap; font-size: .85rem;
+  background: var(--wf-surface-raised); color: var(--wf-text-primary); border: 1px solid var(--wf-accent); border-radius: 3px; box-shadow: var(--wf-shadow); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.layout-menu .create-list { min-width: 14rem; }
+.layout-menu .check { display: inline-block; width: 1rem; text-align: center; color: var(--wf-accent); }
+.menu-group { padding: .3rem .6rem .1rem; font-size: .75rem; color: var(--wf-text-muted); text-transform: uppercase; letter-spacing: .04em; }
+/* UI-DOCK-1 (APP-SHELL-0 §3.6): the viewport header wraps instead of
+   clipping; the four tools stay together and keep their pressed state. */
+.viewport .pane-title { flex-wrap: wrap; white-space: normal; row-gap: .3rem; overflow: visible; }
+.viewport .pane-title .badge { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viewport .pane-title .toggle { margin-left: auto; }
+.tool-group { display: inline-flex; flex-wrap: wrap; gap: .3rem; align-items: center; }

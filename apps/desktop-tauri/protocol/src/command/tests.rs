@@ -75,6 +75,7 @@ fn availability_mirrors_the_toolbar_rules() {
         has_document: true,
         can_undo: true,
         can_redo: true,
+        ..none
     };
     for id in [FileNewWorld, FileOpen, HelpAbout] {
         assert_eq!(id.availability(none), Availability::Enabled);
@@ -135,5 +136,80 @@ fn labels_are_platform_specific() {
     assert_eq!(
         CommandId::FileClose.title(Platform::Linux),
         CommandId::FileClose.spec().hint
+    );
+}
+
+/// UI-DOCK-1: the layout commands are View commands that persist settings
+/// only; none can reach the document.
+#[test]
+fn layout_commands_never_touch_the_document() {
+    use crate::layout::{PanelId, PresetId};
+    use CommandId::*;
+    let layout = [
+        ViewShowSceneTree,
+        ViewShowInspector,
+        ViewShowDiagnostics,
+        ViewHideSceneTree,
+        ViewHideInspector,
+        ViewHideDiagnostics,
+        ViewFocusViewport,
+        ViewFocusSource,
+        ViewPresetModeling,
+        ViewPresetSource,
+        ViewResetLayout,
+    ];
+    let keys: Vec<_> = layout.iter().map(|c| c.key()).collect();
+    assert_eq!(
+        keys,
+        [
+            "view.panel.sceneTree",
+            "view.panel.inspector",
+            "view.panel.diagnostics",
+            "view.hidePanel.sceneTree",
+            "view.hidePanel.inspector",
+            "view.hidePanel.diagnostics",
+            "view.focus.viewport",
+            "view.focus.source",
+            "view.preset.modeling",
+            "view.preset.source",
+            "view.resetLayout",
+        ]
+    );
+    for c in layout {
+        let s = c.spec();
+        assert_eq!(s.menu, Menu::View, "{}", s.key);
+        assert!(!s.mutates_document, "{}", s.key);
+        assert_eq!(s.action, Action::Backend(&["layout_set"]), "{}", s.key);
+        assert!(
+            s.shortcuts.is_empty(),
+            "{}: no second shortcut table",
+            s.key
+        );
+        // Usable with no document open.
+        assert_ne!(s.requires, Requires::Document);
+    }
+    assert_eq!(ViewPresetModeling.preset(), Some(PresetId::Modeling));
+    assert_eq!(ViewPresetSource.preset(), Some(PresetId::Source));
+    assert_eq!(ViewResetLayout.preset(), None);
+    assert_eq!(ViewFocusSource.panel(), Some(PanelId::Source));
+    // Hide needs the panel shown; required panels have no Hide command.
+    assert_eq!(CommandId::hide_for(PanelId::Viewport), None);
+    assert_eq!(CommandId::hide_for(PanelId::Source), None);
+    let none = CommandContext::default();
+    let shown = CommandContext {
+        shown: crate::command::PanelSet::of(&[PanelId::Inspector]),
+        ..none
+    };
+    assert_eq!(
+        ViewHideInspector.availability(none),
+        Availability::Disabled(PANEL_HIDDEN)
+    );
+    assert_eq!(ViewHideInspector.refusal(none), Some(PANEL_HIDDEN));
+    assert_eq!(ViewHideInspector.availability(shown), Availability::Enabled);
+    assert_eq!(ViewHideInspector.refusal(shown), None);
+    assert_eq!(ViewShowInspector.availability(none), Availability::Enabled);
+    assert_eq!(
+        ViewHideSceneTree.availability(shown),
+        Availability::Disabled(PANEL_HIDDEN)
     );
 }

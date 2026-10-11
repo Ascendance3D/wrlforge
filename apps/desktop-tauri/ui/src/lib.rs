@@ -8,6 +8,7 @@ mod about;
 mod camera;
 mod command;
 mod create;
+mod dock;
 mod editor;
 mod extrusion;
 mod gizmo;
@@ -37,7 +38,10 @@ pub fn start() {
     // Before mount: the About state must not belong to a render effect
     // (an effect re-run would dispose a signal it created).
     about::about();
+    // UI-DOCK-1: the layout state, before any render effect exists.
+    dock::init();
     leptos::mount::mount_to_body(App);
+    dock::install();
     pick::install();
     gizmo::install();
     ui::start_external_watch();
@@ -46,6 +50,8 @@ pub fn start() {
     // persisted Storm/Light choice never flashes Tokyo Night widgets first.
     theme::reveal_fallback();
     spawn_local(async {
+        // The saved layout first, so the revealed UI is already in place.
+        dock::load().await;
         theme::init().await;
         native::install().await;
         if let Ok(Some(o)) =
@@ -65,8 +71,46 @@ pub fn start() {
             ipc::call::<Option<smoke::RecoveryPlan>>("smoke_recovery_plan", ipc::NoArgs {}).await
         {
             smoke::run_recovery(plan).await;
+        } else if let Ok(Some(plan)) =
+            ipc::call::<Option<smoke::DockPlan>>("smoke_dock_plan", ipc::NoArgs {}).await
+        {
+            smoke::run_dock(plan).await;
         }
     });
+}
+
+/// UI-DOCK-1: the Source panel. It holds the ONLY editing textarea; the dock
+/// mounts it once and never moves it (see `dock.rs`).
+#[component]
+pub(crate) fn SourcePanel() -> impl IntoView {
+    let u = ui();
+    let has_doc = move || u.doc.with(|d| d.is_some());
+    view! {
+        <section class="editor-col" aria-label="Source editor">
+            <div class="pane-title">
+                "Source"
+                <span class="muted">{move || u.doc.with(|d| d.as_ref().map(|d| format!(" — {}", d.display_path)).unwrap_or_default())}</span>
+            </div>
+            // The textarea is the ONLY editing control (its glyphs are
+            // transparent); the aria-hidden layer behind it paints the
+            // same text in syntax colors and takes no input.
+            <div class="source-wrap">
+                <pre id="source-hl" class="source-hl source-metrics" aria-hidden="true" data-state="pending"></pre>
+                <textarea id="source" class="source source-metrics" spellcheck="false" wrap="off"
+                    autocomplete="off" autocapitalize="off" aria-label="VRML source"
+                    placeholder="Start a New World (Ctrl+N) or open a .wrl / .wrz file (Ctrl+O). Plain and gzip VRML97 are supported."
+                    readonly=move || !has_doc()
+                    on:input=move |_| editor::on_input()
+                    on:beforeinput=on_beforeinput
+                    on:keydown=command::on_keydown
+                    on:keyup=move |_| editor::update_cursor()
+                    on:click=move |_| editor::update_cursor()
+                    on:select=move |_| editor::update_cursor()
+                    on:scroll=move |_| syntax::on_scroll()
+                ></textarea>
+            </div>
+        </section>
+    }
 }
 
 /// Native textarea undo would edit the widget behind the document's back:
@@ -84,7 +128,6 @@ fn on_beforeinput(ev: web_sys::InputEvent) {
 #[component]
 fn App() -> impl IntoView {
     let u = ui();
-    let has_doc = move || u.doc.with(|d| d.is_some());
     // APP-SHELL-0: every File / Edit button runs through the registry.
     view! {
         <div class="app">
@@ -100,6 +143,8 @@ fn App() -> impl IntoView {
                 <CommandButton command=CommandId::EditRedo dom_id="btn-redo" secondary=true/>
                 <span class="sep"></span>
                 <create::CreateMenu/>
+                <span class="sep"></span>
+                <dock::LayoutMenu/>
                 <span class="spacer"></span>
                 <theme::ThemePicker/>
                 <span class="sep"></span>
@@ -118,38 +163,8 @@ fn App() -> impl IntoView {
                 </div>
             })}
             <recovery::RecoveryWarning/>
-            <main class="workspace">
-                <panels::SceneTree/>
-                <section class="editor-col" aria-label="Source editor">
-                    <div class="pane-title">
-                        "Source"
-                        <span class="muted">{move || u.doc.with(|d| d.as_ref().map(|d| format!(" — {}", d.display_path)).unwrap_or_default())}</span>
-                    </div>
-                    // The textarea is the ONLY editing control (its glyphs are
-                    // transparent); the aria-hidden layer behind it paints the
-                    // same text in syntax colors and takes no input.
-                    <div class="source-wrap">
-                        <pre id="source-hl" class="source-hl source-metrics" aria-hidden="true" data-state="pending"></pre>
-                        <textarea id="source" class="source source-metrics" spellcheck="false" wrap="off"
-                            autocomplete="off" autocapitalize="off" aria-label="VRML source"
-                            placeholder="Start a New World (Ctrl+N) or open a .wrl / .wrz file (Ctrl+O). Plain and gzip VRML97 are supported."
-                            readonly=move || !has_doc()
-                            on:input=move |_| editor::on_input()
-                            on:beforeinput=on_beforeinput
-                            on:keydown=command::on_keydown
-                            on:keyup=move |_| editor::update_cursor()
-                            on:click=move |_| editor::update_cursor()
-                            on:select=move |_| editor::update_cursor()
-                            on:scroll=move |_| syntax::on_scroll()
-                        ></textarea>
-                    </div>
-                    <panels::Diagnostics/>
-                </section>
-                <section class="right-col">
-                    <panels::Viewport/>
-                    <panels::Inspector/>
-                </section>
-            </main>
+            // UI-DOCK-1: the dockable workspace (five permanent panels).
+            <dock::Workspace/>
             // VISUAL-4A: the non-modal outline editor (hidden until opened).
             <extrusion::OutlineEditor/>
             // RUST-STAB-1: the startup recovery choice (hidden when empty).

@@ -11,7 +11,7 @@ use leptos::task::spawn_local;
 use wrlforge_desktop_protocol::command::{self as c, Availability, CommandContext, CommandId};
 
 use crate::ui::{self, ui};
-use crate::{about, editor};
+use crate::{about, dock, editor};
 
 /// The current state, read reactively (button `disabled` follows it).
 pub fn context() -> CommandContext {
@@ -20,6 +20,7 @@ pub fn context() -> CommandContext {
         has_document: u.doc.with(|d| d.is_some()),
         can_undo: u.can_undo.get(),
         can_redo: u.can_redo.get(),
+        shown: dock::shown(),
     }
 }
 
@@ -29,6 +30,7 @@ fn context_untracked() -> CommandContext {
         has_document: u.doc.with_untracked(|d| d.is_some()),
         can_undo: u.can_undo.get_untracked(),
         can_redo: u.can_redo.get_untracked(),
+        shown: dock::shown_untracked(),
     }
 }
 
@@ -70,6 +72,20 @@ pub fn run(id: CommandId) {
         CommandId::EditUndo => spawn_local(editor::history(true)),
         CommandId::EditRedo => spawn_local(editor::history(false)),
         CommandId::HelpAbout => about::show(),
+        // UI-DOCK-1: layout only; the document is never reached.
+        CommandId::ViewShowSceneTree
+        | CommandId::ViewShowInspector
+        | CommandId::ViewShowDiagnostics => dock::show(id.panel().expect("panel command")),
+        CommandId::ViewHideSceneTree
+        | CommandId::ViewHideInspector
+        | CommandId::ViewHideDiagnostics => dock::hide(id.panel().expect("panel command")),
+        CommandId::ViewFocusViewport | CommandId::ViewFocusSource => {
+            dock::focus(id.panel().expect("panel command"))
+        }
+        CommandId::ViewPresetModeling | CommandId::ViewPresetSource => {
+            dock::set_preset(id.preset().expect("preset command"))
+        }
+        CommandId::ViewResetLayout => dock::reset(),
     }
 }
 

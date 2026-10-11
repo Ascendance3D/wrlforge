@@ -513,6 +513,23 @@ pub fn theme_set(
     settings.set_theme(&theme_id)
 }
 
+/// UI-DOCK-1: the workspace layout to apply, with a notice when the saved
+/// one could not be used. Application state only: no session is involved.
+#[tauri::command]
+pub fn layout_get(settings: State<'_, SettingsStore>) -> p::layout::LayoutState {
+    settings.layout_state()
+}
+
+/// UI-DOCK-1: validate a whole layout and persist it in `settings.json`.
+/// Never reaches a document, a sidecar file or a recovery record.
+#[tauri::command]
+pub fn layout_set(
+    settings: State<'_, SettingsStore>,
+    layout: p::layout::LayoutWire,
+) -> p::layout::LayoutSetOutcome {
+    settings.set_layout(&layout)
+}
+
 // ---- RUST-STAB-1: crash recovery -----------------------------------------
 
 /// Records left by a WRL Forge process that exited without saving.
@@ -573,6 +590,12 @@ pub async fn recovery_discard(app: AppHandle, id: String) -> p::RecoveryDiscardO
 #[tauri::command]
 pub fn smoke_recovery_plan() -> Option<crate::smoke_recovery::Plan> {
     crate::smoke_recovery::plan()
+}
+
+/// UI-DOCK-1: the docking smoke plan (`--smoke-dock*` only).
+#[tauri::command]
+pub fn smoke_dock_plan() -> Option<crate::smoke_dock::Plan> {
+    crate::smoke_dock::plan()
 }
 
 #[tauri::command]

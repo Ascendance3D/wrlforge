@@ -644,6 +644,9 @@ impl SmokeState {
 
     /// Smoke only: fixture `index` of the picking or gizmo run.
     pub fn pick_fixture(&self, index: usize) -> Option<PathBuf> {
+        if crate::smoke_dock::armed() {
+            return crate::smoke_dock::fixture(index);
+        }
         if let Some(a) = self.6.lock().ok()?.as_ref() {
             return a.fixtures.get(index).map(|f| f.0.clone());
         }
@@ -860,6 +863,11 @@ const XVFB_GEOMETRY: &str = "1600 1000";
 
 /// Real pointer input is allowed ONLY when `smoke.sh` launched this process
 /// inside its own Xvfb server (`WRLFORGE_SMOKE_XVFB=1`) with a DISPLAY set.
+/// UI-DOCK-1: whether real X input may be used (the same rule).
+pub fn real_pointer_available() -> bool {
+    real_pointer_env().is_ok()
+}
+
 fn real_pointer_env() -> Result<String, String> {
     if std::env::var("WRLFORGE_SMOKE_XVFB").as_deref() != Ok("1") {
         return Err("not inside the harness's Xvfb (WRLFORGE_SMOKE_XVFB unset)".into());
@@ -906,7 +914,8 @@ impl SmokeState {
     pub fn real_pointer(&self, action: &str, x: i32, y: i32) -> Result<String, String> {
         let armed = self.2.lock().map_err(|e| e.to_string())?.is_some()
             || self.3.lock().map_err(|e| e.to_string())?.is_some()
-            || self.6.lock().map_err(|e| e.to_string())?.is_some();
+            || self.6.lock().map_err(|e| e.to_string())?.is_some()
+            || crate::smoke_dock::armed();
         if !armed {
             return Err("no picking or gizmo smoke run is armed".into());
         }
@@ -946,6 +955,27 @@ impl SmokeState {
             "up2" => xdotool(&["mousemove", &xs, &ys, "mouseup", "2"])?,
             "wheelup" => xdotool(&["mousemove", &xs, &ys, "click", "4"])?,
             "wheeldown" => xdotool(&["mousemove", &xs, &ys, "click", "5"])?,
+            // UI-DOCK-1: keyboard operation of tabs and dividers (fixed set).
+            k if k.starts_with("key-") => {
+                let name = &k[4..];
+                const KEYS: &[&str] = &[
+                    "Right",
+                    "Left",
+                    "Up",
+                    "Down",
+                    "Home",
+                    "End",
+                    "shift+Right",
+                    "shift+Left",
+                    "Delete",
+                    "Return",
+                    "Tab",
+                ];
+                if !KEYS.contains(&name) {
+                    return Err(format!("key {name:?} is not in the smoke key set"));
+                }
+                xdotool(&["key", name])?
+            }
             "resize" => {
                 if !(320..=1600).contains(&x) || !(240..=1000).contains(&y) {
                     return Err(format!("resize {x}x{y} outside the harness screen"));
@@ -989,6 +1019,9 @@ pub fn expected_text(original: &str) -> String {
 pub fn finish(app: &AppHandle, report: p::SmokeReport) {
     use tauri::Manager;
     if crate::smoke_recovery::finish(app, &report) {
+        return;
+    }
+    if crate::smoke_dock::finish(app, &report) {
         return;
     }
     let state = app.state::<SmokeState>();

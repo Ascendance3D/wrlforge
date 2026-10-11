@@ -11,6 +11,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::layout::{PanelId, PresetId};
+
 /// The product name. Not a version: see [`app_display_name`].
 pub const APP_NAME: &str = "WRL Forge";
 
@@ -69,6 +71,18 @@ pub enum CommandId {
     EditUndo,
     EditRedo,
     HelpAbout,
+    // UI-DOCK-1: panels and layouts (View menu).
+    ViewShowSceneTree,
+    ViewShowInspector,
+    ViewShowDiagnostics,
+    ViewHideSceneTree,
+    ViewHideInspector,
+    ViewHideDiagnostics,
+    ViewFocusViewport,
+    ViewFocusSource,
+    ViewPresetModeling,
+    ViewPresetSource,
+    ViewResetLayout,
 }
 
 /// How Shift takes part in a shortcut match.
@@ -128,6 +142,8 @@ pub enum Requires {
     UndoHistory,
     /// Redo history. Presentation only, as [`Requires::UndoHistory`].
     RedoHistory,
+    /// UI-DOCK-1: the panel is shown (a Hide command).
+    PanelShown(PanelId),
 }
 
 /// Where the work is done.
@@ -161,6 +177,26 @@ pub struct CommandContext {
     pub has_document: bool,
     pub can_undo: bool,
     pub can_redo: bool,
+    /// UI-DOCK-1: the panels in the current layout.
+    pub shown: PanelSet,
+}
+
+/// A set of [`PanelId`]s (UI-DOCK-1).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PanelSet(u8);
+
+impl PanelSet {
+    pub fn of(panels: &[PanelId]) -> PanelSet {
+        PanelSet(panels.iter().fold(0, |m, p| m | Self::bit(*p)))
+    }
+
+    fn bit(p: PanelId) -> u8 {
+        1 << PanelId::ALL.iter().position(|x| *x == p).unwrap_or(0)
+    }
+
+    pub fn contains(self, p: PanelId) -> bool {
+        self.0 & Self::bit(p) != 0
+    }
 }
 
 /// Why a command is not available now.
@@ -291,7 +327,106 @@ pub const COMMANDS: &[CommandSpec] = &[
         mutates_document: false,
         hint: "Version, renderer and license information",
     },
+    // UI-DOCK-1. A layout change persists through `layout_set` (settings
+    // only) and never touches the document, its history or the preview.
+    layout_cmd(
+        CommandId::ViewShowSceneTree,
+        "view.panel.sceneTree",
+        "Show Scene Tree",
+        Requires::Nothing,
+        "Show the Scene Tree panel (it returns to its place in the layout)",
+    ),
+    layout_cmd(
+        CommandId::ViewShowInspector,
+        "view.panel.inspector",
+        "Show Inspector",
+        Requires::Nothing,
+        "Show the Inspector panel (it returns to its place in the layout)",
+    ),
+    layout_cmd(
+        CommandId::ViewShowDiagnostics,
+        "view.panel.diagnostics",
+        "Show Diagnostics",
+        Requires::Nothing,
+        "Show the Diagnostics panel (it returns to its place in the layout)",
+    ),
+    layout_cmd(
+        CommandId::ViewHideSceneTree,
+        "view.hidePanel.sceneTree",
+        "Hide Scene Tree",
+        Requires::PanelShown(PanelId::SceneTree),
+        "Hide the Scene Tree panel (the document is not changed)",
+    ),
+    layout_cmd(
+        CommandId::ViewHideInspector,
+        "view.hidePanel.inspector",
+        "Hide Inspector",
+        Requires::PanelShown(PanelId::Inspector),
+        "Hide the Inspector panel (an unapplied field value is kept, never applied)",
+    ),
+    layout_cmd(
+        CommandId::ViewHideDiagnostics,
+        "view.hidePanel.diagnostics",
+        "Hide Diagnostics",
+        Requires::PanelShown(PanelId::Diagnostics),
+        "Hide the Diagnostics panel (the document is not changed)",
+    ),
+    layout_cmd(
+        CommandId::ViewFocusViewport,
+        "view.focus.viewport",
+        "Focus 3D Viewport",
+        Requires::Nothing,
+        "Bring the 3D Viewport tab to the front and focus it",
+    ),
+    layout_cmd(
+        CommandId::ViewFocusSource,
+        "view.focus.source",
+        "Focus Source",
+        Requires::Nothing,
+        "Bring the Source tab to the front and focus the editor",
+    ),
+    layout_cmd(
+        CommandId::ViewPresetModeling,
+        "view.preset.modeling",
+        "Modeling Layout",
+        Requires::Nothing,
+        "Large viewport; Scene Tree left; Inspector and Diagnostics right; Source as a tab",
+    ),
+    layout_cmd(
+        CommandId::ViewPresetSource,
+        "view.preset.source",
+        "Source Layout",
+        Requires::Nothing,
+        "Large source editor; Diagnostics below; Viewport and Inspector right",
+    ),
+    layout_cmd(
+        CommandId::ViewResetLayout,
+        "view.resetLayout",
+        "Reset Layout",
+        Requires::Nothing,
+        "Restore the active layout preset (the document is not changed)",
+    ),
 ];
+
+const fn layout_cmd(
+    id: CommandId,
+    key: &'static str,
+    label: &'static str,
+    requires: Requires,
+    hint: &'static str,
+) -> CommandSpec {
+    CommandSpec {
+        id,
+        key,
+        label,
+        menu: Menu::View,
+        shortcuts: &[],
+        requires,
+        action: Action::Backend(&["layout_set"]),
+        mutates_document: false,
+        hint,
+    }
+}
 
 /// Every Rust IPC command a registry action may call. A document-changing
 /// command outside this set is a test failure, not a quiet extension.
@@ -305,10 +440,11 @@ pub const ALLOWED_BACKEND: &[&str] = &[
     "doc_undo",
     "doc_redo",
     "app_info",
+    "layout_set",
 ];
 
 impl CommandId {
-    pub const ALL: [CommandId; 9] = [
+    pub const ALL: [CommandId; 20] = [
         CommandId::FileNewWorld,
         CommandId::FileOpen,
         CommandId::FileSave,
@@ -318,6 +454,17 @@ impl CommandId {
         CommandId::EditUndo,
         CommandId::EditRedo,
         CommandId::HelpAbout,
+        CommandId::ViewShowSceneTree,
+        CommandId::ViewShowInspector,
+        CommandId::ViewShowDiagnostics,
+        CommandId::ViewHideSceneTree,
+        CommandId::ViewHideInspector,
+        CommandId::ViewHideDiagnostics,
+        CommandId::ViewFocusViewport,
+        CommandId::ViewFocusSource,
+        CommandId::ViewPresetModeling,
+        CommandId::ViewPresetSource,
+        CommandId::ViewResetLayout,
     ];
 
     pub fn spec(self) -> &'static CommandSpec {
@@ -344,13 +491,53 @@ impl CommandId {
             Requires::UndoHistory if !ctx.can_undo => Availability::Disabled("Nothing to undo"),
             Requires::RedoHistory if !ctx.can_redo => Availability::Disabled("Nothing to redo"),
             Requires::UndoHistory | Requires::RedoHistory => Availability::Enabled,
+            Requires::PanelShown(p) if !ctx.shown.contains(p) => {
+                Availability::Disabled(PANEL_HIDDEN)
+            }
+            Requires::PanelShown(_) => Availability::Enabled,
         }
     }
 
     /// The check made when the command runs. Only the document requirement
     /// refuses here; history is decided by Rust (`doc_undo` / `doc_redo`).
     pub fn refusal(self, ctx: CommandContext) -> Option<&'static str> {
-        (self.spec().requires == Requires::Document && !ctx.has_document).then_some(NO_DOCUMENT)
+        match self.spec().requires {
+            Requires::Document if !ctx.has_document => Some(NO_DOCUMENT),
+            Requires::PanelShown(p) if !ctx.shown.contains(p) => Some(PANEL_HIDDEN),
+            _ => None,
+        }
+    }
+
+    /// UI-DOCK-1: the panel a Show / Hide / Focus command names.
+    pub fn panel(self) -> Option<PanelId> {
+        use CommandId::*;
+        Some(match self {
+            ViewShowSceneTree | ViewHideSceneTree => PanelId::SceneTree,
+            ViewShowInspector | ViewHideInspector => PanelId::Inspector,
+            ViewShowDiagnostics | ViewHideDiagnostics => PanelId::Diagnostics,
+            ViewFocusViewport => PanelId::Viewport,
+            ViewFocusSource => PanelId::Source,
+            _ => return None,
+        })
+    }
+
+    /// UI-DOCK-1: the preset a layout command selects.
+    pub fn preset(self) -> Option<PresetId> {
+        match self {
+            CommandId::ViewPresetModeling => Some(PresetId::Modeling),
+            CommandId::ViewPresetSource => Some(PresetId::Source),
+            _ => None,
+        }
+    }
+
+    /// The Hide command for an optional panel.
+    pub fn hide_for(p: PanelId) -> Option<CommandId> {
+        match p {
+            PanelId::SceneTree => Some(CommandId::ViewHideSceneTree),
+            PanelId::Inspector => Some(CommandId::ViewHideInspector),
+            PanelId::Diagnostics => Some(CommandId::ViewHideDiagnostics),
+            _ => None,
+        }
     }
 
     /// The tooltip: hint plus the first shortcut, if any.
@@ -364,6 +551,7 @@ impl CommandId {
 }
 
 pub const NO_DOCUMENT: &str = "No document is open";
+pub const PANEL_HIDDEN: &str = "The panel is not shown";
 
 /// The command for a primary-modifier key press, if any. `primary` is
 /// Ctrl or Command (either, on every platform). Alt is not examined, as

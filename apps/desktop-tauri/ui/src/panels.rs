@@ -497,6 +497,8 @@ pub fn Viewport() -> impl IntoView {
                 </label>
                 <button class="secondary small" on:click=move |_| spawn_local(ui::preview(true))>"Update"</button>
                 <span class="sep" hidden=move || u.native.with(|s| s.native_shown())></span>
+                // UI-DOCK-1: the four tools wrap as one group (never clipped).
+                <span class="tool-group" role="group" aria-label="Viewport tools">
                 // VISUAL-2: an explicit selection mode. A click selects the
                 // exact authored object; a drag still moves the camera.
                 <button id="btn-select" class="secondary small" hidden=move || u.native.with(|s| s.native_shown())
@@ -562,6 +564,7 @@ pub fn Viewport() -> impl IntoView {
                             u.gizmo_message.set(None);
                         }
                     }>"Scale"</button>
+                </span>
             </div>
             <div class="viewport-stage" hidden=move || u.native.with(|s| s.native_shown())>
                 <x3d-canvas id="viewport" class:picking=move || u.pick_mode.get() || u.move_mode.get() || u.rotate_mode.get() || u.scale_mode.get() splashScreen="false" contextMenu="false" notifications="false"

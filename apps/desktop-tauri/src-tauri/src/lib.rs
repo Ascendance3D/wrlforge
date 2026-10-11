@@ -13,6 +13,7 @@ pub mod resources;
 pub mod service;
 pub mod settings;
 pub mod smoke;
+pub mod smoke_dock;
 pub mod smoke_recovery;
 pub mod viewport;
 
@@ -52,6 +53,8 @@ struct Args {
     smoke_native_control: bool,
     /// RUST-STAB-1: `--smoke-recovery-{crash,restore,later} <dir>`.
     smoke_recovery: Option<(smoke_recovery::Phase, PathBuf)>,
+    /// UI-DOCK-1: `--smoke-dock[-restore|-damaged] <dir>`.
+    smoke_dock: Option<(smoke_dock::Phase, PathBuf)>,
 }
 
 fn parse_args() -> Args {
@@ -74,6 +77,7 @@ fn parse_args() -> Args {
         smoke_native: None,
         smoke_native_control: false,
         smoke_recovery: None,
+        smoke_dock: None,
     };
     let mut theme_final = None;
     let mut theme_expect = None;
@@ -102,6 +106,21 @@ fn parse_args() -> Args {
             Some("--native-force-fifo-only") => a.native_fifo_only = true,
             Some("--smoke-native") => a.smoke_native = it.next().map(PathBuf::from),
             Some("--smoke-native-control") => a.smoke_native_control = true,
+            Some("--smoke-dock") => {
+                a.smoke_dock = it
+                    .next()
+                    .map(|d| (smoke_dock::Phase::Main, PathBuf::from(d)))
+            }
+            Some("--smoke-dock-restore") => {
+                a.smoke_dock = it
+                    .next()
+                    .map(|d| (smoke_dock::Phase::Restore, PathBuf::from(d)))
+            }
+            Some("--smoke-dock-damaged") => {
+                a.smoke_dock = it
+                    .next()
+                    .map(|d| (smoke_dock::Phase::Damaged, PathBuf::from(d)))
+            }
             Some("--smoke-recovery-crash") => {
                 a.smoke_recovery = it.next().map(|d| (smoke_recovery::Phase::Crash, d.into()))
             }
@@ -280,6 +299,16 @@ pub fn run() {
                     .arm_texture(&dir, args.smoke_report.clone())
                     .map_err(|e| format!("smoke-texture: {e}"))?;
             }
+            if let Some((phase, dir)) = args.smoke_dock.clone() {
+                smoke_dock::arm(
+                    &dir,
+                    phase,
+                    args.smoke_report.clone(),
+                    settings_path.clone(),
+                    args.config_dir.clone(),
+                )
+                .map_err(|e| format!("smoke-dock: {e}"))?;
+            }
             if let Some(path) = args.smoke.clone() {
                 app.state::<smoke::SmokeState>()
                     .arm(
@@ -375,6 +404,8 @@ pub fn run() {
             commands::app_info,
             commands::theme_get,
             commands::theme_set,
+            commands::layout_get,
+            commands::layout_set,
             commands::smoke_plan,
             commands::smoke_open_fixture,
             commands::smoke_real_click,
@@ -390,6 +421,7 @@ pub fn run() {
             commands::recovery_discard,
             commands::recovery_status,
             commands::smoke_recovery_plan,
+            commands::smoke_dock_plan,
             commands::smoke_recovery_check,
             commands::smoke_request_close,
         ])
