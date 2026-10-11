@@ -15,6 +15,7 @@ mod create;
 mod extrusion;
 mod gizmo;
 mod pick;
+mod rotscale;
 mod selection;
 mod syntax;
 mod texture;

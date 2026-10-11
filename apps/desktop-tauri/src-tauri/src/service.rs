@@ -1029,11 +1029,7 @@ impl Service {
                     message: e.message,
                 },
             },
-            Err(e) => p::TranslateTargetOutcome::Refused {
-                reason: e.reason.into(),
-                message: e.message,
-            },
-        })
+        )
     }
 
     /// VISUAL-3A1: prove that the runtime node the preview located for
