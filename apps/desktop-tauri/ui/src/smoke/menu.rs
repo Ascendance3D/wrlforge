@@ -22,6 +22,10 @@
 //!   Quit items send) is validated against the registry and runs through
 //!   `command::run` once, also after a layout change; Quit asks through the
 //!   CloseGate;
+//! * the About dialog takes the focus when it opens, before a (test-only
+//!   delayed) `app_info` answer; Escape and Close work while it loads; a
+//!   late answer never reopens it or replaces a later open; closing gives the
+//!   focus back; the document does not change;
 //! * World and reserved items never run;
 //! * Quit (menu and Ctrl+Q) asks through the CloseGate, Cancel keeps the
 //!   application, the document and the recovery records unchanged;
@@ -31,7 +35,7 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{HtmlElement, KeyboardEvent, KeyboardEventInit};
 use wrlforge_desktop_protocol as p;
-use wrlforge_desktop_protocol::command::{CommandId, MENUS, NOT_MIGRATED};
+use wrlforge_desktop_protocol::command::{self as c, CommandId, MENUS, NOT_MIGRATED};
 use wrlforge_desktop_protocol::gizmo::Axis;
 
 use super::create::{all, el, wait_ms};
@@ -227,6 +231,7 @@ pub async fn run(plan: &Plan, r: &mut R) -> Option<()> {
     clipboard(r).await?;
     clipboard_races(r).await?;
     native_menu(r).await?;
+    about_dialog(r).await?;
     tools_and_view(r).await?;
     world_and_reserved(r).await?;
     quit(r).await?;
@@ -1224,6 +1229,112 @@ async fn content() -> Option<(u64, bool, String, bool, bool, String)> {
         s.can_redo,
         textarea()?.value(),
     ))
+}
+
+fn about_state() -> &'static str {
+    match crate::about::about().get_untracked() {
+        None => "closed",
+        Some(crate::about::About::Loading) => "loading",
+        Some(crate::about::About::Ready(_)) => "ready",
+        Some(crate::about::About::Failed(_)) => "failed",
+    }
+}
+
+/// STACK-REVIEW-1 (PR #141 r4242710837): open About with an `app_info`
+/// answer held back `ms` (or failed), as a slow IPC would.
+fn about_delayed(ms: i32, fail: bool) {
+    crate::about::show_with(async move {
+        ipc::sleep(ms).await;
+        if fail {
+            Err("test-only late failure".into())
+        } else {
+            call::<c::AppInfo>("app_info", ipc::NoArgs {}).await
+        }
+    });
+}
+
+/// The About dialog is keyboard-usable before `app_info` answers.
+async fn about_dialog(r: &mut R) -> Option<()> {
+    const LATE: i32 = 1500;
+    let before = doc_state().await?;
+    let ta = textarea()?;
+    let _ = ta.focus();
+    let sel0 = (ta.selection_start().ok()??, ta.selection_end().ok()??);
+    // 1. Focus moves in at once; Escape closes it while it loads.
+    about_delayed(LATE, false);
+    let focused = wait_ms(400, || (active_id() == "about-close").then_some(())).await;
+    let loading = about_state();
+    r.step(
+        "About takes the focus when it opens, before a delayed app_info answer",
+        focused.is_some() && loading == "loading",
+        format!("focus {} state {loading}", active_id()),
+    );
+    real("escape", 0.0, 0.0).await.ok()?;
+    ipc::sleep(150).await;
+    let gone = crate::element_by_id::<HtmlElement>("about-dialog").is_none();
+    let back = active_id();
+    ipc::sleep(LATE + 400).await;
+    r.step(
+        "Escape closes About while it loads, the focus goes back to Source, the late answer does not reopen it",
+        gone && back == "source" && about_state() == "closed"
+            && crate::element_by_id::<HtmlElement>("about-dialog").is_none(),
+        format!("closed {gone} focus {back} after-late {}", about_state()),
+    );
+    // 2. Close (a real click) while it loads.
+    let _ = textarea()?.focus();
+    about_delayed(LATE, false);
+    wait_ms(400, || (active_id() == "about-close").then_some(())).await?;
+    real_click_id("about-close").await?;
+    let back = active_id();
+    ipc::sleep(LATE + 400).await;
+    r.step(
+        "Close works while About loads, the focus goes back, the late answer does not reopen it",
+        back == "source" && about_state() == "closed",
+        format!("focus {back} after-late {}", about_state()),
+    );
+    // 3. Closed and opened again while the first answer is pending: the
+    //    older (failing) answer does not replace the newer state.
+    let _ = textarea()?.focus();
+    about_delayed(LATE, true);
+    wait_ms(400, || (active_id() == "about-close").then_some(())).await?;
+    real("escape", 0.0, 0.0).await.ok()?;
+    ipc::sleep(150).await;
+    about_delayed(300, false);
+    ipc::sleep(LATE + 400).await;
+    let state = about_state();
+    r.step(
+        "a late answer for an earlier open does not replace a later open's state",
+        state == "ready",
+        format!("state {state}"),
+    );
+    // 4. The answer arrives: the version shows, the focus stays on Close.
+    let identity = el("#about-identity")
+        .and_then(|e| e.text_content())
+        .unwrap_or_default();
+    let facts = el("#about-facts")
+        .and_then(|e| e.text_content())
+        .unwrap_or_default();
+    let focus = active_id();
+    r.step(
+        "after the answer, About shows the application version and keeps the focus on Close",
+        focus == "about-close"
+            && !identity.is_empty()
+            && facts.contains(c::APP_VERSION)
+            && !facts.contains("Warning"),
+        format!("focus {focus} identity {identity:?}"),
+    );
+    real("escape", 0.0, 0.0).await.ok()?;
+    ipc::sleep(150).await;
+    let back = active_id();
+    let ta = textarea()?;
+    let sel1 = (ta.selection_start().ok()??, ta.selection_end().ok()??);
+    let after = doc_state().await?;
+    r.step(
+        "closing About gives the focus back to Source with its selection; the document did not change",
+        back == "source" && sel1 == sel0 && after == before,
+        format!("focus {back} sel {sel0:?}->{sel1:?} same-doc {}", after == before),
+    );
+    Some(())
 }
 
 fn hold(delay_ms: i32, fail: bool) {
