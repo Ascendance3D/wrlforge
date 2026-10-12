@@ -316,8 +316,9 @@ fn visit<'a>(ast: &'a Ast, encl: Encl, ix: &mut Index<'a>) {
 }
 
 /// The geometry node types whose WD2-C / VISUAL-1 simple object promotes a
-/// Shape hit to its Transform. VISUAL-1 creates all four.
-const PRIMITIVES: [&str; 4] = ["Box", "Sphere", "Cylinder", "Cone"];
+/// Shape hit to its Transform. VISUAL-1 creates the first four, VISUAL-4A
+/// the Extrusion.
+const PRIMITIVES: [&str; 5] = ["Box", "Sphere", "Cylinder", "Cone", "Extrusion"];
 
 fn fields_named<'a>(n: &'a Node, name: &str) -> Vec<&'a crate::ast::Field> {
     n.fields

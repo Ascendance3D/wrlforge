@@ -167,7 +167,7 @@ pub struct Bounds {
 }
 
 impl Bounds {
-    fn of(c: Option<&Constraints>) -> Option<Bounds> {
+    pub(crate) fn of(c: Option<&Constraints>) -> Option<Bounds> {
         let c = c?;
         let min = c.min.filter(|v| v.is_finite());
         let max = c.max.filter(|v| v.is_finite());
@@ -181,7 +181,7 @@ impl Bounds {
             max_inclusive: max.is_some() && c.max_inclusive == Some(true),
         })
     }
-    fn admits(&self, v: f64) -> bool {
+    pub(crate) fn admits(&self, v: f64) -> bool {
         let low = self
             .min
             .is_none_or(|m| if self.min_inclusive { v >= m } else { v > m });
@@ -241,6 +241,9 @@ pub struct FieldDescriptor {
     /// UTF-16 source span of the value (or the field when it has none).
     pub from: u64,
     pub to: u64,
+    /// VISUAL-4A: an editable `MFVec2f` / `MFVec3f` / `MFRotation` list
+    /// (`crate::mf_edit`). `None` for every other type.
+    pub list: Option<crate::mf_edit::ListValue>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -322,9 +325,9 @@ pub fn has_blocking_syntax_error(p: &ParseResult) -> bool {
     })
 }
 
-struct Found<'a> {
-    node: &'a Node,
-    in_proto_scope: bool,
+pub(crate) struct Found<'a> {
+    pub(crate) node: &'a Node,
+    pub(crate) in_proto_scope: bool,
 }
 
 fn walk<'a>(ast: &'a Ast, in_proto: bool, f: &mut dyn FnMut(&'a Ast, bool)) {
@@ -368,14 +371,14 @@ fn walk<'a>(ast: &'a Ast, in_proto: bool, f: &mut dyn FnMut(&'a Ast, bool)) {
     }
 }
 
-fn walk_doc<'a>(p: &'a ParseResult, f: &mut dyn FnMut(&'a Ast, bool)) {
+pub(crate) fn walk_doc<'a>(p: &'a ParseResult, f: &mut dyn FnMut(&'a Ast, bool)) {
     for s in &p.tree.statements {
         walk(s, false, f);
     }
 }
 
 /// Every node whose span is exactly `[from, to)` -- the identity proof.
-fn nodes_at(p: &ParseResult, from: u64, to: u64) -> Vec<Found<'_>> {
+pub(crate) fn nodes_at(p: &ParseResult, from: u64, to: u64) -> Vec<Found<'_>> {
     let mut out = Vec::new();
     walk_doc(p, &mut |a, in_proto| {
         if let Ast::Node(n) = a {
@@ -390,7 +393,7 @@ fn nodes_at(p: &ParseResult, from: u64, to: u64) -> Vec<Found<'_>> {
     out
 }
 
-fn proto_names(p: &ParseResult) -> Vec<&str> {
+pub(crate) fn proto_names(p: &ParseResult) -> Vec<&str> {
     let mut out = Vec::new();
     walk_doc(p, &mut |a, _| match a {
         Ast::Proto(x) => out.extend(x.name.as_deref()),
@@ -401,7 +404,7 @@ fn proto_names(p: &ParseResult) -> Vec<&str> {
 }
 
 /// Locate the node and apply the node-level gate. `Err` is a reason id.
-fn node_gate(p: &ParseResult, from: u64, to: u64) -> Result<&Node, &'static str> {
+pub(crate) fn node_gate(p: &ParseResult, from: u64, to: u64) -> Result<&Node, &'static str> {
     let found = nodes_at(p, from, to);
     let f = match found.len() {
         0 => return Err(reason::NODE_NOT_FOUND),
@@ -540,6 +543,7 @@ fn describe(
     let vrml97 = record.filter(|r| r.profiles.contains(&"vrml97"));
     let spec = vrml97.and_then(|r| type_spec(r.field_type));
     let mut tokens = Vec::new();
+    let mut list = None;
     let reason = node_reason.or_else(|| {
         if duplicates.contains(&f.name.as_str()) {
             Some(reason::FIELD_DUPLICATED)
@@ -563,7 +567,14 @@ fn describe(
                 Err(r) => Some(r),
             }
         } else {
-            Some(reason::TYPE_UNSUPPORTED)
+            match crate::mf_edit::describe_list(node, index, src) {
+                Some(Ok(l)) => {
+                    list = Some(l);
+                    None
+                }
+                Some(Err(r)) => Some(r),
+                None => Some(reason::TYPE_UNSUPPORTED),
+            }
         }
     });
     let editable = reason.is_none();
@@ -605,13 +616,14 @@ fn describe(
             value_excerpt: excerpt(range.slice(src)),
             from: range.start.offset as u64,
             to: range.end.offset as u64,
+            list: if editable { list } else { None },
         },
         tokens,
         spec,
     })
 }
 
-fn duplicate_names(node: &Node) -> Vec<&str> {
+pub(crate) fn duplicate_names(node: &Node) -> Vec<&str> {
     let mut seen: Vec<&str> = Vec::new();
     let mut dup = Vec::new();
     for f in &node.fields {
@@ -712,7 +724,7 @@ fn is_int32_lexeme(s: &str) -> bool {
 }
 
 /// `encodeNumber`: the candidate token for one component, or a refusal.
-fn encode_number(
+pub(crate) fn encode_number(
     spec: &TypeSpec,
     raw: &str,
     bounds: Option<&Bounds>,
@@ -829,12 +841,12 @@ pub fn encode_string(value: &str) -> Result<String, (&'static str, String)> {
 // Planning
 // ---------------------------------------------------------------------------
 
-fn utf16_len(s: &str) -> u64 {
+pub(crate) fn utf16_len(s: &str) -> u64 {
     s.encode_utf16().count() as u64
 }
 
 /// UTF-16 offset -> byte offset, refusing an offset inside a surrogate pair.
-fn byte_at(src: &str, offset: u64) -> Option<usize> {
+pub(crate) fn byte_at(src: &str, offset: u64) -> Option<usize> {
     let mut u = 0u64;
     for (i, c) in src.char_indices() {
         if u == offset {
@@ -849,7 +861,7 @@ fn byte_at(src: &str, offset: u64) -> Option<usize> {
 }
 
 /// Splice ascending, non-overlapping edits; `None` if any span is invalid.
-fn splice(src: &str, edits: &[SpanEdit]) -> Option<String> {
+pub(crate) fn splice(src: &str, edits: &[SpanEdit]) -> Option<String> {
     let mut out = String::with_capacity(src.len() + 16);
     let mut at = 0usize;
     for e in edits {

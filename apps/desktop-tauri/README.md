@@ -13,8 +13,13 @@ Status and the module map: `docs/architecture/TAURI_RUST_MIGRATION_1.md`.
   librsvg2-dev libxdo-dev libssl-dev` (already present on the dev host).
 * `wasm-bindgen-cli` 0.2.129, installed locally (no sudo):
   `cargo install wasm-bindgen-cli --version =0.2.129 --locked --root target/tools`
-* X_ITE 15.1.10 from the repository's `node_modules/x_ite/dist` (only copied;
-  Node is not run). Override with `X_ITE_DIST=…`.
+* X_ITE 16.5.0, pinned in `xite/PIN` (npm tarball SHA-256 + a SHA-256 for
+  every copied file in `xite/x_ite-16.5.0.sha256`). `build-ui.sh` runs
+  `./fetch-xite.sh` once (curl, build time only) into `target/xite/16.5.0/`
+  and refuses any other version or any changed file. Node is not run. The root
+  `node_modules` (X_ITE 15.1.10) belongs to the Electron app and is not used.
+  `X_ITE_DIST=…` may name another copy; it passes the same check.
+  See `docs/architecture/XITE_16_5_0_INTEGRATION.md`.
 
 ## Build and run
 
@@ -57,9 +62,13 @@ cargo test -p wrl-forge-desktop                       # file + session services
 ./smoke.sh --headless --create                        # VISUAL-1: New World → Create → edit → save → reopen
 ./smoke.sh --headless --pick                          # VISUAL-2: viewport picking (node: oracle plan; xdotool: real clicks in Xvfb)
 ./smoke.sh --headless --move                          # VISUAL-3A: translation gizmo (xdotool: real drags in Xvfb)
+./smoke.sh --headless --extrusion [--research DIR]    # VISUAL-4A: Create Extrusion, Extrusion Inspector, outline editor
+./smoke.sh --headless --rotscale                      # VISUAL-4B: Rotate / Scale tools (xdotool: real drags in Xvfb)
+./smoke.sh --headless --recovery                      # RUST-STAB-1: SIGKILL after a confirmed recovery write, then Restore / Discard / Later
+./smoke.sh --headless --dock                          # UI-DOCK-1: docking, tabs, dividers, presets, source safety (xdotool), restart, damaged layout
 ./smoke.sh --headless --theme tokyo-night-light file.wrl...   # drives the theme selector (UI-THEME-1)
 d=$(mktemp -d) && python3 smoke-texture-plan.py "$d" && \
-  xvfb-run -a ./target/debug/wrl-forge --smoke-texture "$d" --smoke-report "$d/report.json"
+  xvfb-run -a ./target/debug/wrl-forge --smoke-texture "$d" --smoke-report "$d/report.json" --config-dir "$d-config"
                                                        # TEXTURE-LOCAL-1: rendered-pixel texture matrix
 (cd ../.. && node scripts/check-rust-node-schema-parity.js)  # Rust/JS node schema equality
 ../../spikes/tauri-rust-migration-1/parity.sh <dir>   # JS-vs-Rust parser parity (needs node)
@@ -91,7 +100,16 @@ outside the folder are refused. Network and `file:` URLs never reach Rust:
 the CSP adds only the local `wrlres:` scheme. A static Rust check of the
 `ImageTexture` URLs feeds the preview's texture warning.
 
-`preview-adapter.js` also carries an X_ITE 15.1.10 workaround: a texture that
+XITE-16-UPGRADE-2: X_ITE 16.5.0 drops a ROUTE whose node it cannot find and
+renders the rest of the scene (15.1.10 rejected the whole scene). When Rust's
+scope graph PROVES a ROUTE invalid in the previewed text (unresolved or
+invalid node, event, direction or type; never an ambiguous or recovered
+answer), the viewport shows "The preview may be incomplete because one or
+more ROUTEs are invalid." The notice is advisory: the source is not changed
+and Save is not blocked.
+
+`preview-adapter.js` also carries an X_ITE workaround (found on 15.1.10, kept
+for 16.5.0): a texture that
 finishes loading after the parse could leave `createX3DFromString` pending
 forever (its `FileLoader` was reachable only through a `WeakRef`). See the
 comment there.

@@ -1,0 +1,15 @@
+#VRML V2.0 utf8
+# original WRL Forge test fixture (RUST-STAB-1)
+# Cylinder and Cone with explicit field values.
+Transform {
+  translation 0 1 0
+  children [
+    Shape { geometry Cylinder { bottom FALSE height 2 radius 0.5 side TRUE top FALSE } }
+    Transform {
+      translation 2 0 0
+      children [
+        Shape { geometry Cone { bottomRadius 1 height 2 side TRUE bottom TRUE } }
+      ]
+    }
+  ]
+}

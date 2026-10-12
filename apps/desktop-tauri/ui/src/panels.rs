@@ -6,6 +6,7 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 
 use wrlforge_desktop_protocol as p;
+use wrlforge_desktop_protocol::command::CommandId;
 
 use crate::ui::{self, ui};
 
@@ -27,7 +28,7 @@ pub fn SceneTree() -> impl IntoView {
     view! {
         <aside class="tree-col" aria-label="Scene Tree">
             <div class="pane-title">"Scene Tree"
-                <span class="muted" title="USE resolution uses the flat, non-authoritative scope; the WD1.5 scope graph is not migrated yet">
+                <span class="muted" title="USE and ROUTE node names are resolved by the lexical scope graph (ISO 4.6.2, 4.8.4, 4.10.2). ROUTE events and PROTO types are checked by typed analysis (ISO 4.8, 4.10.2). Read-only and advisory.">
                     {move || u.analysis.with(|a| a.as_ref().map(|a| format!(" · {} items · {} scope", a.items.len(), a.resolution_scope)).unwrap_or_default())}
                 </span>
                 <span class="tree-updating" id="tree-updating">{move || stale().then_some(" · updating…")}</span>
@@ -50,9 +51,8 @@ pub fn SceneTree() -> impl IntoView {
                     let key2 = key.clone();
                     let (from, to) = (it.view_from, it.view_to);
                     let pad = format!("padding-left: {}rem", 0.4 + (it.depth.saturating_sub(1)) as f32 * 0.9);
-                    let class = format!("tree-item kind-{}{}", it.kind.to_lowercase(),
-                        if it.use_status.as_deref() == Some("unresolved") { " unresolved" } else { "" });
-                    let title = it.use_status.clone().map(|s| format!("USE {s} (flat scope, non-authoritative)")).unwrap_or_default();
+                    let class = format!("tree-item kind-{}{}", it.kind.to_lowercase(), ref_class(&it.refs, it.typed.as_ref()));
+                    let title = typed_title(ref_title(&it.refs, &a.items), it.typed.as_ref());
                     // Offsets of THIS render's revision; tree_select refuses
                     // them unless that is still the document's revision.
                     let id2 = id.clone();
@@ -60,6 +60,8 @@ pub fn SceneTree() -> impl IntoView {
                     let act2 = act.clone();
                     view! {
                         <li role="treeitem" class=class style=pad title=title data-id=id.clone() tabindex="-1"
+                            data-ref=ref_data(&it.refs)
+                            data-typed=typed_data(it.typed.as_ref())
                             class:selected=move || sel.selected(&key)
                             aria-selected=move || if sel2.selected(&key2) { "true" } else { "false" }
                             on:click=move |_| act()
@@ -78,6 +80,92 @@ pub fn SceneTree() -> impl IntoView {
             {move || (u.doc.with(|d| d.is_none())).then(|| view! { <p class="empty">"Start a New World or open a file to see its scene."</p> })}
         </aside>
     }
+}
+
+/// The weakest reference class on an item, typed answer included: "" when
+/// proven or not a reference.
+fn ref_class(refs: &[p::SceneRef], typed: Option<&p::TypedCheck>) -> &'static str {
+    let classes = || {
+        refs.iter()
+            .map(|r| r.class.as_str())
+            .chain(typed.map(|t| t.class.as_str()))
+    };
+    if classes().any(|c| c == "unresolved") {
+        " ref-unresolved"
+    } else if classes().any(|c| c == "uncertain") {
+        " ref-uncertain"
+    } else {
+        ""
+    }
+}
+
+/// `role:status:reason` per reference, for tests and assistive tools.
+fn ref_data(refs: &[p::SceneRef]) -> String {
+    refs.iter()
+        .map(|r| format!("{}:{}:{}", r.role, r.status, r.reason))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// `subject:status:reason` of the typed answer, for tests and assistive tools.
+fn typed_data(t: Option<&p::TypedCheck>) -> String {
+    t.map(|t| format!("{}:{}:{}", t.subject, t.status, t.reason))
+        .unwrap_or_default()
+}
+
+/// Adds the typed answer to the hover text. Display only.
+fn typed_title(base: String, t: Option<&p::TypedCheck>) -> String {
+    let Some(t) = t else { return base };
+    let what = if t.subject == "route" {
+        "ROUTE events"
+    } else {
+        "Node type"
+    };
+    let line = match (t.class.as_str(), &t.summary) {
+        ("proven", Some(s)) => format!("{what}: proven ({s})"),
+        (c, Some(s)) => format!("{what}: {c}: {} ({}; {s})", t.status, t.reason),
+        (c, None) => format!("{what}: {c}: {} ({})", t.status, t.reason),
+    };
+    if base.is_empty() {
+        line
+    } else {
+        format!("{base}\n{line}")
+    }
+}
+
+/// Hover text. Display only: a target is named, never selected or edited.
+fn ref_title(refs: &[p::SceneRef], items: &[p::SceneItem]) -> String {
+    let label = |id: &Option<String>| {
+        id.as_ref()
+            .and_then(|id| items.iter().find(|i| &i.id == id))
+            .map(|i| i.label.clone())
+    };
+    refs.iter()
+        .map(|r| {
+            let who = match r.role.as_str() {
+                "route-source" => "ROUTE source",
+                "route-destination" => "ROUTE destination",
+                _ => "USE",
+            };
+            let name = r.name.as_deref().unwrap_or("?");
+            let tail = match (
+                r.class.as_str(),
+                label(&r.target),
+                label(&r.language_target),
+            ) {
+                ("proven", Some(t), _) => format!("proven → {t}"),
+                (_, _, Some(l)) if r.status == "ambiguous" => {
+                    format!(
+                        "ambiguous ({}); VRML97 uses the closest: {l}; not an edit target",
+                        r.reason
+                    )
+                }
+                (c, _, _) => format!("{c}: {} ({})", r.status, r.reason),
+            };
+            format!("{who} {name}: {tail}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Arrow keys move focus between items (no selection change); Enter/Space
@@ -207,15 +295,28 @@ fn node_fields(n: p::NodeFields, session: u64, rev: u64) -> impl IntoView {
             </p>
         }
     });
-    let empty = n.fields.is_empty().then(|| {
+    // VISUAL-4A: an Extrusion gets its own sections (authored values and
+    // VRML97 defaults); the generic table lists only its other fields.
+    let extrusion = n
+        .extrusion
+        .clone()
+        .map(|e| crate::extrusion::panel(e, &n.fields, rev, n.editable));
+    let is_x = n.extrusion.is_some();
+    let fields: Vec<p::EditableField> = n
+        .fields
+        .into_iter()
+        .filter(|f| !(is_x && crate::extrusion::is_extrusion_field(&f.name)))
+        .collect();
+    let empty = (fields.is_empty() && !is_x).then(|| {
         view! { <p class="empty">"No explicitly authored fields (defaults are not listed)."</p> }
     });
     view! {
         {banner}
+        {extrusion}
         {empty}
         <table class="fields editable">
             <tbody>
-            {n.fields.into_iter().map(|f| field_row(f, session, rev)).collect_view()}
+            {fields.into_iter().map(|f| field_row(f, session, rev)).collect_view()}
             </tbody>
         </table>
     }
@@ -233,7 +334,10 @@ fn field_row(f: p::EditableField, session: u64, rev: u64) -> impl IntoView {
     .flatten()
     .collect::<Vec<_>>()
     .join(" · ");
-    let value = if f.editable {
+    let value = if let (true, Some(list)) = (f.editable, f.list.clone()) {
+        // VISUAL-4A: an editable MFVec2f / MFVec3f / MFRotation list.
+        crate::extrusion::list_table(&f.name, f.index, &list, rev).into_any()
+    } else if f.editable {
         let idx = f.index;
         let kind = f.kind.clone().unwrap_or_default();
         let arity = f.components.len();
@@ -317,6 +421,27 @@ pub fn Diagnostics() -> impl IntoView {
                     </div>
                 }
             }))}
+            {move || u.analysis.with(|a| a.as_ref().filter(|a| !a.scope_diagnostics.is_empty()).map(|a| {
+                let (session, rev) = (a.session, a.revision);
+                view! {
+                    <div class="diag-scope" id="diag-scope" data-revision=rev.to_string()
+                        title="Advisory scope findings: node names SCOPE0xx (ISO 4.6.2, 4.8.4, 4.10.2) and typed references SCOPE1xx (ISO 4.8, Table 4.4, 4.10.2). Never block Save; uncertain cases are not listed.">
+                        <div class="diag-head">{format!("Scope (advisory) · rev {rev}")}</div>
+                        <ul>
+                            {a.scope_diagnostics.iter().take(200).map(|d| {
+                                let (f, t) = (d.view_from, d.view_to);
+                                view! {
+                                    <li class=format!("diag {}", d.severity) data-code=d.code.clone()
+                                        on:click=move |_| { ui::select_from("Diagnostics", session, rev, f, t); }>
+                                        <span class="sev">{severity_label(&d.severity)}</span>
+                                        {format!("{}:{} {} {}", d.line, d.column, d.code, d.message)}
+                                    </li>
+                                }
+                            }).collect_view()}
+                        </ul>
+                    </div>
+                }
+            }))}
             {move || u.analysis.with(|a| match a {
                 None => view! { <span class="muted">"Diagnostics: —"</span> }.into_any(),
                 Some(a) if a.diagnostics.is_empty() => view! { <span class="ok">"✓ No parser diagnostics (native Rust parser)"</span> }.into_any(),
@@ -357,7 +482,7 @@ pub fn Viewport() -> impl IntoView {
         <section class="viewport" class:native=move || u.native.with(|s| s.native_shown()) aria-label="3D Viewport">
             <div class="pane-title">"3D Viewport"
                 <span class="badge" hidden=move || u.native.with(|s| s.native_shown())
-                    title="X_ITE is a JavaScript renderer hosted through a narrow adapter">"X_ITE 15.1.10 (JavaScript) · temporary"</span>
+                    title="X_ITE is a JavaScript renderer hosted through a narrow adapter">"X_ITE 16.5.0 (JavaScript) · temporary"</span>
                 // NATIVE-RENDER-1 (hidden): the native viewport is the pane
                 // beside this window. Click selects, drag orbits, wheel zooms,
                 // Escape clears, Home resets the view. Selection only.
@@ -366,56 +491,82 @@ pub fn Viewport() -> impl IntoView {
                 <button class="secondary small" hidden=move || !u.native.with(|s| s.native_shown())
                     title="Reset the native view to frame the scene (Home)"
                     on:click=move |_| crate::native::reset_camera()>"Reset view"</button>
-                <label class="toggle">
-                    <input type="checkbox" prop:checked=move || u.preview_enabled.get()
-                        on:change=move |ev| u.preview_enabled.set(event_target_checked(&ev)) />
+                // UI-MENU-1: the same registry commands as View → Live
+                // Preview / Update Preview.
+                <label class="toggle" title=crate::command::title(CommandId::ViewLivePreview)>
+                    <input type="checkbox" id="chk-live" data-command=CommandId::ViewLivePreview.key()
+                        prop:checked=move || u.preview_enabled.get()
+                        on:change=move |ev| {
+                            if event_target_checked(&ev) != u.preview_enabled.get_untracked() {
+                                crate::command::run(CommandId::ViewLivePreview);
+                            }
+                        } />
                     "Live"
                 </label>
-                <button class="secondary small" on:click=move |_| spawn_local(ui::preview(true))>"Update"</button>
+                <button class="secondary small" id="btn-update-preview" data-command=CommandId::ViewUpdatePreview.key()
+                    title=crate::command::title(CommandId::ViewUpdatePreview)
+                    disabled=move || !crate::command::enabled(CommandId::ViewUpdatePreview)
+                    on:click=move |_| crate::command::run(CommandId::ViewUpdatePreview)>"Update"</button>
                 <span class="sep" hidden=move || u.native.with(|s| s.native_shown())></span>
+                // UI-DOCK-1: the four tools wrap as one group (never clipped).
+                <span class="tool-group" role="group" aria-label="Viewport tools">
                 // VISUAL-2: an explicit selection mode. A click selects the
                 // exact authored object; a drag still moves the camera.
                 <button id="btn-select" class="secondary small" hidden=move || u.native.with(|s| s.native_shown())
-                    title="Select: click an object in the viewport to select its exact source node (drag still moves the camera)"
+                    data-command=CommandId::ToolSelect.key() title=crate::command::title(CommandId::ToolSelect)
                     aria-pressed=move || if u.pick_mode.get() { "true" } else { "false" }
-                    disabled=move || u.doc.with(|d| d.is_none())
-                    on:click=move |_| {
-                        u.pick_mode.update(|m| *m = !*m);
-                        if u.pick_mode.get_untracked() { u.move_mode.set(false); }
-                        if !u.pick_mode.get_untracked() { u.pick_message.set(None); }
-                    }>"Select"</button>
+                    disabled=move || !crate::command::enabled(CommandId::ToolSelect)
+                    on:click=move |_| crate::command::run(CommandId::ToolSelect)>"Select"</button>
                 // VISUAL-3A: the Move tool. Drag an axis handle to move the
                 // selected top-level Transform; a click still selects, a drag
                 // elsewhere still moves the camera.
                 <button id="btn-move" class="secondary small" hidden=move || u.native.with(|s| s.native_shown())
-                    title="Move: drag the X (red), Y (green) or Z (blue) handle of the selected object. Esc cancels a drag; the Inspector takes exact values."
+                    data-command=CommandId::ToolMove.key() title=crate::command::title(CommandId::ToolMove)
                     aria-pressed=move || if u.move_mode.get() { "true" } else { "false" }
-                    disabled=move || u.doc.with(|d| d.is_none())
-                    on:click=move |_| {
-                        u.move_mode.update(|m| *m = !*m);
-                        if u.move_mode.get_untracked() {
-                            u.pick_mode.set(false);
-                            crate::gizmo::start();
-                        } else {
-                            u.gizmo_message.set(None);
-                        }
-                    }>"Move"</button>
+                    disabled=move || !crate::command::enabled(CommandId::ToolMove)
+                    on:click=move |_| crate::command::run(CommandId::ToolMove)>"Move"</button>
+                // VISUAL-4B: Rotate (rings about the world axes through the
+                // object's center) and Scale (its own scale axes + uniform).
+                <button id="btn-rotate" class="secondary small" hidden=move || u.native.with(|s| s.native_shown())
+                    data-command=CommandId::ToolRotate.key() title=crate::command::title(CommandId::ToolRotate)
+                    aria-pressed=move || if u.rotate_mode.get() { "true" } else { "false" }
+                    disabled=move || !crate::command::enabled(CommandId::ToolRotate)
+                    on:click=move |_| crate::command::run(CommandId::ToolRotate)>"Rotate"</button>
+                <button id="btn-scale" class="secondary small" hidden=move || u.native.with(|s| s.native_shown())
+                    data-command=CommandId::ToolScale.key() title=crate::command::title(CommandId::ToolScale)
+                    aria-pressed=move || if u.scale_mode.get() { "true" } else { "false" }
+                    disabled=move || !crate::command::enabled(CommandId::ToolScale)
+                    on:click=move |_| crate::command::run(CommandId::ToolScale)>"Scale"</button>
+                </span>
             </div>
             <div class="viewport-stage" hidden=move || u.native.with(|s| s.native_shown())>
-                <x3d-canvas id="viewport" class:picking=move || u.pick_mode.get() || u.move_mode.get() splashScreen="false" contextMenu="false" notifications="false"
+                <x3d-canvas id="viewport" class:picking=move || u.pick_mode.get() || u.move_mode.get() || u.rotate_mode.get() || u.scale_mode.get() splashScreen="false" contextMenu="false" notifications="false"
                     timings="false" cache="false"></x3d-canvas>
                 // The gizmo overlay. Drawn from the renderer's camera by
                 // `gizmo.rs`; only the handles take pointer input.
-                <svg id="gizmo" class="gizmo" data-state="hidden" role="group" aria-label="Translation handles">
+                <svg id="gizmo" class="gizmo" data-state="hidden" data-tool="move" role="group" aria-label="Manipulation handles">
                     {[("x", "X"), ("y", "Y"), ("z", "Z")].into_iter().map(|(a, l)| view! {
-                        <g id=format!("gz-{a}") class="gz-handle" data-axis=a role="button" aria-disabled="true"
-                            aria-label=format!("Move along {l}: drag")>
+                        <g id=format!("gz-r{a}") class="gz-handle gz-ring" data-axis=a role="button" aria-disabled="true"
+                            aria-label=format!("Rotate about {l}: drag")>
+                            <polyline id=format!("gz-r{a}-hit") class="gz-hit"></polyline>
+                            <polyline id=format!("gz-r{a}-halo") class="gz-halo"></polyline>
+                            <polyline id=format!("gz-r{a}-line") class="gz-line"></polyline>
+                        </g>
+                    }).collect_view()}
+                    {[("x", "X"), ("y", "Y"), ("z", "Z")].into_iter().map(|(a, l)| view! {
+                        <g id=format!("gz-{a}") class="gz-handle gz-axis" data-axis=a role="button" aria-disabled="true"
+                            aria-label=format!("Move or scale along {l}: drag")>
                             <line id=format!("gz-{a}-hit") class="gz-hit"></line>
                             <line id=format!("gz-{a}-halo") class="gz-halo"></line>
                             <line id=format!("gz-{a}-line") class="gz-line"></line>
                             <circle id=format!("gz-{a}-tip") class="gz-tip" r="7"></circle>
+                            <rect id=format!("gz-{a}-box") class="gz-box" width="12" height="12"></rect>
                         </g>
                     }).collect_view()}
+                    <g id="gz-u" class="gz-handle gz-uniform" role="button" aria-disabled="true" aria-label="Scale uniformly: drag up or down">
+                        <rect id="gz-u-hit" class="gz-hit" width="24" height="24"></rect>
+                        <rect id="gz-u-box" class="gz-box" width="14" height="14"></rect>
+                    </g>
                     <circle id="gz-origin" class="gz-origin" r="4"></circle>
                 </svg>
             </div>
@@ -429,13 +580,36 @@ pub fn Viewport() -> impl IntoView {
                         t.line, t.node, t.detail, if w.len() > 1 { " · hover for all" } else { "" }),
                 })}
             </div>
+            // XITE-16-UPGRADE-2: Rust diagnostics, not the picture, decide this.
+            <div class="preview-status route-warning" id="route-warning" role="status" aria-live="polite"
+                hidden=move || u.route_warnings.with(|w| w.is_empty()) || u.native.with(|s| s.native_shown())
+                title=move || u.route_warnings.with(|w| w.iter().map(|r| format!("line {} · {}", r.line, r.detail)).collect::<Vec<_>>().join("\n"))>
+                {move || u.route_warnings.with(|w| match w.first() {
+                    None => String::new(),
+                    Some(r) => format!("⚠ The preview may be incomplete because one or more ROUTEs are invalid. · line {}{}",
+                        r.line, if w.len() > 1 { format!(" · {} ROUTEs · hover for all", w.len()) } else { String::new() }),
+                })}
+            </div>
             <div class="preview-status native-status" id="native-status" hidden=move || !u.native.with(|s| s.requested && s.reason.is_some())>
                 {move || u.native.with(|s| s.reason.clone().unwrap_or_default())}
             </div>
             <div class="pick-status gizmo-status" id="gizmo-status" role="status" aria-live="polite"
                 data-kind=move || u.gizmo_message.with(|m| m.as_ref().map(|m| m.0.clone()).unwrap_or_default())
-                hidden=move || !u.move_mode.get() || u.gizmo_message.with(|m| m.is_none())>
+                hidden=move || !(u.move_mode.get() || u.rotate_mode.get() || u.scale_mode.get()) || u.gizmo_message.with(|m| m.is_none())>
                 {move || u.gizmo_message.with(|m| m.as_ref().map(|m| m.1.clone()).unwrap_or_default())}
+                // VISUAL-4B: the explicit authoring action for a missing
+                // rotation / scale field (one undo step, only on request).
+                {move || {
+                    u.gizmo_message.track();
+                    crate::gizmo::GIZMO.with_borrow(|g| g.missing_field).map(|f| view! {
+                        " "
+                        <button id="gz-write-field" class="secondary small"
+                            title=format!("Write the VRML97 default {f} value into this Transform (one undo step)")
+                            on:click=move |_| spawn_local(crate::gizmo::write_missing_field())>
+                            {format!("Write {f}")}
+                        </button>
+                    })
+                }}
             </div>
             <div class="pick-status" id="pick-status" role="status" aria-live="polite"
                 data-kind=move || u.pick_message.with(|m| m.as_ref().map(|m| m.0.clone()).unwrap_or_default())
@@ -469,5 +643,42 @@ pub fn reveal_tree_item(id: &str) {
     let (st, vh) = (ul.scroll_top(), ul.client_height());
     if top < st || top + h > st + vh {
         ul.set_scroll_top((top - vh / 3).max(0));
+    }
+}
+
+/// UI-MENU-1: the Select tool toggle (toolbar button, Tools menu). Moved
+/// unchanged from the button's handler: one viewport tool at a time.
+pub fn toggle_select() {
+    let u = ui();
+    u.pick_mode.update(|m| *m = !*m);
+    if u.pick_mode.get_untracked() {
+        u.move_mode.set(false);
+        u.rotate_mode.set(false);
+        u.scale_mode.set(false);
+    }
+    if !u.pick_mode.get_untracked() {
+        u.pick_message.set(None);
+    }
+}
+
+/// UI-MENU-1: the Move / Rotate / Scale toggle (toolbar button, Tools menu).
+/// Moved unchanged from the three button handlers.
+pub fn toggle_gizmo(tool: wrlforge_desktop_protocol::gizmo::Tool) {
+    use wrlforge_desktop_protocol::gizmo::Tool;
+    let u = ui();
+    let (mine, others) = match tool {
+        Tool::Move => (u.move_mode, [u.rotate_mode, u.scale_mode]),
+        Tool::Rotate => (u.rotate_mode, [u.move_mode, u.scale_mode]),
+        Tool::Scale => (u.scale_mode, [u.move_mode, u.rotate_mode]),
+    };
+    mine.update(|m| *m = !*m);
+    if mine.get_untracked() {
+        u.pick_mode.set(false);
+        for o in others {
+            o.set(false);
+        }
+        crate::gizmo::start();
+    } else {
+        u.gizmo_message.set(None);
     }
 }

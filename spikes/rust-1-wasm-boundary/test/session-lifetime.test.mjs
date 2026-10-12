@@ -179,6 +179,66 @@ test('8. a trap poisons the INSTANCE: every engine over it refuses (RUST-1A fix)
   assert.equal(engine.poisoned, false);
 });
 
+test('8b. PR #130 review: after a trap EVERY session and snapshot operation refuses with EENGINE, facade-only ones included', async () => {
+  const g = await loadGlue(PKG, 'lifetime-poison-facade');
+  const e1 = createTextEngine(g);
+  const e2 = createTextEngine(g); // a second engine over the SAME instance
+  const sessions = [e1.openSession('one\r\n'), e2.openSession('two')];
+  const snaps = sessions.map((s) => s.current());
+  const stale = sessions[0].current();
+  snaps[0] = sessions[0].update(snaps[0], 'one!'); // `stale` is now a stale snapshot
+  const trapping = createTextEngine({ ...g, apply_edits: () => { throw new WebAssembly.RuntimeError('unreachable'); } });
+  assert.equal(code(() => trapping.applyEdits('a', [])), 'EENGINE');
+  assert.deepEqual([e1.poisoned, e2.poisoned], [true, true]);
+  sessions.forEach((s, i) => {
+    const snap = snaps[i];
+    const ops = {
+      current: () => s.current(),
+      update: () => s.update(snap, 'x'),
+      propose: () => s.propose(snap, []),
+      verifyTransaction: () => s.verifyTransaction(snap, [], 'x'),
+      'update(stale)': () => s.update(stale, 'x'),
+      'propose(bad shape)': () => s.propose(snap, 7),
+      text: () => snap.text(),
+      length: () => snap.length,
+      toUtf8: () => snap.toUtf8(0),
+      'toUtf8(bad arg)': () => snap.toUtf8(-1),
+      fromUtf8: () => snap.fromUtf8(0),
+      validateSpan: () => snap.validateSpan(0, 0),
+      lineCol: () => snap.lineCol(0),
+      offsetAt: () => snap.offsetAt(1, 1),
+      lineInfo: () => snap.lineInfo(),
+      dispose: () => s.dispose(),
+    };
+    for (const [name, fn] of Object.entries(ops)) assert.equal(code(fn), 'EENGINE', `engine ${i + 1}: ${name}`);
+    // Labels stay readable: they report state, they answer nothing about the document.
+    assert.equal(typeof snap.revision, 'number');
+    assert.equal(s.disposed, false, 'a refused dispose did not claim success');
+  });
+  for (const e of [e1, e2]) {
+    for (const [name, fn] of Object.entries({
+      info: () => e.info,
+      checkText: () => e.checkText('a'),
+      openSession: () => e.openSession('a'),
+      applyEdits: () => e.applyEdits('a', []),
+      'applyEdits(bad shape)': () => e.applyEdits('a', 7),
+      mapOffset: () => e.mapOffset(0, []),
+      mapRange: () => e.mapRange({ from: 0, to: 0 }, []),
+    })) assert.equal(code(fn), 'EENGINE', name);
+  }
+  // A separately initialized instance is healthy and fully usable.
+  const fresh = await loadEngine(PKG, 'lifetime-poison-facade-fresh');
+  assert.equal(fresh.poisoned, false);
+  const s = fresh.openSession('ab');
+  const next = s.update(s.current(), 'abc');
+  assert.equal(s.current().text(), 'abc');
+  assert.equal(next.length, 3);
+  assert.equal(fresh.mapOffset(1, [{ from: 0, to: 0, insert: 'x' }]), 2);
+  s.dispose();
+  assert.equal(s.disposed, true);
+  assert.equal(engine.poisoned, false);
+});
+
 test('9. a refused creation and a coded refusal never poison or leak', () => {
   for (const bad of [`a\uDC00`, 7, null, undefined, {}]) {
     assert.notEqual(code(() => engine.openSession(bad)), 'NO-ERROR');
