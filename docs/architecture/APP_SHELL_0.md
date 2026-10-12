@@ -351,7 +351,7 @@ authority.
   the title-bar button, so unsaved work is asked about and Cancel keeps the
   application. On macOS, Quit and About are in the native application menu
   (`MAC_APP_MENU`). Their `menu-command` event is validated with
-  `CommandId::from_native_menu` and run through `command::run`. No menu item
+  `command::from_native_menu` (protocol) and run through `command::run`. No menu item
   bypasses the registry.
 - **Theme** has one command per theme, so `command::run(CommandId)` needs
   no parameter. There are three themes, not five:

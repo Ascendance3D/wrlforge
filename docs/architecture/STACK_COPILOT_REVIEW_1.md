@@ -1,0 +1,275 @@
+# STACK-REVIEW-1 — Copilot findings on PRs #139–#143
+
+Lane: STACK-REVIEW-1. Branch `review/copilot-stack-hardening-1`.
+Base: `07729396228ced257361985896d533f619b25428` (`feature/ui-menu-1`, the
+head of Draft PR #143). The parent branches of PRs #139–#143 are not
+changed. Nothing is merged, tagged, released or published.
+
+## 1. Inventory
+
+The inventory was read from GitHub on 2026-10-12, before any code change.
+It matches the expected count. No new comment was found.
+
+| PR | branch | Copilot findings |
+|---|---|---|
+| #139 | `feature/rust-stab-2b-typed-references` | 0 |
+| #140 | `feature/xite-16-5-0-integration` | 5 |
+| #141 | `feature/app-shell-0` | 5 |
+| #142 | `feature/ui-dock-1-magnetic-workspace` | 3 |
+| #143 | `feature/ui-menu-1` | 3 |
+| | **total** | **16** |
+
+An outdated review thread was not taken as proof of a fix. Each finding was
+checked against the code at the base SHA.
+
+## 2. Status of all 16 findings
+
+Status words: **fixed here** (a commit on this branch), **fixed in PR #143**
+(an older commit in the stack, re-verified here), **documentation** (a
+document correction on this branch).
+
+| # | PR | comment | file | status | commit |
+|---|---|---|---|---|---|
+| 1 | #140 | [r4242714025](https://github.com/Ascendance3D/wrlforge/pull/140#discussion_r4242714025) | `fetch-xite.sh` | still present at base → **fixed here** | `309a310` |
+| 2 | #140 | [r4242714046](https://github.com/Ascendance3D/wrlforge/pull/140#discussion_r4242714046) | `build-ui.sh` | still present at base → **fixed here** | `309a310` |
+| 3 | #140 | [r4242714062](https://github.com/Ascendance3D/wrlforge/pull/140#discussion_r4242714062) | `service.rs` | still present at base → **fixed here** | `604718b` |
+| 4 | #140 | [r4242714080](https://github.com/Ascendance3D/wrlforge/pull/140#discussion_r4242714080) | `XITE_16_5_0_INTEGRATION.md` | documentation → **fixed here** | `4e94e3d` |
+| 5 | #140 | [r4242714093](https://github.com/Ascendance3D/wrlforge/pull/140#discussion_r4242714093) | `XITE_16_5_0_INTEGRATION.md` | documentation → **fixed here** | `4e94e3d` |
+| 6 | #141 | [r4242710837](https://github.com/Ascendance3D/wrlforge/pull/141#discussion_r4242710837) | `about.rs` | still present at base → **fixed here** | `0caa7b5` |
+| 7 | #141 | [r4242710854](https://github.com/Ascendance3D/wrlforge/pull/141#discussion_r4242710854) | `APP_SHELL_0.md` | documentation → **fixed here** | `4e94e3d` |
+| 8 | #141 | [r4242710866](https://github.com/Ascendance3D/wrlforge/pull/141#discussion_r4242710866) | `APP_SHELL_0.md` | documentation → **fixed here** | `4e94e3d` |
+| 9 | #141 | [r4242710880](https://github.com/Ascendance3D/wrlforge/pull/141#discussion_r4242710880) | `APP_SHELL_0.md` | code fixed in PR #143 (`c488c80`); documentation **fixed here** | `4e94e3d` |
+| 10 | #141 | [r4242710895](https://github.com/Ascendance3D/wrlforge/pull/141#discussion_r4242710895) | `APP_SHELL_0.md` | code fixed in PR #143 (`c488c80`); documentation **fixed here** | `4e94e3d` |
+| 11 | #142 | [r4242637970](https://github.com/Ascendance3D/wrlforge/pull/142#discussion_r4242637970) | `dock.rs` | still present at base → **fixed here** | `7ac0bcb` |
+| 12 | #142 | [r4242637993](https://github.com/Ascendance3D/wrlforge/pull/142#discussion_r4242637993) | `dock.rs` | **fixed in PR #143** | `6e790cb` |
+| 13 | #142 | [r4242638014](https://github.com/Ascendance3D/wrlforge/pull/142#discussion_r4242638014) | `dock.rs` | **fixed in PR #143** | `6e790cb` |
+| 14 | #143 | [r4243044078](https://github.com/Ascendance3D/wrlforge/pull/143#discussion_r4243044078) | `clipboard.rs` | **fixed in PR #143** | `d19744f` |
+| 15 | #143 | [r4243044099](https://github.com/Ascendance3D/wrlforge/pull/143#discussion_r4243044099) | `app_menu.rs` | **fixed in PR #143** | `d19744f` |
+| 16 | #143 | [r4243044118](https://github.com/Ascendance3D/wrlforge/pull/143#discussion_r4243044118) | `menu.rs` | **fixed in PR #143** | `0772939` |
+
+Fixed on this branch: 1, 2, 3, 6, 11 (code) and 4, 5, 7, 8, 9, 10
+(documentation). Fixed by older commits in PR #143: 9 and 10 (code), 12,
+13, 14, 15, 16. No finding was classified "not reproduced".
+
+## 3. Findings fixed on this branch
+
+### 3.1 #1 — X_ITE symlink verification (`309a310`)
+
+- **Problem.** `fetch-xite.sh --verify` checked `-L` only on the last path
+  component. A symlinked `assets/` directory passed, so the verified tree
+  could come from outside the selected dist.
+- **Change.** `verify` refuses a symlinked dist directory, a symlinked
+  `package.json`, and a symlink in **any** component of a manifest path.
+  Every manifest line must be `<64 hex> <relative path>` with no empty, `.`
+  or `..` component, so no entry can name a file outside the dist. The
+  fetch copies with `cp -P`, so a link in the tarball stays a link and
+  fails. The pinned SHA-256 checks are unchanged.
+- **Evidence.** `apps/desktop-tauri/test-xite-guards.sh` (offline, no
+  download). 18 symlink and manifest cases: valid tree; trailing slash;
+  final-file link to a correct-hash file; intermediate and deep
+  intermediate directory links; file and directory links outside the tree;
+  symlinked dist; symlinked `package.json`; hash and version mismatch; six
+  bad manifest paths. All pass. The base script accepted 5 of the forbidden
+  cases. The real pinned 16.5.0 tree still verifies.
+- **Limit.** `build-ui.sh` copies the files after the check. A tree that an
+  attacker can change between the check and the copy is out of scope.
+
+### 3.2 #2 — X_ITE version guard (`309a310`)
+
+- **Problem.** `build-ui.sh` searched the whole adapter for `'16.5.0'`. A
+  comment or another string passed after the version left `XITE_VERSIONS`.
+- **Change.** New `check-xite-adapters.sh` (Bash and `sed`, no Node.js).
+  It needs exactly one line that is only
+  `const XITE_VERSIONS = Object.freeze([...]);`, whose elements are all
+  exact quoted versions and include the pin. The gizmo adapter needs
+  exactly one line that is only `var XITE_VERSION = '<pin>';`.
+- **Evidence.** 10 adapter cases in `test-xite-guards.sh`: valid; version
+  removed; version only in comments; version in another string; trailing
+  comment; duplicate declaration; prefix version `16.5.0.1`; non-literal
+  element; gizmo version only in a comment; gizmo declaration commented out.
+  All pass. The base check accepted 7 of the forbidden cases. The Node
+  adapter suites pass (47 pass, 1 skipped), including G10: 15.1.10 and
+  16.5.0 pass the runtime gate. The pick smoke accepts the embedded 16.5.0.
+- **Limit.** The check reads the line shapes that the adapters use now. A
+  reformatted declaration (for example over several lines) is refused, not
+  accepted; the check then needs an update.
+
+### 3.3 #3 — ROUTE diagnostic lookup (`604718b`)
+
+- **Problem.** `invalid_routes()` scanned every scope diagnostic from the
+  start for each proven-invalid ROUTE: O(N²) per debounced preview.
+- **Change.** `ScopeGraph::diagnostics()` sorts by `(start, end, code)`
+  (checked in `crates/wrlforge-vrml/src/scope.rs`; a `debug_assert` guards
+  it). `first_finding_inside()` binary-searches to the first finding that
+  starts at or after the ROUTE and stops at the first finding that starts
+  after the ROUTE end. It returns the finding that a linear `find` returns.
+  No verdict, text, line or source byte changes.
+- **Evidence.** The old lookup is kept in the tests as a reference. Generated
+  documents with valid ROUTEs, seven proven-invalid kinds (missing node,
+  before-DEF, across a PROTO boundary, missing event, wrong direction twice,
+  type mismatch), an ambiguous DEF and an EXTERNPROTO-decided endpoint give
+  identical warnings for 0, 1, 3 and 40 blocks (7 warnings per block). Every repository `.wrl`
+  fixture gives identical warnings. The existing ROUTE test passes.
+- **Performance** (release, `route_warning_lookup_timing`, ignored test):
+
+  | ROUTEs | invalid | old (total) | new (total) | parse + scope + diagnostics |
+  |---|---|---|---|---|
+  | 2,750 | 1,750 | 12.7 ms | 9.8 ms | 10.9 ms |
+  | 11,000 | 7,000 | 69.8 ms | 49.7 ms | 34.0 ms |
+  | 44,000 | 28,000 | 612.2 ms | 216.2 ms | 187.0 ms |
+
+  At 44,000 ROUTEs the lookup part falls from about 425 ms to about 29 ms.
+  The totals include the shared parse, so they are single runs, not a
+  benchmark.
+
+### 3.4 #6 — About dialog focus (`0caa7b5`)
+
+- **Problem.** Focus moved to Close only after `app_info` answered, and the
+  Loading → Ready change rebuilt the whole dialog. With a slow IPC the focus
+  stayed outside `role="dialog"`, so Escape did not work.
+- **Change.** The dialog frame and Close button live for the whole open;
+  only the body follows Loading / Ready / Failed. Close takes the focus when
+  it mounts (`NodeRef` + `Effect`). Each open has a number; an answer for an
+  older open is dropped, so a late answer never reopens a closed dialog and
+  never replaces a later open's state. Closing gives the focus back to the
+  control that had it before the open. The version display is unchanged.
+- **Evidence.** Menu smoke, 5 new steps with a test-only delayed `app_info`
+  (`about::show_with`, 1.5 s): focus on Close before the answer; Escape
+  while loading closes it, focus returns to Source, no reopen; Close while
+  loading, same; a late failing answer for an earlier open does not replace
+  a later open; after the answer the version shows and focus stays on Close;
+  Source focus and selection are restored and the document is unchanged.
+  The base logic fails the focus and Escape steps (66/69, run stopped).
+- **Limit.** The delay is a test hook around the same code path, not a slow
+  backend.
+
+### 3.5 #11 — Magnetic docking guide (`7ac0bcb`)
+
+- **Problem.** The edge guide was `zone_rect`: half of the target group's
+  current content. The accepted drop splits the whole tab node, adds a tab
+  strip and a divider, clamps to minimum sizes, collapses splits and frees
+  the moved panel's space.
+- **Change.** `layout::drop_preview()` builds the drop on a copy of the
+  layout, validates it with `Layout::dock`, solves it with the workspace's
+  own `solve()` and returns the moved panel's content box. A valid
+  non-strip drop shows that box. `zone_rect` stays only as the fallback for
+  a refused target. The live layout does not change before the release.
+- **Evidence.** Protocol tests: `drop_preview` equals the applied layout's
+  box for every preset × panel × anchor × zone in three workspace sizes
+  (refused drops return the same error), plus four edges, minimum width,
+  merge, split and a group left with one tab. Dock smoke, 10 real drags:
+
+  | case | guide vs. final panel box |
+  |---|---|
+  | Inspector → Viewport left / right / top / bottom (its split collapses) | 0.00 px each |
+  | Diagnostics → Viewport bottom (neighbor stays) | 0.00 px |
+  | Diagnostics → Source center (merge) | 0.00 px |
+  | Scene Tree → Source right (split) | 0.00 px |
+  | Source out of Modeling's two-tab group → Viewport right | 0.00 px |
+  | Inspector → Modeling's two-tab group, bottom | 0.00 px |
+  | Scene Tree → Viewport left at 1000 px (minimum width binds) | 0.00 px |
+
+  `SNAP_GUIDE_MAX_DIFF_PX = 0.00`, tolerance 1 CSS px. The old guide was off
+  by 3.33–355.38 px in the same cases. An invalid target shows the
+  fallback (0.01 px from `zone_rect`) and docks nothing. The document,
+  Source selection, preview, X_ITE canvas and Source textarea objects are
+  unchanged; a later real pick selects the right node.
+- **Limit.** A tab-strip drop still shows the insertion caret, not the
+  content box; it marks the tab index.
+
+## 4. Documentation corrections (`4e94e3d`)
+
+- **#4.** The seventh excluded file is `x_ite.zip`. The full list comes from
+  a name-by-name comparison of the 136-file XITE-16-UPGRADE-1 manifest with
+  the 129-file shipped manifest: 7 excluded, 0 extra, 0 hash differences.
+- **#5.** The record now has a per-commit table. The internal evidence
+  (`.qa/wrlforge/xite-16-upgrade-2/`) holds full sets for `18c2fcf` and
+  `c23646b`: cargo tests, `npm run check`, every GUI suite, 58-fixture file
+  and Inspector smoke, packages and packaged-binary runs. Verdicts are
+  identical. `c23646b` only adds the document; the binaries are
+  byte-identical. Logs that do not record a commit are not used.
+- **#7.** New §4.2.1 gives the as-built load order of `Layout::from_wire`:
+  refuse the written shape; drop unknown IDs and choose the active tab;
+  remove empty groups; collapse one-child splits and merge same-axis
+  splits; renormalize sizes; validate; else use the preset with a notice.
+- **#8.** The uniqueness rule is for **visible** panels.
+- **#9.** Quit is the registered `app.quit` command (Ctrl+Q / ⌘Q, CloseGate);
+  the macOS native item runs through `command::from_native_menu` and
+  `command::run`.
+- **#10.** Theme is three commands, one per theme
+  (`view.theme.tokyoNight`, `view.theme.tokyoNightStorm`,
+  `view.theme.tokyoNightLight`), not five themes behind one command.
+
+Historical test reports in both documents are not changed.
+
+## 5. Findings fixed by older commits in PR #143 (re-verified)
+
+| # | fix | evidence on this branch (menu / dock smoke, real X input) |
+|---|---|---|
+| 12 | `6e790cb`: after a drop, the moved tab takes the focus | "after a drop the moved tab (Inspector) has the keyboard focus"; each of the 10 snap-guide drags also checks it |
+| 13 | `6e790cb`: Delete on a focused tab focuses the group's new active tab | "Delete on a focused tab moves the focus to the tab now active in its group" |
+| 14 | `d19744f`: Cut / Paste capture editor, session, selection and text before the clipboard await, and refuse a stale state | 7 clipboard-race steps: moved selection, typed edit, replaced document, failed clipboard, rapid Cut/Cut/Paste, Paste during a pending edit — no text, revision or undo change |
+| 15 | `d19744f`: one UI listener validates `menu-command` with the registry and runs `command::run` | native About and Quit run once; once again after a layout change; keys outside the application menu run nothing |
+| 16 | `0772939`: menu handlers stop only the keys they use | F10 / Alt toggles, Alt+V, shortcuts from a bar button and an open menu, AltGr and IME keys, in both layouts |
+
+No working fix was rewritten.
+
+## 6. Source safety
+
+From the menu and dock smoke runs on this branch (an open VRML document,
+real X input):
+
+- docking with a Source selection and a scroll position: selection, scroll,
+  syntax layer, revision, dirty flag, undo / redo unchanged;
+- a layout change or window resize during a Move drag: the drag is
+  canceled, no source edit, no undo step;
+- menu activation, About and Quit with unsaved edits: the document stays
+  Modified and unchanged; Quit Cancel keeps the recovery records;
+- delayed Cut and Paste: stale results edit nothing and add no undo step;
+- picking after docking and after the menu run: the exact node.
+
+`WRONG_SOURCE_SELECTIONS = 0` in both runs. No lost edit, no source change.
+
+## 7. Platform status
+
+Linux x64 is tested (Xvfb, software rendering). Windows x64 and macOS 15+
+(Apple Silicon) are **not** tested in this lane: no native system was used.
+Linux does not prove the native macOS menu (About / Quit in the application
+menu) or Windows behavior; those checks stay open.
+
+## 8. Regression gate
+
+The full Linux gate runs on the final SHA of this branch in a new clean
+worktree. Its results are in the Draft PR description, not in this file, so
+that the gated SHA stays the final SHA.
+
+## 9. Suggested GitHub replies (not posted)
+
+Threads stay unresolved until the owner decides.
+
+- **#1 (r4242714025):** Fixed in `309a310` on `review/copilot-stack-hardening-1`. `--verify` now refuses a link in any component of a manifest path, a linked dist or `package.json`, and any manifest path with an empty, `.` or `..` component. `test-xite-guards.sh` covers final-file, intermediate, deep, outside-tree and correct-hash links; the old check accepted five of them.
+- **#2 (r4242714046):** Fixed in `309a310`. `check-xite-adapters.sh` reads the single real `XITE_VERSIONS` declaration (and the gizmo `XITE_VERSION` line) and refuses a version that appears only in a comment or another string. 10 offline cases.
+- **#3 (r4242714062):** Fixed in `604718b`. The diagnostics are sorted by `(start, end, code)`, so the lookup binary-searches and stops at the ROUTE end. Warnings are identical to the old lookup on generated documents and all fixtures; 44,000 ROUTEs: 612 ms → 216 ms total.
+- **#4 (r4242714080):** Fixed in `4e94e3d`: the seventh file is `x_ite.zip`, confirmed by a name-by-name manifest comparison.
+- **#5 (r4242714093):** Fixed in `4e94e3d`: the record now lists which runs used `18c2fcf` and which used `c23646b`. Both have full evidence with identical verdicts; `c23646b` only adds the document.
+- **#6 (r4242710837):** Fixed in `0caa7b5`: Close takes the focus when the dialog mounts, before IPC; late answers are dropped; focus returns on close. Covered with a delayed `app_info` in the menu smoke.
+- **#7 (r4242710854):** Fixed in `4e94e3d`: APP_SHELL_0 §4.2.1 documents the as-built normalization and the preset fallback.
+- **#8 (r4242710866):** Fixed in `4e94e3d`: the rule is now "each visible panel appears exactly once".
+- **#9 (r4242710880):** Quit was registered as `app.quit` in `c488c80` (PR #143); `4e94e3d` updates the contract.
+- **#10 (r4242710895):** `c488c80` (PR #143) uses one command per theme (three themes); `4e94e3d` updates the contract.
+- **#11 (r4242637970):** Fixed in `7ac0bcb`: the guide is the moved panel's box in the solved candidate layout. 10 real drags measured 0.00 px against the final box (old guide: up to 355 px).
+- **#12 (r4242637993):** Fixed in `6e790cb` (PR #143); re-verified on the stack head.
+- **#13 (r4242638014):** Fixed in `6e790cb` (PR #143); re-verified on the stack head.
+- **#14 (r4243044078):** Fixed in `d19744f` (PR #143); seven stale-state race steps pass on the stack head.
+- **#15 (r4243044099):** Fixed in `d19744f` (PR #143); one validated listener, re-verified.
+- **#16 (r4243044118):** Fixed in `0772939` (PR #143); the F10 / Alt / shortcut steps pass on the stack head in both layouts.
+
+## 10. Remaining limits
+
+1. Windows and macOS are not tested (§7).
+2. The X_ITE build guards have a check-then-copy window (§3.1) and accept
+   only the current one-line declaration shape (§3.2).
+3. Tab-strip drops show an insertion caret, not a content box (§3.5).
+4. The About delay is a test hook (§3.4).
+5. The temporary `fx58` fixture set is gone; fixture comparisons use the
+   repository fixtures only.
