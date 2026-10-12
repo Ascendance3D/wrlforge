@@ -11,8 +11,11 @@
 # OUT       a new output directory (summary.txt, logs, per-fixture TSVs)
 # TOOLS     an apps/desktop-tauri dir to take build tools from: the pinned
 #           wasm-bindgen (target/tools) and the verified X_ITE cache
-#           (target/xite; build-ui.sh verifies it again). Default: none,
-#           so they must already be in WORKTREE.
+#           (target/xite; build-ui.sh verifies it again), and the staged
+#           license texts (target/pkg-licenses). Default: none, so they
+#           must already be in WORKTREE.
+# The pick oracle and the JavaScript tests need WORKTREE/node_modules/x_ite
+# (an ignored directory; a link to the root checkout's copy is enough).
 # Needs: Rust + wasm32, xvfb-run, xdotool, python3, node (test-only: the
 # JavaScript adapter tests and the pick oracle plan), rg. Exit 0 = every
 # group passed and matched the inventory.
@@ -78,6 +81,9 @@ if [[ -n "$tools" ]]; then
   cp "$tools/target/tools/bin/wasm-bindgen" "$app/target/tools/bin/"
   ver="$(sed -n 's/^version=//p' "$app/xite/PIN" | head -1)"
   [[ -d "$app/target/xite/$ver" ]] || cp -a "$tools/target/xite/$ver" "$app/target/xite/"
+  # tauri.conf.json bundles target/pkg-licenses (made by package-linux.sh);
+  # the backend build script refuses to run without it.
+  [[ -d "$app/target/pkg-licenses" ]] || cp -a "$tools/target/pkg-licenses" "$app/target/"
 fi
 
 # ---- 1. builds -------------------------------------------------------------
