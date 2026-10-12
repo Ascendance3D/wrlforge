@@ -15,8 +15,32 @@
 #       GIZMO: var XITE_VERSION = 'VERSION';
 #     with VERSION as one exact element. Comments around it are allowed.
 # No Node.js is used: bash, tr and POSIX awk only.
+#
+#   ./check-xite-adapters.sh --staged DIST PICK_SRC PICK_SHA GIZMO_SRC GIZMO_SHA VERSION
+# STACK-REVIEW-1 QA HOLD fix: check the FINAL copies that ship,
+# DIST/xite-pick-adapter.js and DIST/xite-gizmo-adapter.js. Each must be a
+# regular file (not a symlink, not missing), have the SHA-256 its source had
+# when the build checked it (PICK_SHA / GIZMO_SHA, taken BEFORE that check),
+# and be byte-identical to its repository source now. Then the declaration
+# check below runs again, on the staged files themselves.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
+if [[ "${1:-}" == "--staged" ]]; then
+  dist="${2:?dist}"; ver="${7:?version}"
+  [[ -d "$dist" && ! -L "$dist" ]] || { echo "staged dir $dist is not a real directory (symlink or missing); refusing" >&2; exit 4; }
+  sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
+  staged() { # staged NAME SRC SHA
+    local f="$dist/$1" src="$2" want="$3"
+    [[ "$want" =~ ^[0-9a-f]{64}$ ]] || { echo "bad SHA-256 '$want' for $1; refusing" >&2; return 4; }
+    [[ ! -L "$f" ]] || { echo "staged $f is a symlink; refusing" >&2; return 4; }
+    [[ -f "$f" ]] || { echo "staged $f is missing or not a regular file; refusing" >&2; return 4; }
+    [[ "$(sha256 "$f")" == "$want" ]] || { echo "staged $f is not the source the build checked (SHA-256 differs); refusing" >&2; return 4; }
+    cmp -s "$src" "$f" || { echo "staged $f is not byte-identical to $src; refusing" >&2; return 4; }
+  }
+  staged xite-pick-adapter.js "${3:?pick source}" "${4:?pick sha}" || exit 4
+  staged xite-gizmo-adapter.js "${5:?gizmo source}" "${6:?gizmo sha}" || exit 4
+  exec "$0" "$dist/xite-pick-adapter.js" "$dist/xite-gizmo-adapter.js" "$ver"
+fi
 pick="${1:?pick adapter}"; gizmo="${2:?gizmo adapter}"; ver="${3:?version}"
 [[ "$ver" =~ ^[0-9]+(\.[0-9]+)*$ ]] || { echo "bad version '$ver'" >&2; exit 2; }
 

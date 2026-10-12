@@ -276,6 +276,139 @@ They are not counted in the 16 findings of PRs #139–#143.
   the About step count.** `about_dialog` adds six `r.step` checks, not five.
   §3.4 now says 6. No code change.
 
+### 3.8 Independent QA HOLD — the final staged adapters (on `e3a1496`)
+
+The independent QA of `e3a1496` gave **HOLD**. Cause: `build-ui.sh` checked
+the two **source** adapters, but it did not check their **final copies** in
+`dist/` (`xite-pick-adapter.js`, `xite-gizmo-adapter.js`). The copies were
+made before the check, and nothing read them again.
+
+**Reproduction (before the change).** A temporary build kit ran the
+`e3a1496` `build-ui.sh` with a fake `cargo` and `wasm-bindgen`, a synthetic
+X_ITE, and a test-only `cp` shim on `PATH` that changes one staged adapter.
+The original adapter files were not changed. Every tampered stage built
+with exit 0 and kept `dist/`:
+
+| tampered stage | `e3a1496` build | `dist/` |
+|---|---|---|
+| staged pick adapter: one byte added | exit 0 | present, differs from source |
+| staged pick adapter: removed | exit 0 | present, adapter missing |
+| staged gizmo adapter: a symlink to a copy | exit 0 | present, symlink |
+| staged gizmo adapter: version `0.0.1` | exit 0 | present, differs from source |
+| pick source changed before staging (valid declaration) | exit 0 | present |
+
+**Change.**
+
+- `build-ui.sh` takes the SHA-256 of each adapter source **before** the
+  source check. It runs the source check (unchanged), then copies, then
+  installs X_ITE (unchanged), then runs the new staged check. The source
+  check now runs before any adapter copy.
+- `check-xite-adapters.sh --staged DIST PICK_SRC PICK_SHA GIZMO_SRC
+  GIZMO_SHA VERSION` refuses unless each staged adapter is a regular file
+  (not a symlink, not missing, not a directory), has the SHA-256 taken before
+  the source check, and is byte-identical (`cmp`) to its repository source.
+  Then it runs the same declaration check on the **staged** files. A
+  symlinked `DIST` also refuses.
+- Any failure in `build-ui.sh` — any step — removes `dist/` (an `EXIT`
+  trap), and the script exits non-zero. `package-linux.sh` runs under
+  `set -e`, so a refused build stops packaging.
+- Not changed: the X_ITE pin (16.5.0), the declaration rules, the archive
+  and symlink checks. No Node.js in the build.
+
+**Negative tests.** `test-xite-guards.sh` keeps all 91 earlier cases and
+adds 60 (151 in total, all pass). Part (a) runs `--staged` on a staged
+directory; part (b) runs the real `build-ui.sh` in a temporary layout with
+the `cp` shim and checks that each refusal comes from the staged check and
+leaves **no** `dist/`:
+
+| # | case | `--staged` | `build-ui.sh` |
+|---|---|---|---|
+| 1 | both staged adapters valid | ok | ok, stage = sources |
+| 2 | pick adapter missing | refuse | refuse, no `dist/` |
+| 3 | gizmo adapter missing | refuse | refuse, no `dist/` |
+| 4 | pick adapter changed | refuse | refuse, no `dist/` |
+| 5 | gizmo adapter changed | refuse | refuse, no `dist/` |
+| 6 | version removed from staged pick adapter | refuse | refuse, no `dist/` |
+| 7 | wrong staged gizmo version | refuse | refuse, no `dist/` |
+| 8 | version only in a comment | refuse | refuse, no `dist/` |
+| 9 | changed bytes, valid declaration | refuse (SHA-256) | refuse, no `dist/` |
+| 10 | staged adapter is a symlink (pick; gizmo) | refuse | refuse, no `dist/` |
+| 11 | source changed after its check (pick; gizmo) | refuse (SHA-256) | refuse, no `dist/` |
+| 12 | stage matches both sources exactly | ok | ok |
+
+Also: the staged declaration check runs even when the bytes match (a source
+without the version refuses); a directory in place of an adapter, a
+symlinked `DIST` and a malformed SHA-256 argument refuse; and the order
+(SHA-256, source check, copies, staged check, success) is checked in
+`build-ui.sh`. The `cp` shim exists only in the test; production code has
+no hook and no delay.
+
+### 3.9 Test inventory and count reconciliation
+
+The main agent reported 208 application tests, 193 shared-crate tests and
+86 menu steps. The independent QA reported 108, 153 and 72.
+
+**Main agent commands** (`e3a1496` gate): `cargo test --workspace` in
+`apps/desktop-tauri` and in `crates`, summed over every `test result:` line;
+the menu count is the `steps` array of the `--menu` smoke report.
+
+| application target | tests |
+|---|---|
+| `wrl-forge-desktop` lib | 83 (+1 ignored: `route_warning_lookup_timing`, run separately) |
+| `wrl-forge-desktop` integration: `app_shell` 5, `flux_regression` 6, `scope_regression` 3, `typed_regression` 3 | 17 |
+| `wrl-forge-desktop` bin (`main.rs`), `wrlforge-render`, 5 doc-test targets | 0 |
+| `wrlforge-desktop-protocol` | 73 |
+| `wrlforge-scene` | 25 |
+| `wrlforge-ui` | 10 |
+| **total** | **208** |
+
+| shared crate | tests |
+|---|---|
+| `wrlforge-vrml` | 150 |
+| `wrlforge-text` | 25 |
+| `wrlforge-document` | 15 |
+| `wrlforge-wasm` | 3 |
+| 4 doc-test targets | 0 |
+| **total** | **193** |
+
+**Independent QA.** Its exact commands are not recorded in any artifact
+available to this lane. Facts that are available:
+
+- The QA worktree (`stack-review-1-independent-qa`, `e3a1496`) built the
+  same 15 application and 4 shared-crate test binaries. `--list` on each
+  gives the same counts as above (84 listed = 83 + 1 ignored). So no test is
+  missing from the code that QA built.
+- 108 = `wrlforge-desktop-protocol` 73 + `wrlforge-scene` 25 +
+  `wrlforge-ui` 10: every application package **except**
+  `wrl-forge-desktop` (100 tests in 5 targets).
+  153 = `wrlforge-vrml` 150 + `wrlforge-wasm` 3: every crate **except**
+  `wrlforge-text` 25 and `wrlforge-document` 15.
+  These are the targets that cargo prints **last**, so a partial read of the
+  test output (or a package filter) gives these numbers. This is an
+  inference, not a recorded command.
+- The menu smoke report written at 02:42 (after the main gate, in the QA
+  time window) has 86 steps, all ok. No menu report or plan on this branch
+  has 72 steps (an older local report, from 01:43, has 69). The
+  source of 72 is **not explained** by the available artifacts.
+
+The smaller counts are not treated as failures, and they are not treated as
+passes. To end the question, `apps/desktop-tauri/gate-linux.sh` is now the
+**one repeatable Linux gate**. It runs every required group and fails if any
+count differs from this inventory:
+
+| group | command (in the gate) | required |
+|---|---|---|
+| release Wasm + staged adapters | `build-ui.sh`; `check-xite-adapters.sh --staged`; `fetch-xite.sh --verify-copy` | exit 0 |
+| desktop backend | `cargo build -p wrl-forge-desktop` | exit 0 |
+| application tests | `cargo test --workspace --no-fail-fast` (`apps/desktop-tauri`) | the 15 targets above, exact counts, 0 failed, 0 filtered |
+| shared crates | `cargo test --workspace --no-fail-fast` (`crates`) | the 8 targets above, exact counts, 0 failed, 0 filtered |
+| X_ITE guards | `test-xite-guards.sh` | 151 pass, 0 fail |
+| JavaScript adapter tests | `node --test` (3 pick-adapter files; test-only) | 48 pass, 0 fail, 0 skipped |
+| ROUTE | `cargo test route_warning`; release `route_warning_lookup_timing --ignored` | 2 ok; timing runs |
+| GUI | `smoke.sh --headless` menu / dock / pick / create / extrusion / move / rotscale / recovery / theme; texture; native self-test | menu 86, dock 64 + 7 + 7, pick 130, create 51, extrusion 58, move 156, rotscale 71, recovery 34 + 15, theme 82, texture 46, native 46 steps; all ok |
+| source safety | every `WRONG_SOURCE_SELECTIONS` step in every GUI report | ok, 0 wrong |
+| fixtures | File and Inspector smoke on the 58 repository fixtures, new and starting-SHA binary | same names; 0 verdict and 0 failing-step differences; baseline failures and timeouts listed separately |
+
 ## 4. Documentation corrections (`4e94e3d`)
 
 - **#4.** The seventh excluded file is `x_ite.zip`. The full list comes from
@@ -375,3 +508,9 @@ Threads stay unresolved until the owner decides.
 4. The About delay is a test hook (§3.4).
 5. The temporary `fx58` fixture set is gone; fixture comparisons use the
    repository fixtures only.
+6. QA HOLD fix (§3.8): the staged-adapter check trusts the local build
+   filesystem between its own steps (check, hash, compare); it is a build
+   guard, not a defense against a concurrent local attacker.
+7. The independent QA's exact test commands are not recorded; its 72 menu
+   steps are not explained (§3.9). `gate-linux.sh` fixes the inventory for
+   any later run.

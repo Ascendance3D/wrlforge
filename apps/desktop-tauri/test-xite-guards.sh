@@ -251,5 +251,136 @@ cp "$t/PIN.bak" "$k/xite/PIN"; rm -rf "$k/target"
 # install_copy refuses a linked SOURCE before copying (cp would follow it)
 fresh; mv "$t/c/dist/assets" "$t/c/assets-real"; ln -s ../assets-real "$t/c/dist/assets"
 expect refuse install-source-intermediate-link inst "$t/c/dist"
+
+# ---- STACK-REVIEW-1 QA HOLD: the FINAL staged adapters in dist/ ------------
+# (a) check-xite-adapters.sh --staged on a staged dir built here from the
+# real adapters. S is the stage; the SHAs are the sources' SHAs "at check".
+S="$t/stage"; PS="$t/src-pick.js"; GS="$t/src-giz.js"
+sh_() { sha256sum "$1" | cut -d' ' -f1; }
+stage() { rm -rf "$S"; mkdir -p "$S"; cp "$pick" "$PS"; cp "$giz" "$GS"; cp "$PS" "$S/xite-pick-adapter.js"; cp "$GS" "$S/xite-gizmo-adapter.js"; PSHA="$(sh_ "$PS")"; GSHA="$(sh_ "$GS")"; }
+st() { "$here/check-xite-adapters.sh" --staged "$S" "$PS" "$PSHA" "$GS" "$GSHA" "$ver"; }
+edit() { python3 -I -c 'import sys; p,o,n=sys.argv[1:]; s=open(p).read(); assert o in s; open(p,"w").write(s.replace(o,n,1))' "$@"; }
+gdecl="  var XITE_VERSION = '$ver';"
+stage
+expect ok     staged-01-both-valid             st
+stage; rm "$S/xite-pick-adapter.js"
+expect refuse staged-02-pick-missing           st
+stage; rm "$S/xite-gizmo-adapter.js"
+expect refuse staged-03-gizmo-missing          st
+stage; printf 'x' >> "$S/xite-pick-adapter.js"
+expect refuse staged-04-pick-changed           st
+stage; printf 'x' >> "$S/xite-gizmo-adapter.js"
+expect refuse staged-05-gizmo-changed          st
+stage; edit "$S/xite-pick-adapter.js" "$decl" "$nover"
+expect refuse staged-06-pick-version-removed   st
+stage; edit "$S/xite-gizmo-adapter.js" "$gdecl" "  var XITE_VERSION = '0.0.1';"
+expect refuse staged-07-gizmo-wrong-version    st
+stage; edit "$S/xite-pick-adapter.js" "$decl" "$nover
+  // const XITE_VERSIONS = Object.freeze(['15.1.10', '$ver']);"
+expect refuse staged-08-version-only-in-comment st
+stage; edit "$S/xite-pick-adapter.js" "$decl" "$decl  // staged-only comment"
+XG_WHY=1 expect refuse staged-09-changed-bytes-valid-declaration st
+stage; mv "$S/xite-pick-adapter.js" "$t/linked-pick.js"; ln -s "$t/linked-pick.js" "$S/xite-pick-adapter.js"
+expect refuse staged-10-pick-symlink           st
+stage; mv "$S/xite-gizmo-adapter.js" "$t/linked-giz.js"; ln -s "$t/linked-giz.js" "$S/xite-gizmo-adapter.js"
+expect refuse staged-10-gizmo-symlink          st
+# 11: the source changes after its SHA was taken and checked; the stage is
+# the changed source, so stage == source now, but not the checked bytes.
+stage; edit "$PS" "$decl" "$decl  // changed after the source check"; cp "$PS" "$S/xite-pick-adapter.js"
+XG_WHY=1 expect refuse staged-11-source-changed-after-check st
+stage; edit "$GS" "$gdecl" "$gdecl  // changed after the source check"; cp "$GS" "$S/xite-gizmo-adapter.js"
+expect refuse staged-11-gizmo-source-changed-after-check st
+stage
+same() { cmp -s "$pick" "$S/xite-pick-adapter.js" && cmp -s "$giz" "$S/xite-gizmo-adapter.js"; }
+expect ok     staged-12-stage-is-repository-bytes same
+expect ok     staged-12-exact-match-both-sources st
+# the staged declaration check runs even when the bytes match: a source that
+# itself lost the version (and so would have failed its own check) refuses.
+stage; edit "$PS" "$decl" "$nover"; cp "$PS" "$S/xite-pick-adapter.js"; PSHA="$(sh_ "$PS")"
+XG_WHY=1 expect refuse staged-declaration-check-on-stage st
+stage; rm -rf "$S/xite-pick-adapter.js"; mkdir "$S/xite-pick-adapter.js"
+expect refuse staged-directory-not-file        st
+stage; mv "$S" "$t/stage-real"; ln -s "$t/stage-real" "$S"
+expect refuse staged-dist-dir-symlink          st
+rm -f "$S"; rm -rf "$t/stage-real"
+stage; PSHA=deadbeef
+expect refuse staged-bad-sha-argument          st
+
+# (b) build-ui.sh itself, in a temp layout: fake cargo + wasm-bindgen, the
+# synthetic X_ITE 9.9.9 kit above, adapters declaring 9.9.9, and a cp shim
+# on PATH that tampers with ONE staged adapter (test-only; production code
+# has no hook or delay). Every refusal must leave NO dist/.
+bk="$t/bk"; ba="$bk/r/apps/desktop-tauri"
+mkbk() {
+  rm -rf "$bk"; mkdir -p "$ba/xite" "$ba/ui/static" "$ba/target/tools/bin" "$bk/r/src/preview" "$bk/bin"
+  local f; for f in build-ui.sh check-xite-adapters.sh xite-js-mask.awk fetch-xite.sh; do cp "$here/$f" "$ba/"; done
+  sed "s/'$ver'/'9.9.9'/" "$pick" > "$bk/r/src/preview/xite-pick-adapter.js"
+  sed "s/'$ver'/'9.9.9'/" "$giz" > "$ba/ui/static/xite-gizmo-adapter.js"
+  echo '<html></html>' > "$ba/ui/static/index.html"
+  cp "$k/xite/PIN" "$k/xite/m.sha256" "$ba/xite/"
+  printf '#!/bin/sh\nexit 0\n' > "$bk/bin/cargo"
+  printf '#!/bin/sh\nfor x; do [ "$p" = --out-dir ] && d="$x"; p="$x"; done\necho js > "$d/wrlforge_ui.js"\n' > "$ba/target/tools/bin/wasm-bindgen"
+  chmod +x "$bk/bin/cargo" "$ba/target/tools/bin/wasm-bindgen"
+}
+realcp="$(command -v cp)"
+# bshim MODE TARGET [CONTENT]: install the tampering cp shim
+bshim() {
+  cat > "$bk/bin/cp" <<SH
+#!/usr/bin/env bash
+dest="\${@: -1}"; src=
+for x in "\${@:1:\$#-1}"; do [[ "\${x##*/}" == "$2" ]] && src="\$x"; done
+[[ -n "\$src" && "$1" == source-change ]] && printf '\n// changed after the source check\n' >> "\$src"
+"$realcp" "\$@" || exit
+[[ -n "\$src" ]] || exit 0
+f="\$dest"; [[ -d "\$f" ]] && f="\$f/$2"
+case "$1" in
+  missing) rm -f "\$f" ;;
+  change) printf 'x' >> "\$f" ;;
+  replace) "$realcp" "${3:-}" "\$f" ;;
+  symlink) "$realcp" "\$f" "$bk/outside.js"; rm -f "\$f"; ln -s "$bk/outside.js" "\$f" ;;
+esac
+SH
+  chmod +x "$bk/bin/cp"
+}
+bb() { PATH="$bk/bin:$PATH" X_ITE_DIST="$t/good/dist" "$ba/build-ui.sh"; }
+# brun ok|refuse NAME MODE TARGET [CONTENT]: build, then dist/ must exist
+# (ok, with both staged adapters byte-identical to their sources) or not.
+brun() {
+  local want="$1" name="$2"; shift 2
+  mkbk; [[ "$1" == none ]] || bshim "$@"
+  expect "$want" "build-$name" bb
+  if [[ "$want" == refuse ]]; then
+    cp "$t/out" "$t/bout"   # refused by the STAGED check, not by anything else
+    expect ok "build-$name-refused-by-staged-check" grep -q '^staged .*; refusing$\|/dist/xite-.*refusing$' "$t/bout"
+    expect ok "build-$name-no-dist" test ! -e "$ba/dist"
+  else
+    bok() { cmp -s "$bk/r/src/preview/xite-pick-adapter.js" "$ba/dist/xite-pick-adapter.js" && cmp -s "$ba/ui/static/xite-gizmo-adapter.js" "$ba/dist/xite-gizmo-adapter.js" && [[ ! -L "$ba/dist/xite-pick-adapter.js" && ! -L "$ba/dist/xite-gizmo-adapter.js" ]]; }
+    expect ok "build-$name-stage-matches-sources" bok
+  fi
+}
+nov() { sed "s/, '9.9.9'//" "$bk/r/src/preview/xite-pick-adapter.js" > "$t/b-nover.js"; }
+brun ok     01-both-valid           none
+brun refuse 02-pick-missing         missing xite-pick-adapter.js
+brun refuse 03-gizmo-missing        missing xite-gizmo-adapter.js
+brun refuse 04-pick-changed         change  xite-pick-adapter.js
+brun refuse 05-gizmo-changed        change  xite-gizmo-adapter.js
+mkbk; nov; brun refuse 06-pick-version-removed replace xite-pick-adapter.js "$t/b-nover.js"
+mkbk; sed "s/'9.9.9'/'0.0.1'/" "$ba/ui/static/xite-gizmo-adapter.js" > "$t/b-giz.js"
+brun refuse 07-gizmo-wrong-version  replace xite-gizmo-adapter.js "$t/b-giz.js"
+mkbk; nov; printf "// const XITE_VERSIONS = Object.freeze(['15.1.10', '9.9.9']);\n" >> "$t/b-nover.js"
+brun refuse 08-version-only-in-comment replace xite-pick-adapter.js "$t/b-nover.js"
+mkbk; { cat "$bk/r/src/preview/xite-pick-adapter.js"; echo '// staged-only comment'; } > "$t/b-cmt.js"
+brun refuse 09-changed-bytes-valid-declaration replace xite-pick-adapter.js "$t/b-cmt.js"
+brun refuse 10-pick-symlink         symlink xite-pick-adapter.js
+brun refuse 10-gizmo-symlink        symlink xite-gizmo-adapter.js
+brun refuse 11-pick-source-changed-during-staging  source-change xite-pick-adapter.js
+brun refuse 11-gizmo-source-changed-during-staging source-change xite-gizmo-adapter.js
+brun ok     12-exact-match-both-sources none
+# the build-ui.sh order: source SHAs, then the source check, then the copies,
+# then the staged check (which removes dist/ on refusal), then success.
+order() { awk '/pick_sha="\$\(sha256/ { a = NR } /check-xite-adapters.sh" "\$pick" "\$gizmo"/ { b = NR } /^cp "\$pick" "\$here\/dist\/xite-pick-adapter.js"/ { c = NR }
+  /check-xite-adapters.sh" --staged "\$here\/dist" .*\|\| \{ rm -rf "\$here\/dist"; exit 4; \}/ { d = NR } /^built=1$/ { e = NR }
+  END { exit !(a && a < b && b < c && c < d && d < e) }' "$here/build-ui.sh"; }
+expect ok     build-ui-staged-check-order     order
 printf '\nSUMMARY pass=%d fail=%d\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]
