@@ -229,9 +229,6 @@ fn shortcut_blocked(ev: &web_sys::KeyboardEvent) -> Option<&'static str> {
     if ev.alt_key() || ev.get_modifier_state("AltGraph") {
         return Some("alt");
     }
-    if menu::is_open() {
-        return Some("menu");
-    }
     modal_or_drag()
 }
 
@@ -256,6 +253,11 @@ fn active_element() -> Option<web_sys::Element> {
 
 /// UI-MENU-1: the ONE application shortcut handler (window, bubble phase).
 /// It reads the registry's shortcut table only.
+///
+/// With the focus in the menu bar (a bar button or an open menu) the menu
+/// lets the shortcut through. The command acts on the control the menu took
+/// the focus from, so that control decides the text-field rule; the menu
+/// closes and gives the focus back before the command runs.
 pub fn on_window_keydown(ev: web_sys::KeyboardEvent) {
     if shortcut_blocked(&ev).is_some() {
         return;
@@ -264,11 +266,20 @@ pub fn on_window_keydown(ev: web_sys::KeyboardEvent) {
     else {
         return;
     };
-    let field = clipboard::focus_kind(active_element()) == FocusKind::TextField;
+    let in_menu = menu::bar_has_focus() || menu::is_open();
+    let target = if in_menu {
+        clipboard::last().map(Into::into)
+    } else {
+        active_element()
+    };
+    let field = clipboard::focus_kind(target) == FocusKind::TextField;
     if field && !FIELD_SAFE.contains(&id) {
         return;
     }
     ev.prevent_default();
+    if in_menu {
+        menu::close(true);
+    }
     run(id);
 }
 

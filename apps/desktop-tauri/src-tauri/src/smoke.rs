@@ -990,6 +990,7 @@ impl SmokeState {
                     "ctrl+s",
                     "ctrl+z",
                     "ctrl+y",
+                    "ctrl+shift+z",
                     "ctrl+q",
                     "ctrl+alt+s",
                     "ctrl+alt+z",

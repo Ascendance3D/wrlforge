@@ -208,7 +208,7 @@ there is no second shortcut table.
 | Ctrl+Alt or AltGraph (AltGr) | Nothing runs; the key types text. |
 | Focus inside a dialog (About, recovery choice, outline editor) | Nothing runs; no menu access. |
 | Gizmo, dock or outline drag | Nothing runs; no menu access. The drags keep Escape. |
-| A menu is open | The menu handles the keys. |
+| A menu bar button has the focus, or a menu is open | The menu handles only its own navigation keys. A registry shortcut closes the menu, gives the focus back, then runs once. The text-field rule uses the control the menu took the focus from. |
 
 Each key press runs at most one command. The smoke run counts `command::run`
 calls.
@@ -439,3 +439,110 @@ Gate on `d19744f` (the follow-up code): a new clean worktree, the script
 
 The Files and Inspector failures and timeouts are the known baseline. They are
 the same files and the same failing steps as on UI-DOCK-1.
+
+## 14. Copilot review #5484767419 (PR #143)
+
+The review has three comments. Comments A and B were fixed in §13. Comment C
+was still active.
+
+### Comment C: menu keys stopped every key
+
+**Finding.** `on_bar_button_key()` called `stop_propagation()` for every key.
+`on_list_key()` did the same for unknown keys. Keys that the menu did not use
+never reached the window listener.
+
+**Effect, reproduced on `a59f50c`** (new smoke steps, real X keys under Xvfb):
+
+| case | result on `a59f50c` |
+|---|---|
+| F10, then F10 again | focus stays on `menu-file`; the toggle fails |
+| Alt, then Alt again | focus stays on `menu-file`; the toggle fails |
+| F10 or Alt alone in an open menu | the menu stays open |
+| Alt+V on a focused bar button | View does not open |
+| Ctrl+S with the File button focused | 0 command runs; nothing is saved |
+| Ctrl+S in an open File menu | 0 command runs; the menu stays open |
+| Keys from the bar that reach the window | none |
+
+**Root cause.** The handlers had no handled or unhandled result. They stopped
+the event at the end of every call. In addition, `shortcut_blocked()` refused
+every shortcut while a menu was open.
+
+**Correction.**
+
+- `menu.rs`: `bar_button_key()` and `list_key()` return `true` only when the
+  menu uses the key. `consume()` then calls `prevent_default()` and
+  `stop_propagation()`. Other keys bubble to the one window listener.
+- The menu handlers do not use a key with Ctrl, Alt or Meta, or a key during
+  IME composition (`foreign_key()`). Shift+Tab stays a menu key.
+- `close(true)` with no recorded control removes the focus from the bar. A
+  second F10 or Alt therefore always leaves the bar.
+- `command.rs`: `shortcut_blocked()` no longer refuses shortcuts because a
+  menu is open. With the focus in the bar, `on_window_keydown()` applies the
+  text-field rule to the recorded control. It then closes the menu with focus
+  restoration and runs the command once.
+
+There is no second shortcut listener and no second command table. The
+AltGr, IME, dialog and drag rules are unchanged.
+
+### Expected shortcut behavior
+
+| state | registry shortcut | F10 / Alt alone | Alt+letter |
+|---|---|---|---|
+| Menu closed | runs once (the §6 rules) | focuses the bar | opens the menu |
+| A bar button has the focus | focus returns to the earlier control; runs once | leaves the bar; focus returns | opens the menu |
+| A menu item has the focus | the menu closes; focus returns; runs once | the menu closes; focus returns | opens that menu |
+
+If the earlier control is an Inspector or other text field, only New, Open,
+Save, Save As and Quit run. Undo and Redo do nothing and the menu stays as it
+is. Closing a menu changes no document, no source selection and no selected
+node. Ctrl+Q always goes through `app_quit` and the CloseGate.
+
+### New menu smoke steps (18)
+
+| step | proves |
+|---|---|
+| F10, F10 | bar, then Source with the same selection |
+| Alt, Alt | the same |
+| F10 or Alt in an open menu | the menu closes; Source and its selection return |
+| F10, Alt+V, Escape, Escape | View opens from a bar button; no document, node or selection change |
+| Window reach probe | F10, Alt and Alt+V reach the window listener; Down and Escape do not |
+| The five steps above after View → Modeling | the same results in another dock layout |
+| Ctrl+S, File button focused | 1 run; the file holds the document; focus and selection return |
+| Ctrl+S, File menu open | the menu closes; 1 run; focus and selection return |
+| Ctrl+Z from a bar button, Ctrl+Shift+Z from the Edit menu | 1 undo and 1 redo; Rust text == editor text |
+| Shortcut count | each shortcut reaches the window once and runs once; Save leaves the selected node unchanged |
+| Ctrl+Z / Ctrl+Shift+Z from an Inspector field through the menu | 0 runs; no revision change; the field keeps its text and the focus |
+| AltGr and IME keys in the menu | 0 runs; no change (IME keys are synthetic) |
+| Ctrl+S in an open menu after View → Modeling | the menu closes; 1 run; focus and selection return |
+| Ctrl+Q from a bar button and from the File menu | 2 runs; the CloseGate asks twice; Cancel keeps the unsaved document, selection and recovery records |
+
+The Move drag step now also presses F10: the bar does not take the focus.
+
+The window reach probe is a test-only capture and bubble listener pair. It
+records keys and handles none.
+
+Results with the correction: 80 of 80 steps pass (was 62), 3 of 3 times in
+3 parallel runs. On `a59f50c` the same suite fails 7 of the new steps.
+
+### Comments A and B: still fixed
+
+- **A (Cut / Paste race, `clipboard.rs`).** The `Ticket` check (§13) is in
+  place. A stale or failed answer changes no widget text and sends no
+  `doc_edit`, so there is no undo entry. All clipboard race steps pass.
+- **B (native `menu-command`, `app_menu.rs`).** `app_menu::forward` and
+  `menu::listen_native` both use `from_native_menu`. The listener registers
+  once (`NATIVE_LISTENING`), and `lib.rs` is its only caller. The 4 native
+  event steps pass, including the step after a layout change and the Quit
+  step through the CloseGate.
+
+### Limits
+
+- Windows and macOS are not tested. The macOS native menu runtime check
+  stays pending (§13).
+- Xvfb has no IME and no AltGr key. IME keys are synthetic `keydown` events;
+  AltGr is the real Ctrl+Alt chord.
+- WebKitGTK under Xvfb does not undo typed text in an Inspector `<input>`
+  with Ctrl+Z, also without a menu. The step records this. It proves that no
+  document Undo runs and that the field keeps its text.
+- The `fx58` Files and Inspector fixture set was in `/tmp` and is gone. The
+  gate for this change compares `fxqa` only (see the PR).

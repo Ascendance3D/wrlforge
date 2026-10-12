@@ -222,6 +222,7 @@ pub async fn run(plan: &Plan, r: &mut R) -> Option<()> {
     activation(r).await?;
     shortcuts(r).await?;
     blocked(r).await?;
+    menu_focus_keys(r).await?;
     equivalence(r).await?;
     clipboard(r).await?;
     clipboard_races(r).await?;
@@ -614,6 +615,8 @@ async fn blocked(r: &mut R) -> Option<()> {
     key("ctrl+z").await?;
     key("alt+f").await?;
     let menu_during = any_open();
+    key("F10").await?;
+    let bar_during = crate::menu::bar_has_focus();
     real("escape", at.0, at.1).await.ok()?;
     let canceled = wait_ms(2000, || {
         (crate::gizmo::GIZMO.with_borrow(|g| g.cancels) > cancels).then_some(())
@@ -623,10 +626,11 @@ async fn blocked(r: &mut R) -> Option<()> {
     settle().await;
     let after = doc_state().await;
     r.step(
-        "during a Move drag, Ctrl+S / Ctrl+Z / Alt+F do nothing; Escape still cancels the drag; the source is unchanged",
+        "during a Move drag, Ctrl+S / Ctrl+Z / Alt+F / F10 do nothing; Escape still cancels the drag; the source is unchanged",
         dragging
             && runs() == n
             && !menu_during
+            && !bar_during
             && canceled.is_some()
             && before.as_ref().map(|d| (d.revision, d.view_hash, d.dirty)) == after.as_ref().map(|d| (d.revision, d.view_hash, d.dirty)),
         format!("dragging {dragging} runs +{} menu {menu_during} canceled {}", runs() - n, canceled.is_some()),
@@ -635,6 +639,371 @@ async fn blocked(r: &mut R) -> Option<()> {
     // Save so the next block starts clean.
     crate::command::run(CommandId::FileSave);
     wait_ms(4000, || (!ui().dirty.get_untracked()).then_some(())).await?;
+    Some(())
+}
+
+thread_local! {
+    /// Smoke probe: the keys a menu bar control left to the window.
+    static REACHED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Two window keydown listeners that only record: the capture one notes a
+/// key whose target is in the menu bar (before any handler can close the
+/// menu and detach that target), the bubble one records it if it got there.
+/// They handle nothing: they show which keys the menu handlers let through
+/// to `command::on_window_keydown`.
+fn install_reach_probe() {
+    use wasm_bindgen::prelude::Closure;
+    thread_local! {
+        static ON: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        static PENDING: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    }
+    if ON.with(|o| o.replace(true)) {
+        return;
+    }
+    let Some(w) = web_sys::window() else { return };
+    let capture = Closure::<dyn Fn(KeyboardEvent)>::new(|ev: KeyboardEvent| {
+        let in_bar = ev
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            .is_some_and(|e| e.closest("#menubar").ok().flatten().is_some());
+        let k = ev.key();
+        let name = if ev.ctrl_key() && k != "Control" {
+            format!("Ctrl+{}", k.to_lowercase())
+        } else if ev.alt_key() && k != "Alt" {
+            format!("Alt+{}", k.to_lowercase())
+        } else {
+            k
+        };
+        PENDING.with_borrow_mut(|p| *p = in_bar.then_some(name));
+    });
+    let bubble = Closure::<dyn Fn(KeyboardEvent)>::new(|_: KeyboardEvent| {
+        if let Some(name) = PENDING.with_borrow_mut(Option::take) {
+            REACHED.with_borrow_mut(|r| r.push(name));
+        }
+    });
+    let opts = web_sys::AddEventListenerOptions::new();
+    opts.set_capture(true);
+    let _ = w.add_event_listener_with_callback_and_add_event_listener_options(
+        "keydown",
+        capture.as_ref().unchecked_ref(),
+        &opts,
+    );
+    let _ = w.add_event_listener_with_callback("keydown", bubble.as_ref().unchecked_ref());
+    capture.forget();
+    bubble.forget();
+}
+
+fn reached() -> Vec<String> {
+    REACHED.with_borrow_mut(std::mem::take)
+}
+
+fn source_selection() -> Option<(u32, u32)> {
+    let ta = textarea()?;
+    Some((ta.selection_start().ok()??, ta.selection_end().ok()??))
+}
+
+/// Select "Crate" in Source (the focus and the selection the menu keys
+/// must give back).
+fn select_crate() -> Option<(u32, u32)> {
+    let (a, b) = find("Crate")?;
+    select_source(a, b)?;
+    Some((a, b))
+}
+
+/// Same document, same selected node, same Source selection.
+fn same_state(x: &Option<DocState>, y: &Option<DocState>) -> bool {
+    let k = |d: &Option<DocState>| {
+        d.as_ref().map(|d| {
+            (
+                d.revision,
+                d.view_hash,
+                d.dirty,
+                d.selection,
+                d.selected.clone(),
+            )
+        })
+    };
+    x.is_some() && k(x) == k(y)
+}
+
+/// PR #143 review (#5484767419): keys the menu does not use reach the window
+/// listener. F10 / Alt toggle the bar from a bar button and from an open
+/// menu; shortcuts run once from menu focus and give the focus back.
+async fn menu_focus_keys(r: &mut R) -> Option<()> {
+    install_reach_probe();
+    menu_toggles(r, "").await?;
+    menu_shortcuts(r).await?;
+    menu_field_and_text_input(r).await?;
+    // The same toggles and a popup shortcut after a dock layout change.
+    choose("view", CommandId::ViewPresetModeling).await?;
+    ipc::sleep(300).await;
+    // Modeling puts Source in a tab group: show its tab first.
+    crate::command::run(CommandId::ViewFocusSource);
+    ipc::sleep(300).await;
+    menu_toggles(r, " (Modeling layout)").await?;
+    let (a, b) = select_crate()?;
+    type_edit("\n# menu focus edit L").await?;
+    select_source(a, b)?;
+    key("alt+f").await?;
+    let open = list_open("file");
+    let n = runs();
+    key("ctrl+s").await?;
+    let saved = wait_ms(4000, || (!ui().dirty.get_untracked()).then_some(())).await;
+    let focus = active_id();
+    r.step(
+        "after a layout change, Ctrl+S in an open File menu closes it and saves once; Source and its selection come back",
+        open && saved.is_some() && runs() == n + 1 && !any_open() && focus == "source" && source_selection() == Some((a, b)),
+        format!("open {open} runs +{} focus {focus} sel {:?}", runs() - n, source_selection()),
+    );
+    choose("view", CommandId::ViewPresetSource).await?;
+    ipc::sleep(300).await;
+    let _ = textarea()?.focus();
+    Some(())
+}
+
+/// F10 and Alt alone, twice, from Source; and from an open menu.
+async fn menu_toggles(r: &mut R, tag: &str) -> Option<()> {
+    let (a, b) = select_crate()?;
+    let start = active_id();
+    let before = doc_state().await;
+    let _ = reached();
+    key("F10").await?;
+    let f1 = active_id();
+    key("F10").await?;
+    let f2 = active_id();
+    let f2_sel = source_selection();
+    r.step(
+        &format!(
+            "F10 focuses the menu bar; F10 again restores the Source focus and selection{tag}"
+        ),
+        start == "source" && f1 == "menu-file" && f2 == "source" && f2_sel == Some((a, b)),
+        format!("{start} -> {f1} -> {f2} sel {f2_sel:?}"),
+    );
+    key("alt").await?;
+    let a1 = active_id();
+    key("alt").await?;
+    let a2 = active_id();
+    let a2_sel = source_selection();
+    r.step(
+        &format!("Alt alone focuses the menu bar; Alt again restores the Source focus and selection{tag}"),
+        a1 == "menu-file" && a2 == "source" && a2_sel == Some((a, b)),
+        format!("{a1} -> {a2} sel {a2_sel:?}"),
+    );
+    // From an open menu: F10 and Alt close it and give the focus back.
+    key("F10").await?;
+    key("Down").await?;
+    let p1 = list_open("file");
+    key("F10").await?;
+    let p1_back = (active_id(), any_open());
+    key("alt+e").await?;
+    let p2 = list_open("edit");
+    key("alt").await?;
+    let p2_back = (active_id(), any_open());
+    r.step(
+        &format!("in an open menu, F10 or Alt alone closes it and restores the Source focus and selection{tag}"),
+        p1 && p2
+            && p1_back == ("source".to_string(), false)
+            && p2_back == ("source".to_string(), false)
+            && source_selection() == Some((a, b)),
+        format!("{p1} {p1_back:?} {p2} {p2_back:?}"),
+    );
+    // Alt+letter from a focused bar button opens that menu.
+    key("F10").await?;
+    key("alt+v").await?;
+    let v = list_open("view");
+    key("Escape").await?;
+    key("Escape").await?;
+    let back = active_id();
+    let after = doc_state().await;
+    let seen = reached();
+    let nav_kept = !seen
+        .iter()
+        .any(|k| matches!(k.as_str(), "ArrowDown" | "Escape"));
+    r.step(
+        &format!("Alt+V on a focused bar button opens View; Escape twice restores Source; no document, node or selection change{tag}"),
+        v && back == "source" && same_state(&before, &after),
+        format!("view {v} focus {back} {}", st(&after)),
+    );
+    r.step(
+        &format!("the keys the menu does not use reach the window listener (F10, Alt, Alt+V); the keys it uses (Down, Escape) do not{tag}"),
+        seen.iter().filter(|k| *k == "F10").count() == 2
+            && seen.iter().filter(|k| *k == "Alt").count() == 3
+            && seen.iter().any(|k| k == "Alt+v")
+            && nav_kept,
+        format!("{seen:?}"),
+    );
+    Some(())
+}
+
+/// Registry shortcuts from a focused bar button and from an open menu:
+/// one run each, the popup closes first, the Source focus comes back.
+async fn menu_shortcuts(r: &mut R) -> Option<()> {
+    let _ = select_crate()?;
+    type_edit("\n# menu focus edit 1").await?;
+    let (a, b) = select_crate()?;
+    let _ = reached();
+    key("F10").await?;
+    let bar = active_id();
+    let n = runs();
+    key("ctrl+s").await?;
+    let saved = wait_ms(4000, || (!ui().dirty.get_untracked()).then_some(())).await;
+    let d = disk(FIXTURE).await?;
+    let s = snapshot().await?;
+    let focus = active_id();
+    r.step(
+        "Ctrl+S with the File button focused saves once (the file holds the document); the focus and selection return to Source",
+        bar == "menu-file"
+            && saved.is_some()
+            && runs() == n + 1
+            && d.text.as_deref() == Some(s.view.as_str())
+            && focus == "source"
+            && source_selection() == Some((a, b)),
+        format!("runs +{} focus {focus} sel {:?}", runs() - n, source_selection()),
+    );
+    type_edit("\n# menu focus edit 2").await?;
+    let (a, b) = select_crate()?;
+    // Node ids carry source offsets: take them after the edit.
+    let node0 = doc_state().await?.selected;
+    key("alt+f").await?;
+    let open = list_open("file");
+    let n = runs();
+    key("ctrl+s").await?;
+    let saved = wait_ms(4000, || (!ui().dirty.get_untracked()).then_some(())).await;
+    let focus = active_id();
+    r.step(
+        "Ctrl+S in an open File menu closes the menu, then saves once; the focus and selection return to Source",
+        open && saved.is_some() && runs() == n + 1 && !any_open() && focus == "source" && source_selection() == Some((a, b)),
+        format!("open {open} runs +{} focus {focus}", runs() - n),
+    );
+    let node1 = doc_state().await?.selected;
+    // Undo from a bar button, Redo from an open menu: one step each.
+    let s0 = snapshot().await?;
+    type_edit("\n# menu focus edit 3").await?;
+    let s1 = snapshot().await?;
+    select_crate()?;
+    key("F10").await?;
+    let n = runs();
+    key("ctrl+z").await?;
+    settle().await;
+    let s2 = snapshot().await?;
+    key("alt+e").await?;
+    key("ctrl+shift+z").await?;
+    settle().await;
+    let s3 = snapshot().await?;
+    let sync = in_sync().await;
+    r.step(
+        "Ctrl+Z from the File button undoes one step; Ctrl+Shift+Z from the open Edit menu redoes one step (2 runs, Rust == editor)",
+        runs() == n + 2
+            && s2.view == s0.view
+            && s2.can_redo
+            && s3.view == s1.view
+            && !any_open()
+            && active_id() == "source"
+            && sync.is_some_and(|s| s.1),
+        format!("runs +{} undo {} redo {}", runs() - n, s2.view == s0.view, s3.view == s1.view),
+    );
+    let seen = reached();
+    let shortcuts: Vec<&String> = seen
+        .iter()
+        .filter(|k| k.starts_with("Ctrl+") && *k != "Ctrl+shift")
+        .collect();
+    r.step(
+        "each shortcut reached the window once and ran once; Save from an open menu leaves the selected source node unchanged",
+        shortcuts == ["Ctrl+s", "Ctrl+s", "Ctrl+z", "Ctrl+z"] && node0.is_some() && node0 == node1,
+        format!("{seen:?} node {:?} -> {:?}", node0.as_deref(), node1.as_deref()),
+    );
+    crate::command::run(CommandId::FileSave);
+    wait_ms(4000, || (!ui().dirty.get_untracked()).then_some(())).await?;
+    Some(())
+}
+
+/// An Inspector field keeps Ctrl+Z when a menu takes the focus from it;
+/// AltGr and IME keys in the menu run nothing.
+async fn menu_field_and_text_input(r: &mut R) -> Option<()> {
+    type_edit("\n# menu focus edit 4").await?;
+    let input: web_sys::HtmlInputElement = wait_ms(4000, || {
+        el("#dock-panel-inspector input[type=text]").and_then(|e| e.dyn_into().ok())
+    })
+    .await?;
+    let _ = input.focus();
+    let v0 = input.value();
+    key("End").await?;
+    key("a").await?;
+    key("ctrl+z").await?;
+    let own0 = input.value();
+    key("End").await?;
+    key("a").await?;
+    key("b").await?;
+    let typed = input.value();
+    let s0 = snapshot().await?;
+    let n = runs();
+    key("F10").await?;
+    key("ctrl+z").await?;
+    key("ctrl+shift+z").await?;
+    key("alt+e").await?;
+    key("ctrl+z").await?;
+    key("Escape").await?;
+    key("Escape").await?;
+    settle().await;
+    let s1 = snapshot().await?;
+    let is_input = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.active_element())
+        .is_some_and(|e| e.is_same_node(Some(input.as_ref())));
+    let kept = input.value();
+    // The field's own history is still there.
+    key("ctrl+z").await?;
+    let own_undo = input.value();
+    r.step(
+        "from an Inspector field, Ctrl+Z / Ctrl+Shift+Z with the menu bar focused or the Edit menu open run no document history; the field keeps its text and its own Ctrl+Z",
+        typed.ends_with("ab")
+            && runs() == n
+            && s1.revision == s0.revision
+            && s1.view == s0.view
+            && is_input
+            && kept == typed
+            && (own0 == v0) == (own_undo != typed),
+        format!(
+            "runs +{} rev {} -> {} focus {is_input} · field undo before the menu {v0:?}+a -> {own0:?}, after {typed:?} -> {own_undo:?}",
+            runs() - n,
+            s0.revision,
+            s1.revision
+        ),
+    );
+    input.set_value(&v0);
+    // AltGr (Ctrl+Alt) and IME keys on a bar button and in an open menu.
+    let (a, b) = select_crate()?;
+    let before = doc_state().await;
+    let n = runs();
+    key("F10").await?;
+    key("ctrl+alt+s").await?;
+    key("ctrl+alt+z").await?;
+    synthetic("s", true, true);
+    synthetic("Process", true, false);
+    let bar_kept = active_id() == "menu-file";
+    key("Down").await?;
+    key("ctrl+alt+s").await?;
+    synthetic("s", true, true);
+    synthetic("Process", true, false);
+    let menu_kept = list_open("file");
+    key("Escape").await?;
+    key("Escape").await?;
+    settle().await;
+    let after = doc_state().await;
+    r.step(
+        "AltGr (Ctrl+Alt) and IME keys on a bar button or in an open menu run no command and change nothing (IME: synthetic)",
+        runs() == n
+            && bar_kept
+            && menu_kept
+            && active_id() == "source"
+            && source_selection() == Some((a, b))
+            && same_state(&before, &after),
+        format!("runs +{} bar {bar_kept} menu {menu_kept} {}", runs() - n, st(&after)),
+    );
+    crate::command::run(CommandId::FileSave);
+    wait_ms(4000, || (!ui().dirty.get_untracked()).then_some(())).await?;
+    let _ = textarea()?.focus();
     Some(())
 }
 
@@ -1357,6 +1726,47 @@ async fn quit(r: &mut R) -> Option<()> {
         "after a canceled Quit the recovery records are intact (byte hash unchanged)",
         !d1.is_empty() && d1 == d2 && d2 == d3,
         format!("{} records", d1.len()),
+    );
+    // PR #143 review: Ctrl+Q from a focused bar button and from an open menu.
+    let (a, b) = select_crate()?;
+    let before = doc_state().await;
+    let n = runs();
+    key("F10").await?;
+    key("ctrl+q").await?;
+    let mut asked4 = asked3;
+    for _ in 0..40 {
+        asked4 = disk(FIXTURE).await?.asked;
+        if asked4 > asked3 {
+            break;
+        }
+        ipc::sleep(100).await;
+    }
+    ipc::sleep(500).await;
+    key("alt+f").await?;
+    let open = list_open("file");
+    key("ctrl+q").await?;
+    let mut asked5 = asked4;
+    for _ in 0..40 {
+        asked5 = disk(FIXTURE).await?.asked;
+        if asked5 > asked4 {
+            break;
+        }
+        ipc::sleep(100).await;
+    }
+    ipc::sleep(500).await;
+    let after = doc_state().await;
+    let d4 = digest().await;
+    r.step(
+        "Ctrl+Q from a focused bar button and from an open File menu each run Quit once through the CloseGate; Cancel keeps the unsaved document, the selection and the recovery records",
+        asked4 == asked3 + 1
+            && asked5 == asked4 + 1
+            && open
+            && runs() == n + 2
+            && same_state(&before, &after)
+            && after.as_ref().is_some_and(|d| d.dirty)
+            && source_selection() == Some((a, b))
+            && d4 == d1,
+        format!("asked {asked3} -> {asked4} -> {asked5} runs +{} {}", runs() - n, st(&after)),
     );
     Some(())
 }

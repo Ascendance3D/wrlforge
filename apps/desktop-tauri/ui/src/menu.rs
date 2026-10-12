@@ -130,11 +130,23 @@ fn open_menu(i: usize, last: bool) {
 }
 
 /// Close the open menu; `refocus` gives the focus back to the control that
-/// had it before the menu bar took it.
+/// had it before the menu bar took it. With no such control the focus
+/// leaves the bar (F10 / Alt toggle off), it does not stay on a button.
 pub fn close(refocus: bool) {
     st().open.set(None);
-    if refocus {
+    if !refocus {
+        return;
+    }
+    if clipboard::last().is_some() {
         clipboard::restore_focus();
+    } else if bar_has_focus() {
+        if let Some(a) = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.active_element())
+            .and_then(|a| a.dyn_into::<HtmlElement>().ok())
+        {
+            let _ = a.blur();
+        }
     }
 }
 
@@ -143,7 +155,8 @@ fn focus_bar() {
     focus_el(&format!("menu-{}", menu_slug(&MENUS[0])));
 }
 
-fn bar_has_focus() -> bool {
+/// The focus is on a menu bar button or in an open menu.
+pub fn bar_has_focus() -> bool {
     let Some(a) = web_sys::window()
         .and_then(|w| w.document())
         .and_then(|d| d.active_element())
@@ -165,43 +178,55 @@ fn activate(id: CommandId) {
     command::run(id);
 }
 
+/// A key the menu handlers leave alone: a modified key (a shortcut, Alt+
+/// mnemonic, AltGr text) or an IME composition. It bubbles to the window.
+fn foreign_key(ev: &KeyboardEvent) -> bool {
+    ev.is_composing() || ev.ctrl_key() || ev.alt_key() || ev.meta_key()
+}
+
+/// Stop a key only when the menu used it (PR #143 review): every other key
+/// (F10, Alt, a shortcut) reaches the window listener.
+fn consume(ev: &KeyboardEvent, handled: bool) {
+    if handled {
+        ev.prevent_default();
+        ev.stop_propagation();
+    }
+}
+
 fn on_bar_button_key(i: usize, ev: KeyboardEvent) {
+    let handled = bar_button_key(i, &ev);
+    consume(&ev, handled);
+}
+
+/// A key on a menu bar button; true when the bar used it.
+fn bar_button_key(i: usize, ev: &KeyboardEvent) -> bool {
+    if foreign_key(ev) {
+        return false;
+    }
     let n = MENUS.len();
     match ev.key().as_str() {
-        "ArrowRight" => {
-            ev.prevent_default();
-            focus_el(&format!("menu-{}", menu_slug(&MENUS[(i + 1) % n])));
-        }
-        "ArrowLeft" => {
-            ev.prevent_default();
-            focus_el(&format!("menu-{}", menu_slug(&MENUS[(i + n - 1) % n])));
-        }
-        "Home" => {
-            ev.prevent_default();
-            focus_el(&format!("menu-{}", menu_slug(&MENUS[0])));
-        }
-        "End" => {
-            ev.prevent_default();
-            focus_el(&format!("menu-{}", menu_slug(&MENUS[n - 1])));
-        }
-        "ArrowDown" | "Enter" | " " => {
-            ev.prevent_default();
-            open_menu(i, false);
-        }
-        "ArrowUp" => {
-            ev.prevent_default();
-            open_menu(i, true);
-        }
-        "Escape" => {
-            ev.prevent_default();
-            close(true);
-        }
-        _ => {}
+        "ArrowRight" => focus_el(&format!("menu-{}", menu_slug(&MENUS[(i + 1) % n]))),
+        "ArrowLeft" => focus_el(&format!("menu-{}", menu_slug(&MENUS[(i + n - 1) % n]))),
+        "Home" => focus_el(&format!("menu-{}", menu_slug(&MENUS[0]))),
+        "End" => focus_el(&format!("menu-{}", menu_slug(&MENUS[n - 1]))),
+        "ArrowDown" | "Enter" | " " => open_menu(i, false),
+        "ArrowUp" => open_menu(i, true),
+        "Escape" => close(true),
+        _ => return false,
     }
-    ev.stop_propagation();
+    true
 }
 
 fn on_list_key(i: usize, ev: KeyboardEvent) {
+    let handled = list_key(i, &ev);
+    consume(&ev, handled);
+}
+
+/// A key in an open menu; true when the menu used it.
+fn list_key(i: usize, ev: &KeyboardEvent) -> bool {
+    if foreign_key(ev) {
+        return false;
+    }
     let it = items(i);
     let n = it.len();
     let cur = ev
@@ -215,20 +240,17 @@ fn on_list_key(i: usize, ev: KeyboardEvent) {
     };
     let m = MENUS.len();
     match ev.key().as_str() {
-        "ArrowDown" if n > 0 => go(cur.map_or(0, |c| (c + 1) % n)),
-        "ArrowUp" if n > 0 => go(cur.map_or(n - 1, |c| (c + n - 1) % n)),
-        "Home" if n > 0 => go(0),
-        "End" if n > 0 => go(n - 1),
+        "ArrowDown" => go(cur.map_or(0, |c| (c + 1) % n.max(1))),
+        "ArrowUp" => go(cur.map_or(n.saturating_sub(1), |c| (c + n - 1) % n)),
+        "Home" => go(0),
+        "End" => go(n.saturating_sub(1)),
         "ArrowRight" => open_menu((i + 1) % m, false),
         "ArrowLeft" => open_menu((i + m - 1) % m, false),
         "Escape" => {
             close(false);
             focus_el(&format!("menu-{}", menu_slug(&MENUS[i])));
         }
-        "Tab" => {
-            close(true);
-            ev.prevent_default();
-        }
+        "Tab" => close(true),
         "Enter" | " " => {
             if let Some(id) = cur
                 .and_then(|c| it.get(c))
@@ -238,13 +260,9 @@ fn on_list_key(i: usize, ev: KeyboardEvent) {
                 activate(id);
             }
         }
-        _ => {
-            ev.stop_propagation();
-            return;
-        }
+        _ => return false,
     }
-    ev.prevent_default();
-    ev.stop_propagation();
+    true
 }
 
 fn label_with_mnemonic(m: &MenuDef) -> impl IntoView {
@@ -402,6 +420,10 @@ pub fn MenuBar() -> impl IntoView {
 
 /// Window listeners: the focus record, the one shortcut handler, F10 / Alt
 /// menu access, and closing on an outside press or window blur.
+///
+/// The bar's own key handlers stop only the keys they use (arrows, Home,
+/// End, Enter, Space, Escape, Tab). F10, Alt, Alt+letter and the shortcuts
+/// reach this listener from a bar button and from an open menu.
 pub fn install() {
     let Some(w) = web_sys::window() else { return };
     let Some(doc) = w.document() else { return };
