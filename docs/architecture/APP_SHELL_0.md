@@ -208,7 +208,7 @@ This section is a contract. It is not implemented in this lane.
 | `panel.inspector` | Inspector | 260 × 160 | yes | |
 | `panel.diagnostics` | Diagnostics | 260 × 100 | yes | |
 
-Panel IDs are stable strings, and persisted layouts use only these IDs. An unknown ID in a saved layout is dropped, and the layout stays valid.
+Panel IDs are stable strings, and persisted layouts use only these IDs. An unknown ID in a saved layout is dropped. The tree is then normalized and validated as a whole (§4.2.1). If the result is not valid, the preset is used instead and a notice appears.
 
 The Viewport and the Source cannot close. A Source panel must exist because it holds keyboard focus for editing. A Viewport panel must exist so that the gizmo and pick state stay valid.
 
@@ -223,8 +223,45 @@ TabGroup = { panels: [PanelId], active: PanelId }
 
 - A split has at least two children, and each `sizes` value is a fraction of the parent.
 - A size never makes a panel smaller than its minimum. On a window resize, the layout reduces the largest neighbor first.
-- A tab group has at least one panel. Each panel appears exactly once in the tree.
+- A tab group has at least one panel. Each **visible** panel appears exactly once in the tree.
 - A hidden (closed) panel is not in the tree. **View → Panels** puts it back in its preset position.
+- The Viewport and the Source are always visible, so they are always in the tree.
+
+*Correction (STACK-REVIEW-1, PR #141 review r4242710866):* the first version
+said that each panel appears exactly once. A closed Scene Tree, Inspector or
+Diagnostics panel is not in the tree, so the rule applies to visible panels.
+
+#### 4.2.1 Loading a saved layout (as built in UI-DOCK-1)
+
+*Added in STACK-REVIEW-1 (PR #141 review r4242710854).* `Layout::from_wire`
+(`apps/desktop-tauri/protocol/src/layout.rs`) reads a saved layout in this
+order. Each step is deterministic.
+
+1. **Refuse the shape as written.** A wrong version, an unknown preset, an
+   unknown split axis, more than 6 levels or 24 nodes, a split with fewer
+   than two children, a wrong size count, a size that is not finite or is
+   outside 0.02–1.0, sizes that do not sum to 1 (±0.001), an empty tab
+   group, an `active` that is not in its group, or a known panel twice: the
+   layout is refused. Nothing is repaired.
+2. **Drop unknown panel IDs.** An unknown ID is removed from its tab group
+   and named in the returned list. If the group's `active` was unknown, the
+   first remaining panel of the group becomes active.
+3. **Remove empty groups.** A group with no known panel left is removed,
+   with its size entry.
+4. **Collapse splits.** A split with no child left is removed. A split with
+   one child left is replaced by that child. A child split with the same
+   axis as its parent is merged into the parent (its sizes are multiplied
+   by its share).
+5. **Renormalize sizes.** The remaining sizes are scaled to sum to 1, each
+   is raised to at least 0.03, and they are scaled to 1 again.
+6. **Validate the result as a whole.** The step-1 rules run again, and the
+   Viewport and the Source must both be present. An empty tree counts as a
+   missing Source.
+
+If any step refuses, the UI uses the `preset.source` layout and shows a
+notice with the reason (`dock::load`). A bad layout never blocks startup.
+Sizes are only proportions: minimum panel sizes are applied when the tree
+is solved (`layout::solve`), not when it is loaded.
 
 ### 4.3 Persistence
 
@@ -282,13 +319,13 @@ This section is a contract. It is not implemented in this lane.
 | File | Save As… | `file.saveAs` | registry |
 | File | Reload from Disk | `file.reload` | registry |
 | File | Close | `file.close` | registry |
-| File | Quit | `app.quit` | direct (window close + CloseGate) |
+| File | Quit | `app.quit` | direct (window close + CloseGate) — *as built in UI-MENU-1: registered, see below* |
 | Edit | Undo | `edit.undo` | registry |
 | Edit | Redo | `edit.redo` | registry |
 | Edit | Cut / Copy / Paste / Select All | `edit.cut` … `edit.selectAll` | native → register |
 | Edit | Find… / Replace… / Go to Line… | `edit.find`, `edit.replace`, `edit.goToLine` | missing (disabled) |
 | Edit | Delete Node / Duplicate Node | `edit.deleteNode`, `edit.duplicateNode` | missing (disabled) |
-| View | Theme ▸ (5 themes) | `view.theme` | direct → register |
+| View | Theme ▸ (5 themes) | `view.theme` | direct → register — *as built: three commands, see below* |
 | View | Live Preview | `view.livePreview` | direct → register |
 | View | Update Preview | `view.updatePreview` | direct → register |
 | View | Panels ▸ Scene Tree / Inspector / Diagnostics | `view.panel.*` | UI-DOCK-1 |
@@ -302,6 +339,30 @@ This section is a contract. It is not implemented in this lane.
 | Help | Keyboard Shortcuts | `help.shortcuts` | missing (disabled) |
 | Help | Licenses | `help.licenses` | missing (disabled) |
 | Help | About WRL Forge | `help.about` | registry |
+
+*As built (STACK-REVIEW-1, PR #141 reviews r4242710880 and r4242710895).*
+The two rows above were planning text. UI-MENU-1 implemented them as
+follows; the registry in `apps/desktop-tauri/protocol/src/command.rs` is the
+authority.
+
+- **Quit** is the registered command `app.quit` (`CommandId::AppQuit`,
+  File menu, Ctrl+Q / ⌘Q). It runs through `command::run`, which calls the
+  `app_quit` backend command. The close goes through the same CloseGate as
+  the title-bar button, so unsaved work is asked about and Cancel keeps the
+  application. On macOS, Quit and About are in the native application menu
+  (`MAC_APP_MENU`). Their `menu-command` event is validated with
+  `CommandId::from_native_menu` and run through `command::run`. No menu item
+  bypasses the registry.
+- **Theme** has one command per theme, so `command::run(CommandId)` needs
+  no parameter. There are three themes, not five:
+
+  | command ID | `CommandId` | theme |
+  |---|---|---|
+  | `view.theme.tokyoNight` | `ViewThemeTokyoNight` | `tokyo-night` |
+  | `view.theme.tokyoNightStorm` | `ViewThemeTokyoNightStorm` | `tokyo-night-storm` |
+  | `view.theme.tokyoNightLight` | `ViewThemeTokyoNightLight` | `tokyo-night-light` |
+
+  The checked item comes from `Check::Theme`.
 
 "direct → register" means that the item exists, but it must move into the registry before it gets a menu item.
 

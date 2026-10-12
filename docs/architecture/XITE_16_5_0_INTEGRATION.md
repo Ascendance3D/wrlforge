@@ -28,8 +28,15 @@ still ships X_ITE **15.1.10**. Both apps share one picking adapter.
 The 129 shipped files in the npm tarball are byte-identical to the same
 files in the `dist/` committed at the tag. The XITE-16-UPGRADE-1 manifest
 (`xite-16.5.0-dist.sha256`, 136 files) also lists 7 files that WRL Forge
-never ships: `x_ite.js`, `x_ite.mjs`, `x_ite.min.mjs`, `x_ite.d.ts`,
-`example.html`, `X3DUOM.xml`. X_ITE was not rebuilt from source.
+never ships: `X3DUOM.xml`, `example.html`, `x_ite.d.ts`, `x_ite.js`,
+`x_ite.min.mjs`, `x_ite.mjs`, and `x_ite.zip`. X_ITE was not rebuilt from
+source.
+
+*Correction (STACK-REVIEW-1, PR #140 review r4242714080):* the first version
+of this record listed only six of the seven files; `x_ite.zip` was missing.
+The list above comes from a name-by-name comparison of the two manifests:
+136 − 129 = 7 excluded files, 0 shipped files absent from the 136-file
+manifest, and 0 SHA-256 differences for the 129 shared names.
 
 ## 2. How the Tauri build obtains X_ITE
 
@@ -51,9 +58,19 @@ apps/desktop-tauri/
    `target/xite/16.5.0/` (gitignored) and verifies the copy.
 3. `fetch-xite.sh --verify` runs on **every** dist, also one given by
    `X_ITE_DIST`. It refuses (exit 4) a package version that is not exactly
-   `16.5.0`. It refuses (exit 5) a missing file, a changed byte, or a symlink.
-4. `build-ui.sh` refuses (exit 4) when the pick adapter does not list the
-   pinned version or the gizmo adapter is not pinned to it.
+   `16.5.0`, a symlinked dist directory, or a symlinked `package.json`. It
+   refuses (exit 5) a missing file, a changed byte, or a symlink in **any**
+   component of a manifest path (STACK-REVIEW-1; the first version checked
+   only the last component). It refuses (exit 2) a manifest line that is not
+   `<64 hex> <relative path>` or whose path has an empty, `.` or `..`
+   component. The fetch copies with `cp -P`, so a link stays a link and fails.
+4. `build-ui.sh` runs `check-xite-adapters.sh`, which refuses (exit 4) when
+   the one real `const XITE_VERSIONS = Object.freeze([...]);` declaration of
+   the pick adapter does not list the pinned version as an exact element, or
+   the one real `var XITE_VERSION = '...';` line of the gizmo adapter is not
+   the pinned version. A version in a comment, a trailing comment or another
+   string does not count (STACK-REVIEW-1; the first version searched the
+   whole file). `test-xite-guards.sh` runs 28 offline cases for 3 and 4.
 5. `build-ui.sh` copies only the manifest files into `dist/vendor/x_ite/`.
    An extra file in a fuller `X_ITE_DIST` is never embedded.
 
@@ -189,7 +206,28 @@ Rust resource logs are unchanged from XITE-16-UPGRADE-1.
 
 ## 7. Regression results (Linux x64, exact commit)
 
-All runs used commit `18c2fcf` in a clean, detached verification worktree.
+*Correction (STACK-REVIEW-1, PR #140 review r4242714093):* the first version
+of this sentence said that all runs used `18c2fcf`, while the PR named
+`c23646b`. The evidence (`.qa/wrlforge/xite-16-upgrade-2/`, internal) holds
+two full sets, one per commit. `c23646b` only adds this document, and the
+debug and release binaries are byte-identical at both commits.
+
+| run | `18c2fcf` (implementation) | `c23646b` (final) |
+|---|---|---|
+| `cargo test` desktop, crates, workspace | yes (`logs/verify-*`) | yes (`logs/final-*`) |
+| `npm run check` | yes (`logs/verify-npm-check.log`) | yes (`logs/final-npm-check.log`) |
+| GUI: create, extrusion, move, rotate/scale, texture, pick, recovery | yes (`results/dev-18c2fcf/`) | yes (`results/final-c23646b/`) |
+| file and Inspector smoke, 58 fixtures | yes | yes; identical per file |
+| Linux packages | yes (`logs/verify-package-A.log`; SHA-256 below) | yes (`logs/final-package.log`; `.deb` `a355a4bc…`, AppImage `a232e8f3…`) |
+| packaged-binary runs (`strace`) | yes (`pkgrun/dev-18c2fcf/`) | yes (`pkgrun/final-c23646b/`) |
+
+Per-file and per-suite verdicts are identical at both commits (pick and
+recovery differ only in temporary paths). The unprefixed logs
+`cargo-test-*.log`, `npm-check.log` and `pkgrun.txt` do not record a commit;
+they are not used as evidence for either SHA. The table below gives the
+results, which are the same for both commits.
+
+Each set ran in a clean, detached verification worktree.
 `build-ui.sh` fetched X_ITE from scratch there. The tests used temporary
 copies of the 58 XITE-16-UPGRADE-1 fixtures and Xvfb (software rendering).
 Each GUI run had its own `xvfb-run -a` display and `/tmp` directory.
@@ -285,7 +323,8 @@ download, HTTPS only, and checked against the pinned SHA-256.
 A Linux pass does not prove Windows or macOS behavior.
 
 **Linux packages** (`packaging/package-linux.sh`, unchanged process, commit
-`18c2fcf`; not published):
+`18c2fcf`; not published; the `c23646b` packages are `.deb` `a355a4bc…` and
+AppImage `a232e8f3…`, same sizes and the same payload):
 
 | artifact | SHA-256 |
 |---|---|
