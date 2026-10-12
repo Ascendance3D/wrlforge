@@ -12,8 +12,10 @@ use crate::ipc::{self, call, Session};
 use crate::ui::{self, ui};
 
 mod create;
+mod dock;
 mod extrusion;
 mod gizmo;
+mod menu;
 mod pick;
 mod recovery;
 mod rotscale;
@@ -105,6 +107,44 @@ pub async fn run(plan: p::SmokePlan) {
     .await;
 }
 
+/// UI-DOCK-1: the docking smoke phases (`smoke_dock_plan`).
+pub use dock::Plan as DockPlan;
+
+pub async fn run_dock(plan: DockPlan) {
+    let mut r = R(vec![]);
+    if dock::run(&plan, &mut r).await.is_none() {
+        r.step(
+            "smoke script ran to completion",
+            false,
+            "a required DOM element or reply was missing",
+        );
+    }
+    let _ = call::<()>(
+        "smoke_finish",
+        serde_json::json!({ "report": p::SmokeReport { steps: r.0 } }),
+    )
+    .await;
+}
+
+/// UI-MENU-1: the menu smoke (`smoke_menu_plan`).
+pub use menu::Plan as MenuPlan;
+
+pub async fn run_menu(plan: MenuPlan) {
+    let mut r = R(vec![]);
+    if menu::run(&plan, &mut r).await.is_none() {
+        r.step(
+            "smoke script ran to completion",
+            false,
+            "a required DOM element or reply was missing",
+        );
+    }
+    let _ = call::<()>(
+        "smoke_finish",
+        serde_json::json!({ "report": p::SmokeReport { steps: r.0 } }),
+    )
+    .await;
+}
+
 /// RUST-STAB-1: the recovery smoke phases (`smoke_recovery_plan`).
 pub use recovery::Plan as RecoveryPlan;
 
@@ -122,6 +162,76 @@ pub async fn run_recovery(plan: recovery::Plan) {
         serde_json::json!({ "report": p::SmokeReport { steps: r.0 } }),
     )
     .await;
+}
+
+/// APP-SHELL-0: identity, About and the registry wiring of the toolbar.
+async fn app_shell_steps(r: &mut R) -> Option<()> {
+    use wrlforge_desktop_protocol::command::{self as c, CommandId};
+    let identity = crate::element_by_id::<HtmlElement>("app-identity")?.inner_text();
+    r.step(
+        "APP-SHELL-0: toolbar shows the application identity",
+        identity == "WRL Forge 1.4.5 (Beta)" && identity == c::app_display_name(),
+        identity.clone(),
+    );
+    let wired = [
+        ("btn-new", CommandId::FileNewWorld),
+        ("btn-open", CommandId::FileOpen),
+        ("btn-save", CommandId::FileSave),
+        ("btn-save-as", CommandId::FileSaveAs),
+        ("btn-close", CommandId::FileClose),
+        ("btn-undo", CommandId::EditUndo),
+        ("btn-redo", CommandId::EditRedo),
+        ("btn-about", CommandId::HelpAbout),
+    ];
+    let bad: Vec<&str> = wired
+        .iter()
+        .filter(|(id, cmd)| {
+            crate::element_by_id::<HtmlElement>(id)
+                .and_then(|e| e.get_attribute("data-command"))
+                .as_deref()
+                != Some(cmd.key())
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    r.step(
+        "APP-SHELL-0: every File / Edit / About button runs a registry command",
+        bad.is_empty(),
+        format!("unwired: {bad:?}"),
+    );
+    let info = call::<c::AppInfo>("app_info", ipc::NoArgs {}).await.ok()?;
+    r.step(
+        "APP-SHELL-0: backend reports 1.4.5 Beta, package 1.4.5, X_ITE 16.5.0 default renderer",
+        info.version == "1.4.5"
+            && info.config_version == "1.4.5"
+            && info.channel == "Beta"
+            && info.display == identity
+            && info.renderer == "X_ITE 16.5.0"
+            && info.identifier == "org.ascendance3d.wrlforge.tauri",
+        format!("{info:?}"),
+    );
+    click("btn-about")?;
+    let shown = wait_for(|| {
+        crate::element_by_id::<HtmlElement>("about-identity").map(|e| e.inner_text())
+    })
+    .await;
+    let facts = crate::element_by_id::<HtmlElement>("about-facts")
+        .map(|e| e.inner_text())
+        .unwrap_or_default();
+    r.step(
+        "APP-SHELL-0: About shows WRL Forge 1.4.5 (Beta) and X_ITE 16.5.0, no mismatch",
+        shown.as_deref() == Some("WRL Forge 1.4.5 (Beta)")
+            && facts.contains("X_ITE 16.5.0")
+            && !facts.contains("mismatch"),
+        facts.replace('\n', " · "),
+    );
+    click("about-close")?;
+    ipc::sleep(50).await;
+    r.step(
+        "APP-SHELL-0: About closes",
+        crate::element_by_id::<HtmlElement>("about-dialog").is_none(),
+        "",
+    );
+    Some(())
 }
 
 async fn run_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
@@ -192,6 +302,19 @@ async fn run_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
         ta.value() == edited && snap.view == edited && snap.dirty,
         "",
     );
+
+    // APP-SHELL-0: Ctrl+Y (the registry's second Redo binding) after an undo.
+    key("z", false);
+    settle().await;
+    key("y", false);
+    settle().await;
+    let snap = snapshot().await?;
+    r.step(
+        "APP-SHELL-0: Ctrl+Z then Ctrl+Y returns the edit through the registry",
+        ta.value() == edited && snap.view == edited && snap.dirty,
+        format!("rev {}", snap.revision),
+    );
+    app_shell_steps(r).await?;
 
     if let Some(t) = &plan.theme {
         theme_steps(t, plan.expect_preview, r).await?;
@@ -280,6 +403,81 @@ async fn run_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
     if !r.step("Scene Tree items rendered in the DOM", first.is_some(), "") {
         return None;
     }
+    // RUST-STAB-2A: the tree DOM carries the scope graph's answers, and no
+    // uncertain reference carries a target.
+    {
+        let a = ui().analysis.get_untracked()?;
+        let doc = web_sys::window()?.document()?;
+        let mut bad = Vec::new();
+        let refs: Vec<_> = a.items.iter().filter(|i| !i.refs.is_empty()).collect();
+        for it in &refs {
+            let want = it
+                .refs
+                .iter()
+                .map(|r| format!("{}:{}:{}", r.role, r.status, r.reason))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let got = doc
+                .query_selector(&format!("[data-id=\"{}\"]", it.id))
+                .ok()
+                .flatten()
+                .and_then(|e| e.get_attribute("data-ref"));
+            if got.as_deref() != Some(want.as_str()) {
+                bad.push(format!("{} dom {got:?}", it.id));
+            }
+            if it
+                .refs
+                .iter()
+                .any(|r| r.class != "proven" && r.target.is_some())
+            {
+                bad.push(format!("{} uncertain target", it.id));
+            }
+        }
+        let advisory = a.scope_diagnostics.iter().all(|d| d.severity != "error");
+        r.step(
+            "Scene Tree shows lexical scope answers; uncertain ones carry no target",
+            a.resolution_scope == "lexical" && bad.is_empty() && advisory,
+            format!(
+                "{} reference items, {} scope findings, problems {bad:?}",
+                refs.len(),
+                a.scope_diagnostics.len()
+            ),
+        );
+        // RUST-STAB-2B: typed answers reach the tree DOM unchanged, and the
+        // Diagnostics scope list shows THIS revision's findings.
+        let mut bad = Vec::new();
+        let typed: Vec<_> = a.items.iter().filter(|i| i.typed.is_some()).collect();
+        for it in &typed {
+            let t = it.typed.as_ref()?;
+            let want = format!("{}:{}:{}", t.subject, t.status, t.reason);
+            let got = doc
+                .query_selector(&format!("[data-id=\"{}\"]", it.id))
+                .ok()
+                .flatten()
+                .and_then(|e| e.get_attribute("data-typed"));
+            if got.as_deref() != Some(want.as_str()) {
+                bad.push(format!("{} dom {got:?}", it.id));
+            }
+        }
+        let shown = doc
+            .query_selector_all("#diag-scope li[data-code]")
+            .map(|l| l.length() as usize)
+            .unwrap_or(0);
+        let panel_rev = doc
+            .get_element_by_id("diag-scope")
+            .and_then(|e| e.get_attribute("data-revision"));
+        let want_shown = a.scope_diagnostics.len().min(200);
+        let rev_ok = want_shown == 0 || panel_rev == Some(a.revision.to_string());
+        r.step(
+            "Scene Tree typed answers and Diagnostics scope findings match the analysis",
+            bad.is_empty() && shown == want_shown && rev_ok,
+            format!(
+                "{} typed items, {shown}/{want_shown} findings shown, panel rev {panel_rev:?}, codes {:?}, problems {bad:?}",
+                typed.len(),
+                a.scope_diagnostics.iter().map(|d| d.code.as_str()).collect::<Vec<_>>()
+            ),
+        );
+    }
     let first: HtmlElement = first?.dyn_into().ok()?;
     let item = ui().analysis.get_untracked()?.items.first()?.clone();
     first.click();
@@ -321,8 +519,40 @@ async fn run_steps(plan: &p::SmokePlan, r: &mut R) -> Option<()> {
         r.step(
             "X_ITE preview loaded the unsaved buffer",
             status.contains("loaded:"),
-            status,
+            status.clone(),
         );
+        // XITE-16-UPGRADE-2: the ROUTE notice is shown exactly when Rust
+        // proved an invalid ROUTE in the revision on screen, and each one is
+        // also a scope finding on that line in this revision's analysis.
+        if status.contains("loaded:") {
+            let routes = ui().route_warnings.get_untracked();
+            let el = doc_el().and_then(|d| d.get_element_by_id("route-warning"));
+            let shown = el.as_ref().is_some_and(|e| !e.has_attribute("hidden"));
+            let text = el.and_then(|e| e.text_content()).unwrap_or_default();
+            let a = ui().analysis.get_untracked();
+            let backed = routes.iter().all(|w| {
+                a.as_ref().is_some_and(|a| {
+                    a.scope_diagnostics
+                        .iter()
+                        .any(|d| d.line >= w.line && w.detail.starts_with(&format!("{}: ", d.code)))
+                })
+            });
+            let ok = shown == !routes.is_empty()
+                && backed
+                && (routes.is_empty()
+                    || text.contains(
+                        "The preview may be incomplete because one or more ROUTEs are invalid.",
+                    ));
+            r.step(
+                "ROUTE notice matches the Rust-proven invalid ROUTEs",
+                ok,
+                format!(
+                    "route_warnings {} shown {shown} backed {backed} lines {:?}",
+                    routes.len(),
+                    routes.iter().map(|w| w.line).collect::<Vec<_>>()
+                ),
+            );
+        }
     }
     syntax::reload_steps(r).await?;
     Some(())

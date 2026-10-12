@@ -22,6 +22,7 @@ pub mod node_schema;
 pub mod parser;
 pub mod pick;
 pub mod scene;
+pub mod scope;
 pub mod tokenizer;
 
 pub use parser::{parse, parse_with, Limits, ParseResult};

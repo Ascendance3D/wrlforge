@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # PKG-LINUX-1: build the Linux AppImage and Debian package.
-#   1. Leptos UI -> release Wasm -> dist/ (with X_ITE 15.1.10), via build-ui.sh
+#   1. Leptos UI -> release Wasm -> dist/ (with the X_ITE in xite/PIN, 16.5.0), via build-ui.sh
 #   2. Stage license texts into target/pkg-licenses/ (bundled as resources)
 #   3. cargo tauri build --bundles deb,appimage (release backend; dist/ is
 #      embedded in the binary, so the installed app needs no repository files)

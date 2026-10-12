@@ -47,10 +47,10 @@ workspace; `crates/Cargo.lock` gained only their two path entries.
 |---|---|---|---|
 | `src/vrml/tokenizer.js` | `wrlforge-vrml::tokenizer` | MIGRATED | Trivia arrays not kept (no consumer). Positions are `u32`. A leading U+FEFF is signature trivia (Migration-2; deliberate difference, see notes). |
 | `src/vrml/parser.js`, `ast.js`, `diagnostics.js` (syntax codes) | `wrlforge-vrml::{parser, ast, diagnostics}` | MIGRATED | Parity: 673/673 files identical (65 fixtures + 608 `new-items/item-categories`). |
-| `src/vrml/scene-tree.js` | `wrlforge-vrml::scene::build_scene_tree` | PARTIAL | Same inclusion rules and id format; no PROTO-instance flags, no read-only map API, flat USE scope only. |
+| `src/vrml/scene-tree.js` | `wrlforge-vrml::scene::{build_scene_tree, build_scene_tree_scoped}` | PARTIAL | Same inclusion rules and id format; no PROTO-instance flags, no read-only map API. The flat USE scope is **resolved** (RUST-STAB-2A): USE and ROUTE node names come from the lexical scope graph. ROUTE items carry a typed verdict and PROTO-instance nodes a type answer (RUST-STAB-2B, `SceneItem::typed`). |
 | inspector read side (`presentation.js`, `interface-query.js`) | `wrlforge-vrml::scene::inspect` + `field_edit::inspect_node_fields` | PARTIAL | Node items show schema-typed field descriptors; no messages catalog. |
-| `src/vrml/analyze.js` (VRML040–044) | — | PENDING | Advisory semantic diagnostics not ported. |
-| `src/vrml/symbols.js`, `scope-graph.js` (WD1.5) | — | PENDING | Largest remaining port (~4,600 lines). |
+| `src/vrml/analyze.js` (VRML040–044) | `wrlforge-vrml::scope` advisories `SCOPE001`–`SCOPE010` (RUST-STAB-2A) and `SCOPE101`–`SCOPE131` (RUST-STAB-2B) | PARTIAL | Not a port: scope-correct DEF/USE and ROUTE-node findings replace the flat VRML041–043 meaning. Duplicate DEF is `info` (valid VRML97). Typed ROUTE event/direction/type, `IS`, and node-type findings added in RUST-STAB-2B. No duplicate-ROUTE check (VRML044). |
+| `src/vrml/symbols.js`, `scope-graph.js` (WD1.5) | `wrlforge-vrml::scope` (RUST-STAB-2A) + `scope::typed` (RUST-STAB-2B) | BUILT (read-only, advisory) | DEF/USE (P1), PROTO/EXTERNPROTO type names (P2A), interface members and `IS` (P2B), and ROUTE nodes, events, directions and types (P2C) built from the standard. Not a port; no consumer API (WD1.6) yet. EXTERNPROTO URLs and Inline files are not loaded. See [RUST_STAB_2A_SCOPE](RUST_STAB_2A_SCOPE.md) and [RUST_STAB_2B_TYPED_REFERENCES](RUST_STAB_2B_TYPED_REFERENCES.md). |
 | `src/vrml/edit.js` (WD1.2) | `wrlforge-text::edit` (RUST-1) | MIGRATED | Used by `wrlforge-document` for every edit. |
 | `src/vrml/source-map.js` | `wrlforge-text` offsets + `ViewMap` | PARTIAL | Offset↔token lookup not exposed. |
 | `src/vrml/node-identity.js`, `document-transaction.js` (WD1.4) | span proof in `field_edit` + `wrlforge-document::{apply_source_transaction, map_span}` | PARTIAL | Edits require exactly one node at the exact span of the current revision, re-proved after re-parse. Selections survive undo/redo only through exact change mapping. No Tier-2 DEF identity. |
@@ -78,7 +78,7 @@ workspace; `crates/Cargo.lock` gained only their two path entries.
 | `src/preview/texture-base.js` (relative textures) | `src-tauri/src/resources.rs` | PORTED (TEXTURE-LOCAL-1) | Read-only `wrlres` scheme; per-generation token bound to the Rust session; image files inside the document folder only; 32 MiB cap; static `ImageTexture` URL check → preview warnings. |
 | `src/preview/buffer-overlay.js`, `mall-preview-bridge.js`, `world-preview-bridge.js`, `url-policy.js` | — | PENDING | Preview receives text plus a Rust-issued resource base; `Inline`/movie/audio resources are not served; CSP blocks remote origins. |
 | `fit-math.js`, `extrusion-bounds.js`, `bbox-traversal.js`, `guides.js`, `viewpoint-preserve.js` | — | PENDING | Mall Fit preview not ported. |
-| X_ITE 15.1.10 (renderer) | `ui/static/preview-adapter.js` (JS) | KEPT | X_ITE 15.1.10 is the default renderer. An experimental native wgpu renderer exists behind an opt-in test switch (NATIVE_RENDER_1, see [NATIVE_RENDER_1](NATIVE_RENDER_1.md)) and is disabled by default. |
+| X_ITE 16.5.0 (renderer; 15.1.10 before XITE-16-UPGRADE-2) | `ui/static/preview-adapter.js` (JS) | KEPT | X_ITE 16.5.0 is the default renderer ([XITE_16_5_0_INTEGRATION](XITE_16_5_0_INTEGRATION.md)). An experimental native wgpu renderer exists behind an opt-in test switch (NATIVE_RENDER_1, see [NATIVE_RENDER_1](NATIVE_RENDER_1.md)) and is disabled by default. |
 | `validator.js`, `src/mall/*` | — | PENDING | Mall Item profile (80 KiB cap, rules, repack) not ported. `safe_save` already has the `max_bytes` ceiling. |
 | `src/world-project/*` | — | PENDING | Scanner, asset graph, preview scheme, ZIP bundle not ported (`zip-writer` should use `flate2`). |
 | `src/external-proto/*`, `src/proto-resolution/*`, `src/proto-enrichment/*` | — | PENDING | |
@@ -89,9 +89,9 @@ workspace; `crates/Cargo.lock` gained only their two path entries.
 
 | item | why | removal path |
 |---|---|---|
-| X_ITE 15.1.10 (`vendor/x_ite`, MIT) | It is the default 3D renderer and is written in JavaScript. | X_ITE remains the default renderer. The Rust (wgpu) renderer is experimental and disabled by default (see [NATIVE_RENDER_1](NATIVE_RENDER_1.md)). No X_ITE removal is planned. |
+| X_ITE 16.5.0 (`vendor/x_ite`, MIT; was 15.1.10) | It is the default 3D renderer and is written in JavaScript. | X_ITE remains the default renderer. The Rust (wgpu) renderer is experimental and disabled by default (see [NATIVE_RENDER_1](NATIVE_RENDER_1.md)). No X_ITE removal is planned. |
 | `preview-adapter.js` (~150 lines, handwritten) | The narrow bridge from Rust/Wasm to X_ITE: load, generation retire, pick snapshot (plain JSON), read-only pixel probes. | Kept: X_ITE remains the default renderer. |
-| `xite-pick-adapter.js` (WD2-D, copied at build time) | Parse provenance and hit snapshots need private X_ITE 15.1.10 surfaces. | Kept: X_ITE remains the default renderer. |
+| `xite-pick-adapter.js` (WD2-D, copied at build time) | Parse provenance and hit snapshots need private X_ITE surfaces (proven on 15.1.10 and 16.5.0). | Kept: X_ITE remains the default renderer. |
 | `xite-gizmo-adapter.js` (VISUAL-3A / 3A1, ~290 lines, handwritten) | The gizmo needs X_ITE's camera matrices (private), a temporary rendered translation, rotation or scale (public SAI, VISUAL-4B) on the PROVEN runtime node, and the bound viewpoint's user offsets (private) for the camera carry. Plain data out. | Kept: X_ITE remains the default renderer. |
 | `boot.js` (2 lines, handwritten) | Module bootstrap that loads the wasm-bindgen output. | Could be generated; trivial. |
 | `wrlforge_ui.js` (generated by wasm-bindgen) | Required Wasm glue. | Not application logic. |
@@ -483,6 +483,57 @@ the camera must survive every Move.
   `cargo test -p wrl-forge-desktop --test flux_regression`.
 - The PR #136 head (`96aef4f`) did not compile; this lane's first commit fixes
   the two VISUAL-4B build breaks.
+
+### RUST-STAB-2A — scope graph and safe reference analysis
+
+- A read-only lexical scope graph (`wrlforge-vrml::scope`) resolves USE and
+  ROUTE node names under ISO 4.6.2, 4.8.4 and 4.10.2. It replaces the flat
+  Scene Tree lookup (`resolution_scope` is now `"lexical"`).
+- Edit identity and language meaning are separate answers. Repeated DEF names
+  are `ambiguous` with no edit target; the 4.6.2 closest DEF is display only.
+- Damaged source withholds answers (`recovered`). Advisory findings
+  `SCOPE001`–`SCOPE010` never block Save. Contract, codes, tests and limits:
+  [RUST_STAB_2A_SCOPE](RUST_STAB_2A_SCOPE.md).
+- Tests: `cargo test -p wrlforge-vrml scope` and
+  `cargo test -p wrl-forge-desktop --test scope_regression`.
+
+### RUST-STAB-2B — typed ROUTE, IS, and PROTO reference analysis
+
+- Read-only typed answers on the 2A graph: node-instance types (4.8.1, 4.8.4),
+  interface members (4.7, 4.9.2), ROUTE events, directions and exact types
+  (4.10.2), and `IS` connections (4.8.3, Table 4.4). Built-in Script rules
+  apply only to a node proven to be the built-in Script.
+- An unproven node, type or interface gives no event or type verdict. Findings
+  `SCOPE101`–`SCOPE131` are advisory and never block Save. Contract, codes,
+  tests and limits: [RUST_STAB_2B_TYPED_REFERENCES](RUST_STAB_2B_TYPED_REFERENCES.md).
+- The Flux fixture `08_proto_script_inline.wrl` is unchanged and is invalid
+  VRML97 (`SCOPE114`); its valid counterpart is
+  `corrected/08_proto_script_inline_valid.wrl`.
+- Tests: `cargo test -p wrlforge-vrml scope` and
+  `cargo test -p wrl-forge-desktop --test typed_regression`.
+- Not a full VRML97 or X3D conformance validator.
+
+### UI-MENU-1 — desktop menus and command integration
+
+- Seven in-window menus (File, Edit, View, Create, Tools, World, Help), drawn
+  from the typed command registry on every platform. Each item runs through
+  `command::run`, the toolbar's path. macOS also gets the standard
+  application menu (untested on macOS). Contract, IDs, keyboard, platform
+  limits and results: [UI_MENU_1](UI_MENU_1.md).
+- One window-level shortcut handler replaces the Source-only handler.
+  Text fields keep their own Undo and clipboard keys. IME composition, AltGr,
+  dialogs and drags block application shortcuts.
+- Quit (menu, Ctrl+Q, macOS) uses the existing CloseGate. Menu Cut and Paste
+  reach Rust only through the editor's `doc_edit` path
+  (`Action::SourceEdit`).
+- Mall Item and World Project items are present and disabled ("Not migrated
+  to the Rust application.").
+- Tests: `cargo test -p wrlforge-desktop-protocol command` and
+  `./smoke.sh --headless --menu`.
+
+### Future backlog
+
+- VrmlPad scripting compatibility. Not started; needs its own approved lane.
 
 ### Known issues
 

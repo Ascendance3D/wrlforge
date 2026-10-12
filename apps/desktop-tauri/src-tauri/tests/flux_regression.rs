@@ -31,7 +31,13 @@ fn clock() -> SystemTime {
     UNIX_EPOCH + Duration::from_secs(1_791_500_000)
 }
 
-/// The positive, valid VRML97 fixtures (LF, as authored).
+/// The positive fixtures (LF, as authored): parse-clean, used for source
+/// preservation and edit tests. All are valid VRML97 EXCEPT
+/// `08_proto_script_inline.wrl`, which binds `field SFFloat size` to
+/// `Box.size` (SFVec3f) with IS, an ISO 4.8.3 type mismatch (RUST-STAB-2B,
+/// SCOPE114). It stays here unchanged: source preservation must hold for
+/// invalid VRML too. Its valid counterpart is
+/// `corrected/08_proto_script_inline_valid.wrl`.
 const POSITIVE: &[&str] = &[
     "01_anim_no_starttime.wrl",
     "02_anim_touch.wrl",

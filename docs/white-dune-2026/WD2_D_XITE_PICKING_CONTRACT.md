@@ -14,6 +14,12 @@ independent QA [#31 WD2-D-Q](https://github.com/Ascendance3D/wrlforge/issues/31)
 - [PR #117](https://github.com/Ascendance3D/wrlforge/pull/117) merged at
   `f39c62612d79d217c795562787d6d92764508e48`.
 - X_ITE production pin: exactly `15.1.10`.
+- **Amendment (XITE-16-UPGRADE-2, 2026-10-11):** the pin is now per host
+  application. Electron stays exactly `15.1.10` (root `package.json`, G1/G2).
+  The Rust/Tauri app ships exactly `16.5.0` (`apps/desktop-tauri/xite/PIN`).
+  The adapter's runtime gate (V1) accepts exactly `['15.1.10', '16.5.0']`; the
+  G4 probe and every P-row check are unchanged. See
+  [`XITE_16_5_0_INTEGRATION.md`](../architecture/XITE_16_5_0_INTEGRATION.md).
 
 Final result, QA evidence, refusal model and known limitations:
 [`WD2_D_XITE_PICKING_CLOSEOUT.md`](WD2_D_XITE_PICKING_CLOSEOUT.md).
@@ -677,6 +683,13 @@ Current: `package.json` `"x_ite": "^15.1.10"`; lockfile and installed copy are
 15.1.10. **#30 must change it to exactly `"x_ite": "15.1.10"`** (and the
 lockfile's root `packages[""].dependencies` entry to match) before any private
 API is used. This lane changed neither file.
+
+**Amendment (XITE-16-UPGRADE-2, 2026-10-11).** One pin per host application:
+Electron `15.1.10` (root `package.json` + lockfile, G1/G2 unchanged) and
+Rust/Tauri `16.5.0` (`apps/desktop-tauri/xite/PIN` + per-file SHA-256
+manifest, checked by `build-ui.sh` and the Tauri G1/G3 tests). V1 becomes an
+exact-membership check against `XITE_VERSIONS = ['15.1.10', '16.5.0']`: no
+range, no prefix, no non-string. A third version needs its own lane.
 
 ## Upgrade guards
 

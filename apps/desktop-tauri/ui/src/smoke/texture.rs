@@ -166,11 +166,133 @@ pub(super) async fn run(t: &p::TextureSmoke, r: &mut R) -> Option<()> {
         } else if fx.id.contains("save-reopen") {
             save_reopen(fx, i, r).await?;
         } else {
-            open(i).await?;
+            let traced = ipc::console_trace_start();
+            let Some(doc) = open(i).await else {
+                ipc::console_trace_stop();
+                return None;
+            };
             judge(fx, r, &fx.id).await;
+            let trace = ipc::console_trace_stop().unwrap_or_default();
+            fallback_console(fx, doc.session, traced, &trace, r).await;
         }
     }
+    xml_route(r).await;
     Some(())
+}
+
+/// XITE-16-UPGRADE-2 / upstream PR #232: X_ITE's URL fallback diagnostics,
+/// read from the WebView console of THIS load only (smoke trace). A failed
+/// candidate with another one left warns "trying URL k of n"; when every
+/// candidate failed, ONE final error lists them. Rust's resource log shows
+/// the candidates were requested in authored order. PR #234: no VRML load
+/// may reach the XML parser.
+async fn fallback_console(
+    fx: &p::TextureFixture,
+    session: p::SessionId,
+    traced: bool,
+    trace: &ipc::ConsoleTrace,
+    r: &mut R,
+) {
+    let tries = |l: &&String| {
+        l.starts_with("warn: ") && l.contains("Couldn't load") && l.contains(", trying URL ")
+    };
+    let all_failed =
+        |l: &&String| l.starts_with("error: ") && l.contains("Couldn't load any of the ");
+    let single = |l: &&String| {
+        l.starts_with("error: ") && l.contains("Couldn't load URL ") && !l.contains("any of the")
+    };
+    let n_tries = trace.lines.iter().filter(tries).count();
+    let finals: Vec<&String> = trace.lines.iter().filter(all_failed).collect();
+    let n_single = trace.lines.iter().filter(single).count();
+    // (candidates, "trying" warnings, final list, single error, served order)
+    let (want, order): ((usize, usize, bool, usize), &[&str]) = match &fx.id[..3] {
+        "t07" => ((2, 0, false, 0), &["cyan.png"]),
+        "t08" => ((2, 1, false, 0), &["missing.jpg", "orange.png"]),
+        "t10" => ((1, 0, false, 1), &["nothere.jpg"]),
+        "t13" => ((2, 1, true, 0), &["link.jpg", "linkdir/red-outside.jpg"]),
+        _ => {
+            r.step(
+                &format!("{}: VRML never reaches the XML parser (PR #234)", fx.id),
+                traced && trace.xml == 0,
+                format!("traced {traced} · DOMParser calls {}", trace.xml),
+            );
+            return;
+        }
+    };
+    let final_ok = if want.2 {
+        finals.len() == 1
+            && finals[0].contains(&format!("any of the {} URLs, tried in this order", want.0))
+    } else {
+        finals.is_empty()
+    };
+    let names: Vec<String> = {
+        let mut seen: Vec<String> = Vec::new();
+        for e in resource_log()
+            .await
+            .iter()
+            .filter(|e| e.session == Some(session))
+        {
+            if !seen.contains(&e.name) {
+                seen.push(e.name.clone());
+            }
+        }
+        seen
+    };
+    let order_ok = names.iter().map(String::as_str).collect::<Vec<_>>() == order;
+    r.step(
+        &format!("{}: URL fallback diagnostics and order (PR #232)", fx.id),
+        traced && n_tries == want.1 && final_ok && n_single == want.3 && order_ok && trace.xml == 0,
+        format!(
+            "traced {traced} · trying-warnings {n_tries} (want {}) · final {} (want {}) · single {n_single} (want {}) · requested {names:?} (want {order:?}) · DOMParser {} · console {:?}",
+            want.1,
+            finals.len(),
+            want.2,
+            want.3,
+            trace.xml,
+            trace.lines.iter().filter(|l| l.contains("Couldn't load")).collect::<Vec<_>>()
+        ),
+    );
+}
+
+/// PR #234 positive and BOM cases, as plain X_ITE loads (no document):
+/// genuine X3D XML (also after a BOM) still reaches the XML parser, and VRML
+/// (also after a BOM) does not. Only the BOM-free strings must LOAD: a BOM
+/// left inside a JS string is not XML whitespace, and the app itself never
+/// hands X_ITE a BOM (Rust strips it for the preview). The BOM outcomes are
+/// reported as observed.
+async fn xml_route(r: &mut R) {
+    const XML: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<X3D profile=\"Interchange\" version=\"3.3\"><Scene><Shape><Box/></Shape></Scene></X3D>\n";
+    const VRML: &str = "#VRML V2.0 utf8\nShape { geometry Box { } }\n";
+    let cases = [
+        ("X3D XML", XML.to_string(), true),
+        ("BOM + X3D XML", format!("\u{FEFF}{XML}"), true),
+        (
+            "BOM + X3D XML without a declaration",
+            format!("\u{FEFF}{}", &XML[XML.find("<X3D").unwrap_or(0)..]),
+            true,
+        ),
+        ("VRML97", VRML.to_string(), false),
+        ("BOM + VRML97", format!("\u{FEFF}{VRML}"), false),
+    ];
+    for (label, text, xml) in cases {
+        let traced = ipc::console_trace_start();
+        let status = ipc::preview_load(&text, None, None, "").await;
+        let trace = ipc::console_trace_stop().unwrap_or_default();
+        let loaded = status.starts_with("loaded");
+        let routed = if xml { trace.xml >= 1 } else { trace.xml == 0 };
+        let ok = traced && routed && (loaded || label.starts_with("BOM"));
+        r.step(
+            &format!(
+                "PR #234: {label} {} the XML parser",
+                if xml { "reaches" } else { "does not reach" }
+            ),
+            ok,
+            format!(
+                "traced {traced} · DOMParser calls {} · status {status}",
+                trace.xml
+            ),
+        );
+    }
 }
 
 /// Hold every texture read; open `i`, then switch to `other` while its

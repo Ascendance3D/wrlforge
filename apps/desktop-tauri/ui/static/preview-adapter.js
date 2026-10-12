@@ -34,7 +34,9 @@
 (function () {
   'use strict';
 
-  // TEXTURE-LOCAL-1: X_ITE 15.1.10 workaround. FileLoader.setScene waits for
+  // TEXTURE-LOCAL-1: X_ITE workaround, found on 15.1.10 and kept unchanged for
+  // 16.5.0 (XITE-16-UPGRADE-2), whose interests still hold their target only
+  // through a WeakRef. FileLoader.setScene waits for
   // the new scene's loadCount through an interest whose ONLY reference to
   // the FileLoader is a WeakRef. When a texture is still loading after the
   // parse, nothing else holds the FileLoader; if the collector runs first
@@ -62,6 +64,9 @@
   })();
 
   function canvas() { return document.getElementById('viewport'); }
+
+  // XITE-16-UPGRADE-2: the smoke-only console trace (consoleTraceStart).
+  var consoleTrace = null;
 
   // ---- picking state ---------------------------------------------------------
   // `adapter` belongs to exactly one X_ITE browser; a replaced viewport gets a
@@ -497,6 +502,40 @@
       if (!tr) return '';
       tr.on = false;
       return JSON.stringify({ frames: tr.frames, missing: tr.missing, maxDelta: tr.maxDelta, worstFrame: tr.worstFrame, hadRef: !!tr.ref });
+    },
+    // XITE-16-UPGRADE-2 tests ONLY (--smoke-texture): between start and
+    // stop, copy console log/info/warn/error lines (truncated) and count
+    // DOMParser.parseFromString calls, then restore both exactly. Nothing is
+    // ever started outside a smoke run, kept after stop, or sent anywhere.
+    consoleTraceStart: function () {
+      if (consoleTrace) return false;
+      var tr = { lines: [], xml: 0, restore: [] };
+      ['log', 'info', 'warn', 'error'].forEach(function (k) {
+        var orig = console[k];
+        console[k] = function () {
+          var text = Array.prototype.map.call(arguments, function (a) {
+            return a instanceof Error ? a.name + ': ' + a.message : String(a);
+          }).join(' ');
+          tr.lines.push(k + ': ' + text.slice(0, 600));
+          return orig.apply(console, arguments);
+        };
+        tr.restore.push(function () { console[k] = orig; });
+      });
+      var P = window.DOMParser && window.DOMParser.prototype;
+      if (P && typeof P.parseFromString === 'function') {
+        var parse = P.parseFromString;
+        P.parseFromString = function () { tr.xml += 1; return parse.apply(this, arguments); };
+        tr.restore.push(function () { P.parseFromString = parse; });
+      }
+      consoleTrace = tr;
+      return true;
+    },
+    consoleTraceStop: function () {
+      var tr = consoleTrace;
+      consoleTrace = null;
+      if (!tr) return '';
+      tr.restore.reverse().forEach(function (f) { f(); });
+      return JSON.stringify({ lines: tr.lines, xml: tr.xml });
     },
     // {ok, reason}: whether picking is available at all (compatibility).
     pickStatus: function () {
