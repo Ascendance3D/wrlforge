@@ -756,3 +756,147 @@ fn wire_json_shape_is_stable() {
         other => panic!("{other:?}"),
     }
 }
+
+// ---- STACK-REVIEW-1 (PR #142 r4242637970): the snap guide is the result
+
+fn tgt(anchor: PanelId, zone: Zone) -> DropTarget {
+    DropTarget {
+        anchor,
+        zone,
+        index: None,
+    }
+}
+
+/// The moved panel's content box after the drop is really applied.
+fn accepted(l: &Layout, p: PanelId, t: DropTarget, w: f64, h: f64) -> Rect {
+    let n = l.dock(p, t).unwrap();
+    solve(&n, w, h).group_of(p).unwrap().content
+}
+
+fn diff(a: Rect, b: Rect) -> f64 {
+    [a.x - b.x, a.y - b.y, a.w - b.w, a.h - b.h]
+        .iter()
+        .fold(0.0_f64, |m, d| m.max(d.abs()))
+}
+
+#[test]
+fn drop_preview_is_the_accepted_content_box_for_every_drop() {
+    let (mut ok, mut refused) = (0, 0);
+    for preset in PresetId::ALL {
+        let l = Layout::preset(preset);
+        for (w, h) in [(1200.0, 760.0), (700.0, 420.0), (2400.0, 1400.0)] {
+            for panel in l.visible() {
+                for anchor in l.visible() {
+                    for zone in Zone::ALL {
+                        let t = tgt(anchor, zone);
+                        match l.dock(panel, t) {
+                            Ok(_) => {
+                                let got = drop_preview(&l, panel, t, w, h).unwrap();
+                                assert_eq!(
+                                    got,
+                                    accepted(&l, panel, t, w, h),
+                                    "{preset:?} {panel:?} {t:?}"
+                                );
+                                ok += 1;
+                            }
+                            Err(e) => {
+                                assert_eq!(drop_preview(&l, panel, t, w, h), Err(e));
+                                refused += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Previews never change the live layout.
+        assert_eq!(l, Layout::preset(preset));
+    }
+    assert!(ok > 200 && refused > 0, "ok={ok} refused={refused}");
+}
+
+#[test]
+fn drop_preview_edges_in_all_four_directions_differ_from_the_zone_half() {
+    // Source preset: Inspector onto the Viewport's four edges. The Inspector
+    // leaves the Viewport's column (the split collapses), so the Viewport
+    // group grows before it is split; the new group also has a tab strip.
+    let l = Layout::preset(PresetId::Source);
+    let (w, h) = (1200.0, 760.0);
+    let vp = solve(&l, w, h).group_of(Viewport).unwrap().content;
+    for zone in [Zone::Left, Zone::Right, Zone::Top, Zone::Bottom] {
+        let t = tgt(Viewport, zone);
+        let got = drop_preview(&l, Inspector, t, w, h).unwrap();
+        assert_eq!(got, accepted(&l, Inspector, t, w, h), "{zone:?}");
+        let old = zone_rect(vp, zone);
+        assert!(
+            diff(got, old) > TAB_STRIP_PX - 1.0,
+            "{zone:?}: {got:?} vs {old:?}"
+        );
+    }
+    // A Top / Bottom drop in a group that stays in place: the old guide
+    // still ignored the new tab strip and the divider.
+    let t = tgt(Viewport, Zone::Bottom);
+    let got = drop_preview(&l, Diagnostics, t, w, h).unwrap();
+    let old = zone_rect(vp, Zone::Bottom);
+    assert!(got.h < old.h - TAB_STRIP_PX + 1.0, "{got:?} vs {old:?}");
+}
+
+#[test]
+fn drop_preview_respects_minimum_sizes() {
+    // A narrow workspace: half of the Viewport is below the Scene Tree's
+    // minimum width, so the solver widens it (or the canvas scrolls).
+    let l = Layout::preset(PresetId::Source);
+    let (w, h) = (1000.0, 600.0);
+    let t = tgt(Viewport, Zone::Left);
+    let got = drop_preview(&l, SceneTree, t, w, h).unwrap();
+    assert_eq!(got, accepted(&l, SceneTree, t, w, h));
+    assert!(got.w >= SceneTree.min_size().0 - 1e-6, "{got:?}");
+    let vp = solve(&l, w, h).group_of(Viewport).unwrap().content;
+    assert!(
+        zone_rect(vp, Zone::Left).w < SceneTree.min_size().0,
+        "the case must bind"
+    );
+    let n = l.dock(SceneTree, t).unwrap();
+    let g = solve(&n, w, h);
+    assert!(g.group_of(Viewport).unwrap().content.w >= Viewport.min_size().0 - 1e-6);
+}
+
+#[test]
+fn drop_preview_merge_split_and_one_tab_left_behind() {
+    let (w, h) = (1200.0, 760.0);
+    // Merge: Diagnostics joins the Source group as a tab. Its own group goes,
+    // the Source column collapses, so the merged content box is taller than
+    // the Source box before the drop.
+    let l = Layout::preset(PresetId::Source);
+    let src = solve(&l, w, h).group_of(Source).unwrap().content;
+    let t = tgt(Source, Zone::Center);
+    let got = drop_preview(&l, Diagnostics, t, w, h).unwrap();
+    assert_eq!(got, accepted(&l, Diagnostics, t, w, h));
+    assert!(got.h > src.h + 50.0, "{got:?} vs {src:?}");
+    // Split: Scene Tree onto the Source group's right edge.
+    let t = tgt(Source, Zone::Right);
+    assert_eq!(
+        drop_preview(&l, SceneTree, t, w, h).unwrap(),
+        accepted(&l, SceneTree, t, w, h)
+    );
+    // Out of a two-tab group: Modeling's [Diagnostics, Source] keeps one tab.
+    let m = Layout::preset(PresetId::Modeling);
+    for zone in [
+        Zone::Left,
+        Zone::Right,
+        Zone::Top,
+        Zone::Bottom,
+        Zone::Center,
+    ] {
+        let t = tgt(Viewport, zone);
+        let got = drop_preview(&m, Source, t, w, h).unwrap();
+        assert_eq!(got, accepted(&m, Source, t, w, h), "{zone:?}");
+        let n = m.dock(Source, t).unwrap();
+        assert_eq!(
+            n.group_of(Diagnostics).unwrap().0,
+            vec![Diagnostics],
+            "{zone:?}"
+        );
+    }
+    // A refused drop (onto itself) has no preview.
+    assert!(drop_preview(&l, Source, tgt(Source, Zone::Left), w, h).is_err());
+}
