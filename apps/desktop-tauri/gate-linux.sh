@@ -151,15 +151,18 @@ gui theme ./smoke.sh --headless --theme tokyo-night-light "$wt/test/fixtures/vrm
 ( timeout 300 python3 "$app/native-smoke/harness.py" xvfb "$out/native" "$bin" >"$out/gui-native.txt" 2>&1
   echo $? >"$out/gui-native.rc"; echo "report=$out/native/report.json" >>"$out/gui-native.txt" ) &
 wait
-# A report is <suite>.d/<name>.json; texture and native are named "report".
+# A report is <suite>.d/<name>.json; texture's is texture-report.json and
+# native's is native/report.json -- both keyed "report" in the inventory.
 while IFS='|' read -r key want; do
   suite="${key%%:*}"; rep="${key#*:}"
-  path="$(rg -o 'report=\S+' "$out/gui-$suite.txt" | sed 's/^report=//' | awk -v r="$rep" '{ n = $0; sub(/^.*\//, "", n); sub(/\.json$/, "", n) } n == r' | tail -1)"
+  path="$(rg -o 'report=\S+' "$out/gui-$suite.txt" | sed 's/^report=//' | awk -v r="$rep" '{ n = $0; sub(/^.*\//, "", n); sub(/\.json$/, "", n); sub(/^texture-/, "", n) } n == r' | tail -1)"
   got="$(python3 -I - "$path" <<'PY' 2>/dev/null
 import json, sys
 r = json.load(open(sys.argv[1]))
-if "checks" in r:   # native harness
-    print(r.get("pass") is True and r.get("failures") == 0, r.get("checks_total"), r.get("checks"))
+if "checks" in r:   # native harness: checks is a list of {name, pass, detail}
+    c = r.get("checks", [])
+    print(r.get("pass") is True and r.get("failures") == [] and r.get("checks_total") == len(c),
+          len(c), sum(1 for x in c if x.get("pass") is True))
 else:
     s = r.get("steps", [])
     print(r.get("pass") is True, len(s), sum(1 for x in s if x.get("ok") is True))
@@ -179,8 +182,9 @@ for p in sys.stdin.read().split():
     for s in r.get("steps", []):
         if "WRONG_SOURCE_SELECTIONS" in s.get("name", ""):
             n += 1
-            m = re.search(r"(\d+) wrong", s.get("detail", ""))
-            if not (s.get("ok") is True and m and m.group(1) == "0"): wrong += 1
+            # "N picks, 0 wrong" (menu, dock) or "... wrong 0 ..." (pick)
+            m = re.search(r"(\d+) wrong\b|\bwrong (\d+)", s.get("detail", ""))
+            if not (s.get("ok") is True and m and (m.group(1) or m.group(2)) == "0"): wrong += 1
 print(n, wrong)')"
 read -r wn ww <<<"$ws"
 res wrong-source-selections "$([[ $wn -gt 0 && $ww -eq 0 ]] && echo 1)" "WRONG_SOURCE_SELECTIONS steps=$wn failing=$ww"
