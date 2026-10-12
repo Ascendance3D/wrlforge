@@ -18,15 +18,44 @@ sha256() {
   else shasum -a 256 "$1" | cut -d' ' -f1; fi
 }
 
+# safe_rel REL: a manifest path is relative, non-empty and has no empty, `.`
+# or `..` component, so it cannot name anything outside the dist directory.
+safe_rel() {
+  local part; local -a parts
+  [[ -n "$1" && "$1" != /* && "$1" != */ ]] || return 1
+  IFS=/ read -ra parts <<< "$1"
+  for part in "${parts[@]}"; do
+    [[ -n "$part" && "$part" != . && "$part" != .. ]] || return 1
+  done
+}
+# no_links ROOT REL: no component of ROOT/REL below ROOT is a symlink, so an
+# intermediate directory link cannot redirect the check to another tree.
+no_links() {
+  local p="$1" part; local -a parts
+  IFS=/ read -ra parts <<< "$2"
+  for part in "${parts[@]}"; do
+    p="$p/$part"
+    [[ ! -L "$p" ]] || return 1
+  done
+}
+# Every manifest line is "<64 hex> <safe relative path>"; anything else refuses.
+while read -r want f; do
+  [[ "$want" =~ ^[0-9a-f]{64}$ ]] && safe_rel "$f" || { echo "bad manifest line in $manifest: $want $f" >&2; exit 2; }
+done < <(tr -d '\r' < "$manifest")
+
 # verify DIR: DIR/../package.json names the pinned version, every manifest
-# file exists with its exact hash, and none of them is a symlink.
+# file exists with its exact hash, and neither DIR, the
+# package.json nor ANY component of a manifest path is a symlink.
 verify() {
   local dist="$1" ver want f got bad=0
-  [[ -f "$dist/../package.json" ]] || { echo "no package.json beside $dist" >&2; return 4; }
+  while [[ "$dist" == */ && "$dist" != / ]]; do dist="${dist%/}"; done
+  [[ -d "$dist" && ! -L "$dist" ]] || { echo "dist $dist is not a real directory (symlink or missing); refusing" >&2; return 4; }
+  [[ -f "$dist/../package.json" && ! -L "$dist/../package.json" ]] || { echo "no regular package.json beside $dist" >&2; return 4; }
   ver="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$dist/../package.json" | head -1)"
   [[ "$ver" == "$version" ]] || { echo "X_ITE version $ver != pinned $version; refusing" >&2; return 4; }
   while read -r want f; do
-    if [[ -L "$dist/$f" || ! -f "$dist/$f" ]]; then echo "missing or not a regular file: $f" >&2; bad=1; continue; fi
+    if ! no_links "$dist" "$f"; then echo "symlink in path: $f" >&2; bad=1; continue; fi
+    if [[ ! -f "$dist/$f" ]]; then echo "missing or not a regular file: $f" >&2; bad=1; continue; fi
     got="$(sha256 "$dist/$f")"
     [[ "$got" == "$want" ]] || { echo "hash mismatch: $f" >&2; bad=1; }
   done < <(tr -d '\r' < "$manifest")
@@ -55,7 +84,7 @@ rm -rf "$dest"; mkdir -p "$dest/dist"
 cp "$tmp/ex/package/package.json" "$dest/package.json"
 while read -r _ f; do
   mkdir -p "$dest/dist/$(dirname "$f")"
-  cp "$tmp/ex/package/dist/$f" "$dest/dist/$f"
+  cp -P "$tmp/ex/package/dist/$f" "$dest/dist/$f"   # a link stays a link, so verify refuses it
 done < <(tr -d '\r' < "$manifest")
 verify "$dest/dist"
 echo "X_ITE $version fetched and verified at $dest"

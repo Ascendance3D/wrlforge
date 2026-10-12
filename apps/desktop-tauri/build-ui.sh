@@ -28,8 +28,8 @@ if [[ -z "$xite" ]]; then
 fi
 "$here/fetch-xite.sh" --verify "$xite" || exit 4
 # Both adapters must accept exactly this build (their own runtime gate stays).
-grep -q "'$ver'" "$here/../../src/preview/xite-pick-adapter.js" || { echo "xite-pick-adapter.js does not list X_ITE $ver; refusing" >&2; exit 4; }
-grep -q "var XITE_VERSION = '$ver';" "$here/ui/static/xite-gizmo-adapter.js" || { echo "xite-gizmo-adapter.js is not pinned to X_ITE $ver; refusing" >&2; exit 4; }
+# The check reads the real declarations, never a comment or another string.
+"$here/check-xite-adapters.sh" "$here/../../src/preview/xite-pick-adapter.js" "$here/ui/static/xite-gizmo-adapter.js" "$ver" || exit 4
 # Exactly the verified manifest files (x_ite.min.js, x_ite.css, LICENSE.md,
 # assets/): nothing unlisted is embedded, even from a fuller X_ITE_DIST.
 manifest="$here/xite/$(sed -n 's/^manifest=//p' "$here/xite/PIN" | head -1)"
