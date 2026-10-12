@@ -12,7 +12,9 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod command;
 pub mod gizmo;
+pub mod layout;
 pub mod syntax;
 pub mod theme;
 
@@ -747,6 +749,23 @@ pub struct PreviewSource {
     /// `ImageTexture` nodes with no URL the preview can load.
     #[serde(default)]
     pub texture_warnings: Vec<TextureWarning>,
+    /// XITE-16-UPGRADE-2: ROUTEs the scope graph PROVES invalid in exactly
+    /// this text. X_ITE 16.5.0 drops such a ROUTE and renders the rest, so
+    /// the preview may be incomplete. Advisory; never blocks Save.
+    #[serde(default)]
+    pub route_warnings: Vec<RouteWarning>,
+}
+
+/// One ROUTE statement with a proven source defect (an unresolved or invalid
+/// node, event, direction or type). Uncertain answers (ambiguous, recovered,
+/// unsupported) are never reported here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RouteWarning {
+    /// The ROUTE statement's source line (as the parser reports it).
+    pub line: u32,
+    /// The scope finding (code and message), or the reason code.
+    pub detail: String,
 }
 
 /// One `ImageTexture` the preview cannot load (TEXTURE-LOCAL-1). `detail`

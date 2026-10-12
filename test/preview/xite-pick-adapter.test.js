@@ -126,6 +126,17 @@ test('G10: each missing / changed P-surface disables with its P-row reason', asy
   }
   const browserCases = [
     ['version', (b) => { b.version = '15.1.11'; }, 'xite-version-mismatch'],
+    // XITE-16-UPGRADE-2: exact strings only. No neighbour, prefix, suffix,
+    // range or non-string passes for either approved build.
+    ['version 16.5.1', (b) => { b.version = '16.5.1'; }, 'xite-version-mismatch'],
+    ['version 16.4.0', (b) => { b.version = '16.4.0'; }, 'xite-version-mismatch'],
+    ['version 16.5', (b) => { b.version = '16.5'; }, 'xite-version-mismatch'],
+    ['version 16.5.0-dev', (b) => { b.version = '16.5.0-dev'; }, 'xite-version-mismatch'],
+    ['version padded', (b) => { b.version = ' 16.5.0'; }, 'xite-version-mismatch'],
+    ['version list', (b) => { b.version = '15.1.10,16.5.0'; }, 'xite-version-mismatch'],
+    ['version array', (b) => { b.version = ['16.5.0']; }, 'xite-version-mismatch'],
+    ['version number', (b) => { b.version = 16.5; }, 'xite-version-mismatch'],
+    ['version missing', (b) => { delete b.version; }, 'xite-version-mismatch'],
     ['P6 touch', (b) => { delete b.touch; }, 'touch-missing'],
     ['P6 touch arity', (b) => { b.touch = function (x) { return false; }; }, 'touch-missing'],
     ['P7 getHit', (b) => { delete b.getHit; }, 'hit-shape-changed'],
@@ -149,6 +160,17 @@ test('G10: each missing / changed P-surface disables with its P-row reason', asy
     assert.equal(res.status, 'COMPATIBILITY_DISABLED', label);
     assert.equal(res.reason, reason);
     assert.match(VP.refusalText(res), /Preview picking unavailable \(X_ITE compatibility check failed: /);
+  }
+});
+
+test('G10: each approved X_ITE build (Electron 15.1.10, Tauri 16.5.0) passes the gate and the G4 probe', async () => {
+  for (const version of ['15.1.10', '16.5.0']) {
+    const page = freshPage();
+    const adapter = page.A.createXitePickAdapter({ X3D: page.X3D, browser: createFakeBrowser(page.X3D, { version }) });
+    assert.deepEqual(await settleProbe(adapter), { ok: true }, version);
+    const r = await adapter.parseWithProvenance(BOX.text, { generationId: 1 });
+    assert.ok(r.scene && r.generation, `${version}: provenance generation`);
+    adapter.dispose();
   }
 });
 

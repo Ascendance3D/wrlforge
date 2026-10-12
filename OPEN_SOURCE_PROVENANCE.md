@@ -150,7 +150,10 @@ Forge's own source. Everything under `src/`, `renderer/`, `main.js`, `preload.js
 Third-party components that WRL Forge **depends on and redistributes unmodified**
 (x_ite, CodeMirror, Electron, and their bundled assets) are not implementation
 derivations and are inventoried separately in
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The Rust/Tauri app's x_ite (16.5.0)
+is identified by upstream tag, commit, npm tarball hash and per-file SHA-256 in
+`apps/desktop-tauri/xite/`, and is checked on every build
+(`docs/architecture/XITE_16_5_0_INTEGRATION.md`).
 
 ### Standards data is not third-party code
 

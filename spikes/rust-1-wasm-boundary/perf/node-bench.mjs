@@ -9,7 +9,7 @@ import os from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { runBench, time } from './bench-core.mjs';
-import { loadInputs } from './inputs.mjs';
+import { describeInputs, loadInputs } from './inputs.mjs';
 import { createTextEngine } from '../../../crates/wrlforge-wasm/js/wrlforge-text.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -77,7 +77,8 @@ const result = {
     samples: initSamples.compile.length,
   },
   memory: {
-    note: 'one session held per input (all four inputs at once, ~3.6 MB of text)',
+    ...describeInputs(inputs),
+    unitsNote: 'MB below is MiB (2^20 bytes)',
     wasmLinearMemoryMB: { before: mb(wasmBefore), during: mb(wasmDuring), afterDispose: mb(wasmAfter) },
     rssMB: { before: mb(before.rss), during: mb(during.rss), after: mb(after.rss) },
     heapUsedMB: { before: mb(before.heapUsed), during: mb(during.heapUsed), after: mb(after.heapUsed) },

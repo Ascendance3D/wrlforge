@@ -576,6 +576,11 @@ fn open_outline(rev: u64, field_index: u32, tuples: Vec<Vec<String>>, _closed: b
     });
 }
 
+/// UI-MENU-1: a point drag in the outline editor is in progress.
+pub fn dragging() -> bool {
+    outline().with_untracked(|o| o.as_ref().is_some_and(|o| o.dragging))
+}
+
 /// Drop the session without any IPC: source and history stay untouched.
 pub fn cancel_outline(why: &str) {
     if outline().get_untracked().is_some() {

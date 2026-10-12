@@ -77,6 +77,10 @@ extern "C" {
     fn camera_trace_start_js() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = cameraTraceStop, catch)]
     fn camera_trace_stop_js() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = consoleTraceStart, catch)]
+    fn console_trace_start_js() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = consoleTraceStop, catch)]
+    fn console_trace_stop_js() -> Result<JsValue, JsValue>;
 }
 
 /// The renderer's camera as last drawn, or `None` when it cannot be read.
@@ -283,6 +287,25 @@ pub fn camera_trace_start() -> bool {
 }
 pub fn camera_trace_stop() -> Option<CameraTrace> {
     let s = camera_trace_stop_js().ok()?.as_string()?;
+    serde_json::from_str(&s).ok()
+}
+
+/// XITE-16-UPGRADE-2 smoke evidence: the WebView console lines and the
+/// DOMParser call count between `console_trace_start` and `_stop`.
+#[derive(serde::Deserialize, Clone, Debug, Default)]
+pub struct ConsoleTrace {
+    pub lines: Vec<String>,
+    pub xml: u64,
+}
+
+pub fn console_trace_start() -> bool {
+    console_trace_start_js()
+        .ok()
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+pub fn console_trace_stop() -> Option<ConsoleTrace> {
+    let s = console_trace_stop_js().ok()?.as_string()?;
     serde_json::from_str(&s).ok()
 }
 
