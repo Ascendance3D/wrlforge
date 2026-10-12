@@ -7,14 +7,16 @@
 //   node spikes/rust-1-wasm-boundary/electron/run.cjs
 //
 // Writes out/electron-proof.json. Exit 0 only if the production-CSP page
-// loads the wasm and passes every check, and the negative-control page (CSP
-// minus 'wasm-unsafe-eval') is blocked.
+// loads the wasm, refuses eval with an EvalError and passes every check, and
+// the negative-control page (CSP minus 'wasm-unsafe-eval') ran without a fatal
+// error and blocked all three loaders. The decision lives in verdict.cjs.
 'use strict';
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { VisualQaRunner } = require('../../../qa/visual-qa/runner');
 const { acquire } = require('../../../qa/visual-qa/lock');
+const { evaluateProof } = require('./verdict.cjs');
 
 const HERE = __dirname;
 const SPIKE = path.join(HERE, '..');
@@ -75,10 +77,9 @@ fs.writeFileSync(path.join(OUT, 'electron', 'wasm-bytes.mjs'),
   if (failure || survivors.length) { console.error(failure, survivors); process.exit(1); }
   const prod = results.find((r) => r.id === 'production-csp');
   const neg = results.find((r) => r.id === 'no-wasm-eval-csp');
-  const prodOk = !prod.fatal && Object.values(prod.loaders).some((l) => l.ok) && prod.checks.length > 0 && prod.checks.every((c) => c.ok);
-  const negBlocked = Object.values(neg.loaders).every((l) => !l.ok);
-  const brief = (r) => ({ page: r.page, electron: r.electron, chrome: r.chrome, webPreferences: r.webPreferences, env: { ...r.env, userAgent: undefined },
-    evalBlocked: r.evalBlocked, cspViolations: r.cspViolations, loaders: r.loaders, checks: r.checks.map((c) => `${c.ok ? 'PASS' : 'FAIL'} ${c.name}${c.detail ? ` (${c.detail})` : ''}`), fatal: r.fatal });
-  console.log(JSON.stringify({ prodOk, negBlocked, production: brief(prod), negative: brief(neg) }, null, 2));
+  const { prodOk, negBlocked, reasons } = evaluateProof(results);
+  const brief = (r) => r && ({ page: r.page, electron: r.electron, chrome: r.chrome, webPreferences: r.webPreferences, env: { ...r.env, userAgent: undefined },
+    evalBlocked: r.evalBlocked, cspViolations: r.cspViolations, loaders: r.loaders, checks: (r.checks || []).map((c) => `${c.ok ? 'PASS' : 'FAIL'} ${c.name}${c.detail ? ` (${c.detail})` : ''}`), fatal: r.fatal });
+  console.log(JSON.stringify({ prodOk, negBlocked, reasons, production: brief(prod), negative: brief(neg) }, null, 2));
   process.exit(prodOk && negBlocked ? 0 : 1);
 })();

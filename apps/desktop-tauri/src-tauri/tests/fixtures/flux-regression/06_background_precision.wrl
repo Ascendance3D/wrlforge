@@ -1,0 +1,8 @@
+#VRML V2.0 utf8
+# original WRL Forge test fixture (RUST-STAB-1)
+# High-precision colors and angles: must survive byte-for-byte.
+Background {
+  skyAngle [ 1.2345678901 ]
+  skyColor [ 0.1 0.123456789 0.987654321   0.5 0.25 0.125 ]
+  groundColor [ 0.2 0.333333333 0.0000123456 ]
+}

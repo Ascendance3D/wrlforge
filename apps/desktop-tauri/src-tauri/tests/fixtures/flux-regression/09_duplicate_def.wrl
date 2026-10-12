@@ -1,0 +1,29 @@
+#VRML V2.0 utf8
+# original WRL Forge test fixture (RUST-STAB-1)
+# The same DEF name used twice in valid VRML97. Each USE refers to the closest
+# preceding DEF (ISO/IEC 14772-1 4.6.2). A PROTO body is its own DEF scope.
+
+DEF Box1 Transform {
+  translation 1 0 0
+  children [ Shape { geometry Box { } } ]
+}
+Group { children [ USE Box1 ] }
+
+DEF Box1 Transform {
+  translation -1 0 0
+  children [ Shape { geometry Sphere { } } ]
+}
+Group { children [ USE Box1 ] }
+
+DEF Floor Transform {
+  children [ Shape { geometry Box { size 10 0.1 10 } } ]
+}
+
+PROTO Crate [ ] {
+  DEF Floor Transform {
+    translation 0 1 0
+    children [ Shape { geometry Box { } } ]
+  }
+}
+Crate { }
+Group { children [ USE Floor ] }

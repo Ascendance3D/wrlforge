@@ -11,8 +11,9 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::JsCast;
 use wrlforge_desktop_protocol as p;
+use wrlforge_desktop_protocol::command::CommandId;
 
-use crate::ui::{self, ui};
+use crate::ui::ui;
 
 fn item_id(prim: p::Primitive) -> String {
     format!("create-{}", prim.label().to_lowercase())
@@ -21,22 +22,6 @@ fn item_id(prim: p::Primitive) -> String {
 fn focus(id: &str) {
     if let Some(el) = crate::element_by_id::<web_sys::HtmlElement>(id) {
         let _ = el.focus();
-    }
-}
-
-fn hint(prim: p::Primitive) -> &'static str {
-    match prim {
-        p::Primitive::Box => "Add a Box (2 × 2 × 2) inside a new Transform at the origin",
-        p::Primitive::Sphere => "Add a Sphere (radius 1) inside a new Transform at the origin",
-        p::Primitive::Cylinder => {
-            "Add a Cylinder (radius 1, height 2) inside a new Transform at the origin"
-        }
-        p::Primitive::Cone => {
-            "Add a Cone (bottom radius 1, height 2) inside a new Transform at the origin"
-        }
-        p::Primitive::Extrusion => {
-            "Add an Extrusion (a closed hexagon outline swept along a 2-point spine, height 2) inside a new Transform at the origin"
-        }
     }
 }
 
@@ -116,10 +101,13 @@ pub fn CreateMenu() -> impl IntoView {
                 <div id="create-list" class="create-list" role="menu" aria-label="Create primitive"
                     on:keydown=on_menu_key>
                     {p::Primitive::ALL.into_iter().map(|prim| view! {
-                        <button id=item_id(prim) role="menuitem" class="create-item" title=hint(prim)
+                        // UI-MENU-1: the same registry command as Create → <prim>.
+                        <button id=item_id(prim) role="menuitem" class="create-item"
+                            data-command=CommandId::create_for(prim).key()
+                            title=crate::command::title(CommandId::create_for(prim))
                             on:click=move |_| {
                                 close(true);
-                                spawn_local(ui::create(prim));
+                                crate::command::run(CommandId::create_for(prim));
                             }>
                             <span class=format!("glyph glyph-{}", prim.label().to_lowercase()) aria-hidden="true"></span>
                             {prim.label()}

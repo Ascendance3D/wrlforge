@@ -12,7 +12,9 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod command;
 pub mod gizmo;
+pub mod layout;
 pub mod syntax;
 pub mod theme;
 
@@ -39,6 +41,10 @@ pub struct DocumentInfo {
     /// As, and `display_path` is a label, not a path.
     #[serde(default)]
     pub untitled: bool,
+    /// RUST-STAB-1: restored from a recovery record. Untitled until Save As;
+    /// the recovery record stays until that save or an explicit discard.
+    #[serde(default)]
+    pub recovered: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -132,6 +138,48 @@ pub struct ExternalStatus {
     pub reason: String,
 }
 
+/// RUST-STAB-1: one recovery record offered at startup. Carries a safe
+/// file name only; never a path.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryEntry {
+    /// Opaque record id (32 hex digits).
+    pub id: String,
+    pub name: String,
+    pub untitled: bool,
+    pub format: String,
+    /// When the recovery copy was written (ms since the Unix epoch).
+    pub saved_at_ms: u64,
+    pub bytes: u64,
+    /// `None` for a new world; else `"unchanged"`, `"changed"` or
+    /// `"missing"`: the original file now, versus when it was opened.
+    pub original_now: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryDamaged {
+    pub id: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryList {
+    pub entries: Vec<RecoveryEntry>,
+    pub damaged: Vec<RecoveryDamaged>,
+    /// Shown when recovery storage is unavailable or a write failed.
+    pub warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum RecoveryDiscardOutcome {
+    Discarded,
+    Canceled,
+    Failed { message: String },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Diagnostic {
@@ -154,8 +202,55 @@ pub struct SceneItem {
     pub depth: u32,
     pub view_from: u64,
     pub view_to: u64,
+    /// A USE item's scope-graph status (`SceneRef::status`).
     pub use_status: Option<String>,
     pub child_count: u32,
+    /// RUST-STAB-2A scope answers: one for a USE, two (source, destination)
+    /// for a ROUTE, none otherwise. Read-only; never an edit by itself.
+    #[serde(default)]
+    pub refs: Vec<SceneRef>,
+    /// RUST-STAB-2B typed answer: a ROUTE's whole verdict, or a node's type
+    /// binding when the type is not a proven built-in. Display only.
+    #[serde(default)]
+    pub typed: Option<TypedCheck>,
+}
+
+/// One typed answer from the SAME parse as its Analysis. Codes:
+/// `docs/architecture/RUST_STAB_2B_TYPED_REFERENCES.md`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TypedCheck {
+    /// "route" | "type"
+    pub subject: String,
+    /// Same values as `SceneRef::status`.
+    pub status: String,
+    /// "proven" | "unresolved" | "uncertain"
+    pub class: String,
+    pub reason: String,
+    /// `SFFloat -> SFFloat` for a ROUTE, `PROTO Pulse` for a type.
+    pub summary: Option<String>,
+}
+
+/// One node-name reference answer from the lexical scope graph of the SAME
+/// parse as its Analysis. Codes: `docs/architecture/RUST_STAB_2A_SCOPE.md`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SceneRef {
+    /// "use" | "route-source" | "route-destination"
+    pub role: String,
+    pub name: Option<String>,
+    /// "resolved" | "unresolved" | "ambiguous" | "invalid" | "recovered" |
+    /// "unsupported"
+    pub status: String,
+    /// "proven" | "unresolved" | "uncertain"
+    pub class: String,
+    pub reason: String,
+    /// The DEF node's Scene Tree item id, in this Analysis's revision. Set
+    /// ONLY for a proven unique reference. Never runtime object identity.
+    pub target: Option<String>,
+    /// The ISO 4.6.2 meaning (closest preceding DEF) as an item id. For
+    /// display only: never a selection or edit target.
+    pub language_target: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -174,7 +269,13 @@ pub struct Analysis {
     /// Depth-first source order; the document root is omitted.
     pub items: Vec<SceneItem>,
     pub diagnostics: Vec<Diagnostic>,
-    /// "flat": USE resolution is the non-authoritative flat scope.
+    /// Advisory scope findings: RUST-STAB-2A node names (`SCOPE0xx`) and
+    /// RUST-STAB-2B typed references (`SCOPE1xx`). "warning" or "info",
+    /// never "error". Same parse, revision and view mapping as
+    /// `diagnostics`; kept apart so they never mark the editor or block Save.
+    #[serde(default)]
+    pub scope_diagnostics: Vec<Diagnostic>,
+    /// "lexical": references come from the RUST-STAB-2A scope graph.
     pub resolution_scope: String,
     pub truncated: bool,
 }
@@ -648,6 +749,23 @@ pub struct PreviewSource {
     /// `ImageTexture` nodes with no URL the preview can load.
     #[serde(default)]
     pub texture_warnings: Vec<TextureWarning>,
+    /// XITE-16-UPGRADE-2: ROUTEs the scope graph PROVES invalid in exactly
+    /// this text. X_ITE 16.5.0 drops such a ROUTE and renders the rest, so
+    /// the preview may be incomplete. Advisory; never blocks Save.
+    #[serde(default)]
+    pub route_warnings: Vec<RouteWarning>,
+}
+
+/// One ROUTE statement with a proven source defect (an unresolved or invalid
+/// node, event, direction or type). Uncertain answers (ambiguous, recovered,
+/// unsupported) are never reported here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RouteWarning {
+    /// The ROUTE statement's source line (as the parser reports it).
+    pub line: u32,
+    /// The scope finding (code and message), or the reason code.
+    pub detail: String,
 }
 
 /// One `ImageTexture` the preview cannot load (TEXTURE-LOCAL-1). `detail`
