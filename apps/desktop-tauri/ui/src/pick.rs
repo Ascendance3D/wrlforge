@@ -315,7 +315,7 @@ pub fn install() {
         if id != ev.pointer_id()
             || ev.button() != 0
             || (cx - x).hypot(cy - y) > CLICK_SLOP
-            || !(ui().pick_mode.get_untracked() || ui().move_mode.get_untracked())
+            || !(ui().pick_mode.get_untracked() || crate::gizmo::active_tool().is_some())
         {
             return;
         }

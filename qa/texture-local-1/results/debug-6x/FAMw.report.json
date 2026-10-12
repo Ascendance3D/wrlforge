@@ -1,0 +1,332 @@
+{
+  "file": "texture-local-1",
+  "pass": true,
+  "resourceLog": [
+    {
+      "bytes": 743,
+      "name": "red.jpg",
+      "outcome": "served",
+      "session": 1,
+      "status": 200
+    },
+    {
+      "bytes": 743,
+      "name": "red.jpg",
+      "outcome": "served",
+      "session": 2,
+      "status": 200
+    },
+    {
+      "bytes": 157,
+      "name": "green.png",
+      "outcome": "served",
+      "session": 3,
+      "status": 200
+    },
+    {
+      "bytes": 144,
+      "name": "blue.gif",
+      "outcome": "served",
+      "session": 4,
+      "status": 200
+    },
+    {
+      "bytes": 158,
+      "name": "tex/sub/yellow.png",
+      "outcome": "served",
+      "session": 5,
+      "status": 200
+    },
+    {
+      "bytes": 742,
+      "name": "my%20texture.jpg",
+      "outcome": "served",
+      "session": 6,
+      "status": 200
+    },
+    {
+      "bytes": 157,
+      "name": "cyan.png",
+      "outcome": "served",
+      "session": 7,
+      "status": 200
+    },
+    {
+      "bytes": 0,
+      "name": "missing.jpg",
+      "outcome": "not found",
+      "session": 8,
+      "status": 404
+    },
+    {
+      "bytes": 156,
+      "name": "orange.png",
+      "outcome": "served",
+      "session": 8,
+      "status": 200
+    },
+    {
+      "bytes": 157,
+      "name": "green.png",
+      "outcome": "served",
+      "session": 9,
+      "status": 200
+    },
+    {
+      "bytes": 0,
+      "name": "nothere.jpg",
+      "outcome": "not found",
+      "session": 10,
+      "status": 404
+    },
+    {
+      "bytes": 0,
+      "name": "garbage.jpg",
+      "outcome": "not a valid image file",
+      "session": 11,
+      "status": 415
+    },
+    {
+      "bytes": 0,
+      "name": "",
+      "outcome": "malformed resource path",
+      "session": null,
+      "status": 400
+    },
+    {
+      "bytes": 0,
+      "name": "..%2fred-outside.jpg",
+      "outcome": "path leaves the document folder",
+      "session": 12,
+      "status": 403
+    },
+    {
+      "bytes": 0,
+      "name": "",
+      "outcome": "malformed resource path",
+      "session": null,
+      "status": 400
+    },
+    {
+      "bytes": 0,
+      "name": "",
+      "outcome": "malformed resource path",
+      "session": null,
+      "status": 400
+    },
+    {
+      "bytes": 0,
+      "name": "link.jpg",
+      "outcome": "link resolves outside the document folder",
+      "session": 13,
+      "status": 403
+    },
+    {
+      "bytes": 0,
+      "name": "linkdir/red-outside.jpg",
+      "outcome": "link resolves outside the document folder",
+      "session": 13,
+      "status": 403
+    },
+    {
+      "bytes": 0,
+      "name": "tl1-run.FAMw/plan/red-outside.jpg",
+      "outcome": "preview replaced or document closed",
+      "session": null,
+      "status": 403
+    },
+    {
+      "bytes": 0,
+      "name": "green.png",
+      "outcome": "held (test delay)",
+      "session": 15,
+      "status": 0
+    },
+    {
+      "bytes": 0,
+      "name": "red.jpg",
+      "outcome": "held (test delay)",
+      "session": 16,
+      "status": 0
+    },
+    {
+      "bytes": 0,
+      "name": "green.png",
+      "outcome": "preview replaced or document closed",
+      "session": 15,
+      "status": 403
+    },
+    {
+      "bytes": 743,
+      "name": "red.jpg",
+      "outcome": "served",
+      "session": 16,
+      "status": 200
+    },
+    {
+      "bytes": 157,
+      "name": "green.png",
+      "outcome": "served",
+      "session": 17,
+      "status": 200
+    },
+    {
+      "bytes": 743,
+      "name": "red.jpg",
+      "outcome": "served",
+      "session": 18,
+      "status": 200
+    },
+    {
+      "bytes": 743,
+      "name": "red.jpg",
+      "outcome": "served",
+      "session": 19,
+      "status": 200
+    },
+    {
+      "bytes": 743,
+      "name": "red.jpg",
+      "outcome": "served",
+      "session": 19,
+      "status": 200
+    }
+  ],
+  "steps": [
+    {
+      "detail": "loaded true · status rev 0 · loaded: 2 root node(s); (0.50,0.50) want [230, 30, 30] got [230, 30, 30]; warnings 0 (want 0); captures/t01-jpg-same-folder.png",
+      "name": "t01-jpg-same-folder: Plain VRML with a JPG in the same folder. — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "loaded true · status rev 0 · loaded: 2 root node(s); (0.50,0.50) want [230, 30, 30] got [230, 30, 30]; warnings 0 (want 0); captures/t02-gzip-jpg.png",
+      "name": "t02-gzip-jpg: Gzip-compressed VRML bytes in a .wrl file with a JPG. — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "loaded true · status rev 0 · loaded: 2 root node(s); (0.50,0.50) want [30, 200, 60] got [30, 200, 60]; warnings 0 (want 0); captures/t03-png.png",
+      "name": "t03-png: PNG texture from the same folder. — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "loaded true · status rev 0 · loaded: 2 root node(s); (0.50,0.50) want [40, 60, 230] got [40, 60, 230]; warnings 0 (want 0); captures/t04-gif.png",
+      "name": "t04-gif: GIF texture converted to palette mode. — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "loaded true · status rev 0 · loaded: 2 root node(s); (0.50,0.50) want [240, 220, 30] got [240, 220, 30]; warnings 0 (want 0); captures/t05-child-folder.png",
+      "name": "t05-child-folder: Texture in a nested child folder. — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "loaded true · status rev 0 · loaded: 2 root node(s); (0.50,0.50) want [220, 40, 200] got [220, 40, 201]; warnings 0 (want 0); captures/t06-spaces.png",
+      "name": "t06-spaces: Document and texture paths contain spaces. — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "loaded true · status rev 0 · loaded: 2 root node(s); (0.50,0.50) want [30, 210, 220] got [30, 210, 220]; warnings 0 (want 0); captures/t07-fallback-first-wins.png",
+      "name": "t07-fallback-first-wins: First of two candidate URLs wins when both exist. — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "loaded true · status rev 0 · loaded: 2 root node(s); (0.50,0.50) want [245, 140, 20] got [245, 140, 20]; warnings 0 (want 0); captures/t08-missing-first.png",
+      "name": "t08-missing-first: First candidate URL is missing, so the fallback is used. — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "loaded true · status rev 0 · loaded: 3 root node(s); (0.30,0.50) want [30, 200, 60] got [30, 200, 60]; (0.70,0.50) want [30, 200, 60] got [30, 200, 60]; warnings 0 (want 0); captures/t09-def-use.png",
+      "name": "t09-def-use: DEF/USE shares one texture across two shapes. — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "loaded true · status rev 0 · loaded: 2 root node(s); (0.50,0.50) want untextured got [255, 255, 255]; warnings 1 (want 1) | line 5 ImageTexture: \"nothere.jpg\": not found; captures/t10-missing.png",
+      "name": "t10-missing: Referenced image does not exist. — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "loaded true · status rev 0 · loaded: 2 root node(s); (0.50,0.50) want untextured got [255, 255, 255]; warnings 1 (want 1) | line 5 ImageTexture: \"garbage.jpg\": not a valid image file; captures/t11-invalid-bytes.png",
+      "name": "t11-invalid-bytes: Referenced file is not a valid image. — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "loaded true · status rev 0 · loaded: 2 root node(s); (0.50,0.50) want untextured got [255, 255, 255]; warnings 1 (want 1) | line 5 ImageTexture: \"../red-outside.jpg\": path leaves the document folder; \"..%2fred-outside.jpg\": path leaves the document folder; \"%2e%2e/red-outside.jpg\": path leaves the document folder; \"sub/../../red-outside.jpg\": path leaves the document folder; captures/t12-traversal.png",
+      "name": "t12-traversal: Traversal URLs must not reach the outside target. — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "loaded true · status rev 0 · loaded: 2 root node(s); (0.50,0.50) want untextured got [255, 255, 255]; warnings 1 (want 1) | line 5 ImageTexture: \"link.jpg\": link resolves outside the document folder; \"linkdir/red-outside.jpg\": link resolves outside the document folder; captures/t13-symlink-escape.png",
+      "name": "t13-symlink-escape: Symlinks must not escape the document folder. — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "loaded true · status rev 0 · loaded: 2 root node(s); (0.50,0.50) want untextured got [255, 255, 255]; warnings 1 (want 1) | line 5 ImageTexture: \"http://example.invalid/…\": network and file: URLs are not loaded; \"https://example.invalid/…\": network and file: URLs are not loaded; \"(file: URL)\": network and file: URLs are not loaded; \"(absolute path)\": absolute paths are not loaded; captures/t14-remote-and-absolute.png",
+      "name": "t14-remote-and-absolute: Remote and absolute URLs are never loaded. — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "t15-slow-switch: a texture request is in flight",
+      "ok": true
+    },
+    {
+      "detail": "loaded true · status rev 0 · loaded: 2 root node(s); (0.50,0.50) want [230, 30, 30] got [230, 30, 30]; warnings 0 (want 0); captures/t15-slow-switch-switched-to.png",
+      "name": "t15-slow-switch-switched-to: Plain VRML with a JPG in the same folder. — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "[ResourceLogEntry { session: Some(15), name: \"green.png\", status: 403, outcome: \"preview replaced or document closed\", bytes: 0 }]",
+      "name": "t15-slow-switch: document switch while a texture request is active — the in-flight reply for the closed document was refused",
+      "ok": true
+    },
+    {
+      "detail": "loaded true · status rev 0 · loaded: 2 root node(s); (0.50,0.50) want [30, 200, 60] got [30, 200, 60]; warnings 0 (want 0); captures/t15-slow-switch-reopened.png",
+      "name": "t15-slow-switch-reopened: document switch while a texture request is active — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "loaded true · status rev 0 · loaded: 2 root node(s); (0.50,0.50) want [230, 30, 30] got [230, 30, 30]; warnings 0 (want 0); captures/t16-save-reopen-opened.png",
+      "name": "t16-save-reopen-opened: save, close, reopen, reload — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "Some(Saved { bytes_written: 223, backup: Some(\"doc.wrl.bak-2026-10-10T11-35-41-581Z\"), preserved: false, doc: DocumentInfo { session: 18, name: \"doc.wrl\", display_path: \"/tmp/tl1-run.FAMw/plan/t16/doc.wrl\", format: \"plain\", view: \"#VRML V2.0 utf8\\n# TEXTURE-LOCAL-1 fixture t16-save-reopen\\nViewpoint { position 0 0 10 description \\\"front\\\" }\\nShape {\\n  appearance Appearance { texture ImageTexture { url [ \\\"red.jpg\\\" ] } }\\n  geometry Box { size 30 30 0.1 }\\n}\\n\", revision: 0, dirty: false, eol: \"LF\", eol_mixed: false, bom: false, bytes_on_disk: 223, can_undo: false, can_redo: false, untitled: false } })",
+      "name": "t16-save-reopen: Save succeeded",
+      "ok": true
+    },
+    {
+      "detail": "loaded true · status rev 0 · loaded: 2 root node(s); (0.50,0.50) want [230, 30, 30] got [230, 30, 30]; warnings 0 (want 0); captures/t16-save-reopen-saved.png",
+      "name": "t16-save-reopen-saved: save, close, reopen, reload — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "t16-save-reopen: Close removes the document",
+      "ok": true
+    },
+    {
+      "detail": "loaded true · status rev 0 · loaded: 2 root node(s); (0.50,0.50) want [230, 30, 30] got [230, 30, 30]; warnings 0 (want 0); captures/t16-save-reopen-reopened.png",
+      "name": "t16-save-reopen-reopened: save, close, reopen, reload — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "t16-save-reopen: Reload keeps the session",
+      "ok": true
+    },
+    {
+      "detail": "loaded true · status rev 1 · loaded: 2 root node(s) · view reset (viewpoint-span-lost); (0.50,0.50) want [230, 30, 30] got [230, 30, 30]; warnings 0 (want 0); captures/t16-save-reopen-reloaded.png",
+      "name": "t16-save-reopen-reloaded: save, close, reopen, reload — rendered as expected",
+      "ok": true
+    },
+    {
+      "detail": "31 files checked; changed: []",
+      "name": "rust: every fixture file (documents and images) is byte-identical after the run",
+      "ok": true
+    },
+    {
+      "detail": "14 served, 27 requests logged; escaped: []",
+      "name": "rust: no file outside a document folder was served",
+      "ok": true
+    }
+  ]
+}

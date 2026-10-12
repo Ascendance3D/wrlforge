@@ -1,0 +1,311 @@
+{
+  "file": "pkg-test-basic.wrl",
+  "pass": true,
+  "steps": [
+    {
+      "detail": "",
+      "name": "startup document opened through Rust",
+      "ok": true
+    },
+    {
+      "detail": "272 UTF-16 units, format plain, eol LF, bom false",
+      "name": "editor shows exactly the Rust view projection",
+      "ok": true
+    },
+    {
+      "detail": "rev 0 -> 1, dirty true",
+      "name": "typed edit reached the canonical Rust document",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "status bar shows Modified",
+      "ok": true
+    },
+    {
+      "detail": "dirty false",
+      "name": "Ctrl+Z restores the exact original",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "Ctrl+Shift+Z redoes the edit",
+      "ok": true
+    },
+    {
+      "detail": "Material . diffuseColor (SFColor)",
+      "name": "inspector: found an editable SF field on a real node",
+      "ok": true
+    },
+    {
+      "detail": "diffuseColor = 0.8 0.2 0.2",
+      "name": "inspector: clicking the tree item shows typed, editable controls",
+      "ok": true
+    },
+    {
+      "detail": "\"abc\" -> Not changed — diffuseColor (component 2): \"abc\" is not a number. [input-not-a-number] | \"2\" -> Not changed — diffuseColor (component 2): Value must be ≥ 0 and ≤ 1. [input-out-of-range]",
+      "name": "inspector: invalid values are refused by Rust, visibly, with no change",
+      "ok": true
+    },
+    {
+      "detail": "rev 3 -> 4, view @244: \"0.2\" -> \"0.25\"",
+      "name": "inspector: Apply changed exactly the intended source token in Rust",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "inspector: source editor shows the Rust result",
+      "ok": true
+    },
+    {
+      "detail": "node-216-254",
+      "name": "inspector: re-inspected node shows the new value",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "inspector: Scene Tree re-analyzed at the new revision and keeps the node",
+      "ok": true
+    },
+    {
+      "detail": "rev 4 · loaded: 2 root node(s)",
+      "name": "inspector: live preview reloaded the edited revision",
+      "ok": true
+    },
+    {
+      "detail": "rev 5, selected Some(Selected { session: 1, revision: 5, id: \"node-216-253\" })",
+      "name": "inspector: Ctrl+Z restores the previous value in one step; Inspector keeps the node",
+      "ok": true
+    },
+    {
+      "detail": "rev 6, selected Some(Selected { session: 1, revision: 6, id: \"node-216-254\" })",
+      "name": "inspector: Ctrl+Shift+Z reapplies the field edit; Inspector keeps the node",
+      "ok": true
+    },
+    {
+      "detail": "41 spans, 0 marks, analysis Some((1, 6)), waited 162 ms",
+      "name": "syntax: colors come from the Rust analysis of the current session + revision",
+      "ok": true
+    },
+    {
+      "detail": "1 chunks",
+      "name": "syntax: color layer shows exactly the widget text, in whole-line chunks",
+      "ok": true
+    },
+    {
+      "detail": "9 classes: comment,def-name,field,header,keyword,node-type,number,punctuation,string | ",
+      "name": "syntax: several syntax classes are visible, each painted by its theme token",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "syntax: textarea and color layer share every text-metric property",
+      "ok": true
+    },
+    {
+      "detail": "hit Some(\"source\"), controls 1",
+      "name": "syntax: layer is aria-hidden, takes no pointer input; the textarea is the one control",
+      "ok": true
+    },
+    {
+      "detail": "scrollHeight 770, 12 lines x 18 + 13 = 229",
+      "name": "syntax: every textarea line box is exactly one line-height (uniform rows)",
+      "ok": true
+    },
+    {
+      "detail": "[scroll 0,0: line 2 col 5: dx -0.01px dy 1.00px h 15.0; matrix(1, 0, 0, 1, 0, 0)] [scroll 0,0: line 2 col 5: dx -0.01px dy 1.00px h 15.0; matrix(1, 0, 0, 1, 0, 0)] [scroll 0,0: line 2 col 5: dx -0.01px dy 1.00px h 15.0; matrix(1, 0, 0, 1, 0, 0)] [scroll 0,0: line 7 col 5: dx -0.01px dy 1.00px h 15.0; matrix(1, 0, 0, 1, 0, 0)]",
+      "name": "syntax: layer stays registered with the textarea at top, middle, bottom and far-right scroll",
+      "ok": true
+    },
+    {
+      "detail": "input + layout 3.0 ms, color-layer Rust work 1.0 ms (1 chunk(s) rebuilt)",
+      "name": "syntax: typed text is painted immediately, marked pending until re-analyzed",
+      "ok": true
+    },
+    {
+      "detail": "rev 6 -> 7, exact after 168 ms; ",
+      "name": "syntax: after the edit, Rust re-analyzed the new revision and the new tokens are colored correctly",
+      "ok": true
+    },
+    {
+      "detail": "Some(996)",
+      "name": "syntax: caret sits right after the typed text (native textarea caret)",
+      "ok": true
+    },
+    {
+      "detail": "input handler avg 2.3 ms, max 4.0 ms; exact 168 ms after settle",
+      "name": "syntax: 25 rapid inputs + a paste reach Rust exactly; colors catch up to the final revision",
+      "ok": true
+    },
+    {
+      "detail": "rejected 0 -> 3",
+      "name": "syntax: replies for an older revision, another session or other text are rejected",
+      "ok": true
+    },
+    {
+      "detail": "3 diagnostics, 2 underline runs, invalid token shown: true, panel rev Some(\"9\"), doc rev 9",
+      "name": "syntax: malformed source stays editable; diagnostics and underlines use the same revision",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "syntax: an edit after the syntax error still reaches Rust",
+      "ok": true
+    },
+    {
+      "detail": "exact 144 ms",
+      "name": "syntax: Undo restores the exact text and its colors",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "syntax: Redo then Undo recolor each revision exactly",
+      "ok": true
+    },
+    {
+      "detail": "tokyo-night: 9 classes ok=true keyword rgb(187, 154, 247) comment,def-name,field,header,keyword,node-type,number,punctuation,string |  | tokyo-night-storm: 9 classes ok=true keyword rgb(187, 154, 247) comment,def-name,field,header,keyword,node-type,number,punctuation,string |  | tokyo-night-light: 9 classes ok=true keyword rgb(101, 53, 157) comment,def-name,field,header,keyword,node-type,number,punctuation,string |  | tokyo-night: 9 classes ok=true keyword rgb(187, 154, 247) comment,def-name,field,header,keyword,node-type,number,punctuation,string | ",
+      "name": "syntax: each Tokyo Night theme recolors the same tokens with its own tokens",
+      "ok": true
+    },
+    {
+      "detail": "renders 50 -> 50",
+      "name": "syntax: a theme change re-renders nothing, reparses nothing, edits nothing",
+      "ok": true
+    },
+    {
+      "detail": "295 UTF-16 units, 12 lines, 41 spans (123 wire numbers), analyze round trip 3 ms, last render 1.0 ms; 1 of 1 chunks colored, 41 colored elements in the DOM",
+      "name": "syntax: performance on this document",
+      "ok": true
+    },
+    {
+      "detail": "median 2 ms with layer, 2 ms with layer not laid out",
+      "name": "syntax: keystroke cost with the color layer vs. without it (text restored after)",
+      "ok": true
+    },
+    {
+      "detail": "browser insert+layout 2.0 · widget value read 0.0 · input handler 1.0 · layout after handler 1.0 · caret line/col 0.0 · pump main-thread 0.0 · rust ack 4.0 · our main-thread total 1.0",
+      "name": "perf: keystroke breakdown in ms (medians of 7; text restored after)",
+      "ok": true
+    },
+    {
+      "detail": "Saved pkg-test-basic.wrl (300 B, plain). Backup: pkg-test-basic.wrl.bak-2026-10-10T10-36-47-957Z",
+      "name": "Save button wrote through Rust and cleared dirty",
+      "ok": true
+    },
+    {
+      "detail": "6 items",
+      "name": "Scene Tree lists items from the native parser",
+      "ok": true
+    },
+    {
+      "detail": "0 diagnostics",
+      "name": "diagnostics computed",
+      "ok": true
+    },
+    {
+      "detail": "analysis rev Some(\"35\"), tree DOM rev Some(\"35\"); stale immediately after analyze: false",
+      "name": "Scene Tree DOM shows the current analysis revision before it is clicked",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "Scene Tree items rendered in the DOM",
+      "ok": true
+    },
+    {
+      "detail": "(77, 115) for WorldInfo",
+      "name": "clicking a Scene Tree item selects its exact source span",
+      "ok": true
+    },
+    {
+      "detail": "WorldInfo (1 rows)",
+      "name": "Inspector shows the item's fields",
+      "ok": true
+    },
+    {
+      "detail": "caret (21, 21) -> (21, 21); message \"Scene Tree is updating (an edit is being applied); selection not changed.\"; rev 35 -> 36",
+      "name": "selection: a Scene Tree click during the analysis delay is refused (nothing selected, nothing changed)",
+      "ok": true
+    },
+    {
+      "detail": "stale seen true, caught up true",
+      "name": "selection: the Scene Tree shows an updating state while behind, then catches up",
+      "ok": true
+    },
+    {
+      "detail": "(84, 122) == 84..122 (WorldInfo)",
+      "name": "selection: on a current tree the click selects the item's span in the new revision",
+      "ok": true
+    },
+    {
+      "detail": "stale caret (16, 16) kept: true; carried Some((38, \"node-85-123\")); current (85, 123)",
+      "name": "selection: keyboard Enter on a stale item is refused; on a current item it selects the current span",
+      "ok": true
+    },
+    {
+      "detail": "rev 38 -> 39",
+      "name": "selection: rapid edits followed by an immediate click: refused, every keystroke applied",
+      "ok": true
+    },
+    {
+      "detail": "rev 40, selected Some((40, \"node-96-134\")), inspection rev Some(40)",
+      "name": "selection: an edit during an Inspector request ends with selection, Inspector and document at one revision",
+      "ok": true
+    },
+    {
+      "detail": "backend for rev 39: Some(Stale { current: 40 })",
+      "name": "selection: a late Inspector reply (older revision, older request, other item, stale) never replaces the Inspector",
+      "ok": true
+    },
+    {
+      "detail": "tree rev Some(\"40\"), diagnostics rev Some(\"40\")",
+      "name": "selection: an older or foreign analysis reply never replaces the Scene Tree or Diagnostics",
+      "ok": true
+    },
+    {
+      "detail": "0 inconsistent samples of 60",
+      "name": "selection: during an edit with an analysis in flight, the tree never claims to be current when it is not",
+      "ok": true
+    },
+    {
+      "detail": "inspector stale: true; rev 41; Not changed — title: the Inspector is updating (it shows revision 41, the document is at 42).",
+      "name": "selection: Apply on an Inspector of an older revision is refused before it reaches Rust",
+      "ok": true
+    },
+    {
+      "detail": "rev 49",
+      "name": "selection: undo returns the document to its text before these steps",
+      "ok": true
+    },
+    {
+      "detail": "webgl2 · Apple GPU · X_ITE loaded · canvas ready",
+      "name": "WebView WebGL probe",
+      "ok": true
+    },
+    {
+      "detail": "rev 49 · loaded: 2 root node(s)",
+      "name": "X_ITE preview loaded the unsaved buffer",
+      "ok": true
+    },
+    {
+      "detail": "rev 49 -> 50, 9 classes",
+      "name": "syntax: Reload from disk repaints the reloaded document from a fresh analysis",
+      "ok": true
+    },
+    {
+      "detail": "300 bytes, format plain",
+      "name": "rust: saved file decodes to exactly the expected source",
+      "ok": true
+    },
+    {
+      "detail": "1 backup(s)",
+      "name": "rust: one backup with the original bytes",
+      "ok": true
+    },
+    {
+      "detail": "0",
+      "name": "rust: no temp file left",
+      "ok": true
+    }
+  ]
+}

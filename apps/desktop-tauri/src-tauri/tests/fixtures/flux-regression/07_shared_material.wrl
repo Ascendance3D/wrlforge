@@ -1,0 +1,18 @@
+#VRML V2.0 utf8
+# original WRL Forge test fixture (RUST-STAB-1)
+# A DEF Material used once, then shared with USE in a second Shape.
+Shape {
+  appearance Appearance {
+    material DEF Mat Material { diffuseColor 0.25 0.5 0.75 }
+  }
+  geometry Box { size 1 1 1 }
+}
+
+Transform {  translation 2 0 0
+  children [
+    Shape {
+      appearance Appearance { material USE Mat }
+      geometry Sphere { radius 0.5 }
+    }
+  ]
+}

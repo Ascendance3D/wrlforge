@@ -274,8 +274,8 @@ pub(super) async fn run(c: &p::CreateSmoke, r: &mut R) -> Option<()> {
     keydown("btn-create", "ArrowDown");
     let first = wait_ms(2000, || (active_id() == "create-box").then_some(())).await;
     keydown("create-box", "ArrowUp");
-    let wrap = active_id() == "create-cone";
-    keydown("create-cone", "Home");
+    let wrap = active_id() == "create-extrusion";
+    keydown("create-extrusion", "Home");
     let home = active_id() == "create-box";
     keydown("create-box", "Escape");
     ipc::sleep(50).await;

@@ -10,6 +10,10 @@ The Electron application is **unchanged** and stays the behavior reference
 and recovery path. The new application lives in `apps/desktop-tauri/` and does
 not load Electron, Node.js, `main.js`, `preload.js` or `renderer/`.
 
+### Renderer decision (current)
+
+X_ITE remains the default renderer. The Rust renderer remains experimental and is disabled by default. X_ITE compatibility code is kept.
+
 ## Status key
 
 | status | meaning |
@@ -18,6 +22,7 @@ not load Electron, Node.js, `main.js`, `preload.js` or `renderer/`.
 | PARTIAL | a Rust replacement exists for part of the behavior |
 | PENDING | no Rust replacement yet; the Tauri app lacks the feature |
 | BLOCKED | needs an owner decision before work can proceed |
+| KEPT | a deliberate JavaScript dependency by owner decision (the X_ITE renderer and its adapters) |
 
 ## Layout
 
@@ -42,23 +47,24 @@ workspace; `crates/Cargo.lock` gained only their two path entries.
 |---|---|---|---|
 | `src/vrml/tokenizer.js` | `wrlforge-vrml::tokenizer` | MIGRATED | Trivia arrays not kept (no consumer). Positions are `u32`. A leading U+FEFF is signature trivia (Migration-2; deliberate difference, see notes). |
 | `src/vrml/parser.js`, `ast.js`, `diagnostics.js` (syntax codes) | `wrlforge-vrml::{parser, ast, diagnostics}` | MIGRATED | Parity: 673/673 files identical (65 fixtures + 608 `new-items/item-categories`). |
-| `src/vrml/scene-tree.js` | `wrlforge-vrml::scene::build_scene_tree` | PARTIAL | Same inclusion rules and id format; no PROTO-instance flags, no read-only map API, flat USE scope only. |
+| `src/vrml/scene-tree.js` | `wrlforge-vrml::scene::{build_scene_tree, build_scene_tree_scoped}` | PARTIAL | Same inclusion rules and id format; no PROTO-instance flags, no read-only map API. The flat USE scope is **resolved** (RUST-STAB-2A): USE and ROUTE node names come from the lexical scope graph. ROUTE items carry a typed verdict and PROTO-instance nodes a type answer (RUST-STAB-2B, `SceneItem::typed`). |
 | inspector read side (`presentation.js`, `interface-query.js`) | `wrlforge-vrml::scene::inspect` + `field_edit::inspect_node_fields` | PARTIAL | Node items show schema-typed field descriptors; no messages catalog. |
-| `src/vrml/analyze.js` (VRML040–044) | — | PENDING | Advisory semantic diagnostics not ported. |
-| `src/vrml/symbols.js`, `scope-graph.js` (WD1.5) | — | PENDING | Largest remaining port (~4,600 lines). |
+| `src/vrml/analyze.js` (VRML040–044) | `wrlforge-vrml::scope` advisories `SCOPE001`–`SCOPE010` (RUST-STAB-2A) and `SCOPE101`–`SCOPE131` (RUST-STAB-2B) | PARTIAL | Not a port: scope-correct DEF/USE and ROUTE-node findings replace the flat VRML041–043 meaning. Duplicate DEF is `info` (valid VRML97). Typed ROUTE event/direction/type, `IS`, and node-type findings added in RUST-STAB-2B. No duplicate-ROUTE check (VRML044). |
+| `src/vrml/symbols.js`, `scope-graph.js` (WD1.5) | `wrlforge-vrml::scope` (RUST-STAB-2A) + `scope::typed` (RUST-STAB-2B) | BUILT (read-only, advisory) | DEF/USE (P1), PROTO/EXTERNPROTO type names (P2A), interface members and `IS` (P2B), and ROUTE nodes, events, directions and types (P2C) built from the standard. Not a port; no consumer API (WD1.6) yet. EXTERNPROTO URLs and Inline files are not loaded. See [RUST_STAB_2A_SCOPE](RUST_STAB_2A_SCOPE.md) and [RUST_STAB_2B_TYPED_REFERENCES](RUST_STAB_2B_TYPED_REFERENCES.md). |
 | `src/vrml/edit.js` (WD1.2) | `wrlforge-text::edit` (RUST-1) | MIGRATED | Used by `wrlforge-document` for every edit. |
 | `src/vrml/source-map.js` | `wrlforge-text` offsets + `ViewMap` | PARTIAL | Offset↔token lookup not exposed. |
 | `src/vrml/node-identity.js`, `document-transaction.js` (WD1.4) | span proof in `field_edit` + `wrlforge-document::{apply_source_transaction, map_span}` | PARTIAL | Edits require exactly one node at the exact span of the current revision, re-proved after re-parse. Selections survive undo/redo only through exact change mapping. No Tier-2 DEF identity. |
 | `src/vrml/node-schema.js` | `wrlforge-vrml::node_schema` | MIGRATED | Generated field-for-field from the committed JS schema (`scripts/build-rust-node-schema.js`, `--check`); `scripts/check-rust-node-schema-parity.js` proves value equality (54 nodes, 544 fields, 10 classes). |
 | `src/vrml/field-edit.js` (WD2-B) | `wrlforge-vrml::field_edit` | MIGRATED | Same nine types, reason ids, lexical gates and round-trip proof. Stricter: nodes in PROTO/EXTERNPROTO/interface scope refuse; SFString line breaks refuse. |
-| `structure-edit.js`, `inspector-edit.js`, `first-object.js`, `simple-object.js`, `node-templates.js` | — | PENDING | No structural editing yet. |
+| `structure-edit.js`, `inspector-edit.js`, `first-object.js`, `simple-object.js`, `node-templates.js` | — | PENDING | No structural editing yet (VISUAL-4A adds only "write one absent field"). |
+| — (no JS equivalent) | `wrlforge-vrml::{mf_edit, extrusion}` + `doc_edit_list` / `doc_add_field` + `ui/src/extrusion.rs` | NEW | VISUAL-4A: `MFVec2f` / `MFVec3f` / `MFRotation` list editing, the Extrusion Inspector and the 2D outline editor. See [VISUAL_4A_EXTRUSION](VISUAL_4A_EXTRUSION.md). |
 | `compatibility.js`, `semantic-findings.js`, `messages.js`, `containment.js`, `proto-*.js`, `asset-refs.js` | — | PENDING | |
 | `src/editor/wrl-document.js` | `wrlforge-document::Document` | MIGRATED | One canonical buffer; dirty, revision, undo/redo are Rust-owned. |
 | `src/editor/file-io.js` | `src-tauri/src/files.rs` | MIGRATED | Same 7-step order. Stricter: refuses invalid UTF-8; exact byte stamp instead of SHA-1. |
 | `src/files/vrml-file.js` (`isGzip`), `backups.js`, `src/preview/wrl-source.js` | `files.rs` | MIGRATED | `editPathFor` (Mall `.edit.wrl`) not ported. |
 | `src/editor/session.js`, `session-store.js`, `editor-controller.js`, `path-authorizer.js` | `src-tauri/src/service.rs` + `commands.rs` | PARTIAL | Rust-owned sessions; paths only from native dialogs or the launch argument. No multi-document UI. No World-graph authorization. |
 | `src/editor/language.js` + CodeMirror 6 | `wrlforge-vrml::highlight` + `protocol::syntax` + `<textarea>` with `ui/src/syntax.rs` color layer | PARTIAL | UI-SYNTAX-1: parser-derived syntax colors and diagnostic underlines from the same parse and revision as the Diagnostics panel. Highlight parity with `language.js`: 65/65 committed fixtures, 328/328 approved real items. No gutter, no folding, no outline pane. CodeMirror is NOT used. |
-| `src/editor/recovery-store.js`, `recovery-controller.js` | — | PENDING | No crash recovery. |
+| `src/editor/recovery-store.js`, `recovery-controller.js` | `src-tauri/src/recovery.rs` + `service.rs` recovery hooks + `ui/src/recovery.rs` | MIGRATED (RUST-STAB-1) | Persistent, Rust-owned crash recovery with a startup Restore / Discard / Later choice; passed a SIGKILL smoke. Not a port: binary-checked records, atomic writes, owner locks. See [RUST_STAB_1_RECOVERY](RUST_STAB_1_RECOVERY.md). |
 | `src/editor/ui-state.js` (zoom, themes) | `protocol::theme` + `ui/src/theme.rs` + `ui/static/themes.css` | PARTIAL | UI-THEME-1: three built-in Tokyo Night themes (`tokyo-night` default, `tokyo-night-storm`, `tokyo-night-light`), toolbar selector, persisted. No zoom, High Contrast or Follow System yet. |
 | `src/editor/command-registry.js`, `panel-registry.js`, `workspace-presets.js`, `src/shell/*` | — | PENDING | Fixed layout; toolbar and shortcuts only. |
 | `src/editor/scene-selection.js` | `ui/src/ui.rs` `adopt_selection` (Scene Tree and viewport) | PARTIAL | One selection authority for tree and viewport clicks. No multi-selection. |
@@ -69,9 +75,10 @@ workspace; `crates/Cargo.lock` gained only their two path entries.
 | `src/editor/editor-locator.js` (VSCodium) | — | PENDING | Optional integration. |
 | `src/preview/preview-scheduler.js` | `ui/src/ui.rs` (700 ms debounce) | MIGRATED | Skips revisions already on screen. |
 | `src/preview/preview-state.js` | adapter keeps the last valid scene | PARTIAL | No explicit state machine. |
-| `src/preview/buffer-overlay.js`, `mall-preview-bridge.js`, `world-preview-bridge.js`, `texture-base.js`, `url-policy.js` | — | PENDING | Preview receives text only; relative textures are not served; CSP blocks remote origins. |
+| `src/preview/texture-base.js` (relative textures) | `src-tauri/src/resources.rs` | PORTED (TEXTURE-LOCAL-1) | Read-only `wrlres` scheme; per-generation token bound to the Rust session; image files inside the document folder only; 32 MiB cap; static `ImageTexture` URL check → preview warnings. |
+| `src/preview/buffer-overlay.js`, `mall-preview-bridge.js`, `world-preview-bridge.js`, `url-policy.js` | — | PENDING | Preview receives text plus a Rust-issued resource base; `Inline`/movie/audio resources are not served; CSP blocks remote origins. |
 | `fit-math.js`, `extrusion-bounds.js`, `bbox-traversal.js`, `guides.js`, `viewpoint-preserve.js` | — | PENDING | Mall Fit preview not ported. |
-| X_ITE 15.1.10 (renderer) | `ui/static/preview-adapter.js` (JS) | BLOCKED | X_ITE stays as the temporary renderer; a custom Rust renderer is the approved direction but not started (see below and [PRODUCT_VISION](../PRODUCT_VISION.md)). |
+| X_ITE 16.5.0 (renderer; 15.1.10 before XITE-16-UPGRADE-2) | `ui/static/preview-adapter.js` (JS) | KEPT | X_ITE 16.5.0 is the default renderer ([XITE_16_5_0_INTEGRATION](XITE_16_5_0_INTEGRATION.md)). An experimental native wgpu renderer exists behind an opt-in test switch (NATIVE_RENDER_1, see [NATIVE_RENDER_1](NATIVE_RENDER_1.md)) and is disabled by default. |
 | `validator.js`, `src/mall/*` | — | PENDING | Mall Item profile (80 KiB cap, rules, repack) not ported. `safe_save` already has the `max_bytes` ceiling. |
 | `src/world-project/*` | — | PENDING | Scanner, asset graph, preview scheme, ZIP bundle not ported (`zip-writer` should use `flate2`). |
 | `src/external-proto/*`, `src/proto-resolution/*`, `src/proto-enrichment/*` | — | PENDING | |
@@ -82,10 +89,10 @@ workspace; `crates/Cargo.lock` gained only their two path entries.
 
 | item | why | removal path |
 |---|---|---|
-| X_ITE 15.1.10 (`vendor/x_ite`, MIT) | It is the temporary 3D renderer and is written in JavaScript. | The owner has approved a future custom Rust VRML97/X3D renderer as the direction (see [PRODUCT_VISION](../PRODUCT_VISION.md)); X_ITE remains the temporary renderer until that lane is approved and built. Renderer implementation has not started and needs its own lane. |
-| `preview-adapter.js` (~150 lines, handwritten) | The narrow bridge from Rust/Wasm to X_ITE: load, generation retire, pick snapshot (plain JSON), read-only pixel probes. | Goes away with X_ITE. |
-| `xite-pick-adapter.js` (WD2-D, copied at build time) | Parse provenance and hit snapshots need private X_ITE 15.1.10 surfaces. | Goes away with X_ITE; a Rust renderer reports hits directly. |
-| `xite-gizmo-adapter.js` (VISUAL-3A / 3A1, ~290 lines, handwritten) | The gizmo needs X_ITE's camera matrices (private), a temporary rendered translation (public SAI) on the PROVEN runtime node, and the bound viewpoint's user offsets (private) for the camera carry. Plain data out. | Goes away with X_ITE; a Rust renderer owns its camera. |
+| X_ITE 16.5.0 (`vendor/x_ite`, MIT; was 15.1.10) | It is the default 3D renderer and is written in JavaScript. | X_ITE remains the default renderer. The Rust (wgpu) renderer is experimental and disabled by default (see [NATIVE_RENDER_1](NATIVE_RENDER_1.md)). No X_ITE removal is planned. |
+| `preview-adapter.js` (~150 lines, handwritten) | The narrow bridge from Rust/Wasm to X_ITE: load, generation retire, pick snapshot (plain JSON), read-only pixel probes. | Kept: X_ITE remains the default renderer. |
+| `xite-pick-adapter.js` (WD2-D, copied at build time) | Parse provenance and hit snapshots need private X_ITE surfaces (proven on 15.1.10 and 16.5.0). | Kept: X_ITE remains the default renderer. |
+| `xite-gizmo-adapter.js` (VISUAL-3A / 3A1, ~290 lines, handwritten) | The gizmo needs X_ITE's camera matrices (private), a temporary rendered translation, rotation or scale (public SAI, VISUAL-4B) on the PROVEN runtime node, and the bound viewpoint's user offsets (private) for the camera carry. Plain data out. | Kept: X_ITE remains the default renderer. |
 | `boot.js` (2 lines, handwritten) | Module bootstrap that loads the wasm-bindgen output. | Could be generated; trivial. |
 | `wrlforge_ui.js` (generated by wasm-bindgen) | Required Wasm glue. | Not application logic. |
 | Tauri `withGlobalTauri` injected script | Tauri's own IPC bridge. | Part of Tauri. |
@@ -439,6 +446,94 @@ the camera must survive every Move.
   `replaceWorld`) 42–44 / 55–62; camera carry (SHUTDOWN read → restore
   written) 9 / 10–11; release → final preview bound and gizmo re-bound
   71 / 75–87. Every traced commit: max view-matrix Δ 0.
+
+### VISUAL-4A — source-safe Extrusion authoring
+
+- Create gains **Extrusion** (closed hexagon outline, two-point spine, one
+  undo step). The Extrusion Inspector shows authored values and VRML97
+  defaults, edits list fields one operation at a time, and writes a missing
+  field only on an explicit request. The outline editor applies a whole
+  session as ONE `doc_edit_list` request (one undo step); Cancel sends
+  nothing. Contract, safety rules, tests and limits:
+  [VISUAL_4A_EXTRUSION](VISUAL_4A_EXTRUSION.md).
+- Smoke: `./smoke.sh --headless --extrusion [--research DIR]` (70 steps;
+  research files are copied to the run's temp directory and rendered
+  read-only).
+
+### VISUAL-4B — Rotate and Scale tools
+
+- **Rotate** and **Scale** join Select and Move in the viewport toolbar (the
+  four exclude each other). Rotate draws three rings (world axes) around the
+  pivot `T + C`; Scale draws the object's three scale axes (`R · SR · e_i`)
+  and a uniform square. X_ITE shows the temporary rotation or scale through
+  the same proven binding (VISUAL-3A1); Rust commits one `doc_rotate` /
+  `doc_scale` transaction (one undo step) on release. A missing `rotation`
+  or `scale` is refused, with an explicit "Write" action through
+  `doc_add_field`. Contract, geometry, source rules, tests and limits:
+  [VISUAL_4B_ROTATE_SCALE](VISUAL_4B_ROTATE_SCALE.md).
+- Smoke: `./smoke.sh --headless --rotscale` (71 steps, real X input).
+
+### RUST-STAB-1 — crash recovery and source safety
+
+- Crash recovery is **complete**: the startup Restore workflow passed after a
+  real SIGKILL (`./smoke.sh --headless --recovery`, three processes). Window
+  close now asks before it discards unsaved work. Format, safety rules,
+  lifecycle, tests and limits: [RUST_STAB_1_RECOVERY](RUST_STAB_1_RECOVERY.md).
+- Source preservation regressions from the corrected Flux Studio research:
+  `cargo test -p wrl-forge-desktop --test flux_regression`.
+- The PR #136 head (`96aef4f`) did not compile; this lane's first commit fixes
+  the two VISUAL-4B build breaks.
+
+### RUST-STAB-2A — scope graph and safe reference analysis
+
+- A read-only lexical scope graph (`wrlforge-vrml::scope`) resolves USE and
+  ROUTE node names under ISO 4.6.2, 4.8.4 and 4.10.2. It replaces the flat
+  Scene Tree lookup (`resolution_scope` is now `"lexical"`).
+- Edit identity and language meaning are separate answers. Repeated DEF names
+  are `ambiguous` with no edit target; the 4.6.2 closest DEF is display only.
+- Damaged source withholds answers (`recovered`). Advisory findings
+  `SCOPE001`–`SCOPE010` never block Save. Contract, codes, tests and limits:
+  [RUST_STAB_2A_SCOPE](RUST_STAB_2A_SCOPE.md).
+- Tests: `cargo test -p wrlforge-vrml scope` and
+  `cargo test -p wrl-forge-desktop --test scope_regression`.
+
+### RUST-STAB-2B — typed ROUTE, IS, and PROTO reference analysis
+
+- Read-only typed answers on the 2A graph: node-instance types (4.8.1, 4.8.4),
+  interface members (4.7, 4.9.2), ROUTE events, directions and exact types
+  (4.10.2), and `IS` connections (4.8.3, Table 4.4). Built-in Script rules
+  apply only to a node proven to be the built-in Script.
+- An unproven node, type or interface gives no event or type verdict. Findings
+  `SCOPE101`–`SCOPE131` are advisory and never block Save. Contract, codes,
+  tests and limits: [RUST_STAB_2B_TYPED_REFERENCES](RUST_STAB_2B_TYPED_REFERENCES.md).
+- The Flux fixture `08_proto_script_inline.wrl` is unchanged and is invalid
+  VRML97 (`SCOPE114`); its valid counterpart is
+  `corrected/08_proto_script_inline_valid.wrl`.
+- Tests: `cargo test -p wrlforge-vrml scope` and
+  `cargo test -p wrl-forge-desktop --test typed_regression`.
+- Not a full VRML97 or X3D conformance validator.
+
+### UI-MENU-1 — desktop menus and command integration
+
+- Seven in-window menus (File, Edit, View, Create, Tools, World, Help), drawn
+  from the typed command registry on every platform. Each item runs through
+  `command::run`, the toolbar's path. macOS also gets the standard
+  application menu (untested on macOS). Contract, IDs, keyboard, platform
+  limits and results: [UI_MENU_1](UI_MENU_1.md).
+- One window-level shortcut handler replaces the Source-only handler.
+  Text fields keep their own Undo and clipboard keys. IME composition, AltGr,
+  dialogs and drags block application shortcuts.
+- Quit (menu, Ctrl+Q, macOS) uses the existing CloseGate. Menu Cut and Paste
+  reach Rust only through the editor's `doc_edit` path
+  (`Action::SourceEdit`).
+- Mall Item and World Project items are present and disabled ("Not migrated
+  to the Rust application.").
+- Tests: `cargo test -p wrlforge-desktop-protocol command` and
+  `./smoke.sh --headless --menu`.
+
+### Future backlog
+
+- VrmlPad scripting compatibility. Not started; needs its own approved lane.
 
 ### Known issues
 

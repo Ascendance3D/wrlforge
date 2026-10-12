@@ -13,8 +13,13 @@ Status and the module map: `docs/architecture/TAURI_RUST_MIGRATION_1.md`.
   librsvg2-dev libxdo-dev libssl-dev` (already present on the dev host).
 * `wasm-bindgen-cli` 0.2.129, installed locally (no sudo):
   `cargo install wasm-bindgen-cli --version =0.2.129 --locked --root target/tools`
-* X_ITE 15.1.10 from the repository's `node_modules/x_ite/dist` (only copied;
-  Node is not run). Override with `X_ITE_DIST=…`.
+* X_ITE 16.5.0, pinned in `xite/PIN` (npm tarball SHA-256 + a SHA-256 for
+  every copied file in `xite/x_ite-16.5.0.sha256`). `build-ui.sh` runs
+  `./fetch-xite.sh` once (curl, build time only) into `target/xite/16.5.0/`
+  and refuses any other version or any changed file. Node is not run. The root
+  `node_modules` (X_ITE 15.1.10) belongs to the Electron app and is not used.
+  `X_ITE_DIST=…` may name another copy; it passes the same check.
+  See `docs/architecture/XITE_16_5_0_INTEGRATION.md`.
 
 ## Build and run
 
@@ -28,6 +33,25 @@ cargo build -p wrl-forge-desktop          # or --release
 `dist/` is embedded into the binary at compile time, so rebuild the binary
 after `./build-ui.sh`.
 
+## Linux packages (PKG-LINUX-1)
+
+```sh
+cargo install tauri-cli --version '^2' --locked   # once; provides `cargo tauri`
+./packaging/package-linux.sh
+# -> target/release/bundle/deb/WRL Forge_<version>_amd64.deb
+# -> target/release/bundle/appimage/WRL Forge_<version>_amd64.AppImage
+```
+
+The script builds the release UI and backend, stages the license texts
+(`target/pkg-licenses/`, including every third-party Rust crate license) and
+runs `cargo tauri build --bundles deb,appimage`. It remaps the builder's home
+and checkout paths (`--remap-path-prefix`), so the binaries do not contain
+private paths. The first AppImage build downloads `linuxdeploy` from GitHub.
+Evidence and the runtime library list: `qa/pkg-linux-1/README.md`.
+
+The packaged binary contains the smoke modes, so the same tests run against
+an installed copy: `WRLFORGE_BIN=/usr/bin/wrl-forge ./smoke.sh --headless ...`.
+
 ## Tests
 
 ```sh
@@ -38,7 +62,14 @@ cargo test -p wrl-forge-desktop                       # file + session services
 ./smoke.sh --headless --create                        # VISUAL-1: New World → Create → edit → save → reopen
 ./smoke.sh --headless --pick                          # VISUAL-2: viewport picking (node: oracle plan; xdotool: real clicks in Xvfb)
 ./smoke.sh --headless --move                          # VISUAL-3A: translation gizmo (xdotool: real drags in Xvfb)
+./smoke.sh --headless --extrusion [--research DIR]    # VISUAL-4A: Create Extrusion, Extrusion Inspector, outline editor
+./smoke.sh --headless --rotscale                      # VISUAL-4B: Rotate / Scale tools (xdotool: real drags in Xvfb)
+./smoke.sh --headless --recovery                      # RUST-STAB-1: SIGKILL after a confirmed recovery write, then Restore / Discard / Later
+./smoke.sh --headless --dock                          # UI-DOCK-1: docking, tabs, dividers, presets, source safety (xdotool), restart, damaged layout
 ./smoke.sh --headless --theme tokyo-night-light file.wrl...   # drives the theme selector (UI-THEME-1)
+d=$(mktemp -d) && python3 smoke-texture-plan.py "$d" && \
+  xvfb-run -a ./target/debug/wrl-forge --smoke-texture "$d" --smoke-report "$d/report.json" --config-dir "$d-config"
+                                                       # TEXTURE-LOCAL-1: rendered-pixel texture matrix
 (cd ../.. && node scripts/check-rust-node-schema-parity.js)  # Rust/JS node schema equality
 ../../spikes/tauri-rust-migration-1/parity.sh <dir>   # JS-vs-Rust parser parity (needs node)
 ../../spikes/tauri-rust-migration-1/highlight-parity.sh <dir>  # Rust highlight vs language.js (needs node)
@@ -53,3 +84,32 @@ diagnostic underlines and theme recoloring.
 `smoke.sh` always copies its inputs to a fresh `/tmp` directory first. It never
 touches the original files. Settings go to a temporary `--config-dir` per file,
 never to the user's real preferences (`<app config dir>/settings.json`).
+
+## Local textures (TEXTURE-LOCAL-1)
+
+The X_ITE preview loads `ImageTexture` images through the read-only `wrlres`
+scheme (`src-tauri/src/resources.rs`). Rust gives each preview generation of
+a saved document a new opaque token; X_ITE's base URL becomes
+`wrlres://localhost/<token>/`, and the document text is not changed. The
+handler serves a request only when its token is the session's current token
+(a newer generation, Close or a reopen retires it), and only a JPEG / PNG /
+GIF / BMP / WebP file (extension AND signature) of at most 32 MiB inside the
+document's folder, resolved at request time (a Save As moves it). Dot
+segments, encoded separators, absolute paths and symlinks that resolve
+outside the folder are refused. Network and `file:` URLs never reach Rust:
+the CSP adds only the local `wrlres:` scheme. A static Rust check of the
+`ImageTexture` URLs feeds the preview's texture warning.
+
+XITE-16-UPGRADE-2: X_ITE 16.5.0 drops a ROUTE whose node it cannot find and
+renders the rest of the scene (15.1.10 rejected the whole scene). When Rust's
+scope graph PROVES a ROUTE invalid in the previewed text (unresolved or
+invalid node, event, direction or type; never an ambiguous or recovered
+answer), the viewport shows "The preview may be incomplete because one or
+more ROUTEs are invalid." The notice is advisory: the source is not changed
+and Save is not blocked.
+
+`preview-adapter.js` also carries an X_ITE workaround (found on 15.1.10, kept
+for 16.5.0): a texture that
+finishes loading after the parse could leave `createX3DFromString` pending
+forever (its `FileLoader` was reachable only through a `WeakRef`). See the
+comment there.

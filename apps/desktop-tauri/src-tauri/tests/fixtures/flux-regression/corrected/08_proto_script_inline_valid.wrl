@@ -1,0 +1,42 @@
+#VRML V2.0 utf8
+# original WRL Forge test fixture (RUST-STAB-2B)
+# The corrected, valid counterpart of 08_proto_script_inline.wrl. The original
+# binds `field SFFloat size` to Box.size (SFVec3f) with IS, which ISO 4.8.3
+# forbids; here the interface field is SFVec3f, so every IS type matches.
+
+PROTO Pulse [
+  field SFVec3f size 1 1 1
+  field SFColor tint 1 0 0
+  eventIn SFFloat setSize
+  exposedField SFBool enabled TRUE
+]
+{
+  Group {
+    children [
+      Shape {
+        appearance Appearance { material Material { diffuseColor IS tint } }
+        geometry Box { size IS size }
+      }
+      DEF Gain ScalarInterpolator { key [ 0 1 ] keyValue [ 0 1 ] set_fraction IS setSize }
+    ]
+  }
+}
+
+# A comment between statements
+DEF Clk TimeSensor { cycleInterval 3 loop TRUE }
+DEF Ctl Script {
+  eventIn SFBool go
+  eventOut SFFloat grow
+  field SFFloat rate 2
+  url "javascript: function go(value, time) { grow = value * rate; }"
+}
+DEF Probe ScalarInterpolator {
+  key [ 0 1 ]
+  keyValue [ 0 1 ]
+}
+DEF Inst Pulse { size 2 2 2 tint 0 1 0 }
+Inline { url "child.wrl" }
+
+ROUTE Clk.isActive TO Ctl.go
+ROUTE Ctl.grow TO Probe.set_fraction
+ROUTE Clk.fraction_changed TO Inst.setSize
