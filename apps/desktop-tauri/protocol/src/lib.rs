@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod command;
 pub mod gizmo;
+pub mod layout;
 pub mod syntax;
 pub mod theme;
 

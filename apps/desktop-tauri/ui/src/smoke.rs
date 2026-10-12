@@ -12,8 +12,10 @@ use crate::ipc::{self, call, Session};
 use crate::ui::{self, ui};
 
 mod create;
+mod dock;
 mod extrusion;
 mod gizmo;
+mod menu;
 mod pick;
 mod recovery;
 mod rotscale;
@@ -92,6 +94,44 @@ pub async fn run(plan: p::SmokePlan) {
         (None, None, None) => run_steps(&plan, &mut r).await,
     };
     if done.is_none() {
+        r.step(
+            "smoke script ran to completion",
+            false,
+            "a required DOM element or reply was missing",
+        );
+    }
+    let _ = call::<()>(
+        "smoke_finish",
+        serde_json::json!({ "report": p::SmokeReport { steps: r.0 } }),
+    )
+    .await;
+}
+
+/// UI-DOCK-1: the docking smoke phases (`smoke_dock_plan`).
+pub use dock::Plan as DockPlan;
+
+pub async fn run_dock(plan: DockPlan) {
+    let mut r = R(vec![]);
+    if dock::run(&plan, &mut r).await.is_none() {
+        r.step(
+            "smoke script ran to completion",
+            false,
+            "a required DOM element or reply was missing",
+        );
+    }
+    let _ = call::<()>(
+        "smoke_finish",
+        serde_json::json!({ "report": p::SmokeReport { steps: r.0 } }),
+    )
+    .await;
+}
+
+/// UI-MENU-1: the menu smoke (`smoke_menu_plan`).
+pub use menu::Plan as MenuPlan;
+
+pub async fn run_menu(plan: MenuPlan) {
+    let mut r = R(vec![]);
+    if menu::run(&plan, &mut r).await.is_none() {
         r.step(
             "smoke script ran to completion",
             false,

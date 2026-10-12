@@ -242,6 +242,11 @@ pub fn reset(reason: &str) {
     ui().gizmo_message.set(None);
 }
 
+/// UI-MENU-1: a handle drag is in progress (application shortcuts wait).
+pub fn dragging() -> bool {
+    GIZMO.with_borrow(|g| g.drag.is_some())
+}
+
 /// The active viewport manipulation tool, if any.
 pub fn active_tool() -> Option<Tool> {
     let u = ui();

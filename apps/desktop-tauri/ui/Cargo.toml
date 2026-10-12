@@ -30,5 +30,7 @@ features = [
   "Performance", "console", "DomRect", "CssStyleDeclaration",
   "Range", "TreeWalker", "Node", "DomRectList",
   "PointerEvent", "MouseEvent", "AddEventListenerOptions", "PointerEventInit",
-  "Navigator",
+  "Navigator", "ResizeObserver", "ResizeObserverEntry",
+  # UI-MENU-1: the menu focus record.
+  "FocusEvent",
 ]

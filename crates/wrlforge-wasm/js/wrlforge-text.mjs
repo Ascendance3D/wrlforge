@@ -150,10 +150,19 @@ export function createTextEngine(glue) {
     instance = { error: null };
     INSTANCE_POISON.set(glue.RawSession, instance);
   }
+  // Every call that could answer from document or engine state starts here,
+  // INCLUDING facade-only operations that never reach the raw layer (PR #130
+  // review: `current()` minted a fresh snapshot on a trapped instance). The only
+  // exemptions are labels: `engine.poisoned`, `session.disposed` and
+  // `snapshot.revision`.
+  function alive() {
+    if (instance.error) throw fail('EENGINE', 'engine is poisoned by an earlier failure', { cause: instance.error });
+  }
+
   // Every raw call goes through here. A coded error is a refusal and passes
   // through unchanged. Anything else (a wasm trap) poisons the instance.
   function raw(fn) {
-    if (instance.error) throw fail('EENGINE', 'engine is poisoned by an earlier failure', { cause: instance.error });
+    alive();
     try {
       return fn();
     } catch (e) {
@@ -167,6 +176,7 @@ export function createTextEngine(glue) {
   const snapshots = new WeakMap(); // Snapshot -> { session, revision }
 
   function sessionRecord(session) {
+    alive();
     const rec = sessions.get(session);
     if (!rec) throw fail('ESESSIONFOREIGN', 'not a session of this engine');
     if (rec.disposed) throw fail('ESESSIONDISPOSED', 'session is disposed');
@@ -175,6 +185,7 @@ export function createTextEngine(glue) {
 
   // Resolve a snapshot for use, optionally requiring it to belong to `session`.
   function snapshotRecord(snapshot, session) {
+    alive();
     const snap = snapshots.get(snapshot);
     if (!snap) throw fail('ESESSIONFOREIGN', 'not a snapshot of this engine');
     if (session !== undefined && snap.session !== session) {
@@ -278,6 +289,7 @@ export function createTextEngine(glue) {
     },
     // Idempotent. Marks dead BEFORE freeing so no call can reach freed memory.
     dispose() {
+      alive(); // never touch a trapped instance, and never report success on one
       const rec = sessions.get(this);
       if (!rec) throw fail('ESESSIONFOREIGN', 'not a session of this engine');
       if (rec.disposed) return;
@@ -295,12 +307,14 @@ export function createTextEngine(glue) {
 
     // true, or throws EENCODING with `unit` = first unpaired surrogate.
     checkText(text) {
+      alive();
       if (typeof text !== 'string') throw fail('EARGUMENT', 'text must be a string');
       raw(() => glue.check_text(text));
       return true;
     },
 
     openSession(text) {
+      alive();
       if (typeof text !== 'string') throw fail('EARGUMENT', 'text must be a string');
       const handle = raw(() => new glue.RawSession(text));
       const session = Object.freeze(Object.create(TextSession.prototype));
@@ -314,12 +328,14 @@ export function createTextEngine(glue) {
     },
 
     applyEdits(text, edits) {
+      alive();
       if (typeof text !== 'string') throw fail('EEDITSHAPE', 'text must be a string', { value: text });
       const { froms, tos, inserts } = packEdits(edits);
       return raw(() => glue.apply_edits(text, froms, tos, inserts));
     },
 
     mapOffset(offset, edits, affinity = 'before') {
+      alive();
       checkOffset('offset', offset, null);
       checkAffinity(affinity);
       const { froms, tos, inserts } = packEdits(edits);
@@ -328,6 +344,7 @@ export function createTextEngine(glue) {
     },
 
     mapRange(range, edits, options = {}) {
+      alive();
       const span = toRange(range);
       const startAffinity = options.startAffinity === undefined ? 'before' : options.startAffinity;
       const endAffinity = options.endAffinity === undefined ? 'after' : options.endAffinity;
