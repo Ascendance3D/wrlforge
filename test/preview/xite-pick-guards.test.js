@@ -3,10 +3,14 @@
 // These fail LOUDLY if the X_ITE pin or the private picking surface drifts,
 // or if private X_ITE access leaks out of the one adapter module.
 //
-//   G1  package.json pins x_ite exactly 15.1.10; lockfile resolves 15.1.10
+//   G1  package.json pins x_ite exactly 15.1.10 (Electron); lockfile resolves
+//       15.1.10; the Tauri pin (apps/desktop-tauri/xite/PIN) is exactly
+//       16.5.0 with a per-file manifest; the adapter's runtime list is
+//       EXACTLY those two builds, and the Tauri-only gizmo adapter is 16.5.0
 //   G2  installed node_modules/x_ite is 15.1.10
 //   G3  x_ite.min.js still contains each private name; x_ite.d.ts still does
-//       NOT declare the private ones (if X_ITE publishes them, revisit)
+//       NOT declare the private ones (if X_ITE publishes them, revisit). The
+//       Tauri 16.5.0 bundle is checked too once fetch-xite.sh has fetched it
 //   G8  source scan: private names only in src/preview/xite-pick-adapter.js;
 //       the pure resolver touches no X_ITE API; no module-level capture state
 //       in the adapter; no fallback matcher in either
@@ -36,7 +40,19 @@ const code = (rel) => scanText(read(rel));
 
 const ADAPTER = 'src/preview/xite-pick-adapter.js';
 const RESOLVER = 'src/editor/viewport-pick.js';
-const PIN = '15.1.10';
+const PIN = '15.1.10'; // the Electron app (root package.json)
+const TAURI = 'apps/desktop-tauri';
+const pinValue = (key) => {
+  const m = new RegExp(`^${key}=(.*)$`, 'm').exec(read(`${TAURI}/xite/PIN`).replace(/\r\n?/g, '\n'));
+  return m && m[1];
+};
+const TAURI_PIN = '16.5.0'; // the Rust/Tauri app (XITE-16-UPGRADE-2)
+// The adapter's exact runtime list, read from its source.
+const adapterVersions = () => {
+  const m = /const XITE_VERSIONS = Object\.freeze\(\[([^\]]*)\]\);/.exec(code(ADAPTER));
+  assert.ok(m, 'the adapter declares one frozen XITE_VERSIONS list');
+  return [...m[1].matchAll(/'([^']*)'/g)].map((x) => x[1]);
+};
 
 test('source scans are line-ending independent (LF / CRLF / CR scan identically)', () => {
   const lf = read(ADAPTER).replace(/\r\n?/g, '\n');
@@ -52,7 +68,51 @@ test('G1: x_ite is pinned exactly (no range) in package.json and the lockfile', 
   const lock = JSON.parse(read('package-lock.json'));
   assert.equal(lock.packages[''].dependencies.x_ite, PIN);
   assert.equal(lock.packages['node_modules/x_ite'].version, PIN);
-  assert.match(code(ADAPTER), new RegExp(`const XITE_VERSION = '${PIN.replace(/\./g, '\\.')}';`), 'the adapter checks the same version at runtime');
+  assert.ok(adapterVersions().includes(PIN), 'the adapter accepts the Electron pin at runtime');
+});
+
+test('G1: the adapter accepts EXACTLY the two pinned builds, through an exact-match gate', () => {
+  assert.deepEqual(adapterVersions(), [PIN, TAURI_PIN]);
+  const src = code(ADAPTER);
+  assert.equal((src.match(/XITE_VERSIONS/g) || []).length, 2, 'declared once, used once');
+  assert.match(src, /typeof browser\.version !== 'string' \|\| !XITE_VERSIONS\.includes\(browser\.version\)\) return 'xite-version-mismatch';/);
+  for (const bad of [/startsWith|endsWith|parseInt|parseFloat|semver|localeCompare|\.split\('\.'\)/, /version\s*[<>]=?/]) {
+    assert.doesNotMatch(src, bad, `no version range or prefix logic: ${bad}`);
+  }
+});
+
+test('G1 (Tauri): xite/PIN names exactly 16.5.0 at the upstream tag commit, with a per-file manifest', () => {
+  assert.equal(pinValue('version'), TAURI_PIN);
+  assert.equal(pinValue('upstream_tag'), TAURI_PIN);
+  assert.equal(pinValue('upstream_commit'), '1956793db500353c8f9fdb078b67429310978323');
+  assert.equal(pinValue('tarball'), 'https://registry.npmjs.org/x_ite/-/x_ite-16.5.0.tgz');
+  assert.match(pinValue('tarball_sha256'), /^[0-9a-f]{64}$/);
+  const lines = read(`${TAURI}/xite/${pinValue('manifest')}`).replace(/\r\n?/g, '\n').trim().split('\n');
+  const files = new Map(lines.map((l) => { const m = /^([0-9a-f]{64}) {2}(\S.*)$/.exec(l); assert.ok(m, l); return [m[2], m[1]]; }));
+  assert.equal(files.size, lines.length, 'no duplicate entries');
+  assert.equal(files.get('x_ite.min.js'), '7f5996e6544229cdb5f863e4756c798150a09d9aecca98ab4c7af2d8aa9778b0');
+  assert.equal(files.get('x_ite.css'), 'e0a8d1fc55bf6f3309470d2eeaef5a948213f27ae029f88901bd970eefa1d3ea');
+  assert.equal(files.get('LICENSE.md'), '4b4a56dafaa360d8541ed5425e9e891cb678e6cd5eaf71bfe7ef25514db01695');
+  for (const f of files.keys()) {
+    assert.ok(['x_ite.min.js', 'x_ite.css', 'LICENSE.md'].includes(f) || f.startsWith('assets/'), f);
+    assert.doesNotMatch(f, /(^|\/)\.\.(\/|$)|^\/|\\/, `no traversal or absolute path: ${f}`);
+  }
+  for (const lic of ['assets/fonts/PT_Sans/OFL.txt', 'assets/fonts/Droid/DroidSerif Apache License.txt', 'assets/fonts/Ubuntu/Ubuntu LICENCE.txt']) {
+    assert.ok(files.has(lic), `font license ships: ${lic}`);
+  }
+});
+
+test('G1 (Tauri): the gizmo adapter and build-ui.sh follow the Tauri pin, never the Electron one', () => {
+  assert.match(code(`${TAURI}/ui/static/xite-gizmo-adapter.js`), new RegExp(`var XITE_VERSION = '${TAURI_PIN.replace(/\./g, '\\.')}';`));
+  assert.match(code(`${TAURI}/ui/static/xite-gizmo-adapter.js`), /if \(browser\.version !== XITE_VERSION\) return \{ ok: false, reason: 'xite-version-mismatch' \};/);
+  const build = read(`${TAURI}/build-ui.sh`).replace(/\r\n?/g, '\n').replace(/^\s*#.*$/gm, ''); // code lines only
+  assert.doesNotMatch(build, /node_modules/, 'the Tauri build never takes the Electron X_ITE');
+  assert.doesNotMatch(build, /\d+\.\d+\.\d+['"]?\s*\]\]|== *"?\d+\.\d+/, 'no second hard-coded version in build-ui.sh');
+  assert.match(build, /fetch-xite\.sh" --verify "\$xite" \|\| exit 4/, 'every dist is verified, including X_ITE_DIST');
+  const fetch = read(`${TAURI}/fetch-xite.sh`);
+  assert.match(fetch, /\[\[ "\$ver" == "\$version" \]\]/, 'exact version equality');
+  assert.match(fetch, /\[\[ "\$got" == "\$tar_sha" \]\]/, 'tarball hash equality');
+  assert.match(fetch, /--proto '=https'/, 'https only');
 });
 
 test('G2: the installed X_ITE is exactly 15.1.10', () => {
@@ -60,11 +120,21 @@ test('G2: the installed X_ITE is exactly 15.1.10', () => {
   assert.equal(installed.version, PIN);
 });
 
+const PRIVATE_NAMES = ['VRMLParser', 'nodeStatement', 'comments', 'lastIndex', 'getScene', 'getExecutionContext',
+  'isInsideProtoDeclaration', 'touch', 'getHit', 'shapeNode', 'sensors', 'getParents', 'getWorld', 'getLayer0',
+  'groupNodes', 'getViewport', 'X3DBaseNode', 'X3DExecutionContext', 'X3DScene', 'getTypeName'];
+
+test('G3 (Tauri 16.5.0): every private surface exists in the fetched bundle', (t) => {
+  const dist = path.join(ROOT, TAURI, 'target', 'xite', TAURI_PIN, 'dist', 'x_ite.min.js');
+  if (!fs.existsSync(dist)) return t.skip('run apps/desktop-tauri/fetch-xite.sh first (build-ui.sh does)');
+  const min = fs.readFileSync(dist, 'utf8');
+  assert.ok(min.includes(`"${TAURI_PIN}"`) || min.includes(`'${TAURI_PIN}'`), 'the bundle carries its version string');
+  for (const name of PRIVATE_NAMES) assert.ok(min.includes(name), `16.5.0 x_ite.min.js no longer contains ${name}`);
+});
+
 test('G3: every private surface still exists in the shipped bundle; none is public', () => {
   const min = read('node_modules/x_ite/dist/x_ite.min.js');
-  for (const name of ['VRMLParser', 'nodeStatement', 'comments', 'lastIndex', 'getScene', 'getExecutionContext',
-    'isInsideProtoDeclaration', 'touch', 'getHit', 'shapeNode', 'sensors', 'getParents', 'getWorld', 'getLayer0',
-    'groupNodes', 'getViewport', 'X3DBaseNode', 'X3DExecutionContext', 'X3DScene', 'getTypeName']) {
+  for (const name of PRIVATE_NAMES) {
     assert.ok(min.includes(name), `x_ite.min.js no longer contains ${name}`);
   }
   const dts = read('node_modules/x_ite/dist/x_ite.d.ts');

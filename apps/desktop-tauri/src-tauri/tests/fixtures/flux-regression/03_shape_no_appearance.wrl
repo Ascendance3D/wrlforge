@@ -1,0 +1,9 @@
+#VRML V2.0 utf8
+# original WRL Forge test fixture (RUST-STAB-1)
+# A Shape with NO appearance field. VRML97 draws it unlit; no material is implied.
+Transform {
+  translation   0 0.5 0
+    children [
+      Shape { geometry Box { } }
+    ]
+}

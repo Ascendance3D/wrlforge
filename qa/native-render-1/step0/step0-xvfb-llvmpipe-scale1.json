@@ -1,0 +1,502 @@
+{
+ "checks": [
+  {
+   "detail": "render fd=56 (peer Some(783070)) gdk fd=4 conns_to_X(pid 783070)=3 before=Some(2)",
+   "name": "cycle0:x11-own-connection",
+   "pass": true
+  },
+  {
+   "detail": "presented=2 ready={\"id\":1,\"info\":{\"adapter\":\"llvmpipe (LLVM 20.1.2, 256 bits)\",\"backend\":\"Vulkan\",\"device_type\":\"Cpu\",\"driver\":\"llvmpipe Mesa 25.2.8-0ubuntu0.24.04.2 (LLVM 20.1.2)\",\"platform\":{\"display\":\":1\",\"own_connection_fd\":56,\"surface\":\"xcb\"},\"present_mode\":\"Fifo\",\"surface_copy_src\":true,\"surface_format\":\"Bgra8Unorm\",\"thread\":\"Some(\\\"nr1-render-1\\\")\"},\"init_ms\":85.515809}",
+   "name": "cycle0:first-frame-presented",
+   "pass": true
+  },
+  {
+   "detail": "None size=(779, 700)",
+   "name": "cycle0:initial:render",
+   "pass": true
+  },
+  {
+   "detail": "offscreen_frames=0",
+   "name": "cycle0:initial:presented",
+   "pass": true
+  },
+  {
+   "detail": "Some((208, 349, [120, 21, 17, 255]))",
+   "name": "cycle0:initial:surface-color-id1",
+   "pass": true
+  },
+  {
+   "detail": "Some((584, 314, [23, 66, 169, 255]))",
+   "name": "cycle0:initial:surface-color-id2",
+   "pass": true
+  },
+  {
+   "detail": "Some((2, 2, [26, 28, 33, 255]))",
+   "name": "cycle0:initial:surface-color-bg",
+   "pass": true
+  },
+  {
+   "detail": "at=(208.4,350.0) gpu=1 cpu=1",
+   "name": "cycle0:initial:pick-id1",
+   "pass": true
+  },
+  {
+   "detail": "at=(584.7,314.5) gpu=2 cpu=2",
+   "name": "cycle0:initial:pick-id2",
+   "pass": true
+  },
+  {
+   "detail": "gpu=0 cpu=0",
+   "name": "cycle0:initial:pick-background",
+   "pass": true
+  },
+  {
+   "detail": "{0: 436819, 1: 59573, 2: 48908}",
+   "name": "cycle0:initial:id-coverage",
+   "pass": true
+  },
+  {
+   "detail": "surface == GTK allocation",
+   "name": "cycle0:resize-779x700-to-579x580",
+   "pass": true
+  },
+  {
+   "detail": "surface == GTK allocation",
+   "name": "cycle0:resize-579x580-to-779x700",
+   "pass": true
+  },
+  {
+   "detail": "offscreen frames 0->37",
+   "name": "cycle0:hidden-renders-offscreen-no-present",
+   "pass": true
+  },
+  {
+   "detail": "63->81",
+   "name": "cycle0:hidden-picks-answered",
+   "pass": true
+  },
+  {
+   "detail": "parked at Some(502) ms, destroyed at 1360 ms",
+   "name": "blocked-present:parked-not-destroyed",
+   "pass": true
+  },
+  {
+   "detail": "1360 ms after Destroy request",
+   "name": "blocked-present:destroyed-after-unblock",
+   "pass": true
+  },
+  {
+   "detail": "conns_to_X=2 before=Some(2)",
+   "name": "cycle0:x11-connection-closed",
+   "pass": true
+  },
+  {
+   "detail": "render fd=56 (peer Some(783070)) gdk fd=4 conns_to_X(pid 783070)=3 before=Some(2)",
+   "name": "cycle1:x11-own-connection",
+   "pass": true
+  },
+  {
+   "detail": "presented=2 ready={\"id\":2,\"info\":{\"adapter\":\"llvmpipe (LLVM 20.1.2, 256 bits)\",\"backend\":\"Vulkan\",\"device_type\":\"Cpu\",\"driver\":\"llvmpipe Mesa 25.2.8-0ubuntu0.24.04.2 (LLVM 20.1.2)\",\"platform\":{\"display\":\":1\",\"own_connection_fd\":56,\"surface\":\"xcb\"},\"present_mode\":\"Fifo\",\"surface_copy_src\":true,\"surface_format\":\"Bgra8Unorm\",\"thread\":\"Some(\\\"nr1-render-2\\\")\"},\"init_ms\":60.710583}",
+   "name": "cycle1:first-frame-presented",
+   "pass": true
+  },
+  {
+   "detail": "None size=(779, 700)",
+   "name": "cycle1:initial:render",
+   "pass": true
+  },
+  {
+   "detail": "offscreen_frames=0",
+   "name": "cycle1:initial:presented",
+   "pass": true
+  },
+  {
+   "detail": "Some((208, 349, [120, 21, 17, 255]))",
+   "name": "cycle1:initial:surface-color-id1",
+   "pass": true
+  },
+  {
+   "detail": "Some((584, 314, [23, 66, 169, 255]))",
+   "name": "cycle1:initial:surface-color-id2",
+   "pass": true
+  },
+  {
+   "detail": "Some((2, 2, [26, 28, 33, 255]))",
+   "name": "cycle1:initial:surface-color-bg",
+   "pass": true
+  },
+  {
+   "detail": "at=(208.4,350.0) gpu=1 cpu=1",
+   "name": "cycle1:initial:pick-id1",
+   "pass": true
+  },
+  {
+   "detail": "at=(584.7,314.5) gpu=2 cpu=2",
+   "name": "cycle1:initial:pick-id2",
+   "pass": true
+  },
+  {
+   "detail": "gpu=0 cpu=0",
+   "name": "cycle1:initial:pick-background",
+   "pass": true
+  },
+  {
+   "detail": "{0: 436819, 1: 59573, 2: 48908}",
+   "name": "cycle1:initial:id-coverage",
+   "pass": true
+  },
+  {
+   "detail": "surface == GTK allocation",
+   "name": "cycle1:resize-779x700-to-579x580",
+   "pass": true
+  },
+  {
+   "detail": "surface == GTK allocation",
+   "name": "cycle1:resize-579x580-to-779x700",
+   "pass": true
+  },
+  {
+   "detail": "offscreen frames 0->38",
+   "name": "cycle1:hidden-renders-offscreen-no-present",
+   "pass": true
+  },
+  {
+   "detail": "145->163",
+   "name": "cycle1:hidden-picks-answered",
+   "pass": true
+  },
+  {
+   "detail": "device lost: Destroyed: ",
+   "name": "device-loss:reported-no-panic",
+   "pass": true
+  },
+  {
+   "detail": "mismatch(refused)=1",
+   "name": "device-loss:pick-refused-not-selected",
+   "pass": true
+  },
+  {
+   "detail": "19 ms",
+   "name": "cycle1:destroy-acked-without-park",
+   "pass": true
+  },
+  {
+   "detail": "conns_to_X=2 before=Some(2)",
+   "name": "cycle1:x11-connection-closed",
+   "pass": true
+  },
+  {
+   "detail": "render fd=56 (peer Some(783070)) gdk fd=4 conns_to_X(pid 783070)=3 before=Some(2)",
+   "name": "cycle2:x11-own-connection",
+   "pass": true
+  },
+  {
+   "detail": "presented=2 ready={\"id\":3,\"info\":{\"adapter\":\"llvmpipe (LLVM 20.1.2, 256 bits)\",\"backend\":\"Vulkan\",\"device_type\":\"Cpu\",\"driver\":\"llvmpipe Mesa 25.2.8-0ubuntu0.24.04.2 (LLVM 20.1.2)\",\"platform\":{\"display\":\":1\",\"own_connection_fd\":56,\"surface\":\"xcb\"},\"present_mode\":\"Fifo\",\"surface_copy_src\":true,\"surface_format\":\"Bgra8Unorm\",\"thread\":\"Some(\\\"nr1-render-3\\\")\"},\"init_ms\":66.751752}",
+   "name": "cycle2:first-frame-presented",
+   "pass": true
+  },
+  {
+   "detail": "None size=(779, 700)",
+   "name": "cycle2:initial:render",
+   "pass": true
+  },
+  {
+   "detail": "offscreen_frames=0",
+   "name": "cycle2:initial:presented",
+   "pass": true
+  },
+  {
+   "detail": "Some((208, 349, [120, 21, 17, 255]))",
+   "name": "cycle2:initial:surface-color-id1",
+   "pass": true
+  },
+  {
+   "detail": "Some((584, 314, [23, 66, 169, 255]))",
+   "name": "cycle2:initial:surface-color-id2",
+   "pass": true
+  },
+  {
+   "detail": "Some((2, 2, [26, 28, 33, 255]))",
+   "name": "cycle2:initial:surface-color-bg",
+   "pass": true
+  },
+  {
+   "detail": "at=(208.4,350.0) gpu=1 cpu=1",
+   "name": "cycle2:initial:pick-id1",
+   "pass": true
+  },
+  {
+   "detail": "at=(584.7,314.5) gpu=2 cpu=2",
+   "name": "cycle2:initial:pick-id2",
+   "pass": true
+  },
+  {
+   "detail": "gpu=0 cpu=0",
+   "name": "cycle2:initial:pick-background",
+   "pass": true
+  },
+  {
+   "detail": "{0: 436819, 1: 59573, 2: 48908}",
+   "name": "cycle2:initial:id-coverage",
+   "pass": true
+  },
+  {
+   "detail": "surface == GTK allocation",
+   "name": "cycle2:resize-779x700-to-579x580",
+   "pass": true
+  },
+  {
+   "detail": "surface == GTK allocation",
+   "name": "cycle2:resize-579x580-to-779x700",
+   "pass": true
+  },
+  {
+   "detail": "offscreen frames 0->38",
+   "name": "cycle2:hidden-renders-offscreen-no-present",
+   "pass": true
+  },
+  {
+   "detail": "227->245",
+   "name": "cycle2:hidden-picks-answered",
+   "pass": true
+  },
+  {
+   "detail": "18 ms",
+   "name": "cycle2:destroy-acked-without-park",
+   "pass": true
+  },
+  {
+   "detail": "conns_to_X=2 before=Some(2)",
+   "name": "cycle2:x11-connection-closed",
+   "pass": true
+  },
+  {
+   "detail": "waited 1357 ms, pending 0",
+   "name": "exit:waited-for-render-threads",
+   "pass": true
+  },
+  {
+   "detail": "4 / 4",
+   "name": "surfaces-created==destroyed",
+   "pass": true
+  },
+  {
+   "detail": "0",
+   "name": "native-window-never-destroyed-before-Destroyed",
+   "pass": true
+  },
+  {
+   "detail": "4 / 4",
+   "name": "render-threads-joined",
+   "pass": true
+  },
+  {
+   "detail": "0",
+   "name": "no-render-thread-left",
+   "pass": true
+  },
+  {
+   "detail": "sent=246 answered=246 late=0 outstanding=0 busy=0",
+   "name": "picks-all-answered-in-time",
+   "pass": true
+  },
+  {
+   "detail": "n=198 p99=0.06ms max=2.54ms",
+   "name": "watchdog:baseline-no-viewport (recorded, not gated)",
+   "pass": true
+  },
+  {
+   "detail": "n=307 p99=0.05ms max=8.51ms",
+   "name": "watchdog:blocked-present",
+   "pass": true
+  },
+  {
+   "detail": "n=55 p99=8.29ms max=13.33ms",
+   "name": "watchdog:device-loss",
+   "pass": true
+  },
+  {
+   "detail": "n=266 p99=0.03ms max=0.04ms",
+   "name": "watchdog:exit (recorded, not gated)",
+   "pass": true
+  },
+  {
+   "detail": "n=32 p99=0.03ms max=0.03ms",
+   "name": "watchdog:exit-during-block",
+   "pass": true
+  },
+  {
+   "detail": "n=1191 p99=0.05ms max=0.13ms",
+   "name": "watchdog:gpu-load",
+   "pass": true
+  },
+  {
+   "detail": "n=371 p99=0.04ms max=0.08ms",
+   "name": "watchdog:hidden",
+   "pass": true
+  },
+  {
+   "detail": "n=35 p99=0.74ms max=0.74ms",
+   "name": "watchdog:resize (recorded, not gated)",
+   "pass": true
+  },
+  {
+   "detail": "n=90 p99=0.25ms max=2.19ms",
+   "name": "watchdog:startup (recorded, not gated)",
+   "pass": true
+  },
+  {
+   "detail": "n=23 p99=12.91ms max=12.91ms",
+   "name": "watchdog:teardown (recorded, not gated)",
+   "pass": true
+  }
+ ],
+ "checks_total": 70,
+ "counters": {
+  "created": 4,
+  "destroyed": 4,
+  "parked_events": 2,
+  "picks_answered": 246,
+  "picks_late": 0,
+  "picks_mismatch_refused": 1,
+  "picks_sent": 246,
+  "reentrant": 0,
+  "unrealized_before_destroyed": 0
+ },
+ "failures": [],
+ "gdk_fd": 4,
+ "pass": true,
+ "pick_ms": "n=246 p50=0.267ms p95=1.107ms max=1.353ms",
+ "viewports": [
+  {
+   "id": 1,
+   "info": {
+    "adapter": "llvmpipe (LLVM 20.1.2, 256 bits)",
+    "backend": "Vulkan",
+    "device_type": "Cpu",
+    "driver": "llvmpipe Mesa 25.2.8-0ubuntu0.24.04.2 (LLVM 20.1.2)",
+    "platform": {
+     "display": ":1",
+     "own_connection_fd": 56,
+     "surface": "xcb"
+    },
+    "present_mode": "Fifo",
+    "surface_copy_src": true,
+    "surface_format": "Bgra8Unorm",
+    "thread": "Some(\"nr1-render-1\")"
+   },
+   "init_ms": 85.515809
+  },
+  {
+   "id": 2,
+   "info": {
+    "adapter": "llvmpipe (LLVM 20.1.2, 256 bits)",
+    "backend": "Vulkan",
+    "device_type": "Cpu",
+    "driver": "llvmpipe Mesa 25.2.8-0ubuntu0.24.04.2 (LLVM 20.1.2)",
+    "platform": {
+     "display": ":1",
+     "own_connection_fd": 56,
+     "surface": "xcb"
+    },
+    "present_mode": "Fifo",
+    "surface_copy_src": true,
+    "surface_format": "Bgra8Unorm",
+    "thread": "Some(\"nr1-render-2\")"
+   },
+   "init_ms": 60.710583
+  },
+  {
+   "id": 3,
+   "info": {
+    "adapter": "llvmpipe (LLVM 20.1.2, 256 bits)",
+    "backend": "Vulkan",
+    "device_type": "Cpu",
+    "driver": "llvmpipe Mesa 25.2.8-0ubuntu0.24.04.2 (LLVM 20.1.2)",
+    "platform": {
+     "display": ":1",
+     "own_connection_fd": 56,
+     "surface": "xcb"
+    },
+    "present_mode": "Fifo",
+    "surface_copy_src": true,
+    "surface_format": "Bgra8Unorm",
+    "thread": "Some(\"nr1-render-3\")"
+   },
+   "init_ms": 66.751752
+  },
+  {
+   "id": 4,
+   "info": {
+    "adapter": "llvmpipe (LLVM 20.1.2, 256 bits)",
+    "backend": "Vulkan",
+    "device_type": "Cpu",
+    "driver": "llvmpipe Mesa 25.2.8-0ubuntu0.24.04.2 (LLVM 20.1.2)",
+    "platform": {
+     "display": ":1",
+     "own_connection_fd": 54,
+     "surface": "xcb"
+    },
+    "present_mode": "Fifo",
+    "surface_copy_src": true,
+    "surface_format": "Bgra8Unorm",
+    "thread": "Some(\"nr1-render-4\")"
+   },
+   "init_ms": 60.095695
+  }
+ ],
+ "wayland": false,
+ "x_server_pid": 783070,
+ "exit_code": 0,
+ "display_proof": {
+  "display": ":1",
+  "xvfb_pid": 783070,
+  "socket": "/tmp/.X11-unix/X1",
+  "peer_pid": 783070,
+  "user_display": ":0",
+  "env_keys": [
+   "DISPLAY",
+   "GDK_BACKEND",
+   "GDK_SCALE",
+   "HOME",
+   "LANG",
+   "NO_AT_BRIDGE",
+   "PATH",
+   "VK_ICD_FILENAMES",
+   "WEBKIT_DISABLE_COMPOSITING_MODE",
+   "XDG_RUNTIME_DIR"
+  ]
+ },
+ "stderr_tail": [
+  "(/usr/libexec/xdg-desktop-portal:783081): xdg-desktop-portal-WARNING **: 04:00:25.183: Choosing gtk.portal for org.freedesktop.impl.portal.FileChooser as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:783081): xdg-desktop-portal-WARNING **: 04:00:25.183: Choosing gtk.portal for org.freedesktop.impl.portal.AppChooser as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:783081): xdg-desktop-portal-WARNING **: 04:00:25.184: Choosing gtk.portal for org.freedesktop.impl.portal.Print as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:783081): xdg-desktop-portal-WARNING **: 04:00:25.184: Choosing gtk.portal for org.freedesktop.impl.portal.Notification as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:783081): xdg-desktop-portal-WARNING **: 04:00:25.185: Choosing gtk.portal for org.freedesktop.impl.portal.Inhibit as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:783081): xdg-desktop-portal-WARNING **: 04:00:25.185: Choosing gtk.portal for org.freedesktop.impl.portal.Access as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:783081): xdg-desktop-portal-WARNING **: 04:00:25.187: Failed connect to PipeWire: Couldn't connect to PipeWire",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:783081): xdg-desktop-portal-WARNING **: 04:00:25.187: Choosing gtk.portal for org.freedesktop.impl.portal.Account as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:783081): xdg-desktop-portal-WARNING **: 04:00:25.188: Choosing gtk.portal for org.freedesktop.impl.portal.Email as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:783081): xdg-desktop-portal-WARNING **: 04:00:25.188: Choosing gtk.portal for org.freedesktop.impl.portal.DynamicLauncher as a last-resort fallback",
+  "dbus-daemon[783074]: [session uid=1000 pid=783074] Successfully activated service 'org.freedesktop.portal.Desktop'",
+  "dbus-daemon[783074]: [session uid=1000 pid=783074] Activating service name='org.a11y.Bus' requested by ':1.0' (uid=1000 pid=783075 comm=\"./target/debug/step0-host --selftest 3\" label=\"unconfined\")",
+  "dbus-daemon[783074]: [session uid=1000 pid=783074] Successfully activated service 'org.a11y.Bus'",
+  "libEGL warning: DRI3 error: Could not get DRI3 device",
+  "libEGL warning: Ensure your X server supports DRI3 to get accelerated rendering",
+  "dbus-daemon[783145]: Activating service name='org.a11y.atspi.Registry' requested by ':1.0' (uid=1000 pid=783146 comm=\"/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWeb\" label=\"unconfined\")",
+  "dbus-daemon[783145]: Successfully activated service 'org.a11y.atspi.Registry'",
+  "{\"frame_index\":169,\"size\":[779,700],\"slow_frame_ms\":1500.6929360000001}",
+  "{\"reason\":\"device lost: Destroyed: \",\"viewport_failed\":2}",
+  "{\"frame_index\":3,\"size\":[779,700],\"slow_frame_ms\":1500.710045}",
+  "A connection to the bus can't be made"
+ ]
+}

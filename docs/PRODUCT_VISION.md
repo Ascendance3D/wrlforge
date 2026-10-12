@@ -37,13 +37,14 @@ framework.
 
 ## Renderer direction
 
-A future custom Rust VRML97/X3D renderer is the approved direction. X_ITE stays
-as the temporary renderer until that lane is approved and built. Renderer
-implementation has not started.
+X_ITE remains the default renderer. The Rust (wgpu) renderer remains
+experimental: it exists behind an opt-in test switch (NATIVE_RENDER_1) and is
+disabled by default. No X_ITE removal is planned; X_ITE compatibility code is
+kept.
 
 ## Platforms
 
-Linux, Windows, and macOS.
+Linux and macOS 15+. Windows and mobile are not supported targets.
 
 ## Planned feature groups
 
@@ -63,6 +64,12 @@ application: New World, Create Box/Sphere/Cylinder/Cone as
 Transform/Shape/Appearance/Material, Scene Tree selection, Inspector editing of
 transform and diffuse color, undo/redo, Save As, and reopen. Viewport picking
 and 3D transform gizmos are the next planned visual features.
+
+Crash recovery (RUST-STAB-1, 2026-10-11) is built in the Rust/Tauri
+application: unsaved work is kept in private recovery records and offered at
+the next start (Restore, Discard, Later). See
+`docs/architecture/RUST_STAB_1_RECOVERY.md`. WRL Forge is not ready for public
+release.
 
 None of the groups above should be read as shipped unless a dated status
 document says so.

@@ -1,0 +1,28 @@
+#VRML V2.0 utf8
+# original WRL Forge test fixture (RUST-STAB-1)
+# Same animation chain as 01, plus a TouchSensor that starts it.
+WorldInfo { title "anim touch" }
+
+DEF Mover Transform {
+	translation 0 0 0
+	children [
+		Shape { geometry Box { size 1 1 1 } }
+		DEF Touch TouchSensor { }
+	]
+}
+
+DEF TS TimeSensor {  loop TRUE    cycleInterval 4   }
+DEF PI PositionInterpolator {
+    key [ 0 0.5 1 ]
+    keyValue [ 0 0 0   0 2 0   0 0 0 ]
+}
+DEF OI OrientationInterpolator {
+    key [ 0 1 ]
+    keyValue [ 0 1 0 0   0 1 0 3.14159 ]
+}
+
+ROUTE Touch.touchTime TO TS.set_startTime
+ROUTE TS.fraction_changed TO PI.set_fraction
+ROUTE PI.value_changed TO Mover.set_translation
+ROUTE TS.fraction_changed TO OI.set_fraction
+ROUTE OI.value_changed TO Mover.set_rotation

@@ -12,8 +12,10 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use wrlforge_desktop_protocol as p;
 
+use crate::native::{Native, Shown};
 use crate::service::Service;
 use crate::settings::SettingsStore;
+use crate::viewport;
 use crate::smoke::SmokeState;
 
 /// The document opened from the launch argument, handed to the UI once.
@@ -80,6 +82,8 @@ pub async fn new_document(app: AppHandle, replace: Option<p::SessionId>) -> p::O
                 if !discard {
                     return p::OpenOutcome::Canceled;
                 }
+                // RUST-STAB-1: an explicit discard removes the recovery copy.
+                let _ = svc.discard_recovery(id);
             }
             Ok(false) => {}
             // An unknown session holds nothing to lose.
@@ -155,6 +159,13 @@ pub async fn doc_save_as(app: AppHandle, session: p::SessionId) -> p::SaveOutcom
     if let Some(path) = app.state::<SmokeState>().save_as_override() {
         return app.state::<Service>().save_as(session, &path);
     }
+    // UI-MENU-1 smoke: a planned Save As choice, or a canceled dialog.
+    if let Some(choice) = crate::smoke_menu::save_as_choice() {
+        return match choice {
+            Some(path) => app.state::<Service>().save_as(session, &path),
+            None => p::SaveOutcome::Canceled,
+        };
+    }
     let picked = app
         .dialog()
         .file()
@@ -218,6 +229,25 @@ pub fn doc_edit_field(
     svc.edit_field(&request)
 }
 
+/// VISUAL-4A: a list-field edit (one Inspector action or one outline
+/// session). Synchronous like `doc_edit_field`.
+#[tauri::command]
+pub fn doc_edit_list(
+    svc: State<'_, Service>,
+    request: p::ListEditRequest,
+) -> Result<p::FieldEditOutcome, String> {
+    svc.edit_list(&request)
+}
+
+/// VISUAL-4A: write one absent field because the user asked.
+#[tauri::command]
+pub fn doc_add_field(
+    svc: State<'_, Service>,
+    request: p::AddFieldRequest,
+) -> Result<p::FieldEditOutcome, String> {
+    svc.add_field(&request)
+}
+
 /// VISUAL-3A: whether the gizmo may move an item. Read-only; async like
 /// `doc_inspect` because it parses.
 #[tauri::command]
@@ -258,6 +288,24 @@ pub fn doc_translate(
     svc.translate(&request)
 }
 
+/// VISUAL-4B: commit one rotation drag (one undo step).
+#[tauri::command]
+pub fn doc_rotate(
+    svc: State<'_, Service>,
+    request: p::RotateRequest,
+) -> Result<p::TranslateOutcome, String> {
+    svc.rotate(&request)
+}
+
+/// VISUAL-4B: commit one scale drag (one undo step).
+#[tauri::command]
+pub fn doc_scale(
+    svc: State<'_, Service>,
+    request: p::ScaleRequest,
+) -> Result<p::TranslateOutcome, String> {
+    svc.scale(&request)
+}
+
 /// Resolve one viewport pick (VISUAL-2). Read-only; async like
 /// `doc_analyze` because it parses.
 #[tauri::command]
@@ -266,6 +314,61 @@ pub async fn doc_pick(
     request: p::PickRequest,
 ) -> Result<p::PickOutcome, String> {
     svc.pick(&request)
+}
+
+/// NATIVE-RENDER-1: the native viewport's state (hidden; default off).
+#[tauri::command]
+pub fn native_state() -> p::NativeState {
+    viewport::state()
+}
+
+/// NATIVE-RENDER-1: project the session's current text and show it in the
+/// native viewport. Async: it parses. A damaged text keeps the last valid
+/// projection on screen.
+#[tauri::command]
+pub async fn native_show(
+    app: AppHandle,
+    svc: State<'_, Service>,
+    native: State<'_, Native>,
+    session: p::SessionId,
+) -> Result<p::NativeShown, String> {
+    if !native.active.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("the native viewport is off".into());
+    }
+    match native.show(&svc, session)? {
+        Shown::New(scene, info) => {
+            app.run_on_main_thread(move || viewport::set_scene(scene))
+                .map_err(|e| e.to_string())?;
+            Ok(info)
+        }
+        Shown::KeptLastValid(info) => Ok(info),
+    }
+}
+
+/// NATIVE-RENDER-1: highlight the Scene Tree selection (`item` of
+/// `revision`) in the native viewport. Display only.
+#[tauri::command]
+pub async fn native_select(
+    app: AppHandle,
+    svc: State<'_, Service>,
+    native: State<'_, Native>,
+    session: p::SessionId,
+    revision: u64,
+    item: Option<String>,
+) -> Result<u32, String> {
+    if !native.active.load(std::sync::atomic::Ordering::SeqCst) {
+        return Ok(0);
+    }
+    let (generation, ids) = native.selected_ids(&svc, session, revision, item.as_deref());
+    let n = ids.len() as u32;
+    app.run_on_main_thread(move || viewport::select(generation, ids))
+        .map_err(|e| e.to_string())?;
+    Ok(n)
+}
+
+#[tauri::command]
+pub fn native_reset_camera() {
+    viewport::reset_camera();
 }
 
 #[tauri::command]
@@ -334,19 +437,65 @@ pub fn smoke_plan(smoke: State<'_, SmokeState>) -> Option<p::SmokePlan> {
     smoke.plan()
 }
 
+/// `--smoke-texture` only: hold every `wrlres` read `ms` (at most 5 s) so a
+/// document switch lands while a request is in flight.
+#[tauri::command]
+pub fn smoke_texture_delay(smoke: State<'_, SmokeState>, ms: u64) -> Result<(), String> {
+    if !smoke.texture_armed() {
+        return Err("no texture smoke run is armed".into());
+    }
+    crate::resources::TEST_DELAY_MS.store(ms.min(5_000), std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+
+/// `--smoke-texture` only: store a viewport capture (PNG bytes) as evidence.
+#[tauri::command]
+pub fn smoke_texture_capture(
+    smoke: State<'_, SmokeState>,
+    id: String,
+    png: Vec<u8>,
+) -> Result<String, String> {
+    smoke.texture_capture(&id, &png)
+}
+
+/// `--smoke-texture` only: the answered `wrlres` requests.
+#[tauri::command]
+pub fn smoke_resource_log(
+    smoke: State<'_, SmokeState>,
+) -> Result<Vec<p::ResourceLogEntry>, String> {
+    if !smoke.texture_armed() {
+        return Err("no texture smoke run is armed".into());
+    }
+    Ok(crate::resources::log_snapshot())
+}
+
+/// `--smoke-extrusion` only (inside the harness Xvfb): a whole-screen PNG.
+#[tauri::command]
+pub async fn smoke_window_capture(app: AppHandle, id: String) -> Result<String, String> {
+    app.state::<SmokeState>().window_capture(&id)
+}
+
 #[tauri::command]
 pub fn smoke_finish(app: AppHandle, report: p::SmokeReport) {
     crate::smoke::finish(&app, report);
 }
 
-/// Title the main window from the session's own state: `● name — WRL Forge`.
+/// APP-SHELL-0: the version, channel and default renderer, for About.
+#[tauri::command]
+pub fn app_info(app: AppHandle) -> p::command::AppInfo {
+    crate::app_info(&app)
+}
+
+/// Title the main window from the session's own state:
+/// `● name — WRL Forge 1.4.5 (Beta)`.
 #[tauri::command]
 pub fn window_title(app: AppHandle, session: p::SessionId) -> Result<(), String> {
     let doc = app.state::<Service>().snapshot(session)?;
     let title = format!(
-        "{}{} — WRL Forge",
+        "{}{} — {}",
         if doc.dirty { "● " } else { "" },
-        doc.name
+        doc.name,
+        p::command::app_display_name()
     );
     if let Some(w) = app.get_webview_window("main") {
         w.set_title(&title).map_err(|e| e.to_string())?;
@@ -370,3 +519,213 @@ pub fn theme_set(
 ) -> p::theme::ThemeSetOutcome {
     settings.set_theme(&theme_id)
 }
+
+/// UI-DOCK-1: the workspace layout to apply, with a notice when the saved
+/// one could not be used. Application state only: no session is involved.
+#[tauri::command]
+pub fn layout_get(settings: State<'_, SettingsStore>) -> p::layout::LayoutState {
+    settings.layout_state()
+}
+
+/// UI-DOCK-1: validate a whole layout and persist it in `settings.json`.
+/// Never reaches a document, a sidecar file or a recovery record.
+#[tauri::command]
+pub fn layout_set(
+    settings: State<'_, SettingsStore>,
+    layout: p::layout::LayoutWire,
+) -> p::layout::LayoutSetOutcome {
+    settings.set_layout(&layout)
+}
+
+// ---- RUST-STAB-1: crash recovery -----------------------------------------
+
+/// Records left by a WRL Forge process that exited without saving.
+#[tauri::command]
+pub fn recovery_list(svc: State<'_, Service>) -> p::RecoveryList {
+    svc.recovery_list()
+}
+
+/// Restore one record into a new untitled, unsaved document.
+#[tauri::command]
+pub fn recovery_restore(svc: State<'_, Service>, id: String) -> p::OpenOutcome {
+    svc.recovery_restore(&id)
+}
+
+/// The recovery warning to show now (storage unavailable, failed write).
+#[tauri::command]
+pub fn recovery_status(svc: State<'_, Service>) -> Option<String> {
+    svc.recovery().and_then(|r| r.warning())
+}
+
+/// Discard one offered record, after a native confirmation.
+#[tauri::command]
+pub async fn recovery_discard(app: AppHandle, id: String) -> p::RecoveryDiscardOutcome {
+    let svc = app.state::<Service>();
+    let list = svc.recovery_list();
+    let what = if let Some(e) = list.entries.iter().find(|e| e.id == id) {
+        format!("the recovered work for \"{}\"", e.name)
+    } else if list.damaged.iter().any(|d| d.id == id) {
+        "this damaged recovery record".to_string()
+    } else {
+        return p::RecoveryDiscardOutcome::Failed {
+            message: "that recovery record is no longer offered".into(),
+        };
+    };
+    let yes = match app.state::<SmokeState>().confirm_override() {
+        Some(answer) => answer,
+        None => app
+            .dialog()
+            .message(format!("Discard {what}? This cannot be undone."))
+            .title("Discard recovered work")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Discard".into(),
+                "Cancel".into(),
+            ))
+            .blocking_show(),
+    };
+    if !yes {
+        return p::RecoveryDiscardOutcome::Canceled;
+    }
+    match svc.recovery_discard(&id) {
+        Ok(()) => p::RecoveryDiscardOutcome::Discarded,
+        Err(message) => p::RecoveryDiscardOutcome::Failed { message },
+    }
+}
+
+/// RUST-STAB-1 smoke only.
+#[tauri::command]
+pub fn smoke_recovery_plan() -> Option<crate::smoke_recovery::Plan> {
+    crate::smoke_recovery::plan()
+}
+
+/// UI-DOCK-1: the docking smoke plan (`--smoke-dock*` only).
+#[tauri::command]
+pub fn smoke_dock_plan() -> Option<crate::smoke_dock::Plan> {
+    crate::smoke_dock::plan()
+}
+
+#[tauri::command]
+pub fn smoke_recovery_check(
+    app: AppHandle,
+    session: Option<p::SessionId>,
+    what: String,
+    name: String,
+) -> Result<p::SmokeStep, String> {
+    if !crate::smoke_recovery::armed() {
+        return Err("not a recovery smoke run".into());
+    }
+    Ok(crate::smoke_recovery::check(&app, session, &what, &name))
+}
+
+/// Ask the main window to close, exactly like the title-bar button.
+#[tauri::command]
+pub fn smoke_request_close(app: AppHandle) -> Result<(), String> {
+    if !crate::smoke_recovery::armed() {
+        return Err("not a recovery smoke run".into());
+    }
+    let w = app.get_webview_window("main").ok_or("no main window")?;
+    w.close().map_err(|e| e.to_string())
+}
+
+/// UI-MENU-1: File → Quit, Ctrl+Q (⌘Q) and the macOS application menu.
+/// It closes the main window exactly like the title-bar button, so the
+/// `CloseRequested` handler and its [`CloseGate`] decide: unsaved work is
+/// asked about, and Cancel keeps the application open and the recovery
+/// records as they are. There is no second close path.
+#[tauri::command]
+pub fn app_quit(app: AppHandle) -> Result<(), String> {
+    let w = app.get_webview_window("main").ok_or("no main window")?;
+    w.close().map_err(|e| e.to_string())
+}
+
+/// UI-MENU-1: the menu smoke plan (`--smoke-menu` only).
+#[tauri::command]
+pub fn smoke_menu_plan() -> Option<crate::smoke_menu::Plan> {
+    crate::smoke_menu::plan()
+}
+
+/// UI-MENU-1 smoke: the recovery records (name, length, hash).
+#[tauri::command]
+pub fn smoke_menu_recovery_digest() -> Result<Vec<(String, u64, String)>, String> {
+    if !crate::smoke_menu::armed() {
+        return Err("not a menu smoke run".into());
+    }
+    Ok(crate::smoke_menu::recovery_digest())
+}
+
+/// UI-MENU-1 smoke: send a native application-menu event, as a macOS menu
+/// item does (`app_menu::forward`). `raw` sends the key unchecked, so the
+/// run proves the UI validates it too.
+#[tauri::command]
+pub fn smoke_menu_native(app: AppHandle, key: String, raw: bool) -> Result<bool, String> {
+    if !crate::smoke_menu::armed() {
+        return Err("not a menu smoke run".into());
+    }
+    if raw {
+        use tauri::Emitter;
+        return app
+            .emit(p::command::MENU_EVENT, key)
+            .map(|_| true)
+            .map_err(|e| e.to_string());
+    }
+    Ok(crate::app_menu::forward(&app, &key))
+}
+
+/// UI-MENU-1 smoke: a file of the run as it is on disk.
+#[tauri::command]
+pub fn smoke_menu_disk(name: String) -> Result<crate::smoke_menu::Disk, String> {
+    crate::smoke_menu::disk(&name)
+}
+
+/// Window close with unsaved documents: ask once; Discard removes their
+/// recovery copies and closes, Cancel keeps everything as it is.
+#[derive(Default)]
+pub struct CloseGate {
+    confirmed: std::sync::atomic::AtomicBool,
+    asking: std::sync::atomic::AtomicBool,
+}
+
+impl CloseGate {
+    pub fn confirmed(&self) -> bool {
+        self.confirmed.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+pub fn confirm_close(window: tauri::Window, dirty: Vec<(p::SessionId, String)>) {
+    use std::sync::atomic::Ordering;
+    let app = window.app_handle().clone();
+    let gate = app.state::<CloseGate>();
+    if gate.asking.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let names: Vec<String> = dirty.iter().map(|(_, n)| format!("\"{n}\"")).collect();
+    let yes = match app.state::<SmokeState>().confirm_override() {
+        Some(answer) => answer,
+        None => app
+            .dialog()
+            .message(format!(
+                "{} {} unsaved changes. Discard them and close WRL Forge?",
+                names.join(", "),
+                if names.len() == 1 { "has" } else { "have" }
+            ))
+            .title("Close WRL Forge")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Discard changes".into(),
+                "Cancel".into(),
+            ))
+            .blocking_show(),
+    };
+    crate::smoke_recovery::note_close_asked(yes);
+    if yes {
+        let svc = app.state::<Service>();
+        for (id, _) in &dirty {
+            let _ = svc.discard_recovery(*id);
+        }
+        gate.confirmed.store(true, Ordering::SeqCst);
+        let _ = window.close();
+    }
+    gate.asking.store(false, Ordering::SeqCst);
+}
+

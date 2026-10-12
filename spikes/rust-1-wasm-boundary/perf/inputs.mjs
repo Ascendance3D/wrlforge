@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The three RUST-1 benchmark inputs, matching qa/phase-7b-native-editor/perf.js:
+// The five RUST-1 benchmark inputs. The first three match
+// qa/phase-7b-native-editor/perf.js:
 //   ~6 KB    test/fixtures/world/valid70/world.wrl              (6,929 B)
 //   ~327 KB  test/fixtures/oversized.wrl                         (326,887 B)
 //   ~1.6 MB  oversized.wrl x5, in memory only                    (1,634,435 B)
@@ -24,4 +25,20 @@ export function loadInputs(root) {
     // Latin-1 file read as UTF-8 contains); each one costs a code-unit read.
     { name: '~1.6MB with genuine U+FFFD', text: `${big}# \uFFFD\n`.repeat(Math.ceil((1.3 * 1024 * 1024) / big.length)) },
   ];
+}
+
+// What the memory measurement held, computed from the inputs themselves so the
+// note cannot drift from the workload (PR #130 review: it still said four
+// inputs, ~3.6 MB, after the U+FFFD input made it five). MB here is 10^6 bytes
+// of UTF-8; the memory figures themselves are reported in MiB.
+export function describeInputs(inputs) {
+  const utf16Units = inputs.reduce((n, { text }) => n + text.length, 0);
+  const utf8Bytes = inputs.reduce((n, { text }) => n + Buffer.byteLength(text, 'utf8'), 0);
+  return {
+    inputs: inputs.length,
+    utf16Units,
+    utf8Bytes,
+    note: `one session held per input (all ${inputs.length} inputs at once, `
+      + `${utf16Units} UTF-16 code units = ${utf8Bytes} UTF-8 bytes, ~${(utf8Bytes / 1e6).toFixed(1)} MB of text)`,
+  };
 }

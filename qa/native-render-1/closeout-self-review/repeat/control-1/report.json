@@ -1,0 +1,102 @@
+{
+ "checks": [
+  {
+   "detail": "no host, no render thread",
+   "name": "control:native-viewport-off",
+   "pass": true
+  },
+  {
+   "detail": "n=1581 p99=14.09ms max=16.79ms",
+   "name": "watchdog:control-idle (recorded, not gated)",
+   "pass": true
+  },
+  {
+   "detail": "n=788 p99=479.21ms max=514.51ms",
+   "name": "watchdog:startup (recorded, not gated)",
+   "pass": true
+  }
+ ],
+ "checks_total": 3,
+ "control_run": true,
+ "counters": {
+  "created": 0,
+  "destroyed": 0,
+  "frames_offscreen": 0,
+  "frames_presented": 0,
+  "joined": 0,
+  "last_render_thread_stats": null,
+  "parked": 0,
+  "picks_answered": 0,
+  "picks_busy": 0,
+  "picks_sent": 0,
+  "unrealized_before_destroyed": 0
+ },
+ "elapsed_ms": 12016,
+ "failures": [],
+ "fifo_only_run": false,
+ "notes": {},
+ "pass": true,
+ "platform": null,
+ "state": null,
+ "exit_code": 0,
+ "wall_s": 12.84,
+ "display_proof": {
+  "output_scale": "1.5",
+  "display_server": "kwin",
+  "server_pid": 982534,
+  "socket": "/tmp/nr1-smoke-f4xbn1d4/run/nr1-907793d8",
+  "peer_pid": 982534,
+  "env_keys": [
+   "GDK_BACKEND",
+   "HOME",
+   "LANG",
+   "NO_AT_BRIDGE",
+   "PATH",
+   "WAYLAND_DISPLAY",
+   "WEBKIT_DISABLE_COMPOSITING_MODE",
+   "XDG_RUNTIME_DIR"
+  ]
+ },
+ "stderr_tail": [
+  "dbus-daemon[982539]: [session uid=1000 pid=982539] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.0' (uid=1000 pid=982540 comm=\"~/Projects/cybertown/.worktrees/wrlforge/\" label=\"unconfined\")",
+  "dbus-daemon[982539]: [session uid=1000 pid=982539] Activating service name='org.freedesktop.portal.Documents' requested by ':1.3' (uid=1000 pid=982568 comm=\"/usr/libexec/xdg-desktop-portal\" label=\"unconfined\")",
+  "dbus-daemon[982539]: [session uid=1000 pid=982539] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.4' (uid=1000 pid=982574 comm=\"/usr/libexec/xdg-document-portal\" label=\"unconfined\")",
+  "dbus-daemon[982539]: [session uid=1000 pid=982539] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'",
+  "dbus-daemon[982539]: [session uid=1000 pid=982539] Successfully activated service 'org.freedesktop.portal.Documents'",
+  "Ignoring invalid max threads value 4294967295 > max (100000).",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:982568): xdg-desktop-portal-WARNING **: 05:38:11.116: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:982568): xdg-desktop-portal-WARNING **: 05:38:11.116: The preferred method to match portal implementations to desktop environments is to use the portals.conf(5) configuration file",
+  "dbus-daemon[982539]: [session uid=1000 pid=982539] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.3' (uid=1000 pid=982568 comm=\"/usr/libexec/xdg-desktop-portal\" label=\"unconfined\")",
+  "dbus-daemon[982539]: [session uid=1000 pid=982539] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:982568): xdg-desktop-portal-WARNING **: 05:38:11.173: No skeleton to export",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:982568): xdg-desktop-portal-WARNING **: 05:38:11.173: Choosing gtk.portal for org.freedesktop.impl.portal.FileChooser as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:982568): xdg-desktop-portal-WARNING **: 05:38:11.173: Choosing gtk.portal for org.freedesktop.impl.portal.AppChooser as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:982568): xdg-desktop-portal-WARNING **: 05:38:11.174: Choosing gtk.portal for org.freedesktop.impl.portal.Print as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:982568): xdg-desktop-portal-WARNING **: 05:38:11.174: Choosing gtk.portal for org.freedesktop.impl.portal.Notification as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:982568): xdg-desktop-portal-WARNING **: 05:38:11.174: Choosing gtk.portal for org.freedesktop.impl.portal.Inhibit as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:982568): xdg-desktop-portal-WARNING **: 05:38:11.175: Choosing gtk.portal for org.freedesktop.impl.portal.Access as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:982568): xdg-desktop-portal-WARNING **: 05:38:11.177: Failed connect to PipeWire: Couldn't connect to PipeWire",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:982568): xdg-desktop-portal-WARNING **: 05:38:11.177: Choosing gtk.portal for org.freedesktop.impl.portal.Account as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:982568): xdg-desktop-portal-WARNING **: 05:38:11.178: Choosing gtk.portal for org.freedesktop.impl.portal.Email as a last-resort fallback",
+  "",
+  "(/usr/libexec/xdg-desktop-portal:982568): xdg-desktop-portal-WARNING **: 05:38:11.178: Choosing gtk.portal for org.freedesktop.impl.portal.DynamicLauncher as a last-resort fallback",
+  "dbus-daemon[982539]: [session uid=1000 pid=982539] Successfully activated service 'org.freedesktop.portal.Desktop'",
+  "dbus-daemon[982539]: [session uid=1000 pid=982539] Activating service name='org.a11y.Bus' requested by ':1.0' (uid=1000 pid=982540 comm=\"~/Projects/cybertown/.worktrees/wrlforge/\" label=\"unconfined\")",
+  "dbus-daemon[982539]: [session uid=1000 pid=982539] Successfully activated service 'org.a11y.Bus'",
+  "dbus-daemon[982623]: Activating service name='org.a11y.atspi.Registry' requested by ':1.0' (uid=1000 pid=982624 comm=\"/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWeb\" label=\"unconfined\")",
+  "dbus-daemon[982623]: Successfully activated service 'org.a11y.atspi.Registry'",
+  "A connection to the bus can't be made"
+ ]
+}

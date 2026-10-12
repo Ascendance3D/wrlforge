@@ -12,7 +12,9 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod command;
 pub mod gizmo;
+pub mod layout;
 pub mod syntax;
 pub mod theme;
 
@@ -39,6 +41,10 @@ pub struct DocumentInfo {
     /// As, and `display_path` is a label, not a path.
     #[serde(default)]
     pub untitled: bool,
+    /// RUST-STAB-1: restored from a recovery record. Untitled until Save As;
+    /// the recovery record stays until that save or an explicit discard.
+    #[serde(default)]
+    pub recovered: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -132,6 +138,48 @@ pub struct ExternalStatus {
     pub reason: String,
 }
 
+/// RUST-STAB-1: one recovery record offered at startup. Carries a safe
+/// file name only; never a path.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryEntry {
+    /// Opaque record id (32 hex digits).
+    pub id: String,
+    pub name: String,
+    pub untitled: bool,
+    pub format: String,
+    /// When the recovery copy was written (ms since the Unix epoch).
+    pub saved_at_ms: u64,
+    pub bytes: u64,
+    /// `None` for a new world; else `"unchanged"`, `"changed"` or
+    /// `"missing"`: the original file now, versus when it was opened.
+    pub original_now: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryDamaged {
+    pub id: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryList {
+    pub entries: Vec<RecoveryEntry>,
+    pub damaged: Vec<RecoveryDamaged>,
+    /// Shown when recovery storage is unavailable or a write failed.
+    pub warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum RecoveryDiscardOutcome {
+    Discarded,
+    Canceled,
+    Failed { message: String },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Diagnostic {
@@ -154,8 +202,55 @@ pub struct SceneItem {
     pub depth: u32,
     pub view_from: u64,
     pub view_to: u64,
+    /// A USE item's scope-graph status (`SceneRef::status`).
     pub use_status: Option<String>,
     pub child_count: u32,
+    /// RUST-STAB-2A scope answers: one for a USE, two (source, destination)
+    /// for a ROUTE, none otherwise. Read-only; never an edit by itself.
+    #[serde(default)]
+    pub refs: Vec<SceneRef>,
+    /// RUST-STAB-2B typed answer: a ROUTE's whole verdict, or a node's type
+    /// binding when the type is not a proven built-in. Display only.
+    #[serde(default)]
+    pub typed: Option<TypedCheck>,
+}
+
+/// One typed answer from the SAME parse as its Analysis. Codes:
+/// `docs/architecture/RUST_STAB_2B_TYPED_REFERENCES.md`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TypedCheck {
+    /// "route" | "type"
+    pub subject: String,
+    /// Same values as `SceneRef::status`.
+    pub status: String,
+    /// "proven" | "unresolved" | "uncertain"
+    pub class: String,
+    pub reason: String,
+    /// `SFFloat -> SFFloat` for a ROUTE, `PROTO Pulse` for a type.
+    pub summary: Option<String>,
+}
+
+/// One node-name reference answer from the lexical scope graph of the SAME
+/// parse as its Analysis. Codes: `docs/architecture/RUST_STAB_2A_SCOPE.md`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SceneRef {
+    /// "use" | "route-source" | "route-destination"
+    pub role: String,
+    pub name: Option<String>,
+    /// "resolved" | "unresolved" | "ambiguous" | "invalid" | "recovered" |
+    /// "unsupported"
+    pub status: String,
+    /// "proven" | "unresolved" | "uncertain"
+    pub class: String,
+    pub reason: String,
+    /// The DEF node's Scene Tree item id, in this Analysis's revision. Set
+    /// ONLY for a proven unique reference. Never runtime object identity.
+    pub target: Option<String>,
+    /// The ISO 4.6.2 meaning (closest preceding DEF) as an item id. For
+    /// display only: never a selection or edit target.
+    pub language_target: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -174,7 +269,13 @@ pub struct Analysis {
     /// Depth-first source order; the document root is omitted.
     pub items: Vec<SceneItem>,
     pub diagnostics: Vec<Diagnostic>,
-    /// "flat": USE resolution is the non-authoritative flat scope.
+    /// Advisory scope findings: RUST-STAB-2A node names (`SCOPE0xx`) and
+    /// RUST-STAB-2B typed references (`SCOPE1xx`). "warning" or "info",
+    /// never "error". Same parse, revision and view mapping as
+    /// `diagnostics`; kept apart so they never mark the editor or block Save.
+    #[serde(default)]
+    pub scope_diagnostics: Vec<Diagnostic>,
+    /// "lexical": references come from the RUST-STAB-2A scope graph.
     pub resolution_scope: String,
     pub truncated: bool,
 }
@@ -249,6 +350,21 @@ pub struct EditableField {
     pub value_excerpt: String,
     pub view_from: u64,
     pub view_to: u64,
+    /// VISUAL-4A: an editable `MFVec2f` / `MFVec3f` / `MFRotation` list.
+    #[serde(default)]
+    pub list: Option<ListField>,
+}
+
+/// An editable list value, tuple by tuple, as exact source lexemes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ListField {
+    /// Component labels (`X Y`, `X Y Z` or `X Y Z Angle`).
+    pub labels: Vec<String>,
+    pub rotation: bool,
+    /// "bracketed" | "bare"
+    pub form: String,
+    pub tuples: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -258,6 +374,92 @@ pub struct NodeFields {
     pub reason: String,
     pub node_type: Option<String>,
     pub fields: Vec<EditableField>,
+    /// VISUAL-4A: the Extrusion view (authored values and defaults).
+    #[serde(default)]
+    pub extrusion: Option<ExtrusionInfo>,
+}
+
+/// One Extrusion field: authored or default, never written automatically.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtrusionField {
+    pub name: String,
+    pub field_type: String,
+    pub authored: bool,
+    /// Index into the node's body statements when authored.
+    pub field_index: Option<u32>,
+    /// The effective tuples (lists) -- authored, else the VRML97 default.
+    pub tuples: Option<Vec<Vec<String>>>,
+    /// The effective single value (SFBool / SFFloat).
+    pub single: Option<String>,
+    pub default_text: Option<String>,
+    /// Why an authored value is read-only, if so.
+    pub problem: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtrusionNote {
+    /// "info" | "warning" | "error"
+    pub level: String,
+    pub field: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtrusionInfo {
+    pub fields: Vec<ExtrusionField>,
+    pub notes: Vec<ExtrusionNote>,
+    pub outline_closed: bool,
+}
+
+/// One list operation; indices are of the list as the previous operation
+/// left it. Components are raw user text: Rust validates them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "op", rename_all = "camelCase")]
+pub enum ListOp {
+    Set { index: u32, components: Vec<String> },
+    Insert { index: u32, components: Vec<String> },
+    Delete { index: u32 },
+}
+
+/// VISUAL-4A: a list-field edit (one Inspector action or one whole outline
+/// editing session). Applied as ONE transaction, so one undo step.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ListEditRequest {
+    pub session: SessionId,
+    pub base_revision: u64,
+    pub item: String,
+    pub field_index: u32,
+    pub field_name: String,
+    /// The number of tuples the UI showed.
+    pub expected_count: u32,
+    pub ops: Vec<ListOp>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum AddFieldValue {
+    Bool { value: bool },
+    Number { value: String },
+    List { tuples: Vec<Vec<String>> },
+    /// VISUAL-4B: one SFVec2f / SFVec3f / SFRotation value.
+    Tuple {
+        values: Vec<String>,
+    },
+}
+
+/// VISUAL-4A: write one ABSENT field into the node, because the user asked.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AddFieldRequest {
+    pub session: SessionId,
+    pub base_revision: u64,
+    pub item: String,
+    pub field_name: String,
+    pub value: AddFieldValue,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -310,14 +512,17 @@ pub enum Primitive {
     Sphere,
     Cylinder,
     Cone,
+    /// VISUAL-4A.
+    Extrusion,
 }
 
 impl Primitive {
-    pub const ALL: [Primitive; 4] = [
+    pub const ALL: [Primitive; 5] = [
         Primitive::Box,
         Primitive::Sphere,
         Primitive::Cylinder,
         Primitive::Cone,
+        Primitive::Extrusion,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -325,6 +530,7 @@ impl Primitive {
             Primitive::Sphere => "Sphere",
             Primitive::Cylinder => "Cylinder",
             Primitive::Cone => "Cone",
+            Primitive::Extrusion => "Extrusion",
         }
     }
 }
@@ -361,6 +567,9 @@ pub struct TranslateTargetRequest {
     pub session: SessionId,
     pub revision: u64,
     pub item: String,
+    /// VISUAL-4B: the tool asking. Each tool needs its own field authored.
+    #[serde(default)]
+    pub tool: gizmo::Tool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -383,6 +592,18 @@ pub enum TranslateTargetOutcome {
         translation: [f64; 3],
         /// World position of the Transform's local origin.
         origin: [f64; 3],
+        /// VISUAL-4B: the effective frame (authored, or ISO defaults).
+        #[serde(default)]
+        rotation: [f64; 4],
+        #[serde(default)]
+        scale: [f64; 3],
+        #[serde(default)]
+        scale_orientation: [f64; 4],
+        #[serde(default)]
+        center: [f64; 3],
+        /// World position of the rotation / scale pivot (`T + C`).
+        #[serde(default)]
+        pivot: [f64; 3],
     },
     Refused {
         reason: String,
@@ -407,6 +628,9 @@ pub struct TranslateProveRequest {
     pub generation: u64,
     pub item: String,
     pub snapshot: PickSnapshot,
+    /// VISUAL-4B: the tool the binding is for (its target gate is re-run).
+    #[serde(default)]
+    pub tool: gizmo::Tool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -463,11 +687,37 @@ pub struct TranslateRequest {
     pub decimals: u8,
 }
 
+/// VISUAL-4B: one completed rotation drag. `delta` (radians) turns the
+/// Transform about the parent (world) `axis` through its pivot; Rust composes
+/// `Rot(axis, delta) · rotation`, formats, re-proves and writes it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RotateRequest {
+    pub session: SessionId,
+    pub base_revision: u64,
+    pub item: String,
+    pub axis: gizmo::Axis,
+    pub delta: f64,
+}
+
+/// VISUAL-4B: one completed scale drag: `scale[axis] *= factor`, or every
+/// component when `axis` is `None` (uniform).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ScaleRequest {
+    pub session: SessionId,
+    pub base_revision: u64,
+    pub item: String,
+    pub axis: Option<gizmo::Axis>,
+    pub factor: f64,
+}
+
+/// The outcome of a Move, Rotate or Scale commit.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum TranslateOutcome {
     /// Applied as ONE undo step. `item` is the same Transform in the NEW
-    /// revision; `text` is the token written.
+    /// revision; `text` is the value written (one token for Move).
     Applied {
         state: DocState,
         view: String,
@@ -490,6 +740,56 @@ pub struct PreviewSource {
     /// preview generation rendered by this hash plus `revision`.
     #[serde(default)]
     pub hash: u64,
+    /// TEXTURE-LOCAL-1: the base URL X_ITE resolves relative URLs against
+    /// (`wrlres://localhost/<token>/`). Rust issues a new token for every
+    /// generation; a document without a folder gets one that is never
+    /// valid. The text itself is never rewritten.
+    #[serde(default)]
+    pub resource_base: String,
+    /// `ImageTexture` nodes with no URL the preview can load.
+    #[serde(default)]
+    pub texture_warnings: Vec<TextureWarning>,
+    /// XITE-16-UPGRADE-2: ROUTEs the scope graph PROVES invalid in exactly
+    /// this text. X_ITE 16.5.0 drops such a ROUTE and renders the rest, so
+    /// the preview may be incomplete. Advisory; never blocks Save.
+    #[serde(default)]
+    pub route_warnings: Vec<RouteWarning>,
+}
+
+/// One ROUTE statement with a proven source defect (an unresolved or invalid
+/// node, event, direction or type). Uncertain answers (ambiguous, recovered,
+/// unsupported) are never reported here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RouteWarning {
+    /// The ROUTE statement's source line (as the parser reports it).
+    pub line: u32,
+    /// The scope finding (code and message), or the reason code.
+    pub detail: String,
+}
+
+/// One `ImageTexture` the preview cannot load (TEXTURE-LOCAL-1). `detail`
+/// names the authored URLs and why each failed; never an absolute path.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TextureWarning {
+    /// The node's source line (as the parser reports it).
+    pub line: u32,
+    /// `ImageTexture` or `ImageTexture <DEF name>`.
+    pub node: String,
+    pub detail: String,
+}
+
+/// One answered `wrlres` request (TEXTURE-LOCAL-1 smoke evidence). `name`
+/// is the path below the token, never a filesystem path.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceLogEntry {
+    pub session: Option<SessionId>,
+    pub name: String,
+    pub status: u16,
+    pub outcome: String,
+    pub bytes: u64,
 }
 
 /// The drift hash of a preview text (FNV-1a over its UTF-16 units, as
@@ -594,6 +894,68 @@ impl PickOutcome {
     }
 }
 
+/// NATIVE-RENDER-1: the native viewport's state. Hidden: it is on only when
+/// `settings.json` has `"viewport": {"renderer": "native-experimental"}` or the app was
+/// launched with `--native-viewport`. X_ITE stays the default and the
+/// fallback (FIFO-only Wayland, device loss, any start failure).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeState {
+    /// The native viewport was requested for this run.
+    pub requested: bool,
+    /// `off` | `starting` | `ready` | `failed`. The UI shows the X_ITE
+    /// preview in every state except `starting` and `ready`.
+    pub state: String,
+    pub reason: Option<String>,
+    /// Adapter / backend / present mode, for the status line.
+    pub info: Option<String>,
+}
+
+impl NativeState {
+    pub fn native_shown(&self) -> bool {
+        self.requested && (self.state == "starting" || self.state == "ready")
+    }
+}
+
+/// A node the native viewport does not draw (canonical UTF-16 span).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeNotShown {
+    pub node_type: String,
+    pub from: u64,
+    pub to: u64,
+    pub reason: String,
+}
+
+/// The reply to `native_show`: which projection is on screen now.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeShown {
+    pub generation: u64,
+    pub revision: u64,
+    pub hash: u64,
+    pub objects: u32,
+    pub not_shown: Vec<NativeNotShown>,
+    /// The current text has syntax errors: the previous valid projection
+    /// stays on screen (picks against it are refused as stale).
+    pub kept_last_valid: bool,
+}
+
+/// Rust -> WebView event `native-viewport`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum NativeEvent {
+    /// A resolved viewport click. The UI applies it exactly like a
+    /// `doc_pick` reply (late and stale replies are refused there too).
+    Pick { session: SessionId, pick: PickOutcome },
+    /// Escape in the native viewport: clear the selection.
+    Cleared { session: Option<SessionId> },
+    State { state: NativeState },
+}
+
+/// The Tauri event name that carries `NativeEvent`.
+pub const NATIVE_EVENT: &str = "native-viewport";
+
 /// Launch-time smoke test plan (`--smoke`), consumed by the UI. Never set in a
 /// normal launch.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -623,6 +985,63 @@ pub struct SmokePlan {
     /// `--smoke-move` (VISUAL-3A): translation-gizmo workflow.
     #[serde(default)]
     pub gizmo: Option<GizmoSmoke>,
+    /// `--smoke-texture` (TEXTURE-LOCAL-1): local texture fixture matrix.
+    #[serde(default)]
+    pub texture: Option<TextureSmoke>,
+    /// `--smoke-extrusion` (VISUAL-4A).
+    #[serde(default)]
+    pub extrusion: Option<ExtrusionSmoke>,
+    /// `--smoke-rotscale` (VISUAL-4B).
+    #[serde(default)]
+    pub rotscale: Option<RotScaleSmoke>,
+}
+
+/// VISUAL-4B: the Rotate / Scale run. Fixtures are opened by index.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RotScaleSmoke {
+    pub fixtures: Vec<String>,
+    /// Real X pointer input is available (the harness's own Xvfb).
+    pub real_pointer: bool,
+}
+
+/// VISUAL-4A: the Extrusion run. Fixtures and research files are opened by
+/// index (fixtures first, then research files).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtrusionSmoke {
+    pub fixtures: Vec<String>,
+    pub research: Vec<String>,
+    pub hold_ms: u64,
+    /// Whole-screen captures are possible (inside the harness Xvfb).
+    pub window_capture: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TextureSmoke {
+    pub fixtures: Vec<TextureFixture>,
+}
+
+/// One `--smoke-texture` fixture: what the RENDERED viewport must show.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TextureFixture {
+    pub id: String,
+    pub label: String,
+    pub samples: Vec<TextureSample>,
+    /// `ImageTexture` nodes the Rust check must report as unloadable.
+    pub warnings: usize,
+}
+
+/// A viewport point (fractions of its size) and its expected color;
+/// `None` = the untextured surface (no image may be shown).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TextureSample {
+    pub x: f64,
+    pub y: f64,
+    pub color: Option<[u8; 3]>,
 }
 
 /// VISUAL-3A smoke plan. Fixture files stay on the Rust side; the UI opens

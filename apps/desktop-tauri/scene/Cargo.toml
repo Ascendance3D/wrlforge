@@ -1,0 +1,17 @@
+[package]
+name = "wrlforge-scene"
+description = "NATIVE-RENDER-1: a read-only render projection of ONE document revision (no edit API, no I/O)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+wrlforge-vrml = { path = "../../../crates/wrlforge-vrml" }
+glam = "=0.30.10"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

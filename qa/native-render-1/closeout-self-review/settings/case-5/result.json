@@ -1,0 +1,9 @@
+{
+ "case": "{\"viewport\":{\"renderer\":\"bogus\"}}",
+ "app_pid_found": true,
+ "app_alive_at_end": true,
+ "max_render_threads": 0,
+ "first_render_thread_s": null,
+ "native": false,
+ "proof_peer_pid": true
+}
