@@ -29,6 +29,12 @@ pub struct Ui {
     pub field_error: RwSignal<Option<String>>,
     pub conflict: RwSignal<Option<String>>,
     pub preview_status: RwSignal<String>,
+    /// TEXTURE-LOCAL-1: the Rust check of the previewed revision's
+    /// `ImageTexture` URLs (textures the preview cannot load).
+    pub texture_warnings: RwSignal<Vec<p::TextureWarning>>,
+    /// XITE-16-UPGRADE-2: the Rust-proven invalid ROUTEs of the revision ON
+    /// SCREEN. X_ITE 16.5.0 drops such a ROUTE and renders the rest.
+    pub route_warnings: RwSignal<Vec<p::RouteWarning>>,
     pub preview_enabled: RwSignal<bool>,
     pub last_save: RwSignal<Option<String>>,
     /// X_ITE scene loads this run (lets tests prove a theme switch never
@@ -43,6 +49,9 @@ pub struct Ui {
     /// VISUAL-3A: the viewport Move tool (translation gizmo). One viewport
     /// tool at a time: Select and Move exclude each other.
     pub move_mode: RwSignal<bool>,
+    /// VISUAL-4B: the Rotate and Scale tools (exclusive with Select / Move).
+    pub rotate_mode: RwSignal<bool>,
+    pub scale_mode: RwSignal<bool>,
     /// The Move tool's status line: (`ok` | `none` | `refused`, text).
     pub gizmo_message: RwSignal<Option<(String, String)>>,
     /// NATIVE-RENDER-1: the hidden native viewport's state (default off).
@@ -202,6 +211,8 @@ pub fn ui() -> Ui {
             field_error: RwSignal::new(None),
             conflict: RwSignal::new(None),
             preview_status: RwSignal::new("idle".into()),
+            texture_warnings: RwSignal::new(Vec::new()),
+            route_warnings: RwSignal::new(Vec::new()),
             preview_enabled: RwSignal::new(true),
             last_save: RwSignal::new(None),
             preview_loads: RwSignal::new(0),
@@ -209,6 +220,8 @@ pub fn ui() -> Ui {
             pick_mode: RwSignal::new(false),
             pick_message: RwSignal::new(None),
             move_mode: RwSignal::new(false),
+            rotate_mode: RwSignal::new(false),
+            scale_mode: RwSignal::new(false),
             gizmo_message: RwSignal::new(None),
             native: RwSignal::new(p::NativeState::default()),
         })
@@ -415,21 +428,9 @@ pub fn apply_inspection(seq: u64, sel: &Selected, o: p::InspectOutcome) -> bool 
 /// item id of the revision the Inspector was built from; Rust refuses it if
 /// the document moved on. The UI adopts nothing until Rust applies it.
 pub async fn edit_field(field_index: u32, field_name: String, components: Vec<p::FieldInput>) {
-    editor::idle().await;
-    let u = ui();
-    let (Some(session), Some(insp)) = (
-        CORE.with_borrow(|c| c.session),
-        u.inspection.get_untracked(),
-    ) else {
+    let Some((session, insp)) = field_target(&field_name).await else {
         return;
     };
-    // Fields of an older revision are not sent (Rust would refuse them too).
-    if let Some(why) = stale_reason(session, insp.revision) {
-        let m = format!("Not changed — {field_name}: the Inspector is updating ({why}).");
-        u.field_error.set(Some(m.clone()));
-        flash(&m);
-        return;
-    }
     #[derive(serde::Serialize)]
     struct A {
         request: p::FieldEditRequest,
@@ -442,7 +443,88 @@ pub async fn edit_field(field_index: u32, field_name: String, components: Vec<p:
         field_name: field_name.clone(),
         components,
     };
-    match call::<p::FieldEditOutcome>("doc_edit_field", A { request }).await {
+    let o = call::<p::FieldEditOutcome>("doc_edit_field", A { request }).await;
+    field_outcome(session, &field_name, o).await;
+}
+
+/// VISUAL-4A: one list-field change (`ops` is one Inspector action or one
+/// whole outline-editing session). Rust plans, proves and applies it as ONE
+/// undo step. Returns whether the document changed.
+pub async fn edit_list(
+    field_index: u32,
+    field_name: String,
+    expected_count: u32,
+    ops: Vec<p::ListOp>,
+) -> bool {
+    let Some((session, insp)) = field_target(&field_name).await else {
+        return false;
+    };
+    #[derive(serde::Serialize)]
+    struct A {
+        request: p::ListEditRequest,
+    }
+    let request = p::ListEditRequest {
+        session,
+        base_revision: insp.revision,
+        item: insp.id.clone(),
+        field_index,
+        field_name: field_name.clone(),
+        expected_count,
+        ops,
+    };
+    let o = call::<p::FieldEditOutcome>("doc_edit_list", A { request }).await;
+    field_outcome(session, &field_name, o).await
+}
+
+/// VISUAL-4A: write one absent field because the user asked for it.
+pub async fn add_field(field_name: String, value: p::AddFieldValue) -> bool {
+    let Some((session, insp)) = field_target(&field_name).await else {
+        return false;
+    };
+    #[derive(serde::Serialize)]
+    struct A {
+        request: p::AddFieldRequest,
+    }
+    let request = p::AddFieldRequest {
+        session,
+        base_revision: insp.revision,
+        item: insp.id.clone(),
+        field_name: field_name.clone(),
+        value,
+    };
+    let o = call::<p::FieldEditOutcome>("doc_add_field", A { request }).await;
+    field_outcome(session, &field_name, o).await
+}
+
+/// The session and the Inspector a field change is sent against, or `None`
+/// (with a visible reason) while the Inspector is not of the current text.
+async fn field_target(field_name: &str) -> Option<(u64, p::Inspection)> {
+    editor::idle().await;
+    let u = ui();
+    let (Some(session), Some(insp)) = (
+        CORE.with_borrow(|c| c.session),
+        u.inspection.get_untracked(),
+    ) else {
+        return None;
+    };
+    // Fields of an older revision are not sent (Rust would refuse them too).
+    if let Some(why) = stale_reason(session, insp.revision) {
+        let m = format!("Not changed — {field_name}: the Inspector is updating ({why}).");
+        u.field_error.set(Some(m.clone()));
+        flash(&m);
+        return None;
+    }
+    Some((session, insp))
+}
+
+/// Adopt Rust's answer to a field change. Returns whether it applied.
+async fn field_outcome(
+    session: u64,
+    field_name: &str,
+    o: Result<p::FieldEditOutcome, String>,
+) -> bool {
+    let u = ui();
+    match o {
         Ok(p::FieldEditOutcome::Applied {
             state, view, item, ..
         }) => {
@@ -459,8 +541,12 @@ pub async fn edit_field(field_index: u32, field_name: String, components: Vec<p:
                 "{field_name} changed (revision {}).",
                 state.revision
             ));
+            true
         }
-        Ok(p::FieldEditOutcome::Unchanged) => flash(&format!("{field_name}: no change.")),
+        Ok(p::FieldEditOutcome::Unchanged) => {
+            flash(&format!("{field_name}: no change."));
+            false
+        }
         Ok(p::FieldEditOutcome::Refused {
             reason,
             message,
@@ -475,10 +561,12 @@ pub async fn edit_field(field_index: u32, field_name: String, components: Vec<p:
             );
             u.field_error.set(Some(format!("{m} [{reason}]")));
             flash(&m);
+            false
         }
         Err(e) => {
             u.field_error.set(Some(format!("Field edit failed: {e}")));
             flash(&format!("Field edit failed: {e}"));
+            false
         }
     }
 }
@@ -522,7 +610,10 @@ pub async fn preview(force: bool) {
             // viewpoint (crate::camera); otherwise X_ITE's own binding stands.
             let (camera, why) = crate::camera::want(session, src.revision).await;
             let t0 = crate::editor::now();
-            let status = ipc::preview_load(&src.text, Some(&gen), camera).await;
+            let warnings = src.texture_warnings.clone();
+            let routes = src.route_warnings.clone();
+            let status =
+                ipc::preview_load(&src.text, Some(&gen), camera, &src.resource_base).await;
             let load_ms = crate::editor::now() - t0;
             crate::camera::LOAD_MS.with_borrow_mut(|v| v.push(load_ms));
             u.preview_loads.update(|n| *n += 1);
@@ -530,7 +621,12 @@ pub async fn preview(force: bool) {
                 // Only the newest successful load is the picking generation.
                 if status.starts_with("loaded") {
                     crate::pick::loaded(gen);
+                    // Only a scene that is now on screen changes the ROUTE
+                    // notice; a refused load keeps the last valid scene and
+                    // so keeps that scene's notice.
+                    u.route_warnings.set(routes);
                 }
+                u.texture_warnings.set(warnings);
                 let note = crate::camera::note(why);
                 u.preview_status
                     .set(format!("rev {} · {status}{note}", src.revision));
@@ -717,7 +813,9 @@ pub fn close() {
         crate::gizmo::reset("the document was closed");
         crate::pick::retire("preview-scene-replaced");
         // No document: the viewport shows an empty world, not the old one.
-        let status = ipc::preview_load("#VRML V2.0 utf8\n", None, None).await;
+        u.texture_warnings.set(Vec::new());
+        u.route_warnings.set(Vec::new());
+        let status = ipc::preview_load("#VRML V2.0 utf8\n", None, None, "").await;
         u.preview_loads.update(|n| *n += 1);
         u.preview_status.set(format!("no document · {status}"));
         flash("Closed.");
@@ -766,6 +864,13 @@ pub async fn save_now(as_new: bool) -> Option<p::SaveOutcome> {
             };
             u.last_save.set(Some(m.clone()));
             flash(&m);
+            // TEXTURE-LOCAL-1: a Save As can give the document a (new)
+            // folder. Textures the preview could not load may load now, so
+            // the preview re-resolves them; later loads always use the
+            // session's current folder.
+            if cmd == "doc_save_as" && u.texture_warnings.with_untracked(|w| !w.is_empty()) {
+                preview(true).await;
+            }
         }
         Ok(p::SaveOutcome::Conflict { reason }) => {
             u.conflict.set(Some(reason.clone()));

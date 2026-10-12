@@ -7,6 +7,7 @@ use std::cell::OnceCell;
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use wrlforge_desktop_protocol::command::CommandId;
 use wrlforge_desktop_protocol::theme::{self, ThemeSetOutcome, ThemeState, THEMES};
 
 use crate::ipc::{call, NoArgs};
@@ -85,6 +86,11 @@ pub async fn init() {
     }
 }
 
+/// UI-MENU-1: the active theme id (reactive), for the menu's checked state.
+pub fn current() -> String {
+    theme().id.get()
+}
+
 /// Apply `id` synchronously (same event-loop turn as the user's choice),
 /// then persist it through Rust in the background.
 pub fn select(id: String) {
@@ -130,7 +136,14 @@ pub fn ThemePicker() -> impl IntoView {
             "Theme"
             <select id="theme-select" title="Application color theme (saved for next launch)"
                 prop:value=move || t.id.get()
-                on:change=move |ev| select(event_target_value(&ev))>
+                on:change=move |ev| {
+                    // UI-MENU-1: the same registry command as View → Theme.
+                    let id = event_target_value(&ev);
+                    match CommandId::theme_for(&id) {
+                        Some(c) => crate::command::run(c),
+                        None => select(id),
+                    }
+                }>
                 {THEMES.iter().map(|d| view! {
                     <option value=d.id selected=move || t.id.get() == d.id>{d.label}</option>
                 }).collect_view()}

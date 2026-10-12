@@ -33,11 +33,13 @@ GTK and needs a FUSE-capable system (`libfuse2`) or
 
 ## Known limits
 
-- **Textures do not load in the 3D viewport.** The preview receives the
-  document text only; relative `ImageTexture` URLs (even a file beside the
-  `.wrl`) are not served, so textured items show their untextured material
-  (often plain white). Texture serving is PENDING in TAURI-RUST-MIGRATION-1
-  and needs its own lane. Found on the owner's desktop after install.
+- **Textures (TEXTURE-LOCAL-1):** local `ImageTexture` images (JPEG, PNG,
+  GIF, BMP, WebP) beside the opened `.wrl` or in its child folders now load
+  in the X_ITE preview. Network URLs, `file:` URLs, absolute paths and paths
+  that leave the document folder are not loaded; the preview shows a texture
+  warning instead. An unsaved new world has no folder, so its relative
+  textures load only after Save As. Images are limited to 32 MiB each.
+  `Inline`, `MovieTexture` and `AudioClip` resources are still not served.
 - **KWin fractional scale 1.5 watchdog (NATIVE-RENDER-1, D14):** one run of the
   native viewport at KWin output scale 1.5 failed the UI watchdog gate (p99
   77 ms; gate p99 < 50 ms, max < 100 ms). Later runs passed, and the X_ITE-only

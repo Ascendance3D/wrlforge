@@ -331,3 +331,298 @@ fn format_component_writes_plain_vrml_floats() {
     assert_eq!(format_component(1e7, 2).as_deref(), Some("10000000"));
     assert_eq!(format_component(f64::NAN, 2), None);
 }
+
+// ---- VISUAL-4B: rotation and scale -----------------------------------------
+
+/// Apply a ready plan (any number of token edits) and prove the bytes
+/// outside the field value are unchanged. Returns the new text.
+fn applied_any(src: &str, plan: &Plan) -> String {
+    let Plan::Ready {
+        edits, new_text, ..
+    } = plan
+    else {
+        panic!("not ready: {plan:?}");
+    };
+    let a = utf16_to_byte(src, edits.first().unwrap().from);
+    let b = utf16_to_byte(src, edits.last().unwrap().to);
+    assert_eq!(&new_text.as_bytes()[..a], &src.as_bytes()[..a]);
+    let tail = &src.as_bytes()[b..];
+    assert_eq!(&new_text.as_bytes()[new_text.len() - tail.len()..], tail);
+    new_text.clone()
+}
+
+fn target_of(src: &str, tool: Tool) -> Target {
+    let (f, t) = box_span(src);
+    manip_target(src, f, t, tool).unwrap()
+}
+
+fn mat(r: [f64; 4]) -> M3 {
+    rotation([r[0], r[1], r[2]], r[3]).unwrap()
+}
+
+fn mat_mul3(a: &M3, b: &M3) -> M3 {
+    [0, 1, 2].map(|r| [0, 1, 2].map(|c| (0..3).map(|k| a[r][k] * b[k][c]).sum()))
+}
+
+fn assert_mat_close(a: &M3, b: &M3, tol: f64) {
+    for r in 0..3 {
+        for c in 0..3 {
+            assert!((a[r][c] - b[r][c]).abs() <= tol, "{a:?} != {b:?}");
+        }
+    }
+}
+
+#[test]
+fn rotate_about_each_world_axis_composes_with_the_authored_rotation() {
+    // The VISUAL-1 Box carries `rotation 0 1 0 0`.
+    let src = world("\n");
+    let (f, t) = box_span(&src);
+    for (axis, d) in [(Axis::X, 0.5), (Axis::Y, -1.25), (Axis::Z, 2.0)] {
+        let (plan, text) = plan_rotate(&src, f, t, axis, d);
+        let out = applied_any(&src, &plan);
+        let got = target_of(&out, Tool::Rotate).rotation;
+        let u = axis.unit();
+        assert_mat_close(&mat(got), &mat([u[0], u[1], u[2], d]), 2e-4);
+        assert!(out.contains(&format!("rotation {}", text.unwrap())));
+        // Translation, scale and the rest of the node are untouched.
+        assert!(out.contains("translation 0 0 0") && out.contains("scale 1 1 1"));
+    }
+    // Y is parallel to the authored axis: only the angle token changes.
+    let (plan, text) = plan_rotate(&src, f, t, Axis::Y, 0.75);
+    let (_, old, new) = applied(&src, &plan);
+    assert_eq!((old.as_str(), new.as_str()), ("0", "0.75"));
+    assert_eq!(text.as_deref(), Some("0 1 0 0.75"));
+}
+
+#[test]
+fn an_existing_rotation_is_composed_never_euler_converted() {
+    let src = world("\n").replace("rotation 0 1 0 0", "rotation 1 0 0 0.5");
+    let (f, t) = box_span(&src);
+    let (plan, _) = plan_rotate(&src, f, t, Axis::Y, 0.3);
+    let out = applied_any(&src, &plan);
+    let got = target_of(&out, Tool::Rotate).rotation;
+    let want = mat_mul3(&mat([0.0, 1.0, 0.0, 0.3]), &mat([1.0, 0.0, 0.0, 0.5]));
+    assert_mat_close(&mat(got), &want, 2e-4);
+    // A negative parallel axis: the angle moves the other way, the axis
+    // lexemes stay exactly as written (never normalized).
+    let neg = world("\n").replace("rotation 0 1 0 0", "rotation 0 -2.0 0 0.3");
+    let (f, t) = box_span(&neg);
+    let (plan, text) = plan_rotate(&neg, f, t, Axis::Y, 0.2);
+    let (_, old, new) = applied(&neg, &plan);
+    assert_eq!((old.as_str(), new.as_str()), ("0.3", "0.1"));
+    assert_eq!(text.as_deref(), Some("0 -2.0 0 0.1"));
+    // Past a full turn the parallel angle is not wrapped.
+    let big = world("\n").replace("rotation 0 1 0 0", "rotation 1 0 0 6");
+    let (f, t) = box_span(&big);
+    let (plan, _) = plan_rotate(&big, f, t, Axis::X, 1.0);
+    let (_, old, new) = applied(&big, &plan);
+    assert_eq!((old.as_str(), new.as_str()), ("6", "7"));
+}
+
+#[test]
+fn unchanged_lexemes_survive_a_composed_rotation() {
+    // Identity with a Z axis, rotated about X: Y stays "0" exactly.
+    let src = world("\n").replace("rotation 0 1 0 0", "rotation 0.0 0.0 1 0");
+    let (f, t) = box_span(&src);
+    let (plan, text) = plan_rotate(&src, f, t, Axis::X, 1.0);
+    applied_any(&src, &plan);
+    assert_eq!(text.as_deref(), Some("1 0.0 0 1"));
+    // A zero-axis identity (`0 0 0 0`) gets the ring's axis.
+    let zero = world("\n").replace("rotation 0 1 0 0", "rotation 0 0 0 0");
+    let (f, t) = box_span(&zero);
+    let (plan, text) = plan_rotate(&zero, f, t, Axis::Z, 0.5);
+    applied_any(&zero, &plan);
+    assert_eq!(text.as_deref(), Some("0 0 1 0.5"));
+}
+
+#[test]
+fn rotation_refusals_change_nothing() {
+    let src = world("\n");
+    let (f, t) = box_span(&src);
+    for d in [f64::NAN, f64::INFINITY] {
+        assert!(matches!(
+            plan_rotate(&src, f, t, Axis::X, d).0,
+            Plan::Refused {
+                reason: reason::VALUE_NOT_FINITE,
+                ..
+            }
+        ));
+    }
+    assert_eq!(plan_rotate(&src, f, t, Axis::Y, 0.00001).0, Plan::Unchanged);
+    let missing = src.replace("  rotation 0 1 0 0\n", "");
+    let (f, t) = box_span(&missing);
+    assert_eq!(
+        manip_target(&missing, f, t, Tool::Rotate)
+            .unwrap_err()
+            .reason,
+        reason::NO_ROTATION
+    );
+    assert!(matches!(
+        plan_rotate(&missing, f, t, Axis::X, 1.0).0,
+        Plan::Refused {
+            reason: reason::NO_ROTATION,
+            ..
+        }
+    ));
+    // Move does not need a rotation field.
+    assert!(manip_target(&missing, f, t, Tool::Move).is_ok());
+    let used = format!("{src}Group {{ children USE Box_1 }}\n");
+    let (f, t) = box_span(&used);
+    assert_eq!(
+        manip_target(&used, f, t, Tool::Rotate).unwrap_err().reason,
+        reason::INSTANCED
+    );
+    let routed = format!("{src}DEF T TimeSensor {{}}\nDEF O OrientationInterpolator {{}}\nROUTE O.value_changed TO Box_1.set_rotation\n");
+    let (f, t) = box_span(&routed);
+    assert_eq!(
+        manip_target(&routed, f, t, Tool::Scale).unwrap_err().reason,
+        reason::ROUTED
+    );
+}
+
+#[test]
+fn the_pivot_is_translation_plus_center() {
+    let src = world("\n").replace(
+        "translation 0 0 0",
+        "translation 1 2 3 center 0.5 0 -1 scaleOrientation 0 0 1 0.4",
+    );
+    let tg = target_of(&src, Tool::Rotate);
+    assert_eq!(tg.pivot, [1.5, 2.0, 2.0]);
+    assert_eq!(tg.center, [0.5, 0.0, -1.0]);
+    assert_eq!(tg.scale_orientation, [0.0, 0.0, 1.0, 0.4]);
+    // The center point is fixed under any rotation and scale.
+    for r in [[0.0, 1.0, 0.0, 1.0], [1.0, 1.0, 0.0, 2.5]] {
+        let o = origin_of(
+            tg.translation,
+            tg.center,
+            r,
+            [2.0, 0.5, 3.0],
+            tg.scale_orientation,
+        )
+        .unwrap();
+        // origin is the image of local (0,0,0); the image of C is T + C.
+        let c_img = origin_of(
+            [
+                tg.translation[0] + tg.center[0],
+                tg.translation[1] + tg.center[1],
+                tg.translation[2] + tg.center[2],
+            ],
+            [0.0; 3],
+            r,
+            [2.0, 0.5, 3.0],
+            tg.scale_orientation,
+        )
+        .unwrap();
+        assert_eq!(c_img, tg.pivot);
+        assert!(o.iter().all(|v| v.is_finite()));
+    }
+}
+
+#[test]
+fn scale_one_axis_or_uniformly() {
+    let src = world("\n");
+    let (f, t) = box_span(&src);
+    for (axis, i) in [(Axis::X, 0), (Axis::Y, 1), (Axis::Z, 2)] {
+        let (plan, text) = plan_scale(&src, f, t, Some(axis), 2.5);
+        let (out, old, new) = applied(&src, &plan);
+        assert_eq!((old.as_str(), new.as_str()), ("1", "2.5"));
+        let mut want = [1.0; 3];
+        want[i] = 2.5;
+        assert_eq!(target_of(&out, Tool::Scale).scale, want);
+        assert_eq!(text.as_deref().map(|s| s.split(' ').count()), Some(3));
+    }
+    let (plan, text) = plan_scale(&src, f, t, None, 0.5);
+    let out = applied_any(&src, &plan);
+    assert_eq!(text.as_deref(), Some("0.5 0.5 0.5"));
+    assert!(out.contains("scale 0.5 0.5 0.5"));
+    // Four significant digits.
+    let (_, text) = plan_scale(&src, f, t, Some(Axis::X), 1.234_567);
+    assert_eq!(text.as_deref(), Some("1.235 1 1"));
+    let (_, text) = plan_scale(&src, f, t, Some(Axis::X), 0.012_345_6);
+    assert_eq!(text.as_deref(), Some("0.01235 1 1"));
+}
+
+#[test]
+fn scale_refusals_change_nothing() {
+    let src = world("\n");
+    let (f, t) = box_span(&src);
+    for k in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert!(matches!(
+            plan_scale(&src, f, t, None, k).0,
+            Plan::Refused {
+                reason: reason::FACTOR_INVALID,
+                ..
+            }
+        ));
+    }
+    assert!(matches!(
+        plan_scale(&src, f, t, Some(Axis::Y), 1e-9).0,
+        Plan::Refused {
+            reason: reason::RESULT_SINGULAR,
+            ..
+        }
+    ));
+    assert_eq!(plan_scale(&src, f, t, None, 1.00001).0, Plan::Unchanged);
+    let spelled = src.replace("scale 1 1 1", "scale 1.0 1 1");
+    let (f2, t2) = box_span(&spelled);
+    assert_eq!(
+        plan_scale(&spelled, f2, t2, Some(Axis::X), 1.0).0,
+        Plan::Unchanged
+    );
+    let neg = src.replace("scale 1 1 1", "scale 1 -1 1");
+    let (f3, t3) = box_span(&neg);
+    assert_eq!(
+        manip_target(&neg, f3, t3, Tool::Scale).unwrap_err().reason,
+        reason::SCALE_NOT_POSITIVE
+    );
+    // Rotate and Move still accept a mirrored frame (they do not change it).
+    assert!(manip_target(&neg, f3, t3, Tool::Rotate).is_ok());
+    let missing = src.replace("  scale 1 1 1\n", "");
+    let (f4, t4) = box_span(&missing);
+    assert_eq!(
+        manip_target(&missing, f4, t4, Tool::Scale)
+            .unwrap_err()
+            .reason,
+        reason::NO_SCALE
+    );
+}
+
+#[test]
+fn rotate_and_scale_keep_line_endings_bom_and_comments() {
+    for eol in ["\n", "\r\n", "\r"] {
+        let src = format!(
+            "\u{FEFF}#VRML V2.0 utf8{eol}# héllo ✓{eol}{}{eol}# tail{eol}",
+            template(Primitive::Cone, "Cône_1", eol)
+        );
+        let (f, t) = box_span(&src);
+        let (plan, _) = plan_rotate(&src, f, t, Axis::X, 0.25);
+        let out = applied_any(&src, &plan);
+        assert!(
+            out.starts_with('\u{FEFF}')
+                && out.contains("# héllo ✓")
+                && out.ends_with(&format!("# tail{eol}"))
+        );
+        assert_eq!(out.matches(eol).count(), src.matches(eol).count());
+        let (f, t) = box_span(&out);
+        let (plan, _) = plan_scale(&out, f, t, Some(Axis::Z), 3.0);
+        let out2 = applied_any(&out, &plan);
+        assert_eq!(out2.len(), out.len());
+        assert!(out2.contains("scale 1 1 3"));
+    }
+}
+
+#[test]
+fn nested_transforms_are_refused_for_rotate_and_scale() {
+    let src = format!(
+        "{H}Transform {{ children [ DEF In Transform {{ rotation 0 1 0 0 scale 1 1 1 }} ] }}\n"
+    );
+    let inner = spans(&src, "Transform")[1];
+    for tool in [Tool::Rotate, Tool::Scale] {
+        assert_eq!(
+            manip_target(&src, inner.0, inner.1, tool)
+                .unwrap_err()
+                .reason,
+            reason::NOT_TOP_LEVEL
+        );
+    }
+}

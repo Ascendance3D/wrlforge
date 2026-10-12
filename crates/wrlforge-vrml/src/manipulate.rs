@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! VISUAL-3A direct manipulation: the translation handle of a top-level
-//! Transform, as exact-source edits.
+//! VISUAL-3A / 4B direct manipulation: the translation, rotation and scale
+//! handles of a top-level Transform, as exact-source edits.
 //!
 //! Two questions, both answered from ONE parse of the current text:
 //!
@@ -24,6 +24,17 @@
 //!   component's token can change, and the planner's round-trip proof
 //!   (same node, same field, intended values) applies unchanged.
 //!
+//! * `plan_rotate` / `plan_scale` (VISUAL-4B) -- the edit for one rotation
+//!   ring or one scale handle. Rotation is about a PARENT (= world, the
+//!   Transform is top-level) axis through the pivot `T + C`: the new rotation
+//!   is `Rot(axis, delta) · R`, composed as quaternions (never Euler angles).
+//!   When the authored axis is already parallel to the ring axis only the
+//!   angle token changes; otherwise the whole value is written, and every
+//!   component whose value does not change keeps its exact lexeme. Scale
+//!   multiplies one component (or all three) by a factor and writes only the
+//!   components that change. The written text is proven to reproduce the
+//!   intended transform; a zero, negative or imprecise result is refused.
+//!
 //! Design reference (conceptually informed only, no code taken): White Dune's
 //! `Node::getHandle()` reports a handle position for a field and
 //! `Node::setHandle()` turns a handle position into a new field value. Here
@@ -46,6 +57,60 @@ pub mod reason {
     pub const VALUE_NOT_FINITE: &str = "value-not-finite";
     pub const VALUE_OUT_OF_RANGE: &str = "value-out-of-range";
     pub const OTHER_AXIS_CHANGED: &str = "edit-changes-another-axis";
+    pub const NO_ROTATION: &str = "rotation-not-explicitly-authored";
+    pub const ROTATION_READ_ONLY: &str = "rotation-not-editable";
+    pub const NO_SCALE: &str = "scale-not-explicitly-authored";
+    pub const SCALE_READ_ONLY: &str = "scale-not-editable";
+    pub const SCALE_NOT_POSITIVE: &str = "scale-not-positive";
+    pub const FACTOR_INVALID: &str = "scale-factor-invalid";
+    pub const RESULT_SINGULAR: &str = "result-would-be-singular";
+    pub const RESULT_IMPRECISE: &str = "result-not-representable";
+}
+
+/// Which manipulation the target is asked for: each tool needs ITS field
+/// explicitly authored (a missing field is never written silently).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tool {
+    Move,
+    Rotate,
+    Scale,
+}
+
+impl Tool {
+    pub fn field(self) -> &'static str {
+        match self {
+            Tool::Move => "translation",
+            Tool::Rotate => "rotation",
+            Tool::Scale => "scale",
+        }
+    }
+    fn missing(self) -> &'static str {
+        match self {
+            Tool::Move => reason::NO_TRANSLATION,
+            Tool::Rotate => reason::NO_ROTATION,
+            Tool::Scale => reason::NO_SCALE,
+        }
+    }
+    fn read_only(self) -> &'static str {
+        match self {
+            Tool::Move => reason::TRANSLATION_READ_ONLY,
+            Tool::Rotate => reason::ROTATION_READ_ONLY,
+            Tool::Scale => reason::SCALE_READ_ONLY,
+        }
+    }
+    fn field_type(self) -> &'static str {
+        match self {
+            Tool::Rotate => "SFRotation",
+            _ => "SFVec3f",
+        }
+    }
+    fn verb(self) -> &'static str {
+        match self {
+            Tool::Move => "moved",
+            Tool::Rotate => "rotated",
+            Tool::Scale => "scaled",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +128,11 @@ impl Axis {
             Axis::Z => 2,
         }
     }
+    pub fn unit(self) -> [f64; 3] {
+        let mut v = [0.0; 3];
+        v[self.index()] = 1.0;
+        v
+    }
 }
 
 /// A Transform the gizmo may move.
@@ -74,14 +144,23 @@ pub struct Target {
     /// The node's position among the top-level node statements (the
     /// preview's root nodes).
     pub root_index: usize,
-    /// Index of the `translation` field in `node.fields`.
+    /// Index of the tool's field (`translation`, `rotation` or `scale`) in
+    /// `node.fields`.
     pub field_index: usize,
+    /// The effective frame: authored values, or ISO defaults when absent.
     pub translation: [f64; 3],
-    /// The exact source lexemes of the three components.
-    pub lexemes: [String; 3],
-    /// World position of the Transform's local origin (where the gizmo is
-    /// drawn): `T + C + R·SR·S·SR⁻¹·(−C)`.
+    pub rotation: [f64; 4],
+    pub scale: [f64; 3],
+    pub scale_orientation: [f64; 4],
+    pub center: [f64; 3],
+    /// The exact source lexemes of the tool field's components.
+    pub lexemes: Vec<String>,
+    /// World position of the Transform's local origin (where the Move gizmo
+    /// is drawn): `T + C + R·SR·S·SR⁻¹·(−C)`.
     pub origin: [f64; 3],
+    /// World position of the rotation / scale pivot: the local `center`
+    /// point, which every rotation and scale leaves fixed: `T + C`.
+    pub pivot: [f64; 3],
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -216,28 +295,40 @@ pub fn origin_of(
 
 /// Whether the gizmo may move the node at `[from, to)`, and where it is.
 pub fn translate_target(src: &str, from: u64, to: u64) -> Result<Target, Refusal> {
-    let p = parse(src);
-    target_in(&p, src, from, to)
+    manip_target(src, from, to, Tool::Move)
 }
 
-fn target_in(p: &ParseResult, src: &str, from: u64, to: u64) -> Result<Target, Refusal> {
+/// Whether `tool` may manipulate the node at `[from, to)`, and its frame.
+pub fn manip_target(src: &str, from: u64, to: u64, tool: Tool) -> Result<Target, Refusal> {
+    let p = parse(src);
+    target_in(&p, src, from, to, tool)
+}
+
+fn target_in(
+    p: &ParseResult,
+    src: &str,
+    from: u64,
+    to: u64,
+    tool: Tool,
+) -> Result<Target, Refusal> {
+    let verb = tool.verb();
     let fields = field_edit::inspect_node_fields(p, src, from, to);
     if !fields.editable {
         return Err(refuse(
             fields.reason,
-            "This object cannot be moved: its source cannot be edited safely.",
+            format!("This object cannot be {verb}: its source cannot be edited safely."),
         ));
     }
     if fields.node_type.as_deref() != Some("Transform") {
         return Err(refuse(
             reason::NOT_TRANSFORM,
-            "Only a Transform can be moved. Select the object's Transform.",
+            format!("Only a Transform can be {verb}. Select the object's Transform."),
         ));
     }
     let Some((root_index, node)) = top_level_at(p, from, to) else {
         return Err(refuse(
             reason::NOT_TOP_LEVEL,
-            "Only a top-level Transform can be moved yet (a nested Transform needs its parent's coordinate frame). Use the Inspector.",
+            format!("Only a top-level Transform can be {verb} yet (a nested Transform needs its parent's coordinate frame). Use the Inspector."),
         ));
     };
     let def = node.def.clone();
@@ -246,21 +337,21 @@ fn target_in(p: &ParseResult, src: &str, from: u64, to: u64) -> Result<Target, R
         if defs != 1 {
             return Err(refuse(
                 reason::DEF_NOT_UNIQUE,
-                format!("DEF {def} is defined {defs} times; the moved object would be ambiguous."),
+                format!("DEF {def} is defined {defs} times; the object would be ambiguous."),
             ));
         }
         if uses > 0 {
             return Err(refuse(
                 reason::INSTANCED,
                 format!(
-                    "{def} is also USEd elsewhere; moving it would move every copy. Use the Inspector."
+                    "{def} is also USEd elsewhere; a change would change every copy. Use the Inspector."
                 ),
             ));
         }
         if routes > 0 {
             return Err(refuse(
                 reason::ROUTED,
-                format!("{def} receives ROUTE events (it may be animated); its preview position is not its source position."),
+                format!("{def} receives ROUTE events (it may be animated); its preview frame is not its source frame."),
             ));
         }
     }
@@ -271,25 +362,27 @@ fn target_in(p: &ParseResult, src: &str, from: u64, to: u64) -> Result<Target, R
             .filter(|f| f.name == name)
             .collect::<Vec<_>>()
     };
-    let tr = named("translation");
-    let tr =
-        match tr.as_slice() {
-            [] => return Err(refuse(
-                reason::NO_TRANSLATION,
-                "This Transform has no authored translation field. Add one in the source first.",
-            )),
-            [one] => *one,
-            _ => {
-                return Err(refuse(
-                    reason::TRANSLATION_READ_ONLY,
-                    "translation is authored more than once.",
-                ))
-            }
-        };
-    if !tr.editable || tr.field_type != Some("SFVec3f") || tr.components.len() != 3 {
+    let name = tool.field();
+    let tf = match named(name).as_slice() {
+        [] => {
+            return Err(refuse(
+                tool.missing(),
+                format!("This Transform has no authored {name} field. Write it first (Inspector: \"Write {name}\"), then use the handles."),
+            ))
+        }
+        [one] => *one,
+        _ => {
+            return Err(refuse(
+                tool.read_only(),
+                format!("{name} is authored more than once."),
+            ))
+        }
+    };
+    let width = if tool == Tool::Rotate { 4 } else { 3 };
+    if !tf.editable || tf.field_type != Some(tool.field_type()) || tf.components.len() != width {
         return Err(refuse(
-            reason::TRANSLATION_READ_ONLY,
-            format!("translation cannot be edited ({}).", tr.reason),
+            tool.read_only(),
+            format!("{name} cannot be edited ({}).", tf.reason),
         ));
     }
     let nums = |f: &field_edit::FieldDescriptor| -> Option<Vec<f64>> {
@@ -301,8 +394,11 @@ fn target_in(p: &ParseResult, src: &str, from: u64, to: u64) -> Result<Target, R
             })
             .collect()
     };
-    // The other frame fields: authored ones must be readable; absent ones
-    // take their ISO defaults.
+    if nums(tf).is_none() {
+        return Err(refuse(tool.read_only(), format!("{name} is not numeric.")));
+    }
+    // The frame fields: authored ones must be readable; absent ones take
+    // their ISO defaults.
     let frame = |name: &str, default: &[f64]| -> Result<Vec<f64>, Refusal> {
         match named(name).as_slice() {
             [] => Ok(default.to_vec()),
@@ -311,34 +407,46 @@ fn target_in(p: &ParseResult, src: &str, from: u64, to: u64) -> Result<Target, R
                 .ok_or_else(|| refuse(reason::FRAME_UNREADABLE, format!("{name} cannot be read."))),
             _ => Err(refuse(
                 reason::FRAME_UNREADABLE,
-                format!("{name} cannot be read, so the object's origin is unknown."),
+                format!("{name} cannot be read, so the object's frame is unknown."),
             )),
         }
     };
-    let t = nums(tr)
-        .ok_or_else(|| refuse(reason::TRANSLATION_READ_ONLY, "translation is not numeric."))?;
+    let t = frame("translation", &[0.0, 0.0, 0.0])?;
     let c = frame("center", &[0.0, 0.0, 0.0])?;
     let r = frame("rotation", &[0.0, 0.0, 1.0, 0.0])?;
     let s = frame("scale", &[1.0, 1.0, 1.0])?;
     let sr = frame("scaleOrientation", &[0.0, 0.0, 1.0, 0.0])?;
     let translation = [t[0], t[1], t[2]];
-    let origin = origin_of(
-        translation,
-        [c[0], c[1], c[2]],
-        [r[0], r[1], r[2], r[3]],
-        [s[0], s[1], s[2]],
-        [sr[0], sr[1], sr[2], sr[3]],
-    )
-    .ok_or_else(|| refuse(reason::FRAME_UNREADABLE, "The rotation axis is zero."))?;
+    let center = [c[0], c[1], c[2]];
+    let rotation = [r[0], r[1], r[2], r[3]];
+    let scale = [s[0], s[1], s[2]];
+    let scale_orientation = [sr[0], sr[1], sr[2], sr[3]];
+    let origin = origin_of(translation, center, rotation, scale, scale_orientation)
+        .ok_or_else(|| refuse(reason::FRAME_UNREADABLE, "The rotation axis is zero."))?;
+    if tool == Tool::Scale && scale.iter().any(|v| *v <= 0.0) {
+        return Err(refuse(
+            reason::SCALE_NOT_POSITIVE,
+            "The authored scale has a zero or negative component (VRML97 requires every scale value > 0). Use the Inspector.",
+        ));
+    }
+    let pivot = [0, 1, 2].map(|i| translation[i] + center[i]);
+    if !pivot.iter().all(|v| v.is_finite()) {
+        return Err(refuse(reason::FRAME_UNREADABLE, "The pivot is not finite."));
+    }
     Ok(Target {
         node_from: from,
         node_to: to,
         def,
         root_index,
-        field_index: tr.index,
+        field_index: tf.index,
         translation,
-        lexemes: [0, 1, 2].map(|i| tr.components[i].text.clone()),
+        rotation,
+        scale,
+        scale_orientation,
+        center,
+        lexemes: tf.components.iter().map(|c| c.text.clone()).collect(),
         origin,
+        pivot,
     })
 }
 
@@ -452,6 +560,283 @@ pub fn plan_translate(
         }
     }
     (plan, Some(text))
+}
+
+// ---- VISUAL-4B: rotation and scale -----------------------------------------
+
+/// Decimal places of a written rotation angle (radians): 0.0001 rad is
+/// about 0.006 degrees.
+pub const ANGLE_DECIMALS: u8 = 4;
+/// Decimal places of a written rotation axis component.
+pub const AXIS_DECIMALS: u8 = 6;
+/// The largest difference between any element of the rotation matrix the
+/// written text describes and the intended one.
+const ROTATION_TOLERANCE: f64 = 5e-4;
+
+type Quat = [f64; 4]; // w, x, y, z
+
+fn quat_of(r: [f64; 4]) -> Option<Quat> {
+    let [x, y, z, a] = r;
+    if a == 0.0 {
+        return Some([1.0, 0.0, 0.0, 0.0]);
+    }
+    let l = (x * x + y * y + z * z).sqrt();
+    if !l.is_finite() || l <= 0.0 || !a.is_finite() {
+        return None;
+    }
+    let (s, c) = (a / 2.0).sin_cos();
+    Some([c, s * x / l, s * y / l, s * z / l])
+}
+
+fn quat_mul(a: Quat, b: Quat) -> Quat {
+    [
+        a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
+        a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+        a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
+        a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0],
+    ]
+}
+
+/// `Rot(axis, delta) · old` as an axis-angle value (axis unit length, angle
+/// in [0, π]); `None` if `old` is unreadable or a value is not finite. When
+/// the result is the identity, `old`'s own axis is kept with angle 0.
+pub fn rotate_about(old: [f64; 4], axis: Axis, delta: f64) -> Option<[f64; 4]> {
+    let mut d = [0.0; 4];
+    d[3] = delta;
+    d[axis.index()] = 1.0;
+    let q = quat_mul(quat_of(d)?, quat_of(old)?);
+    let q = if q[0] < 0.0 { q.map(|v| -v) } else { q };
+    let s = (q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
+    let out = if s <= 1e-12 {
+        let l = (old[0] * old[0] + old[1] * old[1] + old[2] * old[2]).sqrt();
+        if l > 0.0 && l.is_finite() {
+            [old[0] / l, old[1] / l, old[2] / l, 0.0]
+        } else {
+            let u = axis.unit();
+            [u[0], u[1], u[2], 0.0]
+        }
+    } else {
+        [q[1] / s, q[2] / s, q[3] / s, 2.0 * s.atan2(q[0])]
+    };
+    out.iter().all(|v| v.is_finite()).then_some(out)
+}
+
+/// The value written for one component: the old lexeme when the new value
+/// equals the old one after rounding, else the rounded new value.
+fn component_text(old_lexeme: &str, old: f64, new: f64, decimals: u8) -> Option<String> {
+    let t = format_component(new, decimals)?;
+    let v = t.parse::<f64>().ok()?;
+    Some(if v == old { old_lexeme.to_string() } else { t })
+}
+
+/// Decimal places for a written scale value: four significant digits, at
+/// most six places.
+pub fn scale_decimals(v: f64) -> u8 {
+    if !v.is_finite() || v <= 0.0 {
+        return 6;
+    }
+    (3.0 - v.log10().floor()).clamp(0.0, 6.0) as u8
+}
+
+fn ready_plan(
+    src: &str,
+    target: &Target,
+    texts: &[String],
+    allowed: &[usize],
+) -> (Plan, Option<String>) {
+    let tool_field = if texts.len() == 4 {
+        "rotation"
+    } else {
+        "scale"
+    };
+    if texts.iter().zip(&target.lexemes).all(|(a, b)| a == b) {
+        return (Plan::Unchanged, None);
+    }
+    let req = Request {
+        node_from: target.node_from,
+        node_to: target.node_to,
+        field_index: target.field_index,
+        field_name: tool_field.into(),
+        components: texts.iter().map(|t| Input::Text(t.clone())).collect(),
+    };
+    let plan = field_edit::plan_field_edit(src, &req);
+    if let Plan::Ready { changed, .. } = &plan {
+        if changed.iter().any(|c| !allowed.contains(c)) {
+            return (
+                Plan::Refused {
+                    reason: reason::OTHER_AXIS_CHANGED,
+                    message: Some(
+                        "The edit would change another component; nothing was changed.".into(),
+                    ),
+                    component_index: None,
+                },
+                None,
+            );
+        }
+    }
+    (plan, Some(texts.join(" ")))
+}
+
+fn refused_plan(reason: &'static str, message: impl Into<String>) -> (Plan, Option<String>) {
+    (
+        Plan::Refused {
+            reason,
+            message: Some(message.into()),
+            component_index: None,
+        },
+        None,
+    )
+}
+
+/// The exact-source edit rotating the Transform at `[from, to)` by `delta`
+/// radians about the parent (world) `axis` through its pivot `T + C`:
+/// `rotation := Rot(axis, delta) · rotation`. Returns the plan and the
+/// written value text.
+///
+/// * The authored axis parallel to `axis` (the other two components exactly
+///   0): only the angle token changes (`angle ± delta`, never wrapped).
+/// * Otherwise the composed value is written (unit axis, angle in [0, π]);
+///   each component whose value does not change keeps its exact lexeme.
+///
+/// The written text must reproduce the intended rotation matrix within
+/// `ROTATION_TOLERANCE`, and its axis must not be zero.
+pub fn plan_rotate(
+    src: &str,
+    from: u64,
+    to: u64,
+    axis: Axis,
+    delta: f64,
+) -> (Plan, Option<String>) {
+    let target = match manip_target(src, from, to, Tool::Rotate) {
+        Ok(t) => t,
+        Err(r) => return refused_plan(r.reason, r.message),
+    };
+    if !delta.is_finite() {
+        return refused_plan(
+            reason::VALUE_NOT_FINITE,
+            "The rotation angle is not finite.",
+        );
+    }
+    let old = target.rotation;
+    let i = axis.index();
+    let others_zero = (0..3).filter(|k| *k != i).all(|k| old[k] == 0.0);
+    let parallel = others_zero && old[i] != 0.0;
+    let mut allowed = vec![3];
+    let texts: Option<Vec<String>> = if parallel {
+        let sign = old[i].signum();
+        let mut t: Vec<String> = target.lexemes[..3].to_vec();
+        let angle = component_text(
+            &target.lexemes[3],
+            old[3],
+            old[3] + sign * delta,
+            ANGLE_DECIMALS,
+        );
+        angle.map(|a| {
+            t.push(a);
+            t
+        })
+    } else {
+        allowed = vec![0, 1, 2, 3];
+        rotate_about(old, axis, delta).and_then(|new| {
+            (0..4)
+                .map(|k| {
+                    let d = if k == 3 {
+                        ANGLE_DECIMALS
+                    } else {
+                        AXIS_DECIMALS
+                    };
+                    component_text(&target.lexemes[k], old[k], new[k], d)
+                })
+                .collect()
+        })
+    };
+    let Some(texts) = texts else {
+        return refused_plan(reason::VALUE_NOT_FINITE, "The new rotation is not finite.");
+    };
+    let Some(written) = texts
+        .iter()
+        .map(|t| t.parse::<f64>().ok())
+        .collect::<Option<Vec<f64>>>()
+    else {
+        return refused_plan(
+            reason::VALUE_NOT_FINITE,
+            "The new rotation is not a number.",
+        );
+    };
+    if written[..3].iter().all(|v| *v == 0.0) {
+        return refused_plan(
+            reason::RESULT_SINGULAR,
+            "The new rotation axis would be 0 0 0.",
+        );
+    }
+    // Proof: the written value is the intended rotation.
+    let intended = rotate_about(old, axis, delta);
+    let close = match (
+        intended.and_then(|r| rotation([r[0], r[1], r[2]], r[3])),
+        rotation([written[0], written[1], written[2]], written[3]),
+    ) {
+        (Some(a), Some(b)) => {
+            (0..3).all(|r| (0..3).all(|c| (a[r][c] - b[r][c]).abs() <= ROTATION_TOLERANCE))
+        }
+        _ => false,
+    };
+    if !close {
+        return refused_plan(
+            reason::RESULT_IMPRECISE,
+            "The rotation cannot be written precisely enough; nothing was changed.",
+        );
+    }
+    ready_plan(src, &target, &texts, &allowed)
+}
+
+/// The exact-source edit scaling the Transform at `[from, to)` by `factor`
+/// along its scale `axis` (one component), or uniformly (`None`, all three).
+/// The pivot `T + C` stays fixed. Each new value is rounded to four
+/// significant digits; components that do not change keep their lexemes.
+/// A non-positive, non-finite or singular result is refused.
+pub fn plan_scale(
+    src: &str,
+    from: u64,
+    to: u64,
+    axis: Option<Axis>,
+    factor: f64,
+) -> (Plan, Option<String>) {
+    let target = match manip_target(src, from, to, Tool::Scale) {
+        Ok(t) => t,
+        Err(r) => return refused_plan(r.reason, r.message),
+    };
+    if !factor.is_finite() || factor <= 0.0 {
+        return refused_plan(
+            reason::FACTOR_INVALID,
+            "The scale factor must be a finite number greater than 0.",
+        );
+    }
+    let comps: Vec<usize> = axis.map_or(vec![0, 1, 2], |a| vec![a.index()]);
+    let mut texts = target.lexemes.clone();
+    for &k in &comps {
+        let old = target.scale[k];
+        let new = old * factor;
+        let Some(t) = component_text(&target.lexemes[k], old, new, scale_decimals(new)) else {
+            return refused_plan(reason::VALUE_NOT_FINITE, "The new scale is not finite.");
+        };
+        match t.parse::<f64>() {
+            Ok(v) if v > 0.0 && v <= MAX_COMPONENT => {}
+            Ok(v) if v > MAX_COMPONENT => {
+                return refused_plan(
+                    reason::VALUE_OUT_OF_RANGE,
+                    format!("{t} is outside the SFVec3f range."),
+                )
+            }
+            _ => {
+                return refused_plan(
+                    reason::RESULT_SINGULAR,
+                    "The new scale would be 0 (a singular transform); nothing was changed.",
+                )
+            }
+        }
+        texts[k] = t;
+    }
+    ready_plan(src, &target, &texts, &comps)
 }
 
 #[cfg(test)]

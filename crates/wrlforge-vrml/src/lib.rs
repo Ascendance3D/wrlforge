@@ -13,13 +13,16 @@
 pub mod ast;
 pub mod create;
 pub mod diagnostics;
+pub mod extrusion;
 pub mod field_edit;
 pub mod highlight;
 pub mod manipulate;
+pub mod mf_edit;
 pub mod node_schema;
 pub mod parser;
 pub mod pick;
 pub mod scene;
+pub mod scope;
 pub mod tokenizer;
 
 pub use parser::{parse, parse_with, Limits, ParseResult};

@@ -9,7 +9,7 @@
 //!   children [
 //!     Shape {
 //!       appearance Appearance { material Material { diffuseColor … } }
-//!       geometry Box | Sphere | Cylinder | Cone { … }
+//!       geometry Box | Sphere | Cylinder | Cone | Extrusion { … }
 //!     }
 //!   ]
 //! }
@@ -42,14 +42,18 @@ pub enum Primitive {
     Sphere,
     Cylinder,
     Cone,
+    /// VISUAL-4A: a hexagonal prism (a closed six-point outline on a
+    /// two-point spine), editable through the Extrusion Inspector.
+    Extrusion,
 }
 
 impl Primitive {
-    pub const ALL: [Primitive; 4] = [
+    pub const ALL: [Primitive; 5] = [
         Primitive::Box,
         Primitive::Sphere,
         Primitive::Cylinder,
         Primitive::Cone,
+        Primitive::Extrusion,
     ];
 
     /// The VRML97 geometry node type, also the DEF name stem.
@@ -59,6 +63,7 @@ impl Primitive {
             Primitive::Sphere => "Sphere",
             Primitive::Cylinder => "Cylinder",
             Primitive::Cone => "Cone",
+            Primitive::Extrusion => "Extrusion",
         }
     }
 
@@ -67,13 +72,21 @@ impl Primitive {
     }
 
     /// The geometry's explicitly authored fields (ISO 6.4 / 6.42 / 6.17 /
-    /// 6.14 defaults, written out so the Inspector can show them).
+    /// 6.14 defaults, written out so the Inspector can show them). The
+    /// Extrusion (6.18) authors only its outline and spine: every other field
+    /// keeps its VRML97 default and is NOT written.
     fn geometry_fields(self) -> &'static [&'static str] {
         match self {
             Primitive::Box => &["size 2 2 2"],
             Primitive::Sphere => &["radius 1"],
             Primitive::Cylinder => &["radius 1", "height 2"],
             Primitive::Cone => &["bottomRadius 1", "height 2"],
+            // A closed, convex hexagon (radius 1, the same winding as the
+            // ISO default square) swept along +Y from y = -1 to y = 1.
+            Primitive::Extrusion => &[
+                "crossSection [ 1 0, 0.5 -0.866, -0.5 -0.866, -1 0, -0.5 0.866, 0.5 0.866, 1 0 ]",
+                "spine [ 0 -1 0, 0 1 0 ]",
+            ],
         }
     }
 
@@ -83,6 +96,7 @@ impl Primitive {
             Primitive::Sphere => "0.2 0.5 0.8",
             Primitive::Cylinder => "0.3 0.7 0.3",
             Primitive::Cone => "0.8 0.7 0.2",
+            Primitive::Extrusion => "0.6 0.4 0.8",
         }
     }
 }
