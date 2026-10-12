@@ -452,12 +452,15 @@ fn flux_fixture_shapes() {
     let g = graph(&src);
     assert_eq!(routes(&g).len(), 4);
     assert!(routes(&g).iter().all(|r| r.status == Status::Resolved));
-    assert!(g.diagnostics().is_empty());
+    // RUST-STAB-2B adds one typed finding: `size IS size` (SFFloat to
+    // SFVec3f). No node-name finding.
+    let codes: Vec<_> = g.diagnostics().iter().map(|d| d.code).collect();
+    assert_eq!(codes, vec![code::IS_TYPE_MISMATCH]);
 
-    // m2: node names are fine; the bad event name is RUST-STAB-2B's.
+    // m2: node names are fine; the bad event name is a RUST-STAB-2B finding.
     let g = graph(&read("malformed/m2_route_no_such_eventout.wrl"));
     assert!(routes(&g).iter().all(|r| r.status == Status::Resolved));
-    assert!(g.diagnostics().is_empty());
+    assert!(g.diagnostics().iter().all(|d| d.code.starts_with("SCOPE1")));
 
     // m6: really non-conforming (4.10.2).
     let g = graph(&read("malformed/m6_route_before_def.wrl"));

@@ -36,7 +36,14 @@ the shipped application (except where noted as build-time only):
 
 Shipped in the application bundle:
 
-- **x_ite** — the VRML/X3D rendering engine. © Holger Seelig and contributors.
+- **x_ite** — the VRML/X3D rendering engine. © Holger Seelig and contributors. The
+  Electron app ships x_ite **15.1.10** (root `package.json`). The Rust/Tauri app ships
+  x_ite **16.5.0** (upstream tag `16.5.0`, commit `1956793db500353c8f9fdb078b67429310978323`;
+  pin and per-file SHA-256 in `apps/desktop-tauri/xite/`). Each ships x_ite's own
+  `LICENSE.md` unmodified, including its "Additional licenses" section (the SGI Free B
+  notice for the OpenGL Sample Implementation tessellator); in the Tauri packages it is
+  `X_ITE-LICENSE.md`. x_ite 16.5.0 no longer bundles jQuery, so its `LICENSE.md` no
+  longer lists it.
 - **@codemirror/state**
 - **@codemirror/view**
 - **@codemirror/language**
@@ -87,7 +94,7 @@ SOFTWARE.
 ## Fonts bundled inside x_ite
 
 The x_ite package ships bundled fonts, which are therefore included in the packaged WRL Forge
-application (inside the app's `asar` archive). x_ite carries the corresponding license files
+application (inside the Electron app's `asar` archive, and embedded in the Rust/Tauri binary). x_ite carries the corresponding license files
 for these fonts. They are governed by their own licenses:
 
 - **PT Sans** — licensed under the **SIL Open Font License, Version 1.1** (OFL-1.1).

@@ -7,7 +7,7 @@
 //
 //   1. CAMERA. The active layer's viewpoint view and projection matrices, the
 //      layer viewport rectangle and the canvas rectangle, exactly as X_ITE
-//      last drew them (PRIVATE X_ITE 15.1.10 surfaces: getActiveLayer,
+//      last drew them (PRIVATE X_ITE 16.5.0 surfaces, as in 15.1.10: getActiveLayer,
 //      getViewpoint, getViewMatrix, getProjectionMatrix, getViewport,
 //      getRectangle). The gizmo math is Rust (protocol::gizmo).
 //   2. TEMPORARY FRAME. During a drag, the bound Transform's rendered
@@ -34,7 +34,9 @@
 // generation, same span, same object) before every temporary translation.
 (function () {
   'use strict';
-  var XITE_VERSION = '15.1.10';
+  // Tauri-only: exactly the build in apps/desktop-tauri/xite/PIN. build-ui.sh
+  // refuses to embed a dist this constant does not name.
+  var XITE_VERSION = '16.5.0';
 
   function fn(o, name) {
     try { return !!o && typeof o[name] === 'function'; } catch (e) { return false; }

@@ -6,6 +6,7 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 
 use wrlforge_desktop_protocol as p;
+use wrlforge_desktop_protocol::command::CommandId;
 
 use crate::ui::{self, ui};
 
@@ -27,7 +28,7 @@ pub fn SceneTree() -> impl IntoView {
     view! {
         <aside class="tree-col" aria-label="Scene Tree">
             <div class="pane-title">"Scene Tree"
-                <span class="muted" title="USE and ROUTE node names are resolved by the lexical scope graph (ISO 4.6.2, 4.8.4, 4.10.2). Read-only and advisory.">
+                <span class="muted" title="USE and ROUTE node names are resolved by the lexical scope graph (ISO 4.6.2, 4.8.4, 4.10.2). ROUTE events and PROTO types are checked by typed analysis (ISO 4.8, 4.10.2). Read-only and advisory.">
                     {move || u.analysis.with(|a| a.as_ref().map(|a| format!(" · {} items · {} scope", a.items.len(), a.resolution_scope)).unwrap_or_default())}
                 </span>
                 <span class="tree-updating" id="tree-updating">{move || stale().then_some(" · updating…")}</span>
@@ -50,8 +51,8 @@ pub fn SceneTree() -> impl IntoView {
                     let key2 = key.clone();
                     let (from, to) = (it.view_from, it.view_to);
                     let pad = format!("padding-left: {}rem", 0.4 + (it.depth.saturating_sub(1)) as f32 * 0.9);
-                    let class = format!("tree-item kind-{}{}", it.kind.to_lowercase(), ref_class(&it.refs));
-                    let title = ref_title(&it.refs, &a.items);
+                    let class = format!("tree-item kind-{}{}", it.kind.to_lowercase(), ref_class(&it.refs, it.typed.as_ref()));
+                    let title = typed_title(ref_title(&it.refs, &a.items), it.typed.as_ref());
                     // Offsets of THIS render's revision; tree_select refuses
                     // them unless that is still the document's revision.
                     let id2 = id.clone();
@@ -60,6 +61,7 @@ pub fn SceneTree() -> impl IntoView {
                     view! {
                         <li role="treeitem" class=class style=pad title=title data-id=id.clone() tabindex="-1"
                             data-ref=ref_data(&it.refs)
+                            data-typed=typed_data(it.typed.as_ref())
                             class:selected=move || sel.selected(&key)
                             aria-selected=move || if sel2.selected(&key2) { "true" } else { "false" }
                             on:click=move |_| act()
@@ -80,11 +82,17 @@ pub fn SceneTree() -> impl IntoView {
     }
 }
 
-/// The weakest reference class on an item: "" when proven or not a reference.
-fn ref_class(refs: &[p::SceneRef]) -> &'static str {
-    if refs.iter().any(|r| r.class == "unresolved") {
+/// The weakest reference class on an item, typed answer included: "" when
+/// proven or not a reference.
+fn ref_class(refs: &[p::SceneRef], typed: Option<&p::TypedCheck>) -> &'static str {
+    let classes = || {
+        refs.iter()
+            .map(|r| r.class.as_str())
+            .chain(typed.map(|t| t.class.as_str()))
+    };
+    if classes().any(|c| c == "unresolved") {
         " ref-unresolved"
-    } else if refs.iter().any(|r| r.class == "uncertain") {
+    } else if classes().any(|c| c == "uncertain") {
         " ref-uncertain"
     } else {
         ""
@@ -97,6 +105,32 @@ fn ref_data(refs: &[p::SceneRef]) -> String {
         .map(|r| format!("{}:{}:{}", r.role, r.status, r.reason))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// `subject:status:reason` of the typed answer, for tests and assistive tools.
+fn typed_data(t: Option<&p::TypedCheck>) -> String {
+    t.map(|t| format!("{}:{}:{}", t.subject, t.status, t.reason))
+        .unwrap_or_default()
+}
+
+/// Adds the typed answer to the hover text. Display only.
+fn typed_title(base: String, t: Option<&p::TypedCheck>) -> String {
+    let Some(t) = t else { return base };
+    let what = if t.subject == "route" {
+        "ROUTE events"
+    } else {
+        "Node type"
+    };
+    let line = match (t.class.as_str(), &t.summary) {
+        ("proven", Some(s)) => format!("{what}: proven ({s})"),
+        (c, Some(s)) => format!("{what}: {c}: {} ({}; {s})", t.status, t.reason),
+        (c, None) => format!("{what}: {c}: {} ({})", t.status, t.reason),
+    };
+    if base.is_empty() {
+        line
+    } else {
+        format!("{base}\n{line}")
+    }
 }
 
 /// Hover text. Display only: a target is named, never selected or edited.
@@ -391,7 +425,7 @@ pub fn Diagnostics() -> impl IntoView {
                 let (session, rev) = (a.session, a.revision);
                 view! {
                     <div class="diag-scope" id="diag-scope" data-revision=rev.to_string()
-                        title="Advisory scope findings (ISO 4.6.2, 4.8.4, 4.10.2). Never block Save; uncertain cases are not listed.">
+                        title="Advisory scope findings: node names SCOPE0xx (ISO 4.6.2, 4.8.4, 4.10.2) and typed references SCOPE1xx (ISO 4.8, Table 4.4, 4.10.2). Never block Save; uncertain cases are not listed.">
                         <div class="diag-head">{format!("Scope (advisory) · rev {rev}")}</div>
                         <ul>
                             {a.scope_diagnostics.iter().take(200).map(|d| {
@@ -448,7 +482,7 @@ pub fn Viewport() -> impl IntoView {
         <section class="viewport" class:native=move || u.native.with(|s| s.native_shown()) aria-label="3D Viewport">
             <div class="pane-title">"3D Viewport"
                 <span class="badge" hidden=move || u.native.with(|s| s.native_shown())
-                    title="X_ITE is a JavaScript renderer hosted through a narrow adapter">"X_ITE 15.1.10 (JavaScript) · temporary"</span>
+                    title="X_ITE is a JavaScript renderer hosted through a narrow adapter">"X_ITE 16.5.0 (JavaScript) · temporary"</span>
                 // NATIVE-RENDER-1 (hidden): the native viewport is the pane
                 // beside this window. Click selects, drag orbits, wheel zooms,
                 // Escape clears, Home resets the view. Selection only.
@@ -457,78 +491,53 @@ pub fn Viewport() -> impl IntoView {
                 <button class="secondary small" hidden=move || !u.native.with(|s| s.native_shown())
                     title="Reset the native view to frame the scene (Home)"
                     on:click=move |_| crate::native::reset_camera()>"Reset view"</button>
-                <label class="toggle">
-                    <input type="checkbox" prop:checked=move || u.preview_enabled.get()
-                        on:change=move |ev| u.preview_enabled.set(event_target_checked(&ev)) />
+                // UI-MENU-1: the same registry commands as View → Live
+                // Preview / Update Preview.
+                <label class="toggle" title=crate::command::title(CommandId::ViewLivePreview)>
+                    <input type="checkbox" id="chk-live" data-command=CommandId::ViewLivePreview.key()
+                        prop:checked=move || u.preview_enabled.get()
+                        on:change=move |ev| {
+                            if event_target_checked(&ev) != u.preview_enabled.get_untracked() {
+                                crate::command::run(CommandId::ViewLivePreview);
+                            }
+                        } />
                     "Live"
                 </label>
-                <button class="secondary small" on:click=move |_| spawn_local(ui::preview(true))>"Update"</button>
+                <button class="secondary small" id="btn-update-preview" data-command=CommandId::ViewUpdatePreview.key()
+                    title=crate::command::title(CommandId::ViewUpdatePreview)
+                    disabled=move || !crate::command::enabled(CommandId::ViewUpdatePreview)
+                    on:click=move |_| crate::command::run(CommandId::ViewUpdatePreview)>"Update"</button>
                 <span class="sep" hidden=move || u.native.with(|s| s.native_shown())></span>
+                // UI-DOCK-1: the four tools wrap as one group (never clipped).
+                <span class="tool-group" role="group" aria-label="Viewport tools">
                 // VISUAL-2: an explicit selection mode. A click selects the
                 // exact authored object; a drag still moves the camera.
                 <button id="btn-select" class="secondary small" hidden=move || u.native.with(|s| s.native_shown())
-                    title="Select: click an object in the viewport to select its exact source node (drag still moves the camera)"
+                    data-command=CommandId::ToolSelect.key() title=crate::command::title(CommandId::ToolSelect)
                     aria-pressed=move || if u.pick_mode.get() { "true" } else { "false" }
-                    disabled=move || u.doc.with(|d| d.is_none())
-                    on:click=move |_| {
-                        u.pick_mode.update(|m| *m = !*m);
-                        if u.pick_mode.get_untracked() {
-                            u.move_mode.set(false);
-                            u.rotate_mode.set(false);
-                            u.scale_mode.set(false);
-                        }
-                        if !u.pick_mode.get_untracked() { u.pick_message.set(None); }
-                    }>"Select"</button>
+                    disabled=move || !crate::command::enabled(CommandId::ToolSelect)
+                    on:click=move |_| crate::command::run(CommandId::ToolSelect)>"Select"</button>
                 // VISUAL-3A: the Move tool. Drag an axis handle to move the
                 // selected top-level Transform; a click still selects, a drag
                 // elsewhere still moves the camera.
                 <button id="btn-move" class="secondary small" hidden=move || u.native.with(|s| s.native_shown())
-                    title="Move: drag the X (red), Y (green) or Z (blue) handle of the selected object. Esc cancels a drag; the Inspector takes exact values."
+                    data-command=CommandId::ToolMove.key() title=crate::command::title(CommandId::ToolMove)
                     aria-pressed=move || if u.move_mode.get() { "true" } else { "false" }
-                    disabled=move || u.doc.with(|d| d.is_none())
-                    on:click=move |_| {
-                        u.move_mode.update(|m| *m = !*m);
-                        if u.move_mode.get_untracked() {
-                            u.pick_mode.set(false);
-                            u.rotate_mode.set(false);
-                            u.scale_mode.set(false);
-                            crate::gizmo::start();
-                        } else {
-                            u.gizmo_message.set(None);
-                        }
-                    }>"Move"</button>
+                    disabled=move || !crate::command::enabled(CommandId::ToolMove)
+                    on:click=move |_| crate::command::run(CommandId::ToolMove)>"Move"</button>
                 // VISUAL-4B: Rotate (rings about the world axes through the
                 // object's center) and Scale (its own scale axes + uniform).
                 <button id="btn-rotate" class="secondary small" hidden=move || u.native.with(|s| s.native_shown())
-                    title="Rotate: drag the X (red), Y (green) or Z (blue) ring of the selected object (world axes, about its center). Shift snaps to 15°. Esc cancels."
+                    data-command=CommandId::ToolRotate.key() title=crate::command::title(CommandId::ToolRotate)
                     aria-pressed=move || if u.rotate_mode.get() { "true" } else { "false" }
-                    disabled=move || u.doc.with(|d| d.is_none())
-                    on:click=move |_| {
-                        u.rotate_mode.update(|m| *m = !*m);
-                        if u.rotate_mode.get_untracked() {
-                            u.pick_mode.set(false);
-                            u.move_mode.set(false);
-                            u.scale_mode.set(false);
-                            crate::gizmo::start();
-                        } else {
-                            u.gizmo_message.set(None);
-                        }
-                    }>"Rotate"</button>
+                    disabled=move || !crate::command::enabled(CommandId::ToolRotate)
+                    on:click=move |_| crate::command::run(CommandId::ToolRotate)>"Rotate"</button>
                 <button id="btn-scale" class="secondary small" hidden=move || u.native.with(|s| s.native_shown())
-                    title="Scale: drag the X, Y or Z handle (the object's own scale axes) or the center square (uniform). Esc cancels."
+                    data-command=CommandId::ToolScale.key() title=crate::command::title(CommandId::ToolScale)
                     aria-pressed=move || if u.scale_mode.get() { "true" } else { "false" }
-                    disabled=move || u.doc.with(|d| d.is_none())
-                    on:click=move |_| {
-                        u.scale_mode.update(|m| *m = !*m);
-                        if u.scale_mode.get_untracked() {
-                            u.pick_mode.set(false);
-                            u.move_mode.set(false);
-                            u.rotate_mode.set(false);
-                            crate::gizmo::start();
-                        } else {
-                            u.gizmo_message.set(None);
-                        }
-                    }>"Scale"</button>
+                    disabled=move || !crate::command::enabled(CommandId::ToolScale)
+                    on:click=move |_| crate::command::run(CommandId::ToolScale)>"Scale"</button>
+                </span>
             </div>
             <div class="viewport-stage" hidden=move || u.native.with(|s| s.native_shown())>
                 <x3d-canvas id="viewport" class:picking=move || u.pick_mode.get() || u.move_mode.get() || u.rotate_mode.get() || u.scale_mode.get() splashScreen="false" contextMenu="false" notifications="false"
@@ -569,6 +578,16 @@ pub fn Viewport() -> impl IntoView {
                     None => String::new(),
                     Some(t) => format!("⚠ {} texture{} not loaded · line {} · {}: {}{}", w.len(), if w.len() == 1 { "" } else { "s" },
                         t.line, t.node, t.detail, if w.len() > 1 { " · hover for all" } else { "" }),
+                })}
+            </div>
+            // XITE-16-UPGRADE-2: Rust diagnostics, not the picture, decide this.
+            <div class="preview-status route-warning" id="route-warning" role="status" aria-live="polite"
+                hidden=move || u.route_warnings.with(|w| w.is_empty()) || u.native.with(|s| s.native_shown())
+                title=move || u.route_warnings.with(|w| w.iter().map(|r| format!("line {} · {}", r.line, r.detail)).collect::<Vec<_>>().join("\n"))>
+                {move || u.route_warnings.with(|w| match w.first() {
+                    None => String::new(),
+                    Some(r) => format!("⚠ The preview may be incomplete because one or more ROUTEs are invalid. · line {}{}",
+                        r.line, if w.len() > 1 { format!(" · {} ROUTEs · hover for all", w.len()) } else { String::new() }),
                 })}
             </div>
             <div class="preview-status native-status" id="native-status" hidden=move || !u.native.with(|s| s.requested && s.reason.is_some())>
@@ -624,5 +643,42 @@ pub fn reveal_tree_item(id: &str) {
     let (st, vh) = (ul.scroll_top(), ul.client_height());
     if top < st || top + h > st + vh {
         ul.set_scroll_top((top - vh / 3).max(0));
+    }
+}
+
+/// UI-MENU-1: the Select tool toggle (toolbar button, Tools menu). Moved
+/// unchanged from the button's handler: one viewport tool at a time.
+pub fn toggle_select() {
+    let u = ui();
+    u.pick_mode.update(|m| *m = !*m);
+    if u.pick_mode.get_untracked() {
+        u.move_mode.set(false);
+        u.rotate_mode.set(false);
+        u.scale_mode.set(false);
+    }
+    if !u.pick_mode.get_untracked() {
+        u.pick_message.set(None);
+    }
+}
+
+/// UI-MENU-1: the Move / Rotate / Scale toggle (toolbar button, Tools menu).
+/// Moved unchanged from the three button handlers.
+pub fn toggle_gizmo(tool: wrlforge_desktop_protocol::gizmo::Tool) {
+    use wrlforge_desktop_protocol::gizmo::Tool;
+    let u = ui();
+    let (mine, others) = match tool {
+        Tool::Move => (u.move_mode, [u.rotate_mode, u.scale_mode]),
+        Tool::Rotate => (u.rotate_mode, [u.move_mode, u.scale_mode]),
+        Tool::Scale => (u.scale_mode, [u.move_mode, u.rotate_mode]),
+    };
+    mine.update(|m| *m = !*m);
+    if mine.get_untracked() {
+        u.pick_mode.set(false);
+        for o in others {
+            o.set(false);
+        }
+        crate::gizmo::start();
+    } else {
+        u.gizmo_message.set(None);
     }
 }

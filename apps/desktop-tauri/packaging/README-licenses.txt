@@ -10,6 +10,6 @@ Files in this directory:
   LICENSE                    GNU General Public License, version 3 (WRL Forge)
   COPYRIGHT.md               WRL Forge copyright notice
   THIRD_PARTY_NOTICES.md     Third-party notices of the WRL Forge project
-  X_ITE-LICENSE.md           X_ITE 15.1.10 (MIT), the 3D preview engine
+  X_ITE-LICENSE.md           X_ITE 16.5.0 (MIT), the 3D preview engine
   LICENSE-tokyo-night.txt    Tokyo Night color theme (MIT)
   RUST-CRATES-LICENSES.txt   Every third-party Rust crate the app is built from

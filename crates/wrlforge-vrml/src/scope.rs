@@ -28,6 +28,11 @@
 //!   ranking, no type narrowing.
 //! - `language_target`: what 4.6.2 says the reference means (closest
 //!   preceding DEF). Informational only. It never feeds edit identity.
+//!
+//! RUST-STAB-2B adds typed answers on the same graph (`scope/typed.rs`): node
+//! instance types, interface members, ROUTE events and `IS` connections. The
+//! built-in Script rules (4.4.4 self-reference, Script interfaces) apply only
+//! to a node whose type is PROVEN to be the built-in Script.
 
 use std::collections::HashMap;
 
@@ -56,12 +61,52 @@ pub mod reason {
     pub const REFERENCE_IN_PROTO_INTERFACE_DEFAULT: &str = "reference-in-proto-interface-default";
     pub const NAME_DECLARED_IN_PROTO_INTERFACE_DEFAULT: &str =
         "name-declared-in-proto-interface-default";
+
+    // RUST-STAB-2B: node types. Documented in
+    // `docs/architecture/RUST_STAB_2B_TYPED_REFERENCES.md`.
+    pub const NODE_TYPE_IS_BUILTIN: &str = "node-type-is-builtin";
+    pub const NODE_TYPE_UNKNOWN: &str = "node-type-unknown";
+    pub const RECURSIVE_PROTO_INSTANCE: &str = "recursive-proto-instance";
+    pub const DUPLICATE_PROTO_DECLARATION: &str = "duplicate-proto-declaration";
+    pub const PROTO_INSTANCE_BEFORE_DECLARATION: &str = "proto-instance-before-declaration";
+    pub const TYPE_IN_PROTO_INTERFACE_DEFAULT: &str = "type-in-proto-interface-default";
+    pub const TYPE_SCOPE_CHAIN_NOT_PROVABLE: &str = "type-scope-chain-not-provable";
+
+    // RUST-STAB-2B: interfaces and endpoints.
+    pub const NODE_TYPE_NOT_PROVEN: &str = "node-type-not-proven";
+    pub const INTERFACE_NOT_PROVABLE: &str = "interface-not-provable";
+    pub const DUPLICATE_INTERFACE_MEMBER: &str = "duplicate-interface-member";
+    pub const EXTERNPROTO_INTERFACE_NOT_LOCALLY_VERIFIABLE: &str =
+        "externproto-interface-not-locally-verifiable";
+    pub const FIELD_TYPE_UNKNOWN: &str = "field-type-unknown";
+
+    // RUST-STAB-2B: ROUTE events (ISO 4.10.2).
+    pub const ROUTE_EVENT_UNKNOWN: &str = "route-event-unknown";
+    pub const ROUTE_SOURCE_NOT_AN_EVENT_OUT: &str = "route-source-not-an-event-out";
+    pub const ROUTE_DESTINATION_NOT_AN_EVENT_IN: &str = "route-destination-not-an-event-in";
+    pub const ROUTE_TYPE_MISMATCH: &str = "route-type-mismatch";
+    pub const ROUTE_NODE_NOT_PROVEN: &str = "route-node-not-proven";
+
+    // RUST-STAB-2B: IS connections (ISO 4.8.3, Table 4.4).
+    pub const IS_OUTSIDE_PROTO_DEFINITION: &str = "is-outside-proto-definition";
+    pub const IS_IN_PROTO_INTERFACE_DEFAULT: &str = "is-in-proto-interface-default";
+    pub const IS_INTERFACE_MEMBER_NOT_DECLARED: &str = "is-interface-member-not-declared";
+    pub const IS_NODE_FIELD_UNKNOWN: &str = "is-node-field-unknown";
+    pub const IS_ACCESS_MISMATCH: &str = "is-access-mismatch";
+    pub const IS_TYPE_MISMATCH: &str = "is-type-mismatch";
+    pub const INTERFACE_DECLARATION_ON_NON_SCRIPT: &str = "interface-declaration-on-non-script";
 }
 
 /// Detail codes: non-binding classification, never a status.
 pub mod detail {
     /// A ROUTE inside an MFNode array (Cybertown/Blaxxun compatibility).
     pub const ROUTE_IN_MFNODE_ARRAY: &str = "route-in-mfnode-array";
+    /// A PROTO with the name of a built-in node binds the instance (4.8.1).
+    pub const PROTO_SHADOWS_BUILTIN: &str = "proto-shadows-builtin";
+    /// Bound through the 4.10.2 `set_`/`_changed` ROUTE fallback.
+    pub const EVENT_VIA_SHORTHAND: &str = "event-via-shorthand";
+    /// Bound through the 4.7 exposedField `set_zzz`/`zzz_changed` names.
+    pub const EVENT_VIA_EXPOSEDFIELD_ALIAS: &str = "event-via-exposedfield-alias";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,9 +189,14 @@ pub enum TypeKind {
 pub struct TypeDecl {
     pub kind: TypeKind,
     pub name: Option<String>,
+    /// The name token (RUST-STAB-2B).
+    pub name_range: Option<Range>,
+    /// The scope the declaration is WRITTEN in (not the body it opens).
     /// `None` inside a PROTO interface default value.
     pub scope: Option<usize>,
     pub range: Range,
+    /// The PROTO body scope this declaration opens. `None` for EXTERNPROTO.
+    pub body_scope: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,7 +256,8 @@ pub struct Reference {
     /// later declarations of a forward reference).
     pub candidates: Vec<usize>,
     pub detail: Option<&'static str>,
-    inside_script: bool,
+    /// The innermost node instance that contains this reference.
+    enclosing: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -221,6 +272,14 @@ pub struct ScopeGraph {
     pub unscoped_defs: Vec<DefDecl>,
     /// A hard parse limit or unbalanced structure: no scope is provable.
     pub document_recovered: Option<&'static str>,
+    /// RUST-STAB-2B: one type answer per node instance, in source order.
+    pub instances: Vec<TypeRef>,
+    /// RUST-STAB-2B: one answer per `IS` connection.
+    pub is_bindings: Vec<IsBinding>,
+    /// RUST-STAB-2B: one typed answer per ROUTE statement.
+    pub routes: Vec<RouteCheck>,
+    is_sites: Vec<typed::IsSite>,
+    route_sites: Vec<typed::RouteSite>,
 }
 
 // --- construction --------------------------------------------------------
@@ -229,7 +288,11 @@ pub struct ScopeGraph {
 struct Ctx {
     /// `None` inside a PROTO interface default value.
     scope: Option<usize>,
-    inside_script: bool,
+    /// The innermost enclosing node instance (index into `instances`).
+    parent: Option<usize>,
+    /// The innermost enclosing PROTO definition (index into `types`). ISO
+    /// 4.8.4: an `IS` refers to the innermost prototype's declarations.
+    proto_owner: Option<usize>,
 }
 
 struct Builder {
@@ -270,6 +333,16 @@ impl Builder {
             Ast::ExternProto(e) => self.extern_proto(e, ctx),
             Ast::Route(r) => {
                 let d = in_array.then_some(detail::ROUTE_IN_MFNODE_ARRAY);
+                let first = self.g.references.len();
+                self.g.route_sites.push(typed::RouteSite {
+                    range: r.range,
+                    source: first,
+                    destination: first + 1,
+                    from_event: r.from.event.clone(),
+                    from_event_range: r.from.event_range,
+                    to_event: r.to.event.clone(),
+                    to_event_range: r.to.event_range,
+                });
                 self.add_ref(
                     RefKind::RouteSource,
                     &r.from.node,
@@ -328,7 +401,7 @@ impl Builder {
             language_target: None,
             candidates: vec![],
             detail,
-            inside_script: ctx.inside_script,
+            enclosing: ctx.parent,
         });
     }
 
@@ -349,8 +422,10 @@ impl Builder {
         self.g.types.push(TypeDecl {
             kind: TypeKind::ExternProto,
             name: e.name.clone(),
+            name_range: e.name_range,
             scope: ctx.scope,
             range: e.range,
+            body_scope: None,
         });
         self.members(MemberOwner::Type(ti), &e.interfaces);
     }
@@ -360,15 +435,18 @@ impl Builder {
         self.g.types.push(TypeDecl {
             kind: TypeKind::Proto,
             name: p.name.clone(),
+            name_range: p.name_range,
             scope: ctx.scope,
             range: p.range,
+            body_scope: None,
         });
         self.members(MemberOwner::Type(ti), &p.interfaces);
         // Interface defaults: which DEF/USE scope owns them is not settled by
         // the standard text, so they are visited with NO scope.
         let none = Ctx {
             scope: None,
-            inside_script: ctx.inside_script,
+            parent: ctx.parent,
+            proto_owner: None,
         };
         for i in &p.interfaces {
             if let Some(d) = &i.default {
@@ -376,6 +454,7 @@ impl Builder {
             }
         }
         let body = self.add_scope(ScopeKind::ProtoBody, p.range, p.name.clone());
+        self.g.types[ti].body_scope = Some(body);
         if p.name.is_none() {
             self.g.scopes[body].recovered = Some(reason::PROTO_SCOPE_NOT_PROVABLE);
         } else if !p
@@ -391,7 +470,8 @@ impl Builder {
             &p.body,
             Ctx {
                 scope: Some(body),
-                inside_script: ctx.inside_script,
+                parent: ctx.parent,
+                proto_owner: Some(ti),
             },
         );
     }
@@ -410,12 +490,24 @@ impl Builder {
                 None => self.g.unscoped_defs.push(d),
             }
         }
+        let me = self.g.instances.len();
+        self.g
+            .instances
+            .push(TypeRef::site(n, ctx.scope, ctx.parent));
         let inner = Ctx {
             scope: ctx.scope,
-            inside_script: ctx.inside_script || n.node_type == "Script",
+            parent: Some(me),
+            proto_owner: ctx.proto_owner,
         };
+        // Recorded by spelling; used only when the type is PROVEN to be the
+        // built-in Script node (a `PROTO Script` takes the name).
         if n.node_type == "Script" {
             self.members(MemberOwner::Script(n.range), &n.interfaces);
+        }
+        for i in &n.interfaces {
+            if i.is.is_some() {
+                self.g.is_sites.push(typed::IsSite::interface(me, i, ctx));
+            }
         }
         // A node's own interface defaults belong to the node's scope.
         for i in &n.interfaces {
@@ -427,10 +519,10 @@ impl Builder {
         for f in &n.fields {
             match f {
                 Ast::Field(field) => {
-                    if !field.is_binding {
-                        if let Some(v) = &field.value {
-                            self.value(v, inner);
-                        }
+                    if field.is_binding {
+                        self.g.is_sites.push(typed::IsSite::field(me, field, ctx));
+                    } else if let Some(v) = &field.value {
+                        self.value(v, inner);
                     }
                 }
                 other => self.statement(other, inner, false),
@@ -506,6 +598,19 @@ struct Index {
     unscoped_names: HashMap<String, ()>,
 }
 
+/// ISO 4.4.4: is `r` below a node PROVEN to be the built-in Script? A
+/// `PROTO Script` instance does not count.
+fn inside_script(g: &ScopeGraph, r: &Reference) -> bool {
+    let mut at = r.enclosing;
+    while let Some(i) = at {
+        if g.instances[i].is_builtin("Script") {
+            return true;
+        }
+        at = g.instances[i].parent;
+    }
+    false
+}
+
 fn resolve(g: &ScopeGraph, idx: &Index, r: &Reference) -> Resolution {
     let res = |status, reason| Resolution {
         status,
@@ -561,7 +666,7 @@ fn resolve(g: &ScopeGraph, idx: &Index, r: &Reference) -> Resolution {
         let def = &g.defs[d];
         if r.kind == RefKind::Use && contains(def.node_range, r.statement_range) {
             // 4.4.4: a cycle only inside the transformation hierarchy.
-            if r.inside_script {
+            if inside_script(g, r) {
                 return Resolution {
                     status: Status::Resolved,
                     reason: reason::SELF_REFERENCE_OUTSIDE_TRANSFORMATION_HIERARCHY,
@@ -643,6 +748,11 @@ pub fn build(parse: &ParseResult) -> ScopeGraph {
             references: vec![],
             unscoped_defs: vec![],
             document_recovered: None,
+            instances: vec![],
+            is_bindings: vec![],
+            routes: vec![],
+            is_sites: vec![],
+            route_sites: vec![],
         },
     };
     let doc = b.add_scope(ScopeKind::Document, parse.tree.range, None);
@@ -650,11 +760,14 @@ pub fn build(parse: &ParseResult) -> ScopeGraph {
         &parse.tree.statements,
         Ctx {
             scope: Some(doc),
-            inside_script: false,
+            parent: None,
+            proto_owner: None,
         },
     );
     b.mark_recovery(parse);
     let mut g = b.g;
+    // Types first: the 4.4.4 Script rule needs the PROVEN type.
+    typed::resolve_types(&mut g);
 
     let mut idx = Index {
         by_scope: HashMap::new(),
@@ -686,6 +799,7 @@ pub fn build(parse: &ParseResult) -> ScopeGraph {
         r.language_target = a.language_target;
         r.candidates = a.candidates;
     }
+    typed::check(&mut g);
     g
 }
 
@@ -786,6 +900,7 @@ impl ScopeGraph {
                 range,
             });
         }
+        out.extend(typed::diagnostics(self));
         out.sort_by_key(|d| (d.range.start.offset, d.range.end.offset, d.code));
         out
     }
@@ -798,6 +913,22 @@ pub mod code {
     pub const BEFORE_DEF: &str = "SCOPE003";
     pub const SELF_REFERENCE: &str = "SCOPE004";
     pub const AMBIGUOUS: &str = "SCOPE010";
+
+    // RUST-STAB-2B typed references: a separate range, SCOPE1xx.
+    pub const ROUTE_EVENT_UNKNOWN: &str = "SCOPE101";
+    pub const ROUTE_SOURCE_DIRECTION: &str = "SCOPE102";
+    pub const ROUTE_DESTINATION_DIRECTION: &str = "SCOPE103";
+    pub const ROUTE_TYPE_MISMATCH: &str = "SCOPE104";
+    pub const IS_MEMBER_NOT_DECLARED: &str = "SCOPE111";
+    pub const IS_NODE_FIELD_UNKNOWN: &str = "SCOPE112";
+    pub const IS_ACCESS_MISMATCH: &str = "SCOPE113";
+    pub const IS_TYPE_MISMATCH: &str = "SCOPE114";
+    pub const IS_OUTSIDE_PROTO: &str = "SCOPE115";
+    pub const NODE_TYPE_UNKNOWN: &str = "SCOPE121";
+    pub const PROTO_BEFORE_DECLARATION: &str = "SCOPE122";
+    pub const RECURSIVE_PROTO: &str = "SCOPE123";
+    pub const DUPLICATE_PROTO: &str = "SCOPE130";
+    pub const PROTO_SHADOWS_BUILTIN: &str = "SCOPE131";
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -811,5 +942,11 @@ pub struct ScopeDiagnostic {
     pub range: Range,
 }
 
+mod typed;
+pub use typed::{Access, EventEnd, IsBinding, Origin, RouteCheck, TypeRef};
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod typed_tests;

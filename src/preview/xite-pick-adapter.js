@@ -32,8 +32,13 @@
 // top-level name can collide in the page's shared script scope.
 
 (function () {
-  // The exact X_ITE build every private-surface assumption below was proven on.
-  const XITE_VERSION = '15.1.10';
+  // The exact X_ITE builds every private-surface assumption below was proven
+  // on, one per host application (XITE-16-UPGRADE-2): 15.1.10 is the Electron
+  // app's pin (root package.json), 16.5.0 the Rust/Tauri app's (apps/
+  // desktop-tauri/xite/PIN, proven in XITE-16-UPGRADE-1). Exact strings only:
+  // no range, no prefix, no newer-is-fine. Each host's build refuses any
+  // other X_ITE, and the G4 probe still runs on whichever build is loaded.
+  const XITE_VERSIONS = Object.freeze(['15.1.10', '16.5.0']);
 
   // ---- shared parser-hook coordinator ---------------------------------------
   // Both X_ITE browsers on the page share ONE VRMLParser.prototype, so ONE
@@ -113,7 +118,7 @@
   // Browser-side surfaces belong to one adapter.
   function checkBrowserSurfaces(browser) {
     if (!browser) return 'browser-missing';
-    if (browser.version !== XITE_VERSION) return 'xite-version-mismatch'; // V1 / G2
+    if (typeof browser.version !== 'string' || !XITE_VERSIONS.includes(browser.version)) return 'xite-version-mismatch'; // V1 / G2
     if (!fn(browser, 'createX3DFromString') || !fn(browser, 'replaceWorld')) return 'browser-public-api-missing';
     if (!fn(browser, 'touch') || browser.touch.length !== 2) return 'touch-missing'; // P6
     if (!fn(browser, 'getHit')) return 'hit-shape-changed'; // P7
