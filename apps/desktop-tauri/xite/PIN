@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# XITE-16-UPGRADE-2: the ONE X_ITE build the Rust/Tauri app ships.
+# The Electron app keeps its own pin in the root package.json (15.1.10).
+# fetch-xite.sh downloads exactly this tarball; build-ui.sh refuses any dist
+# whose version or files differ from it. key=value, no shell is evaluated.
+version=16.5.0
+tarball=https://registry.npmjs.org/x_ite/-/x_ite-16.5.0.tgz
+integrity=sha512-bpxQecS31b6zVc2SvZlThJNRK4tXBlmr+D5aoO9cGgE71e5nKu8z9sPba+GkFx2GcADncN9oMwpXbbPWeuEtBA==
+tarball_sha256=48dc4fed65ae1b7bb4d4183178291c14bb2cc0ddb58d5a37d5fa6c6a62889142
+upstream=https://github.com/create3000/x_ite
+upstream_tag=16.5.0
+upstream_commit=1956793db500353c8f9fdb078b67429310978323
+# Every file build-ui.sh copies, with its SHA-256 (same set and bytes as the
+# dist/ committed at the upstream tag).
+manifest=x_ite-16.5.0.sha256

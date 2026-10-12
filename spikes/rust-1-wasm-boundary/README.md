@@ -22,6 +22,7 @@ npm ci                                            # existing lockfile; provides 
 node spikes/rust-1-wasm-boundary/build.mjs --negative-controls   # out/pkg + out/neg/*/pkg + out/build-manifest.json
 node --test spikes/rust-1-wasm-boundary/test/*.test.mjs          # Node 24 load proof
 node spikes/rust-1-wasm-boundary/harness/precision-review.mjs   # RUST-1A: BigInt oracle over RUST1-PRECISION
+RUST1A_PKG=spikes/rust-1-wasm-boundary/out/neg/no-ambiguity/pkg node spikes/rust-1-wasm-boundary/harness/precision-review.mjs   # must exit 1
 RUST1A_HEAVY=1 node --max-old-space-size=16000 --test spikes/rust-1-wasm-boundary/test/session-lifetime.test.mjs   # real wasm trap (~11 s, ~5 GB)
 RUST1A_PKG=spikes/rust-1-wasm-boundary/out/neg/lossy-utf16/pkg node --test spikes/rust-1-wasm-boundary/test/utf16-gate-adversarial.test.mjs   # must FAIL
 node spikes/rust-1-wasm-boundary/harness/run.mjs --negative-controls   # differential, exit 0 = pass
@@ -38,13 +39,18 @@ node spikes/rust-1-wasm-boundary/electron/run.cjs                # renderer proo
 | `test/node-proof.test.mjs` | Node proof, adversarial inputs, sessions |
 | `test/utf16-gate-adversarial.test.mjs` | RUST-1A: hostile `isWellFormed`, facade + every raw string export |
 | `test/session-lifetime.test.mjs` | RUST-1A: lifetime, isolation, memory high-water, instance poisoning |
-| `harness/precision-review.mjs` | RUST-1A: independent BigInt review of every `RUST1-PRECISION` case |
+| `harness/precision-review.mjs` | RUST-1A: independent BigInt review of every `RUST1-PRECISION` case; fails on an inexact or oracle-refused Rust success |
+| `harness/bigint-oracle.mjs` | the independent exact BigInt mapping oracle (shared by the review and the stage check) |
+| `test/precision-review-gate.test.mjs` | PR #130 fix: oracle-refused Rust success fails the review (scripted + real mutant) |
+| `test/precision-check.test.mjs` | PR #130 fix: `unsafeIntegerInvolved` never trusts the JavaScript answer |
+| `test/electron-verdict.test.mjs` | PR #130 fix: Electron proof verdict (EvalError, complete negative control) |
+| `test/bench-metadata.test.mjs` | PR #130 fix: benchmark memory note computed from the inputs |
 | `harness/framework.mjs` | reusable differential framework (stage adapter contract) |
 | `harness/registry.json` | approved-difference registry (ids are NOT owner decisions D1–D9) |
 | `harness/stages/edit-algebra.mjs` | implemented stage; regenerates the RUST-0 case set exactly |
 | `harness/stages/planned.mjs` | interfaces for tokenize, parse, source-map, semantics, node-identity, transaction (not implemented) |
 | `harness/run.mjs` | runner; release + negative controls |
 | `perf/` | boundary benchmark shared by Node and the renderer |
-| `electron/` | isolated Electron main + proof pages (production CSP copy and a no-`wasm-unsafe-eval` control) |
+| `electron/` | isolated Electron main + proof pages (production CSP copy and a no-`wasm-unsafe-eval` control); `verdict.cjs` is the pure pass/fail decision |
 
 `out/` is gitignored and fully regenerable.

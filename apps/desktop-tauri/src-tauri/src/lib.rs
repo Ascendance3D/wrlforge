@@ -8,10 +8,15 @@
 pub mod commands;
 pub mod files;
 pub mod native;
+pub mod recovery;
 pub mod resources;
 pub mod service;
 pub mod settings;
 pub mod smoke;
+pub mod smoke_dock;
+pub mod smoke_menu;
+mod app_menu;
+pub mod smoke_recovery;
 pub mod viewport;
 
 use std::path::PathBuf;
@@ -33,6 +38,8 @@ struct Args {
     smoke_texture: Option<PathBuf>,
     /// `--smoke-extrusion <dir>`: the VISUAL-4A Extrusion run.
     smoke_extrusion: Option<PathBuf>,
+    /// `--smoke-rotscale <dir>`: the VISUAL-4B Rotate / Scale run.
+    smoke_rotscale: Option<PathBuf>,
     smoke_no_preview: bool,
     smoke_inspector: bool,
     smoke_theme: Option<p::ThemeSmoke>,
@@ -46,6 +53,12 @@ struct Args {
     smoke_native: Option<PathBuf>,
     /// With `--smoke-native`: the X_ITE-only control (no native viewport).
     smoke_native_control: bool,
+    /// RUST-STAB-1: `--smoke-recovery-{crash,restore,later} <dir>`.
+    smoke_recovery: Option<(smoke_recovery::Phase, PathBuf)>,
+    /// UI-DOCK-1: `--smoke-dock[-restore|-damaged] <dir>`.
+    smoke_dock: Option<(smoke_dock::Phase, PathBuf)>,
+    /// UI-MENU-1: `--smoke-menu <dir>`.
+    smoke_menu: Option<PathBuf>,
 }
 
 fn parse_args() -> Args {
@@ -58,6 +71,7 @@ fn parse_args() -> Args {
         smoke_move: None,
         smoke_texture: None,
         smoke_extrusion: None,
+        smoke_rotscale: None,
         smoke_no_preview: false,
         smoke_inspector: false,
         smoke_theme: None,
@@ -66,6 +80,9 @@ fn parse_args() -> Args {
         native_fifo_only: false,
         smoke_native: None,
         smoke_native_control: false,
+        smoke_recovery: None,
+        smoke_dock: None,
+        smoke_menu: None,
     };
     let mut theme_final = None;
     let mut theme_expect = None;
@@ -80,6 +97,7 @@ fn parse_args() -> Args {
             Some("--smoke-move") => a.smoke_move = it.next().map(PathBuf::from),
             Some("--smoke-texture") => a.smoke_texture = it.next().map(PathBuf::from),
             Some("--smoke-extrusion") => a.smoke_extrusion = it.next().map(PathBuf::from),
+            Some("--smoke-rotscale") => a.smoke_rotscale = it.next().map(PathBuf::from),
             Some("--smoke-no-preview") => a.smoke_no_preview = true,
             Some("--smoke-inspector") => a.smoke_inspector = true,
             Some("--smoke-theme") => theme_final = it.next().and_then(|s| s.into_string().ok()),
@@ -93,6 +111,31 @@ fn parse_args() -> Args {
             Some("--native-force-fifo-only") => a.native_fifo_only = true,
             Some("--smoke-native") => a.smoke_native = it.next().map(PathBuf::from),
             Some("--smoke-native-control") => a.smoke_native_control = true,
+            Some("--smoke-dock") => {
+                a.smoke_dock = it
+                    .next()
+                    .map(|d| (smoke_dock::Phase::Main, PathBuf::from(d)))
+            }
+            Some("--smoke-dock-restore") => {
+                a.smoke_dock = it
+                    .next()
+                    .map(|d| (smoke_dock::Phase::Restore, PathBuf::from(d)))
+            }
+            Some("--smoke-dock-damaged") => {
+                a.smoke_dock = it
+                    .next()
+                    .map(|d| (smoke_dock::Phase::Damaged, PathBuf::from(d)))
+            }
+            Some("--smoke-menu") => a.smoke_menu = it.next().map(PathBuf::from),
+            Some("--smoke-recovery-crash") => {
+                a.smoke_recovery = it.next().map(|d| (smoke_recovery::Phase::Crash, d.into()))
+            }
+            Some("--smoke-recovery-restore") => {
+                a.smoke_recovery = it.next().map(|d| (smoke_recovery::Phase::Restore, d.into()))
+            }
+            Some("--smoke-recovery-later") => {
+                a.smoke_recovery = it.next().map(|d| (smoke_recovery::Phase::Later, d.into()))
+            }
             _ if a.open.is_none() => a.open = Some(PathBuf::from(arg)),
             _ => {}
         }
@@ -106,7 +149,38 @@ fn parse_args() -> Args {
     a
 }
 
+/// The X_ITE version pinned in `xite/PIN`: the default 3D renderer.
+pub fn xite_version() -> &'static str {
+    include_str!("../../xite/PIN")
+        .lines()
+        .find_map(|l| l.strip_prefix("version="))
+        .map(str::trim)
+        .unwrap_or("unknown")
+}
+
+/// APP-SHELL-0: what About shows. The version comes from Cargo; the
+/// `config_version` is what Tauri read from `tauri.conf.json`.
+pub fn app_info<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> p::command::AppInfo {
+    use p::command as c;
+    p::command::AppInfo {
+        name: c::APP_NAME.into(),
+        version: c::APP_VERSION.into(),
+        channel: c::APP_CHANNEL.into(),
+        display: c::app_display_name(),
+        config_version: app.package_info().version.to_string(),
+        identifier: app.config().identifier.clone(),
+        tauri_version: tauri::VERSION.into(),
+        renderer: format!("X_ITE {}", xite_version()),
+        license: "GPL-3.0-or-later".into(),
+    }
+}
+
 pub fn run() {
+    // APP-SHELL-0: report the identity without opening a window.
+    if std::env::args_os().nth(1).is_some_and(|a| a == "--version") {
+        println!("{}", p::command::app_display_name());
+        return;
+    }
     let args = parse_args();
     let mut context = tauri::generate_context!();
     if args.smoke_native.is_some() {
@@ -121,6 +195,7 @@ pub fn run() {
         .manage(commands::Startup::default())
         .manage(smoke::SmokeState::default())
         .manage(native::Native::default())
+        .manage(commands::CloseGate::default())
         // TEXTURE-LOCAL-1: read-only preview resources (see resources.rs).
         // The WebView names a token, never a folder; Rust decides the file.
         .register_asynchronous_uri_scheme_protocol(resources::SCHEME, |ctx, request, responder| {
@@ -161,6 +236,36 @@ pub fn run() {
                 },
             };
             let settings_path = store.path();
+            // RUST-STAB-1: crash recovery in the app's private DATA dir (or
+            // `<config-dir>/recovery` for tests; never the user's).
+            let rec = match args.config_dir.clone() {
+                Some(d) => recovery::Recovery::open(&d.join(recovery::DIR_NAME), Default::default()),
+                None => match app.path().app_data_dir() {
+                    Ok(d) => recovery::Recovery::open(&d.join(recovery::DIR_NAME), Default::default()),
+                    Err(e) => recovery::Recovery::unavailable(&e.to_string()),
+                },
+            };
+            let rec = std::sync::Arc::new(rec);
+            app.state::<service::Service>().attach_recovery(rec.clone());
+            {
+                let handle = app.handle().clone();
+                std::thread::Builder::new()
+                    .name("wrlforge-recovery".into())
+                    .spawn(move || {
+                        while rec.wait_due() {
+                            handle.state::<service::Service>().recovery_pass();
+                        }
+                    })
+                    .map_err(|e| format!("recovery worker: {e}"))?;
+            }
+            if let Some((phase, dir)) = args.smoke_recovery.clone() {
+                smoke_recovery::arm(&dir, phase, args.smoke_report.clone())
+                    .map_err(|e| format!("smoke-recovery: {e}"))?;
+                if phase == smoke_recovery::Phase::Crash {
+                    let handle = app.handle().clone();
+                    std::thread::spawn(move || smoke_recovery::run_crash(handle));
+                }
+            }
             let native_requested =
                 (args.native_viewport || args.smoke_native.is_some() || store.native_viewport())
                     && !args.smoke_native_control;
@@ -190,10 +295,38 @@ pub fn run() {
                     .arm_extrusion(&dir, args.smoke_report.clone())
                     .map_err(|e| format!("smoke-extrusion: {e}"))?;
             }
+            if let Some(dir) = args.smoke_rotscale.clone() {
+                app.state::<smoke::SmokeState>()
+                    .arm_rotscale(&dir, args.smoke_report.clone())
+                    .map_err(|e| format!("smoke-rotscale: {e}"))?;
+            }
             if let Some(dir) = args.smoke_texture.clone() {
                 app.state::<smoke::SmokeState>()
                     .arm_texture(&dir, args.smoke_report.clone())
                     .map_err(|e| format!("smoke-texture: {e}"))?;
+            }
+            if let Some((phase, dir)) = args.smoke_dock.clone() {
+                smoke_dock::arm(
+                    &dir,
+                    phase,
+                    args.smoke_report.clone(),
+                    settings_path.clone(),
+                    args.config_dir.clone(),
+                )
+                .map_err(|e| format!("smoke-dock: {e}"))?;
+            }
+            if let Some(dir) = args.smoke_menu.clone() {
+                smoke_menu::arm(&dir, args.smoke_report.clone(), args.config_dir.clone())
+                    .map_err(|e| format!("smoke-menu: {e}"))?;
+            }
+            // UI-MENU-1: the standard macOS application menu (About, Hide,
+            // Quit; Edit with the platform clipboard items). Other platforms
+            // use the in-window menu bar only.
+            #[cfg(target_os = "macos")]
+            {
+                let menu = app_menu::build(app.handle())?;
+                app.set_menu(menu)?;
+                app.on_menu_event(app_menu::on_event);
             }
             if let Some(path) = args.smoke.clone() {
                 app.state::<smoke::SmokeState>()
@@ -206,6 +339,11 @@ pub fn run() {
                         settings_path,
                     )
                     .map_err(|e| format!("smoke: {e}"))?;
+            }
+            // APP-SHELL-0: the window shows the version until a document
+            // titles it (`window_title`).
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_title(&p::command::app_display_name());
             }
             // NATIVE-RENDER-1 (hidden): last, so the window layout exists.
             let installed = viewport::install(
@@ -231,9 +369,20 @@ pub fn run() {
             }
             Ok(())
         })
-        .on_window_event(|_window, event| {
-            // The native viewport's window must outlive its render thread.
+        .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // RUST-STAB-1: unsaved work is never closed away silently.
+                let app = window.app_handle();
+                if !app.state::<commands::CloseGate>().confirmed() {
+                    let dirty = app.state::<service::Service>().dirty_sessions();
+                    if !dirty.is_empty() {
+                        api.prevent_close();
+                        let w = window.clone();
+                        std::thread::spawn(move || commands::confirm_close(w, dirty));
+                        return;
+                    }
+                }
+                // The native viewport's window must outlive its render thread.
                 if viewport::defer_close(0) {
                     api.prevent_close();
                 }
@@ -268,9 +417,14 @@ pub fn run() {
             commands::doc_translate_prove,
             commands::doc_preview_carry,
             commands::doc_translate,
+            commands::doc_rotate,
+            commands::doc_scale,
             commands::window_title,
+            commands::app_info,
             commands::theme_get,
             commands::theme_set,
+            commands::layout_get,
+            commands::layout_set,
             commands::smoke_plan,
             commands::smoke_open_fixture,
             commands::smoke_real_click,
@@ -281,14 +435,38 @@ pub fn run() {
             commands::smoke_texture_delay,
             commands::smoke_texture_capture,
             commands::smoke_resource_log,
+            commands::recovery_list,
+            commands::recovery_restore,
+            commands::recovery_discard,
+            commands::recovery_status,
+            commands::smoke_recovery_plan,
+            commands::smoke_dock_plan,
+            commands::smoke_recovery_check,
+            commands::smoke_request_close,
+            // UI-MENU-1.
+            commands::app_quit,
+            commands::smoke_menu_plan,
+            commands::smoke_menu_recovery_digest,
+            commands::smoke_menu_disk,
+            commands::smoke_menu_native,
         ])
         .build(context)
         .expect("error while building WRL Forge")
-        .run(|_app, event| {
-            if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+        .run(|app, event| match event {
+            tauri::RunEvent::ExitRequested { api, code, .. } => {
                 if viewport::defer_close(code.unwrap_or(0)) {
                     api.prevent_exit();
                 }
             }
+            // RUST-STAB-1: a normal exit writes any scheduled recovery copy
+            // (unsaved work that was not explicitly discarded stays offered).
+            tauri::RunEvent::Exit => {
+                let svc = app.state::<service::Service>();
+                svc.recovery_pass();
+                if let Some(r) = svc.recovery() {
+                    r.stop();
+                }
+            }
+            _ => {}
         });
 }

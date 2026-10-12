@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Persistent application preferences (UI-THEME-1). Today: the theme only.
+//! Persistent application preferences: the theme (UI-THEME-1) and the
+//! workspace layout (UI-DOCK-1).
 //!
 //! `settings.json` lives in Tauri's per-app CONFIG directory (or the
 //! `--config-dir` a test passes). The WebView never sees or chooses a path; it
@@ -11,6 +12,12 @@
 //! oversized, corrupt, wrong-version or unknown-theme file yields Tokyo Night
 //! plus a notice. Writes go to a temp sibling, are fsynced, then renamed over
 //! the old file, so a failed write leaves the previous settings intact.
+//!
+//! UI-DOCK-1 adds `"layout": {"version":1,"preset":…,"root":…}`, validated as
+//! a whole by `protocol::layout`. A missing, damaged, older, newer or invalid
+//! layout yields the default (Source) preset plus a notice and never blocks
+//! startup. The theme and the layout share ONE writer: both hold the same
+//! lock across the read-modify-write, and each replaces only its own keys.
 
 use std::fs;
 use std::io::Write;
@@ -18,6 +25,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde_json::Value;
+use wrlforge_desktop_protocol::layout::{
+    Layout, LayoutSetOutcome, LayoutState, LayoutWire, PresetId, LAYOUT_VERSION,
+};
 use wrlforge_desktop_protocol::theme::{self, ThemeSetOutcome, ThemeState};
 
 pub const FILE_NAME: &str = "settings.json";
@@ -64,6 +74,70 @@ pub fn parse(bytes: &[u8]) -> Loaded {
     }
 }
 
+/// The persisted key of the workspace layout.
+pub const LAYOUT_KEY: &str = "layout";
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LayoutLoaded {
+    pub layout: Layout,
+    pub notice: Option<String>,
+}
+
+fn layout_fallback(why: impl Into<String>) -> LayoutLoaded {
+    LayoutLoaded {
+        layout: Layout::default_layout(),
+        notice: Some(format!(
+            "{}; using the {} layout.",
+            why.into(),
+            PresetId::DEFAULT.label()
+        )),
+    }
+}
+
+/// Interpret the layout in settings bytes. Pure: no I/O. No layout key (or
+/// no file) is the silent default; anything unusable is the default + notice.
+pub fn parse_layout(bytes: &[u8]) -> LayoutLoaded {
+    let Ok(v) = serde_json::from_slice::<Value>(bytes) else {
+        return layout_fallback("The saved layout could not be read (settings are not JSON)");
+    };
+    let Some(raw) = v.as_object().and_then(|o| o.get(LAYOUT_KEY)) else {
+        return LayoutLoaded {
+            layout: Layout::default_layout(),
+            notice: None,
+        };
+    };
+    match raw.get("version").and_then(Value::as_u64) {
+        Some(v) if v > LAYOUT_VERSION as u64 => {
+            return layout_fallback(format!(
+                "The saved layout is from a newer WRL Forge (layout version {v})"
+            ))
+        }
+        Some(v) if v < LAYOUT_VERSION as u64 => {
+            return layout_fallback(format!("The saved layout version {v} is too old"))
+        }
+        Some(_) => {}
+        None => return layout_fallback("The saved layout has no valid version"),
+    }
+    let wire = match serde_json::from_value::<LayoutWire>(raw.clone()) {
+        Ok(w) => w,
+        Err(_) => return layout_fallback("The saved layout is damaged"),
+    };
+    match Layout::from_wire(&wire) {
+        Ok((layout, unknown)) if unknown.is_empty() => LayoutLoaded {
+            layout,
+            notice: None,
+        },
+        Ok((layout, unknown)) => LayoutLoaded {
+            layout,
+            notice: Some(format!(
+                "The saved layout named unknown panels ({}); they were left out.",
+                unknown.join(", ")
+            )),
+        },
+        Err(e) => layout_fallback(format!("The saved layout is invalid ({e})")),
+    }
+}
+
 pub struct SettingsStore {
     /// `None` when the platform reported no config directory: the app still
     /// runs on Tokyo Night, and every save reports NotSaved.
@@ -72,6 +146,9 @@ pub struct SettingsStore {
     /// NATIVE-RENDER-1: the HIDDEN `"viewport": {"renderer": "native-experimental"}` key,
     /// read once at startup. No UI writes it; anything else means X_ITE.
     native_viewport: bool,
+    /// UI-DOCK-1: the adopted workspace layout. Written under `current`'s
+    /// lock, so the theme and the layout never race for the file.
+    layout: Mutex<LayoutLoaded>,
 }
 
 /// The approved (design) value of the hidden `viewport.renderer` key.
@@ -98,15 +175,24 @@ impl SettingsStore {
     pub fn open(dir: PathBuf) -> Self {
         let path = dir.join(FILE_NAME);
         let loaded = load(&path);
-        let native_viewport = fs::metadata(&path)
+        let bytes = fs::metadata(&path)
             .ok()
             .filter(|m| m.is_file() && m.len() <= MAX_BYTES)
-            .and_then(|_| fs::read(&path).ok())
-            .is_some_and(|b| native_viewport_requested(&b));
+            .and_then(|_| fs::read(&path).ok());
+        let native_viewport = bytes.as_deref().is_some_and(native_viewport_requested);
+        let layout = match (fs::metadata(&path), bytes.as_deref()) {
+            (Err(e), _) if e.kind() == std::io::ErrorKind::NotFound => LayoutLoaded {
+                layout: Layout::default_layout(),
+                notice: None,
+            },
+            (_, Some(b)) => parse_layout(b),
+            (_, None) => layout_fallback("The saved layout could not be read"),
+        };
         SettingsStore {
             dir: Some(dir),
             current: Mutex::new(loaded),
             native_viewport,
+            layout: Mutex::new(layout),
         }
     }
 
@@ -115,6 +201,10 @@ impl SettingsStore {
             dir: None,
             current: Mutex::new(fallback(format!("No settings directory ({reason})"))),
             native_viewport: false,
+            layout: Mutex::new(LayoutLoaded {
+                layout: Layout::default_layout(),
+                notice: None,
+            }),
         }
     }
 
@@ -143,7 +233,13 @@ impl SettingsStore {
         // the adopted id cannot interleave.
         let mut cur = self.current.lock().unwrap();
         let result = match &self.dir {
-            Some(dir) => write_theme(dir, id),
+            Some(dir) => write_with(dir, |obj| {
+                obj.insert(
+                    "schemaVersion".into(),
+                    Value::from(theme::SETTINGS_SCHEMA_VERSION),
+                );
+                obj.insert("themeId".into(), Value::from(id));
+            }),
             None => Err(std::io::Error::other("no settings directory")),
         };
         cur.theme_id = id.to_string();
@@ -155,6 +251,60 @@ impl SettingsStore {
             Err(e) => ThemeSetOutcome::NotSaved {
                 theme_id: id.into(),
                 message: format!("Theme applied for this session but NOT saved: {e}"),
+            },
+        }
+    }
+}
+
+impl SettingsStore {
+    /// UI-DOCK-1: the layout to apply at startup (or after a reload).
+    pub fn layout_state(&self) -> LayoutState {
+        let l = self.layout.lock().unwrap();
+        LayoutState {
+            layout: l.layout.to_wire(),
+            notice: l.notice.clone(),
+        }
+    }
+
+    /// Validate a layout as a whole, persist it, and adopt it. An invalid
+    /// layout changes nothing; a failed write keeps the old file intact.
+    pub fn set_layout(&self, wire: &LayoutWire) -> LayoutSetOutcome {
+        let layout = match Layout::from_wire(wire) {
+            Ok((l, unknown)) if unknown.is_empty() => l,
+            Ok((_, unknown)) => {
+                return LayoutSetOutcome::Rejected {
+                    message: format!("Unknown panels: {}", unknown.join(", ")),
+                }
+            }
+            Err(e) => {
+                return LayoutSetOutcome::Rejected {
+                    message: format!("Invalid layout: {e}"),
+                }
+            }
+        };
+        // The theme's lock: one settings writer at a time.
+        let cur = self.current.lock().unwrap();
+        let canonical = serde_json::to_value(layout.to_wire()).expect("layout json");
+        let result = match &self.dir {
+            Some(dir) => write_with(dir, |obj| {
+                // A first write creates a file the theme reader accepts.
+                obj.entry("schemaVersion")
+                    .or_insert_with(|| Value::from(theme::SETTINGS_SCHEMA_VERSION));
+                obj.entry("themeId")
+                    .or_insert_with(|| Value::from(cur.theme_id.clone()));
+                obj.insert(LAYOUT_KEY.into(), canonical);
+            }),
+            None => Err(std::io::Error::other("no settings directory")),
+        };
+        drop(cur);
+        *self.layout.lock().unwrap() = LayoutLoaded {
+            layout,
+            notice: None,
+        };
+        match result {
+            Ok(()) => LayoutSetOutcome::Saved,
+            Err(e) => LayoutSetOutcome::NotSaved {
+                message: format!("Layout applied for this session but NOT saved: {e}"),
             },
         }
     }
@@ -179,9 +329,12 @@ fn load(path: &Path) -> Loaded {
     }
 }
 
-/// The new file content: the existing object (if valid JSON) with the theme
-/// keys replaced, so later preference keys survive a theme change.
-fn render(existing: Option<&[u8]>, id: &str) -> Vec<u8> {
+/// The new file content: the existing object (if valid JSON) with only the
+/// caller's keys replaced, so every other preference key survives.
+fn render(
+    existing: Option<&[u8]>,
+    edit: impl FnOnce(&mut serde_json::Map<String, Value>),
+) -> Vec<u8> {
     let mut obj = existing
         .and_then(|b| serde_json::from_slice::<Value>(b).ok())
         .and_then(|v| match v {
@@ -189,24 +342,29 @@ fn render(existing: Option<&[u8]>, id: &str) -> Vec<u8> {
             _ => None,
         })
         .unwrap_or_default();
-    obj.insert(
-        "schemaVersion".into(),
-        Value::from(theme::SETTINGS_SCHEMA_VERSION),
-    );
-    obj.insert("themeId".into(), Value::from(id));
+    edit(&mut obj);
     let mut out = serde_json::to_vec_pretty(&Value::Object(obj)).expect("json");
     out.push(b'\n');
     out
 }
 
-fn write_theme(dir: &Path, id: &str) -> std::io::Result<()> {
+/// The one settings writer: read-modify-write with an atomic rename.
+fn write_with(
+    dir: &Path,
+    edit: impl FnOnce(&mut serde_json::Map<String, Value>),
+) -> std::io::Result<()> {
     fs::create_dir_all(dir)?;
     let path = dir.join(FILE_NAME);
     let existing = fs::metadata(&path)
         .ok()
         .filter(|m| m.is_file() && m.len() <= MAX_BYTES)
         .and_then(|_| fs::read(&path).ok());
-    let bytes = render(existing.as_deref(), id);
+    let bytes = render(existing.as_deref(), edit);
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(std::io::Error::other(
+            "settings would exceed the size limit",
+        ));
+    }
     let tmp = dir.join(format!("{FILE_NAME}.wrlforge-tmp-{}", std::process::id()));
     let res = (|| {
         let mut f = fs::OpenOptions::new()
@@ -458,6 +616,248 @@ mod tests {
             // The session still uses the chosen theme.
             assert_eq!(s.state().theme_id, "tokyo-night-light");
         }
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    // ---------------------------------------------------------- UI-DOCK-1
+
+    use wrlforge_desktop_protocol::layout::{DropTarget, PanelId, Zone};
+
+    fn moved() -> Layout {
+        Layout::preset(PresetId::Source)
+            .dock(
+                PanelId::Inspector,
+                DropTarget {
+                    anchor: PanelId::SceneTree,
+                    zone: Zone::Bottom,
+                    index: None,
+                },
+            )
+            .unwrap()
+    }
+
+    fn file(d: &Path) -> Value {
+        serde_json::from_slice(&fs::read(d.join(FILE_NAME)).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn no_file_or_no_key_is_the_silent_default_layout() {
+        let d = tmpdir("layout-none");
+        let s = SettingsStore::open(d.join("absent"));
+        let st = s.layout_state();
+        assert_eq!(st.layout, Layout::default_layout().to_wire());
+        assert_eq!(st.notice, None);
+        fs::write(
+            d.join(FILE_NAME),
+            r#"{"schemaVersion":1,"themeId":"tokyo-night"}"#,
+        )
+        .unwrap();
+        let st = SettingsStore::open(d.clone()).layout_state();
+        assert_eq!(st.layout, Layout::default_layout().to_wire());
+        assert_eq!(st.notice, None);
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn theme_then_layout_and_layout_then_theme_keep_both() {
+        let d = tmpdir("layout-order");
+        fs::write(
+            d.join(FILE_NAME),
+            r#"{"schemaVersion":1,"themeId":"tokyo-night","viewport":{"renderer":"native-experimental"},"future":[1,2]}"#,
+        )
+        .unwrap();
+        let s = SettingsStore::open(d.clone());
+        // Theme, then layout.
+        assert!(matches!(
+            s.set_theme("tokyo-night-storm"),
+            ThemeSetOutcome::Saved { .. }
+        ));
+        assert_eq!(s.set_layout(&moved().to_wire()), LayoutSetOutcome::Saved);
+        let v = file(&d);
+        assert_eq!(v["themeId"], "tokyo-night-storm");
+        assert_eq!(v["layout"]["version"], 1);
+        assert_eq!(v["viewport"]["renderer"], "native-experimental");
+        assert_eq!(v["future"][1], 2);
+        // Layout, then theme.
+        let modeling = Layout::preset(PresetId::Modeling);
+        assert_eq!(s.set_layout(&modeling.to_wire()), LayoutSetOutcome::Saved);
+        assert!(matches!(
+            s.set_theme("tokyo-night-light"),
+            ThemeSetOutcome::Saved { .. }
+        ));
+        let v = file(&d);
+        assert_eq!(v["themeId"], "tokyo-night-light");
+        assert_eq!(v["layout"]["preset"], "preset.modeling");
+        assert_eq!(v["viewport"]["renderer"], "native-experimental");
+        assert_eq!(v["future"][0], 1);
+        // Restart: both come back, no notice.
+        let again = SettingsStore::open(d.clone());
+        assert_eq!(again.state().theme_id, "tokyo-night-light");
+        assert_eq!(again.state().notice, None);
+        assert_eq!(again.layout_state().layout, modeling.to_wire());
+        assert_eq!(again.layout_state().notice, None);
+        assert!(again.native_viewport());
+        // No temp file left behind.
+        let names: Vec<_> = fs::read_dir(&d)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from(FILE_NAME)]);
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn a_first_layout_write_creates_a_file_the_theme_reader_accepts() {
+        let d = tmpdir("layout-first");
+        let s = SettingsStore::open(d.clone());
+        assert_eq!(s.set_layout(&moved().to_wire()), LayoutSetOutcome::Saved);
+        let again = SettingsStore::open(d.clone());
+        assert_eq!(again.state().theme_id, "tokyo-night");
+        assert_eq!(again.state().notice, None);
+        assert_eq!(again.layout_state().layout, moved().to_wire());
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn damaged_old_newer_and_invalid_layouts_fall_back_with_a_notice() {
+        let ok = serde_json::to_string(&moved().to_wire()).unwrap();
+        let cases = [
+            (r#"{"schemaVersion":1,"themeId":"tokyo-night","layout":7}"#.to_string(), "version"),
+            (r#"{"schemaVersion":1,"themeId":"tokyo-night","layout":{}}"#.into(), "version"),
+            (r#"{"schemaVersion":1,"layout":{"version":0,"preset":"preset.source"}}"#.into(), "too old"),
+            (r#"{"schemaVersion":1,"layout":{"version":2,"preset":"preset.source","root":{"type":"hologram"}}}"#.into(), "newer"),
+            (r#"{"schemaVersion":1,"layout":{"version":1,"preset":"preset.source","root":{"type":"hologram"}}}"#.into(), "damaged"),
+            (r#"{"schemaVersion":1,"layout":{"version":1,"preset":"preset.source","root":{"type":"tabs","panels":["panel.source"],"active":"panel.source"}}}"#.into(), "invalid"),
+            (r#"{"schemaVersion":1,"layout":{"version":1,"preset":"preset.source","root":{"type":"split","axis":"row","sizes":[1.5,-0.5],"children":[{"type":"tabs","panels":["panel.source"],"active":"panel.source"},{"type":"tabs","panels":["panel.viewport"],"active":"panel.viewport"}]}}}"#.into(), "invalid"),
+            (r#"{"schemaVersion":1,"layout":{"version":1,"preset":"preset.source","root":{"type":"split","axis":"row","sizes":[0.5,0.5],"children":[{"type":"tabs","panels":["panel.source","panel.viewport"],"active":"panel.source"},{"type":"tabs","panels":["panel.viewport"],"active":"panel.viewport"}]}}}"#.into(), "invalid"),
+            ("{not json".into(), "not JSON"),
+            (format!(r#"{{"schemaVersion":1,"layout":{}}}"#, ok.replace("preset.source", "preset.gaming")), "invalid"),
+        ];
+        for (text, word) in cases {
+            let l = parse_layout(text.as_bytes());
+            assert_eq!(l.layout, Layout::default_layout(), "{text}");
+            let n = l.notice.unwrap_or_default();
+            assert!(n.contains(word), "{text}: {n}");
+            assert!(n.contains("Source layout"), "{n}");
+        }
+        // Unknown panels are left out; the rest of the layout is kept.
+        let unknown = ok.replace("panel.diagnostics", "panel.future");
+        let l = parse_layout(format!("{{\"layout\":{unknown}}}").as_bytes());
+        assert!(!l.layout.is_visible(PanelId::Diagnostics));
+        assert!(l.layout.is_visible(PanelId::Inspector));
+        assert!(l.notice.unwrap().contains("panel.future"));
+        // A bad layout never blocks startup, and the theme still loads.
+        let d = tmpdir("layout-bad");
+        fs::write(
+            d.join(FILE_NAME),
+            r#"{"schemaVersion":1,"themeId":"tokyo-night-storm","layout":{"version":99}}"#,
+        )
+        .unwrap();
+        let s = SettingsStore::open(d.clone());
+        assert_eq!(s.state().theme_id, "tokyo-night-storm");
+        assert!(s.layout_state().notice.unwrap().contains("newer"));
+        assert_eq!(s.layout_state().layout, Layout::default_layout().to_wire());
+        // The next layout change replaces it cleanly and clears the notice.
+        assert_eq!(s.set_layout(&moved().to_wire()), LayoutSetOutcome::Saved);
+        assert_eq!(s.layout_state().notice, None);
+        assert_eq!(
+            SettingsStore::open(d.clone()).state().theme_id,
+            "tokyo-night-storm"
+        );
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn invalid_layouts_are_rejected_without_writing() {
+        let d = tmpdir("layout-reject");
+        let s = SettingsStore::open(d.clone());
+        let mut w = moved().to_wire();
+        w.version = 9;
+        assert!(matches!(
+            s.set_layout(&w),
+            LayoutSetOutcome::Rejected { .. }
+        ));
+        let mut w = moved().to_wire();
+        w.preset = "preset.x".into();
+        assert!(matches!(
+            s.set_layout(&w),
+            LayoutSetOutcome::Rejected { .. }
+        ));
+        let w = LayoutWire {
+            version: 1,
+            preset: "preset.source".into(),
+            root: wrlforge_desktop_protocol::layout::NodeWire::Tabs {
+                panels: vec![
+                    "panel.source".into(),
+                    "panel.viewport".into(),
+                    "panel.ghost".into(),
+                ],
+                active: "panel.source".into(),
+            },
+        };
+        assert!(matches!(
+            s.set_layout(&w),
+            LayoutSetOutcome::Rejected { .. }
+        ));
+        assert!(!d.join(FILE_NAME).exists());
+        assert_eq!(s.layout_state().layout, Layout::default_layout().to_wire());
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_layout_write_keeps_the_previous_file_byte_identical() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tmpdir("layout-ro");
+        let original = br#"{"schemaVersion":1,"themeId":"tokyo-night-storm"}"#;
+        fs::write(d.join(FILE_NAME), original).unwrap();
+        fs::set_permissions(&d, fs::Permissions::from_mode(0o555)).unwrap();
+        let s = SettingsStore::open(d.clone());
+        let out = s.set_layout(&moved().to_wire());
+        let writable_anyway = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(d.join("probe"))
+            .is_ok();
+        fs::set_permissions(&d, fs::Permissions::from_mode(0o755)).unwrap();
+        if !writable_anyway {
+            assert!(matches!(out, LayoutSetOutcome::NotSaved { .. }), "{out:?}");
+            assert_eq!(fs::read(d.join(FILE_NAME)).unwrap(), original);
+            // Applied for this session.
+            assert_eq!(s.layout_state().layout, moved().to_wire());
+        }
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn concurrent_theme_and_layout_writers_never_lose_a_key() {
+        let d = tmpdir("layout-race");
+        let s = std::sync::Arc::new(SettingsStore::open(d.clone()));
+        let themes = ["tokyo-night-storm", "tokyo-night-light", "tokyo-night"];
+        let layouts = [
+            moved(),
+            Layout::preset(PresetId::Modeling),
+            Layout::default_layout(),
+        ];
+        let t = {
+            let s = s.clone();
+            std::thread::spawn(move || {
+                for i in 0..30 {
+                    s.set_theme(themes[i % 3]);
+                }
+            })
+        };
+        for i in 0..30 {
+            s.set_layout(&layouts[i % 3].to_wire());
+        }
+        t.join().unwrap();
+        let v = file(&d);
+        assert_eq!(v["themeId"], themes[29 % 3]);
+        assert_eq!(v["layout"]["version"], 1);
+        assert_eq!(
+            serde_json::from_value::<LayoutWire>(v["layout"].clone()).unwrap(),
+            layouts[29 % 3].to_wire()
+        );
         fs::remove_dir_all(&d).unwrap();
     }
 }

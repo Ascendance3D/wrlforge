@@ -853,6 +853,8 @@ pub enum AddValue {
     Number(String),
     /// A list of tuples.
     List(Vec<Vec<String>>),
+    /// One tuple (VISUAL-4B: SFVec2f, SFVec3f, SFRotation).
+    Tuple(Vec<String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -865,7 +867,8 @@ pub struct AddRequest {
 
 /// Plan the insertion of `field_name value` as the LAST statement of the
 /// node's body. Only an absent VRML97 `field` / `exposedField` of type
-/// SFBool, SFFloat or one of the three list types may be added. The value is
+/// SFBool, SFFloat, SFVec2f, SFVec3f, SFRotation or one of the three list
+/// types may be added. The value is
 /// what the user chose; nothing else is written.
 pub fn plan_add_field(src: &str, req: &AddRequest) -> Plan {
     let p = parse(src);
@@ -899,6 +902,19 @@ pub fn plan_add_field(src: &str, req: &AddRequest) -> Plan {
             Ok((t, _)) => t,
             Err((r, m)) => return refused(r, m),
         },
+        (ty @ ("SFVec2f" | "SFVec3f" | "SFRotation"), AddValue::Tuple(t)) => {
+            let Some(spec) = list_spec(&format!("MF{}", &ty[2..])) else {
+                return refused(reason::FIELD_NOT_ADDABLE, "The field type is not addable.");
+            };
+            match encode_tuple(spec, bounds.as_ref(), t, None, 0) {
+                Ok(e) => e
+                    .iter()
+                    .map(|(s, _)| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                Err(plan) => return plan,
+            }
+        }
         (ty, AddValue::List(tuples)) if list_spec(ty).is_some() => {
             let spec = list_spec(ty).unwrap_or(ListSpec {
                 labels: &[],
@@ -1029,6 +1045,7 @@ pub fn plan_add_field(src: &str, req: &AddRequest) -> Plan {
             .iter()
             .map(|x| x.iter().map(|s| s.trim().to_string()).collect())
             .collect(),
+        AddValue::Tuple(t) => vec![t.iter().map(|s| s.trim().to_string()).collect()],
         _ => Vec::new(),
     };
     Plan::Ready {

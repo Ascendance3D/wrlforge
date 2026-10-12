@@ -12,6 +12,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { sha256 } from '../framework.mjs';
+import { MAX_SAFE, oracle as exactMapping } from '../bigint-oracle.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -349,14 +350,39 @@ export function makeStage(ROOT) {
     if (Array.isArray(c.edits)) for (const e of c.edits) if (e && typeof e === 'object') vals.push(e.from, e.to);
     return vals.filter((v) => typeof v === 'number');
   };
+  // The exact BigInt result of a mapping case, or null when the case is not a
+  // well-formed mapping the WD1.2 contract answers (bad shape, overlap,
+  // ambiguity). Every offset must be a non-negative integer Number first, so
+  // a string or fraction never reaches BigInt().
+  const isOffset = (v) => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+  const exactResult = (c) => {
+    if (!Array.isArray(c.edits) || !c.edits.every((e) => e && typeof e === 'object'
+      && isOffset(e.from) && isOffset(e.to) && e.from <= e.to && typeof e.insert === 'string')) return null;
+    if (c.kind === 'R') {
+      const r = c.range;
+      if (!r || typeof r !== 'object') return null;
+      const ends = r.start ? [r.start.offset, r.end?.offset] : [r.from, r.to];
+      if (!ends.every(isOffset) || ends[0] > ends[1]) return null;
+    } else if (!isOffset(c.off)) return null;
+    const truth = exactMapping(c);
+    return truth.includes('REFUSE') ? null : truth;
+  };
   const checks = {
     endpointInsideSurrogatePair: (c, js) => (c.kind === 'A' || c.kind === 'SA' || c.kind === 'PA')
       && js.startsWith('OK ') && c.edits.some((e) => insidePair(c.text, e.from) || insidePair(c.text, e.to)),
     someInputIllFormed: (c) => (typeof c.text === 'string' && !c.text.isWellFormed())
       || (Array.isArray(c.edits) && c.edits.some((e) => e && typeof e.insert === 'string' && !e.insert.isWellFormed())),
-    unsafeIntegerInvolved: (c, js) => ['M', 'SM', 'PM', 'R'].includes(c.kind)
-      && (offsetsOf(c).some((v) => Number.isInteger(v) && !Number.isSafeInteger(v))
-        || (/^OK[NR] /.test(js) && js.split(' ').slice(1).map(Number).some((v) => !Number.isSafeInteger(v)))),
+    // RUST1-PRECISION. Independent of BOTH answers (PR #130 review): an unsafe
+    // input offset is observable from the case alone, and an unsafe RESULT is
+    // proven by the BigInt oracle (harness/bigint-oracle.mjs), never by the
+    // JavaScript answer being graded. A safe-in, safe-out refusal is therefore
+    // a regression, whatever the baseline printed.
+    unsafeIntegerInvolved: (c) => {
+      if (!['M', 'SM', 'PM', 'R'].includes(c.kind)) return false;
+      if (offsetsOf(c).some((v) => Number.isInteger(v) && !Number.isSafeInteger(v))) return true;
+      const truth = exactResult(c);
+      return truth !== null && truth.some((t) => t > MAX_SAFE);
+    },
   };
 
   function extra(all, ctx, { inputs, baselines, classes }) {

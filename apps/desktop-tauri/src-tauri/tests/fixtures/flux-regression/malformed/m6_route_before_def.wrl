@@ -1,0 +1,6 @@
+#VRML V2.0 utf8
+# original WRL Forge test fixture (RUST-STAB-1), INTENTIONALLY MALFORMED.
+# The ROUTE names TS before the DEF TS that defines it.
+ROUTE TS.fraction_changed TO PI.set_fraction
+DEF PI PositionInterpolator { key [ 0 1 ] keyValue [ 0 0 0   1 1 1 ] }
+DEF TS TimeSensor { cycleInterval 2 }

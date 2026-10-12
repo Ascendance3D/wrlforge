@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 use wrlforge_desktop_protocol as p;
@@ -23,6 +23,7 @@ use wrlforge_text::Edit;
 use wrlforge_vrml::{create, extrusion, field_edit, highlight, manipulate, mf_edit, scene};
 
 use crate::files::{self, FileError, Format, SaveOptions, Stamp};
+use crate::recovery::{self, Recovery};
 use crate::resources;
 
 pub struct Session {
@@ -37,6 +38,28 @@ pub struct Session {
     /// Only this token is served; a newer generation, a close or a reopen
     /// (a new session) retires it.
     resource_token: Option<String>,
+    /// RUST-STAB-1: this session's recovery record id. The record exists on
+    /// disk only while the document is dirty (and a write has completed).
+    recovery_id: String,
+    /// The recovery change sequence of the current state.
+    recovery_seq: u64,
+    /// RUST-STAB-1: the safe file name of a restored record (untitled).
+    recovered_name: Option<String>,
+}
+
+impl Session {
+    fn new(path: Option<PathBuf>, format: Format, stamp: Option<Stamp>, doc: Document) -> Self {
+        Session {
+            path,
+            format,
+            stamp,
+            doc,
+            resource_token: None,
+            recovery_id: recovery::new_id(),
+            recovery_seq: 0,
+            recovered_name: None,
+        }
+    }
 }
 
 /// The largest runtime graph a pick snapshot may carry (the adapter's own
@@ -50,6 +73,8 @@ pub struct Service {
     sessions: Mutex<HashMap<p::SessionId, Session>>,
     next: AtomicU64,
     clock: fn() -> SystemTime,
+    /// RUST-STAB-1: crash recovery; absent until the app attaches it.
+    recovery: OnceLock<Arc<Recovery>>,
 }
 
 impl Default for Service {
@@ -158,6 +183,23 @@ pub(crate) fn pick_outcome(
 
 /// UTF-16 units the canonical text has before its preview text: 1 for a
 /// leading U+FEFF (the preview omits it), else 0.
+/// The protocol's gizmo tool / axis as the planner's.
+fn manip_tool(t: p::gizmo::Tool) -> manipulate::Tool {
+    match t {
+        p::gizmo::Tool::Move => manipulate::Tool::Move,
+        p::gizmo::Tool::Rotate => manipulate::Tool::Rotate,
+        p::gizmo::Tool::Scale => manipulate::Tool::Scale,
+    }
+}
+
+fn manip_axis(a: p::gizmo::Axis) -> manipulate::Axis {
+    match a {
+        p::gizmo::Axis::X => manipulate::Axis::X,
+        p::gizmo::Axis::Y => manipulate::Axis::Y,
+        p::gizmo::Axis::Z => manipulate::Axis::Z,
+    }
+}
+
 fn preview_offset(text: &str) -> u64 {
     u64::from(text.starts_with('\u{FEFF}'))
 }
@@ -290,31 +332,60 @@ impl Service {
             sessions: Mutex::new(HashMap::new()),
             next: AtomicU64::new(1),
             clock,
+            recovery: OnceLock::new(),
         }
     }
 
+    /// Attach crash recovery (once, at startup).
+    pub fn attach_recovery(&self, rec: Arc<Recovery>) {
+        let _ = self.recovery.set(rec);
+    }
+
+    pub fn recovery(&self) -> Option<&Arc<Recovery>> {
+        self.recovery.get()
+    }
+
+    /// Every session access goes through here, so EVERY committed change
+    /// (typing, Inspector, Create, Move / Rotate / Scale, Extrusion, list
+    /// edits, Undo / Redo, Reload) reaches recovery: a new revision is a
+    /// new recovery state. The canonical document is never touched by it.
     fn with<R>(&self, id: p::SessionId, f: impl FnOnce(&mut Session) -> R) -> Result<R, String> {
         let mut map = self.sessions.lock().map_err(err)?;
         let s = map
             .get_mut(&id)
             .ok_or_else(|| format!("unknown document session {id}"))?;
-        Ok(f(s))
+        let revision = s.doc.revision();
+        let out = f(s);
+        if s.doc.revision() != revision {
+            self.recovery_note(id, s);
+        }
+        Ok(out)
+    }
+
+    /// The session reached a new state: a dirty one is scheduled for a
+    /// recovery write; a clean one (saved, reloaded, undone to the saved
+    /// text) has its record removed NOW, which also blocks any delayed write.
+    fn recovery_note(&self, id: p::SessionId, s: &mut Session) {
+        let Some(rec) = self.recovery.get() else {
+            return;
+        };
+        s.recovery_seq = rec.next_seq();
+        if s.doc.dirty() {
+            rec.mark(id);
+        } else {
+            let _ = rec.retire(&s.recovery_id, s.recovery_seq);
+        }
     }
 
     fn info(id: p::SessionId, s: &Session) -> p::DocumentInfo {
         let counts = s.doc.eol_counts();
         p::DocumentInfo {
             session: id,
-            name: match &s.path {
-                Some(p) => p
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-                None => UNTITLED_NAME.into(),
-            },
-            display_path: match &s.path {
-                Some(p) => p.display().to_string(),
-                None => "New world (not saved yet)".into(),
+            name: Self::name(s),
+            display_path: match (&s.path, &s.recovered_name) {
+                (Some(p), _) => p.display().to_string(),
+                (None, Some(_)) => "Recovered work (not saved yet; use Save As)".into(),
+                (None, None) => "New world (not saved yet)".into(),
             },
             format: s.format.as_str().into(),
             view: s.doc.view(),
@@ -327,6 +398,18 @@ impl Service {
             can_undo: s.doc.can_undo(),
             can_redo: s.doc.can_redo(),
             untitled: s.path.is_none(),
+            recovered: s.path.is_none() && s.recovered_name.is_some(),
+        }
+    }
+
+    fn name(s: &Session) -> String {
+        match (&s.path, &s.recovered_name) {
+            (Some(p), _) => p
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            (None, Some(n)) => n.clone(),
+            (None, None) => UNTITLED_NAME.into(),
         }
     }
 
@@ -352,13 +435,12 @@ impl Service {
                 }
             }
         };
-        self.insert(Session {
-            path: Some(path.to_path_buf()),
-            format: loaded.format,
-            stamp: Some(loaded.stamp),
-            doc: Document::new(loaded.text),
-            resource_token: None,
-        })
+        self.insert(Session::new(
+            Some(path.to_path_buf()),
+            loaded.format,
+            Some(loaded.stamp),
+            Document::new(loaded.text),
+        ))
     }
 
     /// A new, empty VRML97 world in a new session. It has NO path and no
@@ -366,13 +448,12 @@ impl Service {
     /// It is in the canonical document engine like any opened file, and is
     /// not dirty until it is changed.
     pub fn new_world(&self) -> p::OpenOutcome {
-        self.insert(Session {
-            path: None,
-            format: Format::Plain,
-            stamp: None,
-            doc: Document::new(create::NEW_WORLD.into()),
-            resource_token: None,
-        })
+        self.insert(Session::new(
+            None,
+            Format::Plain,
+            None,
+            Document::new(create::NEW_WORLD.into()),
+        ))
     }
 
     /// Whether `id` holds changes that are not on disk (the New World
@@ -495,7 +576,11 @@ impl Service {
                 ..Default::default()
             };
             let result = files::safe_save(&path, s.doc.text(), s.format, Some(stamp), opts, now);
-            Self::after_save(id, s, result)
+            let out = Self::after_save(id, s, result);
+            if matches!(out, p::SaveOutcome::Saved { .. }) {
+                self.recovery_note(id, s);
+            }
+            out
         });
         r.unwrap_or_else(|m| p::SaveOutcome::Failed { message: m })
     }
@@ -514,7 +599,11 @@ impl Service {
             if result.is_ok() {
                 s.path = Some(path.to_path_buf());
             }
-            Self::after_save(id, s, result)
+            let out = Self::after_save(id, s, result);
+            if matches!(out, p::SaveOutcome::Saved { .. }) {
+                self.recovery_note(id, s);
+            }
+            out
         });
         r.unwrap_or_else(|m| p::SaveOutcome::Failed { message: m })
     }
@@ -595,7 +684,9 @@ impl Service {
         let text = text.as_str();
         {
             let parsed = wrlforge_vrml::parse(text);
-            let tree = scene::build_scene_tree(&parsed.tree, text);
+            // One parse: the tree, the scope graph and the diagnostics below
+            // all describe exactly this revision's text.
+            let (tree, graph) = scene::build_scene_tree_scoped(&parsed, text);
             let vm = ViewMap::new(text);
             let items = tree
                 .order
@@ -613,6 +704,26 @@ impl Service {
                         view_to: vm.view(it.to),
                         use_status: it.use_status.map(Into::into),
                         child_count: it.children.len() as u32,
+                        refs: it
+                            .refs
+                            .iter()
+                            .map(|r| p::SceneRef {
+                                role: r.role.into(),
+                                name: r.name.clone(),
+                                status: r.status.into(),
+                                class: r.class.into(),
+                                reason: r.reason.into(),
+                                target: r.target.clone(),
+                                language_target: r.language_target.clone(),
+                            })
+                            .collect(),
+                        typed: it.typed.as_ref().map(|t| p::TypedCheck {
+                            subject: t.subject.into(),
+                            status: t.status.into(),
+                            class: t.class.into(),
+                            reason: t.reason.into(),
+                            summary: t.summary.clone(),
+                        }),
                     }
                 })
                 .collect();
@@ -623,6 +734,19 @@ impl Service {
                     code: d.code.as_str().into(),
                     severity: d.severity.as_str().into(),
                     message: d.message.clone(),
+                    line: d.range.start.line,
+                    column: d.range.start.column,
+                    view_from: vm.view(d.range.start.offset as u64),
+                    view_to: vm.view(d.range.end.offset as u64),
+                })
+                .collect();
+            let scope_diagnostics = graph
+                .diagnostics()
+                .into_iter()
+                .map(|d| p::Diagnostic {
+                    code: d.code.into(),
+                    severity: d.severity.into(),
+                    message: d.message,
                     line: d.range.start.line,
                     column: d.range.start.column,
                     view_from: vm.view(d.range.start.offset as u64),
@@ -653,6 +777,7 @@ impl Service {
                 highlights_truncated,
                 items,
                 diagnostics,
+                scope_diagnostics,
                 resolution_scope: tree.resolution_scope.into(),
                 truncated: parsed.truncated,
             })
@@ -920,6 +1045,7 @@ impl Service {
                     p::AddFieldValue::Bool { value } => mf_edit::AddValue::Bool(*value),
                     p::AddFieldValue::Number { value } => mf_edit::AddValue::Number(value.clone()),
                     p::AddFieldValue::List { tuples } => mf_edit::AddValue::List(tuples.clone()),
+                    p::AddFieldValue::Tuple { values } => mf_edit::AddValue::Tuple(values.clone()),
                 },
             };
             let plan = mf_edit::plan_add_field(s.doc.text(), &req);
@@ -986,25 +1112,32 @@ impl Service {
         let Some((from, to)) = node_span(&r.item) else {
             return Ok(p::TranslateTargetOutcome::Refused {
                 reason: field_edit::reason::NOT_A_NODE.into(),
-                message: "Select an object (a Transform) to move it.".into(),
+                message: "Select an object (a Transform) to change it.".into(),
             });
         };
-        Ok(match manipulate::translate_target(&text, from, to) {
-            Ok(t) => p::TranslateTargetOutcome::Ready {
-                revision: current,
-                item: r.item.clone(),
-                def_name: t.def,
-                root_index: t.root_index as u32,
-                preview_from: from - preview_offset(&text),
-                preview_to: to - preview_offset(&text),
-                translation: t.translation,
-                origin: t.origin,
+        Ok(
+            match manipulate::manip_target(&text, from, to, manip_tool(r.tool)) {
+                Ok(t) => p::TranslateTargetOutcome::Ready {
+                    revision: current,
+                    item: r.item.clone(),
+                    def_name: t.def,
+                    root_index: t.root_index as u32,
+                    preview_from: from - preview_offset(&text),
+                    preview_to: to - preview_offset(&text),
+                    translation: t.translation,
+                    origin: t.origin,
+                    rotation: t.rotation,
+                    scale: t.scale,
+                    scale_orientation: t.scale_orientation,
+                    center: t.center,
+                    pivot: t.pivot,
+                },
+                Err(e) => p::TranslateTargetOutcome::Refused {
+                    reason: e.reason.into(),
+                    message: e.message,
+                },
             },
-            Err(e) => p::TranslateTargetOutcome::Refused {
-                reason: e.reason.into(),
-                message: e.message,
-            },
-        })
+        )
     }
 
     /// VISUAL-3A1: prove that the runtime node the preview located for
@@ -1033,10 +1166,10 @@ impl Service {
         let Some((from, to)) = node_span(&r.item) else {
             return Ok(refused(field_edit::reason::NOT_A_NODE, "Not an object."));
         };
-        if let Err(e) = manipulate::translate_target(&text, from, to) {
+        if let Err(e) = manipulate::manip_target(&text, from, to, manip_tool(r.tool)) {
             return Ok(refused(e.reason, &e.message));
         }
-        let unprovable = "The preview cannot prove which rendered object is this Transform, so it cannot be moved here. Use the Inspector.";
+        let unprovable = "The preview cannot prove which rendered object is this Transform, so it cannot be changed here. Use the Inspector.";
         let snap = &r.snapshot;
         let (Some(shape), "found", 1..=MAX_PICK_GRAPH) = (
             snap.shape.as_deref(),
@@ -1119,57 +1252,129 @@ impl Service {
             let Some((node_from, node_to)) = node_span(&r.item) else {
                 return refused(field_edit::reason::NOT_A_NODE, "Not an object.".into());
             };
-            let axis = match r.axis {
-                p::gizmo::Axis::X => manipulate::Axis::X,
-                p::gizmo::Axis::Y => manipulate::Axis::Y,
-                p::gizmo::Axis::Z => manipulate::Axis::Z,
-            };
             let (plan, text) = manipulate::plan_translate(
                 s.doc.text(),
                 node_from,
                 node_to,
-                axis,
+                manip_axis(r.axis),
                 r.value,
                 r.decimals,
             );
-            match plan {
-                field_edit::Plan::Unchanged => p::TranslateOutcome::Unchanged,
-                field_edit::Plan::Refused {
-                    reason, message, ..
-                } => refused(reason, message.unwrap_or_else(|| reason.to_string())),
-                field_edit::Plan::Ready {
-                    edits, new_text, ..
-                } => {
-                    // The edit lies inside the node: its start is fixed and
-                    // its end moves by the length change.
-                    let delta: i64 = edits
-                        .iter()
-                        .map(|e| e.insert.encode_utf16().count() as i64 - (e.to - e.from) as i64)
-                        .sum();
-                    let item = format!("node-{node_from}-{}", node_to as i64 + delta);
-                    let edits: Vec<Edit> = edits
-                        .into_iter()
-                        .map(|e| Edit {
-                            from: e.from,
-                            to: e.to,
-                            insert: e.insert,
-                        })
-                        .collect();
-                    match s
-                        .doc
-                        .apply_source_transaction(r.base_revision, &edits, &new_text)
-                    {
-                        Ok(a) => p::TranslateOutcome::Applied {
-                            state: Self::state(s, a),
-                            view: s.doc.view(),
-                            item,
-                            text: text.unwrap_or_default(),
-                        },
-                        Err(e) => refused(field_edit::reason::TRANSACTION_REJECTED, e.to_string()),
-                    }
+            Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text)
+        })
+    }
+
+    /// VISUAL-4B: commit one rotation drag (`rotation := Rot(axis, delta) ·
+    /// rotation`, about the pivot). Same proof and transaction rules as
+    /// `translate`.
+    pub fn rotate(&self, r: &p::RotateRequest) -> Result<p::TranslateOutcome, String> {
+        self.with(r.session, |s| {
+            let (node_from, node_to) = match Self::manip_preflight(s, r.base_revision, &r.item) {
+                Ok(span) => span,
+                Err(o) => return o,
+            };
+            let (plan, text) = manipulate::plan_rotate(
+                s.doc.text(),
+                node_from,
+                node_to,
+                manip_axis(r.axis),
+                r.delta,
+            );
+            Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text)
+        })
+    }
+
+    /// VISUAL-4B: commit one scale drag (one component or uniform).
+    pub fn scale(&self, r: &p::ScaleRequest) -> Result<p::TranslateOutcome, String> {
+        self.with(r.session, |s| {
+            let (node_from, node_to) = match Self::manip_preflight(s, r.base_revision, &r.item) {
+                Ok(span) => span,
+                Err(o) => return o,
+            };
+            let (plan, text) = manipulate::plan_scale(
+                s.doc.text(),
+                node_from,
+                node_to,
+                r.axis.map(manip_axis),
+                r.factor,
+            );
+            Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text)
+        })
+    }
+
+    /// The revision and item checks every gizmo commit starts with.
+    fn manip_preflight(
+        s: &Session,
+        base_revision: u64,
+        item: &str,
+    ) -> Result<(u64, u64), p::TranslateOutcome> {
+        if base_revision != s.doc.revision() {
+            return Err(p::TranslateOutcome::Refused {
+                reason: "parse-session-is-stale".into(),
+                message: format!(
+                    "The document changed (revision {} → {}); the object was not changed.",
+                    base_revision,
+                    s.doc.revision()
+                ),
+            });
+        }
+        node_span(item).ok_or_else(|| p::TranslateOutcome::Refused {
+            reason: field_edit::reason::NOT_A_NODE.into(),
+            message: "Not an object.".into(),
+        })
+    }
+
+    /// Apply a gizmo plan as ONE transaction whose result must equal the
+    /// planned, round-trip-verified text.
+    fn apply_manip(
+        s: &mut Session,
+        base_revision: u64,
+        node_from: u64,
+        node_to: u64,
+        plan: field_edit::Plan,
+        text: Option<String>,
+    ) -> p::TranslateOutcome {
+        let refused = |reason: &str, message: String| p::TranslateOutcome::Refused {
+            reason: reason.into(),
+            message,
+        };
+        match plan {
+            field_edit::Plan::Unchanged => p::TranslateOutcome::Unchanged,
+            field_edit::Plan::Refused {
+                reason, message, ..
+            } => refused(reason, message.unwrap_or_else(|| reason.to_string())),
+            field_edit::Plan::Ready {
+                edits, new_text, ..
+            } => {
+                // The edits lie inside the node: its start is fixed and its
+                // end moves by the length change.
+                let delta: i64 = edits
+                    .iter()
+                    .map(|e| e.insert.encode_utf16().count() as i64 - (e.to - e.from) as i64)
+                    .sum();
+                let item = format!("node-{node_from}-{}", node_to as i64 + delta);
+                let edits: Vec<Edit> = edits
+                    .into_iter()
+                    .map(|e| Edit {
+                        from: e.from,
+                        to: e.to,
+                        insert: e.insert,
+                    })
+                    .collect();
+                match s
+                    .doc
+                    .apply_source_transaction(base_revision, &edits, &new_text)
+                {
+                    Ok(a) => p::TranslateOutcome::Applied {
+                        state: Self::state(s, a),
+                        view: s.doc.view(),
+                        item,
+                        text: text.unwrap_or_default(),
+                    },
+                    Err(e) => refused(field_edit::reason::TRANSACTION_REJECTED, e.to_string()),
                 }
             }
-        })
+        }
     }
 
     /// Preview input: the canonical text, minus a leading U+FEFF. X_ITE's
@@ -1191,6 +1396,7 @@ impl Service {
         })?;
         // The URL check stats files: outside the session lock.
         let texture_warnings = resources::check_textures(&text, folder.as_deref());
+        let route_warnings = invalid_routes(&text);
         Ok(p::PreviewSource {
             revision,
             hash: p::preview_hash(&text),
@@ -1199,6 +1405,7 @@ impl Service {
                 token.as_deref().unwrap_or(resources::NO_FOLDER_TOKEN),
             ),
             texture_warnings,
+            route_warnings,
         })
     }
 
@@ -1282,17 +1489,173 @@ impl Service {
     }
 }
 
+/// RUST-STAB-1: the recovery side of the service. Kept apart from the Save
+/// path: nothing here writes a document file or changes undo history.
+impl Service {
+    /// Write every session with an unwritten dirty state. The text is copied
+    /// under the session lock; the disk write runs without it. Returns the
+    /// number of records replaced.
+    pub fn recovery_pass(&self) -> usize {
+        let Some(rec) = self.recovery.get() else {
+            return 0;
+        };
+        let mut written = 0;
+        for id in rec.take_pending() {
+            let snap = self.with(id, |s| {
+                s.doc.dirty().then(|| recovery::Snapshot {
+                    record: s.recovery_id.clone(),
+                    sequence: s.recovery_seq,
+                    revision: s.doc.revision(),
+                    format: s.format.as_str(),
+                    name: Self::name(s),
+                    original: s
+                        .path
+                        .as_ref()
+                        .zip(s.stamp.as_ref())
+                        .map(|(p, st)| recovery::Original::of(p, &st.bytes, st.mtime)),
+                    text: s.doc.text().to_string(),
+                })
+            });
+            // A closed session or a clean one has nothing to write.
+            if let Ok(Some(snap)) = snap {
+                if rec.write(&snap) == Ok(true) {
+                    written += 1;
+                }
+            }
+        }
+        written
+    }
+
+    /// The user explicitly discarded `id`'s unsaved changes (New World →
+    /// Discard, quit → Discard): remove its record now.
+    pub fn discard_recovery(&self, id: p::SessionId) -> Result<(), String> {
+        let Some(rec) = self.recovery.get() else {
+            return Ok(());
+        };
+        let record = self.with(id, |s| s.recovery_id.clone())?;
+        rec.retire(&record, rec.next_seq())
+    }
+
+    /// Sessions holding unsaved changes, with their display names.
+    pub fn dirty_sessions(&self) -> Vec<(p::SessionId, String)> {
+        let Ok(map) = self.sessions.lock() else {
+            return vec![];
+        };
+        let mut v: Vec<_> = map
+            .iter()
+            .filter(|(_, s)| s.doc.dirty())
+            .map(|(&id, s)| (id, Self::name(s)))
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// Records left by a WRL Forge process that exited without saving.
+    pub fn recovery_list(&self) -> p::RecoveryList {
+        let Some(rec) = self.recovery.get() else {
+            return p::RecoveryList::default();
+        };
+        let warning = rec.warning();
+        let Some(store) = rec.store() else {
+            return p::RecoveryList {
+                warning,
+                ..Default::default()
+            };
+        };
+        let scan = store.scan();
+        p::RecoveryList {
+            entries: scan
+                .offered
+                .into_iter()
+                .map(|o| p::RecoveryEntry {
+                    id: o.header.record,
+                    name: o.header.name,
+                    untitled: o.header.untitled,
+                    format: o.header.format,
+                    saved_at_ms: o.header.saved_at_ms,
+                    bytes: o.header.text_bytes,
+                    original_now: o.original_now.map(str::to_string),
+                })
+                .collect(),
+            damaged: scan
+                .damaged
+                .into_iter()
+                .map(|d| p::RecoveryDamaged {
+                    id: d.id,
+                    reason: d.reason,
+                })
+                .collect(),
+            warning,
+        }
+    }
+
+    /// Restore: the record's exact text in a NEW untitled, dirty session in
+    /// the record's format. Nothing on disk is written except the record
+    /// itself (re-owned by this process, same text), so the original file
+    /// is untouched and only Save As can give the work a file.
+    pub fn recovery_restore(&self, record: &str) -> p::OpenOutcome {
+        let failed = |m: String| p::OpenOutcome::Failed { message: m };
+        let Some(rec) = self.recovery.get() else {
+            return failed("crash recovery is not available".into());
+        };
+        let Some(store) = rec.store() else {
+            return failed("crash recovery is not available".into());
+        };
+        if !store.scan().offered.iter().any(|o| o.header.record == record) {
+            return failed("that recovery record is not available to restore".into());
+        }
+        let (h, text) = match store.read(record) {
+            Ok(r) => r,
+            Err(e) => return failed(format!("the recovery record cannot be read: {e}")),
+        };
+        let format = if h.format == "gzip" {
+            Format::Gzip
+        } else {
+            Format::Plain
+        };
+        let mut s = Session::new(None, format, None, Document::new_unsaved(text));
+        s.recovery_id = h.record.clone();
+        s.recovery_seq = rec.next_seq();
+        s.recovered_name = Some(recovery::safe_name(&h.name));
+        // Take ownership of the record (same exact text), so no other
+        // window offers it while this one holds the work.
+        let snap = recovery::Snapshot {
+            record: h.record,
+            sequence: s.recovery_seq,
+            revision: s.doc.revision(),
+            format: format.as_str(),
+            name: h.name,
+            original: h.original,
+            text: s.doc.text().to_string(),
+        };
+        match rec.write(&snap) {
+            Ok(true) => self.insert(s),
+            Ok(false) => failed("that recovery record changed while it was restored".into()),
+            Err(e) => failed(format!("the recovery record cannot be re-owned: {e}")),
+        }
+    }
+
+    /// The text of `id`'s own recovery record on disk, if one exists
+    /// (read-only; smoke evidence).
+    pub fn recovery_record_text(&self, id: p::SessionId) -> Option<String> {
+        let rec = self.recovery.get()?;
+        let record = self.with(id, |s| s.recovery_id.clone()).ok()?;
+        rec.store()?.read(&record).ok().map(|(_, t)| t)
+    }
+
+    /// Discard one record offered at startup (after the user confirmed).
+    pub fn recovery_discard(&self, record: &str) -> Result<(), String> {
+        let rec = self.recovery.get().ok_or("crash recovery is not available")?;
+        let store = rec.store().ok_or("crash recovery is not available")?;
+        store.remove_orphan(record)
+    }
+}
+
 #[cfg(test)]
 impl Service {
     /// A session holding `text` (no path), for tests in other modules.
     pub(crate) fn open_text_for_test(&self, text: &str) -> p::SessionId {
-        match self.insert(Session {
-            path: None,
-            format: Format::Plain,
-            stamp: None,
-            doc: Document::new(text.into()),
-            resource_token: None,
-        }) {
+        match self.insert(Session::new(None, Format::Plain, None, Document::new(text.into()))) {
             p::OpenOutcome::Opened { doc } => doc.session,
             _ => panic!("open failed"),
         }
@@ -1304,6 +1667,50 @@ impl Service {
         let r = p::EditRequest { session: id, base_revision, from, to, insert: insert.into(), item: None };
         assert!(matches!(self.edit(&r).unwrap(), p::EditOutcome::Applied { .. }));
     }
+}
+
+/// XITE-16-UPGRADE-2: the ROUTEs the scope graph PROVES invalid in `text`
+/// (the exact preview text). X_ITE 16.5.0 drops such a ROUTE and renders the
+/// rest; 15.1.10 rejected the scene. Only a whole-ROUTE verdict of
+/// `Unresolved` or `Invalid` counts: an ambiguous, recovered or unsupported
+/// answer proves nothing and is never reported. Nothing is inferred from what
+/// X_ITE drew, and the text is not changed.
+fn invalid_routes(text: &str) -> Vec<p::RouteWarning> {
+    let parsed = wrlforge_vrml::parse(text);
+    let graph = wrlforge_vrml::scope::build(&parsed);
+    let findings = graph.diagnostics();
+    graph
+        .routes
+        .iter()
+        .filter(|r| r.status.class() == "unresolved")
+        .map(|r| p::RouteWarning {
+            line: r.range.start.line,
+            detail: first_finding_inside(&findings, r.range.start.offset, r.range.end.offset)
+                .map(|d| format!("{}: {}", d.code, d.message))
+                .unwrap_or_else(|| r.reason.to_string()),
+        })
+        .collect()
+}
+
+/// STACK-REVIEW-1 (PR #140 r4242714062): the first finding, in `findings`
+/// order, whose range lies inside `start..=end`. `ScopeGraph::diagnostics`
+/// sorts by (start, end, code), so a binary search finds the first finding
+/// that starts at or after `start`, and the scan stops at the first one that
+/// starts after `end` (a finding cannot end before it starts). The answer is
+/// the same one a linear `find` gives, without a full scan per ROUTE.
+fn first_finding_inside(
+    findings: &[wrlforge_vrml::scope::ScopeDiagnostic],
+    start: u32,
+    end: u32,
+) -> Option<&wrlforge_vrml::scope::ScopeDiagnostic> {
+    debug_assert!(findings
+        .windows(2)
+        .all(|w| w[0].range.start.offset <= w[1].range.start.offset));
+    let first = findings.partition_point(|d| d.range.start.offset < start);
+    findings[first..]
+        .iter()
+        .take_while(|d| d.range.start.offset <= end)
+        .find(|d| d.range.end.offset <= end)
 }
 
 #[cfg(test)]
@@ -1334,6 +1741,217 @@ mod tests {
             p::OpenOutcome::Opened { doc } => doc,
             other => panic!("not opened: {other:?}"),
         }
+    }
+
+    /// XITE-16-UPGRADE-2: the preview's ROUTE warning comes only from a
+    /// PROVEN whole-ROUTE defect in the exact preview text. Uncertain answers
+    /// never warn, the source and its history are untouched, and Save works.
+    /// The pre-STACK-REVIEW-1 lookup, kept verbatim as the reference that
+    /// the indexed lookup must reproduce exactly.
+    fn invalid_routes_linear(text: &str) -> Vec<(u32, String)> {
+        let parsed = wrlforge_vrml::parse(text);
+        let graph = wrlforge_vrml::scope::build(&parsed);
+        let findings = graph.diagnostics();
+        graph
+            .routes
+            .iter()
+            .filter(|r| r.status.class() == "unresolved")
+            .map(|r| {
+                let inside = |d: &&wrlforge_vrml::scope::ScopeDiagnostic| {
+                    d.range.start.offset >= r.range.start.offset
+                        && d.range.end.offset <= r.range.end.offset
+                };
+                (
+                    r.range.start.line,
+                    findings
+                        .iter()
+                        .find(inside)
+                        .map(|d| format!("{}: {}", d.code, d.message))
+                        .unwrap_or_else(|| r.reason.to_string()),
+                )
+            })
+            .collect()
+    }
+
+    fn indexed(text: &str) -> Vec<(u32, String)> {
+        invalid_routes(text)
+            .into_iter()
+            .map(|w| (w.line, w.detail))
+            .collect()
+    }
+
+    /// Many ROUTEs of every verdict: valid, each proven-invalid kind,
+    /// ambiguous, unsupported (EXTERNPROTO), before-DEF and across a PROTO.
+    fn many_routes(n: usize) -> String {
+        let mut t = String::from(
+            "#VRML V2.0 utf8\nEXTERNPROTO E [ eventOut SFFloat out ] \"e.wrl\"\nDEF A E { }\n\
+             DEF D TimeSensor { }\nDEF D TimeSensor { }\n\
+             PROTO Q [ ] { DEF In TimeSensor { } }\n",
+        );
+        for i in 0..n {
+            t.push_str(&format!(
+                "ROUTE Late{i}.fraction_changed TO P{i}.set_fraction\n"
+            ));
+            t.push_str(&format!("DEF T{i} TimeSensor {{ }}\nDEF P{i} PositionInterpolator {{ }}\nDEF Late{i} TimeSensor {{ }}\n"));
+            t.push_str(&format!(
+                "ROUTE T{i}.fraction_changed TO P{i}.set_fraction\n"
+            ));
+            t.push_str(&format!("ROUTE T{i}.isActive TO T{i}.enabled\n"));
+            t.push_str(&format!(
+                "ROUTE Ghost{i}.fraction_changed TO P{i}.set_fraction\n"
+            ));
+            t.push_str(&format!("ROUTE T{i}.nosuch TO P{i}.set_fraction\n"));
+            t.push_str(&format!("ROUTE P{i}.set_fraction TO T{i}.set_enabled\n"));
+            t.push_str(&format!(
+                "ROUTE T{i}.fraction_changed TO P{i}.value_changed\n"
+            ));
+            t.push_str(&format!(
+                "ROUTE P{i}.value_changed TO T{i}.set_cycleInterval\n"
+            ));
+            t.push_str(&format!("ROUTE D.fraction_changed TO P{i}.set_fraction\n"));
+            t.push_str(&format!("ROUTE A.other TO P{i}.set_fraction\n"));
+            t.push_str(&format!("ROUTE In.fraction_changed TO P{i}.set_fraction\n"));
+        }
+        t
+    }
+
+    #[test]
+    fn route_warning_lookup_matches_the_linear_reference() {
+        for n in [0, 1, 3, 40] {
+            let t = many_routes(n);
+            let want = invalid_routes_linear(&t);
+            assert_eq!(indexed(&t), want, "n={n}");
+            if n > 0 {
+                // 7 proven-invalid ROUTEs per block; the valid, ambiguous,
+                // unsupported ones never warn.
+                assert_eq!(want.len(), 7 * n, "n={n}: {want:?}");
+            }
+        }
+        // Every repository .wrl fixture (plain text) gives the same warnings.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let mut stack = vec![
+            root.join("test/fixtures"),
+            root.join("apps/desktop-tauri/src-tauri/tests/fixtures"),
+        ];
+        let (mut files, mut warned) = (0, 0);
+        while let Some(dir) = stack.pop() {
+            let Ok(rd) = fs::read_dir(&dir) else { continue };
+            for e in rd.flatten() {
+                let path = e.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|x| x == "wrl") {
+                    let Ok(t) = fs::read_to_string(&path) else {
+                        continue;
+                    };
+                    let want = invalid_routes_linear(&t);
+                    assert_eq!(indexed(&t), want, "{}", path.display());
+                    files += 1;
+                    warned += usize::from(!want.is_empty());
+                }
+            }
+        }
+        assert!(files > 50 && warned >= 2, "files={files} warned={warned}");
+    }
+
+    /// Timing only: `cargo test --release -- --ignored --nocapture route_warning_lookup_timing`
+    #[test]
+    #[ignore]
+    fn route_warning_lookup_timing() {
+        for n in [250, 1000, 4000] {
+            let t = many_routes(n);
+            let s = std::time::Instant::now();
+            let old = invalid_routes_linear(&t);
+            let t_old = s.elapsed();
+            let s = std::time::Instant::now();
+            let new = indexed(&t);
+            let t_new = s.elapsed();
+            assert_eq!(new, old);
+            let s = std::time::Instant::now();
+            let g = wrlforge_vrml::scope::build(&wrlforge_vrml::parse(&t));
+            let _ = g.diagnostics();
+            let t_base = s.elapsed();
+            println!(
+                "ROUTE-TIMING n_blocks={n} routes={} invalid={} linear={t_old:?} indexed={t_new:?} parse+scope+diagnostics={t_base:?}",
+                11 * n, old.len()
+            );
+        }
+    }
+
+    #[test]
+    fn route_warnings_report_only_proven_invalid_routes() {
+        let lines = |t: &str| invalid_routes(t).iter().map(|w| w.line).collect::<Vec<_>>();
+        // The two fixtures X_ITE 16.5.0 now renders partially.
+        let m6 =
+            include_str!("../tests/fixtures/flux-regression/malformed/m6_route_before_def.wrl");
+        let w = invalid_routes(m6);
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert_eq!(w[0].line, 4);
+        assert!(w[0].detail.starts_with("SCOPE003: "), "{w:?}");
+        let inv = include_str!("../../../../test/fixtures/vrml/invalid-route.wrl");
+        let w = invalid_routes(inv);
+        assert_eq!(lines(inv), [4, 5], "{w:?}");
+        assert!(
+            w.iter().all(|w| w.detail.starts_with("SCOPE001: ")),
+            "{w:?}"
+        );
+        // Proven event, direction and type defects warn too.
+        let head = "#VRML V2.0 utf8\nDEF T TimeSensor { }\nDEF P PositionInterpolator { }\n";
+        for (route, code) in [
+            ("ROUTE T.nosuch TO P.set_fraction\n", "SCOPE101"),
+            ("ROUTE P.set_fraction TO T.set_enabled\n", "SCOPE102"),
+            ("ROUTE T.fraction_changed TO P.value_changed\n", "SCOPE103"),
+            ("ROUTE P.value_changed TO T.set_cycleInterval\n", "SCOPE104"),
+        ] {
+            let w = invalid_routes(&format!("{head}{route}"));
+            assert_eq!(w.len(), 1, "{route}: {w:?}");
+            assert!(w[0].detail.starts_with(code), "{route}: {w:?}");
+        }
+        // Valid ROUTEs (including the 4.10.2 shorthand) never warn.
+        let ok = format!(
+            "{head}ROUTE T.fraction_changed TO P.set_fraction\nROUTE T.isActive TO T.enabled\n"
+        );
+        assert!(invalid_routes(&ok).is_empty(), "{:?}", invalid_routes(&ok));
+        // Uncertain answers prove nothing: an ambiguous DEF, a damaged parse,
+        // an EXTERNPROTO the URL would decide.
+        let amb = "#VRML V2.0 utf8\nDEF T TimeSensor { }\nDEF T TimeSensor { }\nDEF P PositionInterpolator { }\nROUTE T.fraction_changed TO P.set_fraction\n";
+        assert!(invalid_routes(amb).is_empty(), "{:?}", invalid_routes(amb));
+        let damaged = "#VRML V2.0 utf8\nDEF P PositionInterpolator { }\nROUTE Ghost.fraction_changed TO P.set_fraction\nGroup { children [\n";
+        assert!(
+            invalid_routes(damaged).is_empty(),
+            "{:?}",
+            invalid_routes(damaged)
+        );
+        let ext = "#VRML V2.0 utf8\nEXTERNPROTO E [ eventOut SFFloat out ] \"e.wrl\"\nDEF A E { }\nDEF P PositionInterpolator { }\nROUTE A.other TO P.set_fraction\n";
+        assert!(invalid_routes(ext).is_empty(), "{:?}", invalid_routes(ext));
+        // Through the service: BOM + CRLF source, the preview text is the
+        // source minus the BOM, the warning arrives, nothing else changes.
+        let d = tmp("route-warn");
+        let src = format!("\u{FEFF}{}", inv.replace('\n', "\r\n"));
+        fs::write(d.join("r.wrl"), &src).unwrap();
+        let bytes = fs::read(d.join("r.wrl")).unwrap();
+        let svc = Service::new(clock);
+        let id = opened(svc.open_path(&d.join("r.wrl"))).session;
+        let ps = svc.preview_source(id).unwrap();
+        assert_eq!(ps.text, src.trim_start_matches('\u{FEFF}'));
+        assert_eq!(
+            ps.route_warnings.iter().map(|w| w.line).collect::<Vec<_>>(),
+            [4, 5]
+        );
+        let info = svc.snapshot(id).unwrap();
+        assert_eq!(
+            (info.revision, info.dirty, info.can_undo),
+            (0, false, false)
+        );
+        assert_eq!(svc.text(id).unwrap(), src);
+        // Advisory only: Save As writes the exact bytes.
+        match svc.save_as(id, &d.join("copy.wrl")) {
+            p::SaveOutcome::Saved { .. } => {}
+            o => panic!("{o:?}"),
+        }
+        assert_eq!(fs::read(d.join("copy.wrl")).unwrap(), bytes);
+        assert_eq!(fs::read(d.join("r.wrl")).unwrap(), bytes);
+        let _ = fs::remove_dir_all(&d);
     }
 
     fn found(r: Result<p::InspectOutcome, String>) -> p::Inspection {
@@ -2579,8 +3197,326 @@ mod tests {
             session: id,
             revision: rev,
             item: item.into(),
+            tool: p::gizmo::Tool::Move,
         })
         .unwrap()
+    }
+
+    // ---- VISUAL-4B: rotate and scale ----------------------------------------
+
+    fn target_for(
+        svc: &Service,
+        id: u64,
+        rev: u64,
+        item: &str,
+        tool: p::gizmo::Tool,
+    ) -> p::TranslateTargetOutcome {
+        svc.translate_target(&p::TranslateTargetRequest {
+            session: id,
+            revision: rev,
+            item: item.into(),
+            tool,
+        })
+        .unwrap()
+    }
+
+    /// A Ready target with its revision set to 0 (to compare two sessions).
+    fn at_rev0(o: p::TranslateTargetOutcome) -> p::TranslateTargetOutcome {
+        match o {
+            p::TranslateTargetOutcome::Ready {
+                item,
+                def_name,
+                root_index,
+                preview_from,
+                preview_to,
+                translation,
+                origin,
+                rotation,
+                scale,
+                scale_orientation,
+                center,
+                pivot,
+                ..
+            } => p::TranslateTargetOutcome::Ready {
+                revision: 0,
+                item,
+                def_name,
+                root_index,
+                preview_from,
+                preview_to,
+                translation,
+                origin,
+                rotation,
+                scale,
+                scale_orientation,
+                center,
+                pivot,
+            },
+            other => other,
+        }
+    }
+
+    fn rot(
+        svc: &Service,
+        id: u64,
+        rev: u64,
+        item: &str,
+        axis: p::gizmo::Axis,
+        d: f64,
+    ) -> p::TranslateOutcome {
+        svc.rotate(&p::RotateRequest {
+            session: id,
+            base_revision: rev,
+            item: item.into(),
+            axis,
+            delta: d,
+        })
+        .unwrap()
+    }
+
+    fn scl(
+        svc: &Service,
+        id: u64,
+        rev: u64,
+        item: &str,
+        axis: Option<p::gizmo::Axis>,
+        f: f64,
+    ) -> p::TranslateOutcome {
+        svc.scale(&p::ScaleRequest {
+            session: id,
+            base_revision: rev,
+            item: item.into(),
+            axis,
+            factor: f,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn ui_preview_rotation_equals_the_committed_rule() {
+        // The UI shows `protocol::gizmo::rotate_about` while dragging; Rust
+        // commits `manipulate::rotate_about`. They must be the same rule.
+        use p::gizmo::Axis as A;
+        for old in [
+            [0.0, 1.0, 0.0, 0.0],
+            [1.0, 2.0, -0.5, 0.8],
+            [0.0, 0.0, -1.0, 3.0],
+        ] {
+            for (pa, ma) in [
+                (A::X, manipulate::Axis::X),
+                (A::Y, manipulate::Axis::Y),
+                (A::Z, manipulate::Axis::Z),
+            ] {
+                for d in [-2.0, 0.3, 4.0] {
+                    let a = p::gizmo::rotate_about(old, pa, d).unwrap();
+                    let b = manipulate::rotate_about(old, ma, d).unwrap();
+                    assert!(
+                        a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-12),
+                        "{a:?} {b:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rotate_scale_undo_redo_save_reopen_is_exact() {
+        use p::gizmo::{Axis as A, Tool};
+        let dir = tmp("visual4b");
+        let bodies = [
+            ("lf", "#VRML V2.0 utf8\n# keep me\nDEF Kept Group {}\n"),
+            (
+                "crlf",
+                "#VRML V2.0 utf8\r\n# keep me ✓\r\nDEF Kept Group {}\r\n",
+            ),
+            (
+                "bom",
+                "\u{FEFF}#VRML V2.0 utf8\r\n# Tëst 😀\r\nDEF Kept Group {}\r\n",
+            ),
+        ];
+        for (tag, src) in bodies {
+            let path = dir.join(format!("{tag}.wrl"));
+            fs::write(&path, src).unwrap();
+            let svc = Service::new(clock);
+            let id = opened(svc.open_path(&path)).session;
+            let (st, item, _) = created(create(&svc, id, 0, p::Primitive::Box));
+            let created_text = svc.text(id).unwrap();
+            let mut rev = st.revision;
+            let mut item = item;
+            let p::TranslateTargetOutcome::Ready {
+                rotation,
+                scale,
+                pivot,
+                ..
+            } = target_for(&svc, id, rev, &item, Tool::Rotate)
+            else {
+                panic!("not a rotate target")
+            };
+            assert_eq!(
+                (rotation, scale, pivot),
+                ([0.0, 1.0, 0.0, 0.0], [1.0; 3], [0.0; 3])
+            );
+            let mut texts = vec![svc.text(id).unwrap()];
+            type Step = fn(&Service, u64, u64, &str) -> p::TranslateOutcome;
+            let steps: [Step; 7] = [
+                |s, id, r, i| rot(s, id, r, i, A::Y, 0.5),
+                |s, id, r, i| rot(s, id, r, i, A::X, 0.25),
+                |s, id, r, i| rot(s, id, r, i, A::Z, -1.0),
+                |s, id, r, i| scl(s, id, r, i, Some(A::X), 2.0),
+                |s, id, r, i| scl(s, id, r, i, Some(A::Y), 0.5),
+                |s, id, r, i| scl(s, id, r, i, Some(A::Z), 3.0),
+                |s, id, r, i| scl(s, id, r, i, None, 1.5),
+            ];
+            for step in steps {
+                let (st, it, _) = moved(step(&svc, id, rev, &item));
+                assert_eq!(st.revision, rev + 1, "one revision per drag");
+                rev = st.revision;
+                item = it;
+                texts.push(svc.text(id).unwrap());
+            }
+            let fin = svc.text(id).unwrap();
+            assert!(fin.contains("scale 3 0.75 4.5"), "{fin}");
+            assert!(fin.contains("translation 0 0 0"));
+            // Only the Box's rotation and scale lines changed.
+            let changed: Vec<_> = created_text
+                .split_inclusive('\n')
+                .zip(fin.split_inclusive('\n'))
+                .filter(|(a, b)| a != b)
+                .map(|(a, _)| a.trim().split(' ').next().unwrap().to_string())
+                .collect();
+            assert_eq!(changed, ["rotation", "scale"]);
+            // Stale revision: refused, nothing changes.
+            assert!(matches!(
+                rot(&svc, id, rev - 1, &item, A::X, 1.0),
+                p::TranslateOutcome::Refused { .. }
+            ));
+            assert!(matches!(
+                scl(&svc, id, rev - 1, &item, None, 2.0),
+                p::TranslateOutcome::Refused { .. }
+            ));
+            assert_eq!(svc.text(id).unwrap(), fin);
+            // One undo step per drag, each restoring the exact previous text.
+            for want in texts.iter().rev().skip(1) {
+                svc.undo(id).unwrap();
+                assert_eq!(&svc.text(id).unwrap(), want);
+            }
+            svc.undo(id).unwrap();
+            assert_eq!(svc.text(id).unwrap(), src);
+            svc.redo(id).unwrap();
+            for want in texts.iter().skip(1) {
+                svc.redo(id).unwrap();
+                assert_eq!(&svc.text(id).unwrap(), want);
+            }
+            // Save As → reopen: the same bytes and the same frame.
+            let out = dir.join(format!("{tag}-saved.wrl"));
+            assert!(matches!(
+                svc.save_as(id, &out),
+                p::SaveOutcome::Saved { .. }
+            ));
+            assert_eq!(fs::read_to_string(&out).unwrap(), fin);
+            assert_eq!(fs::read_to_string(&path).unwrap(), src);
+            let svc2 = Service::new(clock);
+            let d2 = opened(svc2.open_path(&out));
+            assert_eq!(
+                target_for(&svc2, d2.session, 0, &item, Tool::Scale),
+                at_rev0(target_for(
+                    &svc,
+                    id,
+                    svc.snapshot(id).unwrap().revision,
+                    &item,
+                    Tool::Scale
+                ))
+            );
+        }
+    }
+
+    #[test]
+    fn rotate_scale_refusals_change_nothing() {
+        use p::gizmo::{Axis as A, Tool};
+        let dir = tmp("visual4b-refuse");
+        let src = "#VRML V2.0 utf8\nDEF A Transform { translation 1 0 0 }\nDEF B Transform { rotation 0 1 0 0 scale 1 -1 1 }\nDEF C Transform { rotation 0 1 0 0 scale 1 1 1 }\nGroup { children USE C }\nTransform { children DEF N Transform { rotation 0 0 1 0 scale 1 1 1 } }\n";
+        let path = dir.join("r.wrl");
+        fs::write(&path, src).unwrap();
+        let svc = Service::new(clock);
+        let id = opened(svc.open_path(&path)).session;
+        // Item ids are exact UTF-16 node spans.
+        let item = |def: &str| {
+            let at = src.find(&format!("DEF {def} Transform")).unwrap();
+            let mut depth = 0;
+            let mut end = at;
+            for (i, c) in src[at..].char_indices() {
+                match c {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = at + i + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            format!("node-{at}-{end}")
+        };
+        let refused = |o: p::TranslateTargetOutcome| match o {
+            p::TranslateTargetOutcome::Refused { reason, .. } => reason,
+            other => panic!("not refused: {other:?}"),
+        };
+        let t = |d: &str, tool| target_for(&svc, id, 0, &item(d), tool);
+        assert_eq!(
+            refused(t("A", Tool::Rotate)),
+            "rotation-not-explicitly-authored"
+        );
+        assert_eq!(
+            refused(t("A", Tool::Scale)),
+            "scale-not-explicitly-authored"
+        );
+        assert_eq!(refused(t("B", Tool::Scale)), "scale-not-positive");
+        assert!(matches!(
+            t("B", Tool::Rotate),
+            p::TranslateTargetOutcome::Ready { .. }
+        ));
+        assert_eq!(refused(t("C", Tool::Rotate)), "transform-is-used-elsewhere");
+        assert_eq!(refused(t("N", Tool::Scale)), "transform-is-not-top-level");
+        for o in [
+            rot(&svc, id, 0, &item("A"), A::X, 1.0),
+            scl(&svc, id, 0, &item("B"), None, 2.0),
+            rot(&svc, id, 0, &item("C"), A::Y, 1.0),
+            scl(&svc, id, 0, &item("N"), Some(A::X), 2.0),
+            rot(&svc, id, 0, "node-1-2", A::X, 1.0),
+        ] {
+            assert!(matches!(o, p::TranslateOutcome::Refused { .. }), "{o:?}");
+        }
+        assert!(matches!(
+            target_for(&svc, id, 5, &item("A"), Tool::Rotate),
+            p::TranslateTargetOutcome::Stale { current: 0 }
+        ));
+        assert_eq!(svc.text(id).unwrap(), src);
+        assert_eq!(svc.snapshot(id).unwrap().revision, 0);
+        // The explicit authoring workflow: write rotation, then rotate.
+        let (st, it) = applied(
+            svc.add_field(&p::AddFieldRequest {
+                session: id,
+                base_revision: 0,
+                item: item("A"),
+                field_name: "rotation".into(),
+                value: p::AddFieldValue::Tuple {
+                    values: vec!["0".into(), "0".into(), "1".into(), "0".into()],
+                },
+            })
+            .unwrap(),
+        );
+        assert_eq!(
+            svc.text(id).unwrap(),
+            src.replacen(
+                "translation 1 0 0 }",
+                "translation 1 0 0 rotation 0 0 1 0 }",
+                1
+            )
+        );
+        let (_, _, text) = moved(rot(&svc, id, st.revision, &it, A::Z, 0.5));
+        assert_eq!(text, "0 0 1 0.5");
     }
 
     fn mv(
@@ -2666,6 +3602,7 @@ mod tests {
                 generation: 1,
                 item: format!("node-{f}-{t}"),
                 snapshot: snap,
+                tool: p::gizmo::Tool::Move,
             })
             .unwrap()
         };
@@ -3080,3 +4017,362 @@ mod tests {
         }
     }
 }
+
+/// RUST-STAB-1: recovery through the real service paths.
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use crate::recovery::{Recovery, Schedule};
+    use std::fs;
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "wrlforge-tauri-rec-{tag}-{}-{}",
+            std::process::id(),
+            recovery::new_id()
+        ));
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// One "process": a service with recovery in `dir/recovery`. Dropping
+    /// it releases the instance lock exactly like a process exit.
+    fn process(dir: &Path) -> Service {
+        let svc = Service::default();
+        let rec = Recovery::open(&dir.join("recovery"), Schedule::default());
+        assert!(rec.warning().is_none(), "{:?}", rec.warning());
+        svc.attach_recovery(Arc::new(rec));
+        svc
+    }
+
+    fn opened(o: p::OpenOutcome) -> p::DocumentInfo {
+        match o {
+            p::OpenOutcome::Opened { doc } => doc,
+            other => panic!("not opened: {other:?}"),
+        }
+    }
+
+    fn edit(svc: &Service, id: u64, at: u64, ins: &str) -> p::DocState {
+        let rev = svc.snapshot(id).unwrap().revision;
+        match svc
+            .edit(&p::EditRequest {
+                session: id,
+                base_revision: rev,
+                from: at,
+                to: at,
+                insert: ins.into(),
+                item: None,
+            })
+            .unwrap()
+        {
+            p::EditOutcome::Applied { state, .. } => state,
+            other => panic!("refused: {other:?}"),
+        }
+    }
+
+    fn records(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = fs::read_dir(dir.join("recovery"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("rec-"))
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// The text of the single record for session `id`, read from disk.
+    fn on_disk(svc: &Service, id: u64) -> Option<String> {
+        let rec = svc.recovery().unwrap();
+        let rid = svc.with(id, |s| s.recovery_id.clone()).unwrap();
+        rec.store().unwrap().read(&rid).ok().map(|(_, t)| t)
+    }
+
+    const TRICKY: &str = "\u{FEFF}#VRML V2.0 utf8\r\n# caf\u{e9} \u{1F600}\r\nDEF A Transform { translation 0 0 0 }\rUSE A\n";
+
+    #[test]
+    fn crash_then_restore_is_exact_for_every_form_and_untitled() {
+        let d = tmp("restore");
+        let docs = d.join("docs");
+        fs::create_dir_all(&docs).unwrap();
+        let plain = docs.join("plain.wrl");
+        let gz = docs.join("packed.wrl");
+        let crlf = docs.join("tricky.wrl");
+        fs::write(&plain, "#VRML V2.0 utf8\nShape { geometry Box {} }\n").unwrap();
+        fs::write(&gz, files::encode("#VRML V2.0 utf8\nGroup {}\n", Format::Gzip).unwrap()).unwrap();
+        fs::write(&crlf, TRICKY).unwrap();
+        let originals: Vec<Vec<u8>> = [&plain, &gz, &crlf].iter().map(|p| fs::read(p).unwrap()).collect();
+
+        let mut expected: Vec<(String, String, bool)> = vec![];
+        {
+            let svc = process(&d);
+            for (path, at, ins) in [(&plain, 16u64, "# one\n"), (&gz, 0, "#x"), (&crlf, 1, "\u{2603}")] {
+                let doc = opened(svc.open_path(path));
+                edit(&svc, doc.session, at, ins);
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                expected.push((name, svc.text(doc.session).unwrap(), false));
+            }
+            // A new world, never saved, with a created object.
+            let nw = opened(svc.new_world());
+            let o = svc
+                .create(&p::CreateRequest {
+                    session: nw.session,
+                    base_revision: nw.revision,
+                    primitive: p::Primitive::Box,
+                })
+                .unwrap();
+            assert!(matches!(o, p::CreateOutcome::Applied { .. }));
+            expected.push((UNTITLED_NAME.into(), svc.text(nw.session).unwrap(), true));
+            // A clean document never produces a record.
+            opened(svc.open_path(&plain));
+            assert_eq!(svc.recovery_pass(), 4);
+            assert_eq!(records(&d).len(), 4);
+            // The process dies here (no save, no clean shutdown path).
+        }
+        let svc = process(&d);
+        let list = svc.recovery_list();
+        assert!(list.damaged.is_empty(), "{:?}", list.damaged);
+        assert_eq!(list.entries.len(), 4);
+        for (name, text, untitled) in &expected {
+            let e = list.entries.iter().find(|e| &e.name == name).unwrap();
+            assert_eq!(e.untitled, *untitled);
+            assert!(!e.name.contains('/'));
+            assert_eq!(e.bytes, text.len() as u64);
+            if !untitled {
+                assert_eq!(e.original_now.as_deref(), Some("unchanged"));
+            }
+            let doc = opened(svc.recovery_restore(&e.id));
+            assert!(doc.untitled && doc.recovered && doc.dirty, "{doc:?}");
+            assert_eq!(doc.name, *name);
+            assert_eq!(doc.format, if name == "packed.wrl" { "gzip" } else { "plain" });
+            assert_eq!(svc.text(doc.session).unwrap().as_bytes(), text.as_bytes(), "{name}");
+            // Restoring twice is refused: this window owns it now.
+            assert!(matches!(svc.recovery_restore(&e.id), p::OpenOutcome::Failed { .. }));
+            // A plain Save cannot reach any file: Save As is required.
+            assert!(matches!(svc.save(doc.session), p::SaveOutcome::Failed { .. }));
+        }
+        // The originals are still byte-identical.
+        for (p, b) in [&plain, &gz, &crlf].iter().zip(&originals) {
+            assert_eq!(&fs::read(p).unwrap(), b);
+        }
+        assert_eq!(records(&d).len(), 4, "records stay until Save As or Discard");
+        // Nothing is offered to this process for its own restored work.
+        assert!(svc.recovery_list().entries.is_empty());
+    }
+
+    #[test]
+    fn restored_work_edits_undoes_and_saves_as_its_own_format() {
+        let d = tmp("saveas");
+        let gz = d.join("item.wrl");
+        let text = "#VRML V2.0 utf8\r\nGroup { }\r\n";
+        fs::write(&gz, files::encode(text, Format::Gzip).unwrap()).unwrap();
+        let before = fs::read(&gz).unwrap();
+        let typed;
+        {
+            let svc = process(&d);
+            let doc = opened(svc.open_path(&gz));
+            edit(&svc, doc.session, 0, "# kept\n");
+            assert!(svc.text(doc.session).unwrap().starts_with("# kept\r\n"));
+            typed = svc.text(doc.session).unwrap();
+            svc.recovery_pass();
+        }
+        let svc = process(&d);
+        let e = svc.recovery_list().entries.remove(0);
+        let doc = opened(svc.recovery_restore(&e.id));
+        let id = doc.session;
+        // Normal editing and Undo on the recovered text.
+        edit(&svc, id, 0, "X");
+        assert_ne!(svc.text(id).unwrap(), typed);
+        assert!(matches!(svc.undo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), typed);
+        assert!(svc.snapshot(id).unwrap().dirty, "undo does not make it saved");
+        svc.recovery_pass();
+        assert_eq!(on_disk(&svc, id).unwrap(), typed, "the record follows the newest revision");
+        // Save As writes gzip, then the record is complete (removed).
+        let out = d.join("out.wrl");
+        assert!(matches!(svc.save_as(id, &out), p::SaveOutcome::Saved { .. }));
+        let raw = fs::read(&out).unwrap();
+        assert!(files::is_gzip(&raw));
+        assert_eq!(files::decode(&raw).unwrap().0, typed);
+        assert!(records(&d).is_empty());
+        assert_eq!(fs::read(&gz).unwrap(), before, "the original never changed");
+    }
+
+    #[test]
+    fn every_document_change_reaches_recovery_and_save_completes_it() {
+        let d = tmp("changes");
+        let svc = process(&d);
+        let nw = opened(svc.new_world());
+        let id = nw.session;
+        assert_eq!(svc.recovery_pass(), 0, "an unchanged new world is clean");
+        let (state, item) = match svc
+            .create(&p::CreateRequest { session: id, base_revision: 0, primitive: p::Primitive::Box })
+            .unwrap()
+        {
+            p::CreateOutcome::Applied { state, item, .. } => (state, item),
+            other => panic!("{other:?}"),
+        };
+        let check = |what: &str| {
+            assert_eq!(svc.recovery_pass(), 1, "{what} scheduled a write");
+            assert_eq!(on_disk(&svc, id).unwrap(), svc.text(id).unwrap(), "{what}");
+        };
+        check("create");
+        let o = svc
+            .translate(&p::TranslateRequest {
+                session: id,
+                base_revision: state.revision,
+                item: item.clone(),
+                axis: p::gizmo::Axis::X,
+                value: 1.5,
+                decimals: 3,
+            })
+            .unwrap();
+        let (rev, item) = match o {
+            p::TranslateOutcome::Applied { state, item, .. } => (state.revision, item),
+            other => panic!("{other:?}"),
+        };
+        check("move");
+        for (what, o) in [
+            (
+                "rotate",
+                svc.rotate(&p::RotateRequest { session: id, base_revision: rev, item: item.clone(), axis: p::gizmo::Axis::Y, delta: 0.5 }),
+            ),
+        ] {
+            match o.unwrap() {
+                p::TranslateOutcome::Applied { .. } => check(what),
+                // A created Box may lack the field: a refusal changes nothing.
+                _ => assert_eq!(svc.recovery_pass(), 0),
+            }
+        }
+        assert!(matches!(svc.undo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        check("undo");
+        assert!(matches!(svc.redo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        check("redo");
+        edit(&svc, id, 0, "#");
+        check("typing");
+        // Writing a record never changes the document or its history.
+        let info = svc.snapshot(id).unwrap();
+        svc.recovery_pass();
+        assert_eq!(svc.snapshot(id).unwrap(), info);
+        // A pending write that runs after Save cannot recreate the record.
+        edit(&svc, id, 0, "#");
+        let path = d.join("w.wrl");
+        assert!(matches!(svc.save_as(id, &path), p::SaveOutcome::Saved { .. }));
+        assert!(records(&d).is_empty(), "save completes the record at once");
+        assert_eq!(svc.recovery_pass(), 0);
+        assert!(records(&d).is_empty());
+        // Undo back to the saved text is clean: no record; redo is dirty.
+        edit(&svc, id, 0, "#");
+        svc.recovery_pass();
+        assert_eq!(records(&d).len(), 1);
+        svc.undo(id).unwrap();
+        assert!(records(&d).is_empty(), "back at the saved text");
+    }
+
+    #[test]
+    fn failed_save_conflict_and_cancel_keep_the_record() {
+        let d = tmp("keep");
+        let path = d.join("a.wrl");
+        fs::write(&path, "#VRML V2.0 utf8\n").unwrap();
+        let svc = process(&d);
+        let id = opened(svc.open_path(&path)).session;
+        edit(&svc, id, 0, "# mine\n");
+        svc.recovery_pass();
+        let mine = svc.text(id).unwrap();
+        // An outside change: Save is a conflict, the record stays.
+        fs::write(&path, "#VRML V2.0 utf8\n# theirs\n").unwrap();
+        assert_eq!(svc.check_external(id).unwrap().changed, true);
+        assert!(matches!(svc.save(id), p::SaveOutcome::Conflict { .. }));
+        assert_eq!(on_disk(&svc, id).unwrap(), mine);
+        // A failed write (read-only folder): the record stays.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let ro = d.join("ro");
+            fs::create_dir_all(&ro).unwrap();
+            fs::set_permissions(&ro, fs::Permissions::from_mode(0o500)).unwrap();
+            let r = svc.save_as(id, &ro.join("b.wrl"));
+            fs::set_permissions(&ro, fs::Permissions::from_mode(0o700)).unwrap();
+            assert!(matches!(r, p::SaveOutcome::Failed { .. }), "{r:?}");
+            assert_eq!(on_disk(&svc, id).unwrap(), mine);
+        }
+        // Closing without a decision (or a canceled quit) keeps the record.
+        svc.close(id).unwrap();
+        assert_eq!(records(&d).len(), 1);
+        drop(svc);
+        let svc = process(&d);
+        assert_eq!(svc.recovery_list().entries.len(), 1);
+        // Later: nothing changes; the next start offers it again.
+        drop(svc);
+        let svc = process(&d);
+        let e = svc.recovery_list().entries.remove(0);
+        assert_eq!(e.original_now.as_deref(), Some("changed"));
+        // Discard removes ONLY that record.
+        let other = opened(svc.new_world()).session;
+        edit(&svc, other, 0, "#");
+        svc.recovery_pass();
+        svc.recovery_discard(&e.id).unwrap();
+        assert_eq!(records(&d).len(), 1, "this window's record is untouched");
+        assert!(svc.recovery_list().entries.is_empty());
+        // An explicit discard of open work removes its record.
+        svc.discard_recovery(other).unwrap();
+        assert!(records(&d).is_empty());
+    }
+
+    #[test]
+    fn a_failed_recovery_write_warns_and_changes_nothing() {
+        let d = tmp("warn");
+        let svc = process(&d);
+        let id = opened(svc.new_world()).session;
+        edit(&svc, id, 0, "# a\n");
+        svc.recovery_pass();
+        let first = on_disk(&svc, id).unwrap();
+        let info = svc.snapshot(id).unwrap();
+        svc.recovery().unwrap().store().unwrap().fail_next_writes(1);
+        edit(&svc, id, 0, "# b\n");
+        let info2 = svc.snapshot(id).unwrap();
+        assert_eq!(svc.recovery_pass(), 0);
+        assert_eq!(svc.snapshot(id).unwrap(), info2, "the document is unchanged by the failure");
+        assert_ne!(info, info2);
+        assert_eq!(on_disk(&svc, id).unwrap(), first, "the older record is kept");
+        assert!(svc.recovery_list().warning.unwrap().contains("could not save"));
+        // The next change writes again and clears the warning.
+        edit(&svc, id, 0, "# c\n");
+        assert_eq!(svc.recovery_pass(), 1);
+        assert!(svc.recovery_list().warning.is_none());
+        // Unavailable storage: editing still works, with a warning.
+        let svc2 = Service::default();
+        svc2.attach_recovery(Arc::new(Recovery::unavailable("test")));
+        let id2 = opened(svc2.new_world()).session;
+        edit(&svc2, id2, 0, "#");
+        assert_eq!(svc2.recovery_pass(), 0);
+        assert!(svc2.recovery_list().warning.unwrap().contains("unavailable"));
+    }
+
+    #[test]
+    fn a_damaged_record_is_reported_and_not_restorable() {
+        let d = tmp("damaged");
+        {
+            let svc = process(&d);
+            let id = opened(svc.new_world()).session;
+            edit(&svc, id, 0, "#");
+            svc.recovery_pass();
+        }
+        let name = records(&d).remove(0);
+        let p = d.join("recovery").join(&name);
+        let mut b = fs::read(&p).unwrap();
+        let n = b.len();
+        b[n - 1] ^= 0x20;
+        fs::write(&p, &b).unwrap();
+        let svc = process(&d);
+        let l = svc.recovery_list();
+        assert!(l.entries.is_empty());
+        assert_eq!(l.damaged.len(), 1);
+        assert!(l.damaged[0].reason.contains("checksum"), "{}", l.damaged[0].reason);
+        assert!(matches!(svc.recovery_restore(&l.damaged[0].id), p::OpenOutcome::Failed { .. }));
+        assert!(p.exists(), "never deleted without the user");
+        svc.recovery_discard(&l.damaged[0].id).unwrap();
+        assert!(!p.exists());
+    }
+}
+

@@ -32,6 +32,9 @@ pub struct Ui {
     /// TEXTURE-LOCAL-1: the Rust check of the previewed revision's
     /// `ImageTexture` URLs (textures the preview cannot load).
     pub texture_warnings: RwSignal<Vec<p::TextureWarning>>,
+    /// XITE-16-UPGRADE-2: the Rust-proven invalid ROUTEs of the revision ON
+    /// SCREEN. X_ITE 16.5.0 drops such a ROUTE and renders the rest.
+    pub route_warnings: RwSignal<Vec<p::RouteWarning>>,
     pub preview_enabled: RwSignal<bool>,
     pub last_save: RwSignal<Option<String>>,
     /// X_ITE scene loads this run (lets tests prove a theme switch never
@@ -46,6 +49,9 @@ pub struct Ui {
     /// VISUAL-3A: the viewport Move tool (translation gizmo). One viewport
     /// tool at a time: Select and Move exclude each other.
     pub move_mode: RwSignal<bool>,
+    /// VISUAL-4B: the Rotate and Scale tools (exclusive with Select / Move).
+    pub rotate_mode: RwSignal<bool>,
+    pub scale_mode: RwSignal<bool>,
     /// The Move tool's status line: (`ok` | `none` | `refused`, text).
     pub gizmo_message: RwSignal<Option<(String, String)>>,
     /// NATIVE-RENDER-1: the hidden native viewport's state (default off).
@@ -206,6 +212,7 @@ pub fn ui() -> Ui {
             conflict: RwSignal::new(None),
             preview_status: RwSignal::new("idle".into()),
             texture_warnings: RwSignal::new(Vec::new()),
+            route_warnings: RwSignal::new(Vec::new()),
             preview_enabled: RwSignal::new(true),
             last_save: RwSignal::new(None),
             preview_loads: RwSignal::new(0),
@@ -213,6 +220,8 @@ pub fn ui() -> Ui {
             pick_mode: RwSignal::new(false),
             pick_message: RwSignal::new(None),
             move_mode: RwSignal::new(false),
+            rotate_mode: RwSignal::new(false),
+            scale_mode: RwSignal::new(false),
             gizmo_message: RwSignal::new(None),
             native: RwSignal::new(p::NativeState::default()),
         })
@@ -602,6 +611,7 @@ pub async fn preview(force: bool) {
             let (camera, why) = crate::camera::want(session, src.revision).await;
             let t0 = crate::editor::now();
             let warnings = src.texture_warnings.clone();
+            let routes = src.route_warnings.clone();
             let status =
                 ipc::preview_load(&src.text, Some(&gen), camera, &src.resource_base).await;
             let load_ms = crate::editor::now() - t0;
@@ -611,6 +621,10 @@ pub async fn preview(force: bool) {
                 // Only the newest successful load is the picking generation.
                 if status.starts_with("loaded") {
                     crate::pick::loaded(gen);
+                    // Only a scene that is now on screen changes the ROUTE
+                    // notice; a refused load keeps the last valid scene and
+                    // so keeps that scene's notice.
+                    u.route_warnings.set(routes);
                 }
                 u.texture_warnings.set(warnings);
                 let note = crate::camera::note(why);
@@ -800,6 +814,7 @@ pub fn close() {
         crate::pick::retire("preview-scene-replaced");
         // No document: the viewport shows an empty world, not the old one.
         u.texture_warnings.set(Vec::new());
+        u.route_warnings.set(Vec::new());
         let status = ipc::preview_load("#VRML V2.0 utf8\n", None, None, "").await;
         u.preview_loads.update(|n| *n += 1);
         u.preview_status.set(format!("no document · {status}"));
