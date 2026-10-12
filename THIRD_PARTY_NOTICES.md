@@ -36,7 +36,14 @@ the shipped application (except where noted as build-time only):
 
 Shipped in the application bundle:
 
-- **x_ite** — the VRML/X3D rendering engine. © Holger Seelig and contributors.
+- **x_ite** — the VRML/X3D rendering engine. © Holger Seelig and contributors. The
+  Electron app ships x_ite **15.1.10** (root `package.json`). The Rust/Tauri app ships
+  x_ite **16.5.0** (upstream tag `16.5.0`, commit `1956793db500353c8f9fdb078b67429310978323`;
+  pin and per-file SHA-256 in `apps/desktop-tauri/xite/`). Each ships x_ite's own
+  `LICENSE.md` unmodified, including its "Additional licenses" section (the SGI Free B
+  notice for the OpenGL Sample Implementation tessellator); in the Tauri packages it is
+  `X_ITE-LICENSE.md`. x_ite 16.5.0 no longer bundles jQuery, so its `LICENSE.md` no
+  longer lists it.
 - **@codemirror/state**
 - **@codemirror/view**
 - **@codemirror/language**
@@ -87,7 +94,7 @@ SOFTWARE.
 ## Fonts bundled inside x_ite
 
 The x_ite package ships bundled fonts, which are therefore included in the packaged WRL Forge
-application (inside the app's `asar` archive). x_ite carries the corresponding license files
+application (inside the Electron app's `asar` archive, and embedded in the Rust/Tauri binary). x_ite carries the corresponding license files
 for these fonts. They are governed by their own licenses:
 
 - **PT Sans** — licensed under the **SIL Open Font License, Version 1.1** (OFL-1.1).
@@ -101,6 +108,14 @@ The full text of each font license is distributed with the x_ite package inside 
 application bundle.
 
 ---
+
+## Tokyo Night colour palette (Tauri desktop app)
+
+- **Tokyo Night VS Code theme** — © 2018-present Enkia, **MIT License**. Its colour values
+  are adapted into the built-in Tokyo Night, Tokyo Night Storm and Tokyo Night Light themes
+  of the Rust/Tauri application (`apps/desktop-tauri/ui/static/themes.css`). No extension code
+  is shipped. The license text ships as `LICENSE-tokyo-night.txt` beside the stylesheet.
+  Provenance: [`OPEN_SOURCE_PROVENANCE.md`](OPEN_SOURCE_PROVENANCE.md) §4, entry TN-1.
 
 ## Build-time icon tooling
 
@@ -121,6 +136,7 @@ application bundle.
 | Ubuntu Mono (in x_ite) | Ubuntu Font Licence 1.0 | yes (font data) | separately licensed font data, aggregated |
 | esbuild, electron-builder | MIT | build-only | n/a (not distributed) |
 | @resvg/resvg-js | MPL-2.0 | build-only | n/a (not distributed) |
+| Tokyo Night colour values (Tauri app) | MIT | yes (adapted values + license text) | yes — permissive, absorbable |
 
 **On the bundled fonts.** The three font families travel inside the `x_ite` package's own
 `dist/assets/fonts/**`, each accompanied by its own license file, and are redistributed
@@ -132,4 +148,4 @@ license texts must continue to ship with them.
 
 No component listed in this file was authored by WRL Forge, and none may be relabelled as
 such. No third-party implementation code has been copied or adapted into WRL Forge's own
-sources — see [`OPEN_SOURCE_PROVENANCE.md`](OPEN_SOURCE_PROVENANCE.md) §4.
+sources; the Tokyo Night colour values are the one adapted item — see [`OPEN_SOURCE_PROVENANCE.md`](OPEN_SOURCE_PROVENANCE.md) §4.

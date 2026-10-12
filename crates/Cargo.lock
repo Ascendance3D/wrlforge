@@ -117,7 +117,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "wrlforge-document"
+version = "0.0.0"
+dependencies = [
+ "wrlforge-text",
+]
+
+[[package]]
 name = "wrlforge-text"
+version = "0.0.0"
+
+[[package]]
+name = "wrlforge-vrml"
 version = "0.0.0"
 
 [[package]]

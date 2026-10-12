@@ -1,0 +1,23 @@
+{
+ "pass": true,
+ "exit": 0,
+ "checks": 46,
+ "failures": [],
+ "proof": {
+  "output_scale": "1.5",
+  "display_server": "kwin",
+  "server_pid": 950190,
+  "socket": "/tmp/nr1-smoke-08kwwhrw/run/nr1-7f2add52",
+  "peer_pid": 950190,
+  "env_keys": [
+   "GDK_BACKEND",
+   "HOME",
+   "LANG",
+   "NO_AT_BRIDGE",
+   "PATH",
+   "WAYLAND_DISPLAY",
+   "WEBKIT_DISABLE_COMPOSITING_MODE",
+   "XDG_RUNTIME_DIR"
+  ]
+ }
+}

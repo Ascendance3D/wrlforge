@@ -1,0 +1,273 @@
+{
+ "checks": [
+  {
+   "detail": "Apple M1 \u00b7 Metal \u00b7 Fifo \u00b7 MSAA 4\u00d7 \u00b7 macOS CAMetalLayer (non-view delegate) \u00b7 init 15 ms",
+   "name": "native-ready",
+   "pass": true
+  },
+  {
+   "detail": "off-main delegate `window` calls 1",
+   "name": "mac:occlusion-walk-stopped-at-our-delegate",
+   "pass": true
+  },
+  {
+   "detail": "7",
+   "name": "projection:objects",
+   "pass": true
+  },
+  {
+   "detail": "USE:use-not-drawn, Group:node-type-not-in-native-scope",
+   "name": "projection:not-shown-listed",
+   "pass": true
+  },
+  {
+   "detail": "created 1 destroyed 0 live true",
+   "name": "render-thread:one",
+   "pass": true
+  },
+  {
+   "detail": "highlight requests since pick: [(1, [1])]",
+   "name": "ui-adopted:box",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Object(1) oracle=Some(Object(1)) gpu=Some(Ok(1)) status=PROVEN reason=shape-promoted-to-proven-simple-object item=Some(\"node-67-227\") frame=Some((1, 1, 0)) ms=4.22",
+   "name": "pick:box",
+   "pass": true
+  },
+  {
+   "detail": "highlight requests since pick: [(1, [2])]",
+   "name": "ui-adopted:sphere",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Object(2) oracle=Some(Object(2)) gpu=Some(Ok(2)) status=PROVEN reason=shape-promoted-to-proven-simple-object item=Some(\"node-228-418\") frame=Some((2, 1, 0)) ms=1.82",
+   "name": "pick:sphere",
+   "pass": true
+  },
+  {
+   "detail": "highlight requests since pick: [(1, [3])]",
+   "name": "ui-adopted:cylinder",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Object(3) oracle=Some(Object(3)) gpu=Some(Ok(3)) status=PROVEN reason=shape-promoted-to-proven-simple-object item=Some(\"node-419-607\") frame=Some((3, 1, 0)) ms=1.47",
+   "name": "pick:cylinder",
+   "pass": true
+  },
+  {
+   "detail": "highlight requests since pick: [(1, [4])]",
+   "name": "ui-adopted:mirrored cone",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Object(4) oracle=Some(Object(4)) gpu=Some(Ok(4)) status=PROVEN reason=shape-promoted-to-proven-simple-object item=Some(\"node-608-794\") frame=Some((4, 1, 0)) ms=1.73",
+   "name": "pick:mirrored cone",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Object(5) oracle=Some(Object(5)) gpu=Some(Ok(5)) status=REFUSED_SENSOR_CONFLICT reason=pointing-device-sensor-under-pointer item=None frame=Some((5, 1, 0)) ms=1.44",
+   "name": "pick:box beside a TouchSensor",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Object(6) oracle=Some(Object(6)) gpu=Some(Ok(6)) status=REFUSED_AMBIGUOUS reason=runtime-node-has-several-live-parents item=None frame=Some((5, 1, 0)) ms=2.06",
+   "name": "pick:DEF/USE sphere (transparent)",
+   "pass": true
+  },
+  {
+   "detail": "highlight requests since pick: [(1, [7])]",
+   "name": "ui-adopted:scaled backdrop",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Object(7) oracle=Some(Object(7)) gpu=Some(Ok(7)) status=PROVEN reason=shape-promoted-to-proven-simple-object item=Some(\"node-1186-1341\") frame=Some((5, 1, 0)) ms=2.04",
+   "name": "pick:scaled backdrop",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Background oracle=Some(Background) gpu=Some(Ok(0)) status=NO_HIT reason=no-geometry-under-pointer item=None frame=Some((6, 1, 0)) ms=1.78",
+   "name": "pick:background",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Refused(\"pick-near-object-edge\") oracle=Some(Refused(\"pick-near-object-edge\")) gpu=Some(Ok(0)) status=REFUSED_AMBIGUOUS reason=pick-near-object-edge item=None frame=Some((6, 1, 0)) ms=1.68",
+   "name": "pick:edge-band",
+   "pass": true
+  },
+  {
+   "detail": "empty highlight requested after Escape",
+   "name": "escape-clears-ui-selection",
+   "pass": true
+  },
+  {
+   "detail": "Sweep { req: 1, frame: Some(FrameStamp { seq: 7, session: 1, revision: 0, generation: 1, text_hash: 3985855723387866, width: 1210, height: 1736, view: View { view: DMat4 { x_axis: DVec4(1.0, 0.0, -0.0, 0.0), y_axis: DVec4(-0.0, 1.0, -0.0, 0.0), z_axis: DVec4(0.0, 0.0, 1.0, 0.0), w_axis: DVec4(-0.0, -0.0, -24.658615669697493, 1.0) }, proj: DMat4 { x_axis: DVec4(3.463698936156011, 0.0, 0.0, 0.0), y_axis: DVec4(0.0, 2.414214120246989, 0.0, 0.0), z_axis: DVec4(0.0, 0.0, -1.0036185822728403, -1.0), w_axis: DVec4(0.0, 0.0, -0.262770445104012, 0.0) }, width: 1210, height: 1736 }, scale: 2.0 }), samples: 58378, agree_object: 7289, agree_background: 50810, refused_band: 279, disagree: 0, error: None }",
+   "name": "sweep:gpu-cpu-agree",
+   "pass": true
+  },
+  {
+   "detail": "0.48% of samples refused by the band",
+   "name": "sweep:band-is-thin",
+   "pass": true
+  },
+  {
+   "detail": "offscreen frames 1",
+   "name": "hidden:no-present",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Refused(\"frame-not-shown\") oracle=None gpu=None status=REFUSED_STALE reason=frame-not-shown item=None frame=Some((8, 1, 0)) ms=0.01",
+   "name": "pick:while-hidden",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Refused(\"gpu-cpu-pick-disagree\") oracle=Some(Object(1)) gpu=Some(Ok(2)) status=UNSUPPORTED reason=gpu-cpu-pick-disagree item=None frame=Some((9, 1, 0)) ms=5.25",
+   "name": "pick:forced-disagreement",
+   "pass": true
+  },
+  {
+   "detail": "4 / 3",
+   "name": "cleanup:created==destroyed+1",
+   "pass": true
+  },
+  {
+   "detail": "3 / 3",
+   "name": "cleanup:threads-joined",
+   "pass": true
+  },
+  {
+   "detail": "0",
+   "name": "cleanup:native-window-never-destroyed-before-Destroyed",
+   "pass": true
+  },
+  {
+   "detail": "Live",
+   "name": "cleanup:one-live-viewport",
+   "pass": true
+  },
+  {
+   "detail": "Ok(Applied { state: DocState { revision: 1, dirty: true, view_len: 1343, view_hash: 3332485786855886, caret: 1343, can_undo: true, can_redo: false }, item: None })",
+   "name": "stale:edit-applied",
+   "pass": true
+  },
+  {
+   "detail": "verdict=Object(1) oracle=Some(Object(1)) gpu=Some(Ok(1)) status=REFUSED_STALE reason=source-changed-since-preview item=None frame=Some((3, 1, 0)) ms=3.78",
+   "name": "pick:after-edit",
+   "pass": true
+  },
+  {
+   "detail": "destroyed after 1208 ms",
+   "name": "blocked:parked-then-destroyed",
+   "pass": true
+  },
+  {
+   "detail": "1208 ms",
+   "name": "blocked:destroyed-within-deadline",
+   "pass": true
+  },
+  {
+   "detail": "Native viewport stopped: the GPU device was lost (device lost: Destroyed: ). Using X_ITE; restart the app to try again.",
+   "name": "d9:device-loss-reported",
+   "pass": true
+  },
+  {
+   "detail": "created 5 destroyed 5 live false",
+   "name": "d9:no-restart",
+   "pass": true
+  },
+  {
+   "detail": "0 after 14 ms",
+   "name": "no-render-thread-left",
+   "pass": true
+  },
+  {
+   "detail": "n=491 p99=0.15ms max=12.61ms",
+   "name": "watchdog:baseline-idle (recorded, not gated)",
+   "pass": true
+  },
+  {
+   "detail": "n=253 p99=0.26ms max=1.29ms",
+   "name": "watchdog:blocked-present",
+   "pass": true
+  },
+  {
+   "detail": "n=124 p99=0.12ms max=0.12ms",
+   "name": "watchdog:cleanup",
+   "pass": true
+  },
+  {
+   "detail": "n=45 p99=1.66ms max=1.66ms",
+   "name": "watchdog:device-loss",
+   "pass": true
+  },
+  {
+   "detail": "n=58 p99=0.66ms max=0.66ms",
+   "name": "watchdog:fault (recorded, not gated)",
+   "pass": true
+  },
+  {
+   "detail": "n=491 p99=0.03ms max=0.07ms",
+   "name": "watchdog:gpu-load",
+   "pass": true
+  },
+  {
+   "detail": "n=70 p99=0.22ms max=0.22ms",
+   "name": "watchdog:hidden",
+   "pass": true
+  },
+  {
+   "detail": "n=67 p99=34.86ms max=34.86ms",
+   "name": "watchdog:picks (recorded, not gated)",
+   "pass": true
+  },
+  {
+   "detail": "n=9 p99=0.11ms max=0.11ms",
+   "name": "watchdog:stale (recorded, not gated)",
+   "pass": true
+  },
+  {
+   "detail": "n=201 p99=72.85ms max=85.36ms",
+   "name": "watchdog:startup (recorded, not gated)",
+   "pass": true
+  }
+ ],
+ "checks_total": 46,
+ "control_run": false,
+ "counters": {
+  "created": 5,
+  "destroyed": 5,
+  "frames_offscreen": 1,
+  "frames_presented": 20,
+  "joined": 5,
+  "last_render_thread_stats": "created=true panicked=false frames=2 offscreen=0 picks=0 uncaptured_errors=0 device_lost=true",
+  "parked": 1,
+  "picks_answered": 12,
+  "picks_busy": 0,
+  "picks_sent": 12,
+  "unrealized_before_destroyed": 0
+ },
+ "elapsed_ms": 11227,
+ "failures": [],
+ "fifo_only_run": false,
+ "notes": {
+  "refusal_band_share": 0.004779197642947686
+ },
+ "pass": true,
+ "platform": {
+  "delegate_window_calls_off_main": 20,
+  "macos": "27.0.1",
+  "native_window": "cametallayer-sublayer",
+  "scale": 2.0,
+  "wayland": false
+ },
+ "state": {
+  "info": "Apple M1 \u00b7 Metal \u00b7 Fifo \u00b7 MSAA 4\u00d7 \u00b7 macOS CAMetalLayer (non-view delegate) \u00b7 init 29 ms",
+  "reason": "Native viewport stopped: the GPU device was lost (device lost: Destroyed: ). Using X_ITE; restart the app to try again.",
+  "state": "failed"
+ },
+ "main_thread_checker": {
+  "injected": true,
+  "dylib_loaded_lines": 1,
+  "reports": 0
+ }
+}

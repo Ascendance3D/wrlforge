@@ -1,0 +1,42 @@
+dbus-daemon[979955]: [session uid=1000 pid=979955] Activating service name='org.gtk.vfs.Daemon' requested by ':1.0' (uid=1000 pid=979956 comm="~/Projects/cybertown/.worktrees/wrlforge/" label="unconfined")
+dbus-daemon[979955]: [session uid=1000 pid=979955] Successfully activated service 'org.gtk.vfs.Daemon'
+dbus-daemon[979955]: [session uid=1000 pid=979955] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.0' (uid=1000 pid=979956 comm="~/Projects/cybertown/.worktrees/wrlforge/" label="unconfined")
+dbus-daemon[979955]: [session uid=1000 pid=979955] Activating service name='org.freedesktop.portal.Documents' requested by ':1.3' (uid=1000 pid=979983 comm="/usr/libexec/xdg-desktop-portal" label="unconfined")
+dbus-daemon[979955]: [session uid=1000 pid=979955] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.4' (uid=1000 pid=979989 comm="/usr/libexec/xdg-document-portal" label="unconfined")
+dbus-daemon[979955]: [session uid=1000 pid=979955] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[979955]: [session uid=1000 pid=979955] Successfully activated service 'org.freedesktop.portal.Documents'
+Ignoring invalid max threads value 4294967295 > max (100000).
+
+(/usr/libexec/xdg-desktop-portal:979983): xdg-desktop-portal-WARNING **: 05:36:48.141: Choosing gtk.portal for org.freedesktop.impl.portal.Lockdown as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:979983): xdg-desktop-portal-WARNING **: 05:36:48.141: The preferred method to match portal implementations to desktop environments is to use the portals.conf(5) configuration file
+dbus-daemon[979955]: [session uid=1000 pid=979955] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.3' (uid=1000 pid=979983 comm="/usr/libexec/xdg-desktop-portal" label="unconfined")
+dbus-daemon[979955]: [session uid=1000 pid=979955] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'
+
+(/usr/libexec/xdg-desktop-portal:979983): xdg-desktop-portal-WARNING **: 05:36:48.199: No skeleton to export
+
+(/usr/libexec/xdg-desktop-portal:979983): xdg-desktop-portal-WARNING **: 05:36:48.199: Choosing gtk.portal for org.freedesktop.impl.portal.FileChooser as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:979983): xdg-desktop-portal-WARNING **: 05:36:48.199: Choosing gtk.portal for org.freedesktop.impl.portal.AppChooser as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:979983): xdg-desktop-portal-WARNING **: 05:36:48.199: Choosing gtk.portal for org.freedesktop.impl.portal.Print as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:979983): xdg-desktop-portal-WARNING **: 05:36:48.200: Choosing gtk.portal for org.freedesktop.impl.portal.Notification as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:979983): xdg-desktop-portal-WARNING **: 05:36:48.200: Choosing gtk.portal for org.freedesktop.impl.portal.Inhibit as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:979983): xdg-desktop-portal-WARNING **: 05:36:48.201: Choosing gtk.portal for org.freedesktop.impl.portal.Access as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:979983): xdg-desktop-portal-WARNING **: 05:36:48.203: Failed connect to PipeWire: Couldn't connect to PipeWire
+
+(/usr/libexec/xdg-desktop-portal:979983): xdg-desktop-portal-WARNING **: 05:36:48.203: Choosing gtk.portal for org.freedesktop.impl.portal.Account as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:979983): xdg-desktop-portal-WARNING **: 05:36:48.204: Choosing gtk.portal for org.freedesktop.impl.portal.Email as a last-resort fallback
+
+(/usr/libexec/xdg-desktop-portal:979983): xdg-desktop-portal-WARNING **: 05:36:48.204: Choosing gtk.portal for org.freedesktop.impl.portal.DynamicLauncher as a last-resort fallback
+dbus-daemon[979955]: [session uid=1000 pid=979955] Successfully activated service 'org.freedesktop.portal.Desktop'
+dbus-daemon[979955]: [session uid=1000 pid=979955] Activating service name='org.a11y.Bus' requested by ':1.0' (uid=1000 pid=979956 comm="~/Projects/cybertown/.worktrees/wrlforge/" label="unconfined")
+dbus-daemon[979955]: [session uid=1000 pid=979955] Successfully activated service 'org.a11y.Bus'
+dbus-daemon[980029]: Activating service name='org.a11y.atspi.Registry' requested by ':1.0' (uid=1000 pid=980030 comm="/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWeb" label="unconfined")
+dbus-daemon[980029]: Successfully activated service 'org.a11y.atspi.Registry'
+SpiRegistry daemon is running with well-known name - org.a11y.atspi.Registry

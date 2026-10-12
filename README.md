@@ -29,12 +29,12 @@ WRL Forge is an Electron desktop application for working with classic VRML97 `.w
 - **Work with World Projects**: scan a multi-file world (nested Inline files, textures) and get a report of missing, unsafe, or case-mismatched assets; view an embedded X_ITE world preview with a viewpoint selector, navigation modes, and reset view; and edit a nested WRL while previewing it inside the full world.
 - **Build a World Project Bundle**: a portable ZIP for manual review and hand-off (uploaded by hand through the Cybertown website), written by a deterministic in-repo ZIP writer.
 
-Rendering is **X_ITE only** — the sole approved renderer.
+Rendering today is **X_ITE**, the temporary working preview renderer, in both the released Electron application and the in-progress Rust/Tauri desktop application. A **custom Rust VRML97/X3D renderer** is the approved future rendering engine. It is **planned, not implemented**: it needs its own implementation lane, and it replaces X_ITE only after compatibility tests pass and the owner approves. See [docs/PRODUCT_VISION.md](docs/PRODUCT_VISION.md).
 
 ## What It Is Not
 
 - **No direct Cybertown upload**, no Cybertown authentication, and no automatic submission. These will not be built — it is a locked product decision.
-- **No custom renderer** — X_ITE is the only renderer.
+- **No custom renderer yet** — X_ITE is the only renderer that ships today. The planned Rust renderer does not exist yet, and no claim of full VRML97/X3D standards support is made.
 - **No official Cybertown affiliation.**
 - **No guarantee** that every historical VRML extension behaves identically to the original platform.
 - **No telemetry, analytics, ads, auto-update, or crash upload.**

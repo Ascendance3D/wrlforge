@@ -5,7 +5,7 @@
 # No production module loads anything built from here.
 [workspace]
 resolver = "2"
-members = ["wrlforge-text", "wrlforge-wasm"]
+members = ["wrlforge-text", "wrlforge-wasm", "wrlforge-vrml", "wrlforge-document"]
 
 [workspace.package]
 version = "0.0.0"
