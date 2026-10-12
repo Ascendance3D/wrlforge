@@ -1,0 +1,28 @@
+{
+ "pass": false,
+ "exit": 1,
+ "checks": 46,
+ "failures": [
+  "watchdog:blocked-present: n=422 p99=61.62ms max=72.53ms",
+  "watchdog:cleanup: n=477 p99=70.64ms max=81.54ms",
+  "watchdog:device-loss: n=39 p99=62.48ms max=62.48ms",
+  "watchdog:gpu-load: n=1483 p99=429.03ms max=449.83ms"
+ ],
+ "proof": {
+  "output_scale": "1.5",
+  "display_server": "kwin",
+  "server_pid": 956754,
+  "socket": "/tmp/nr1-smoke-9rs6j05w/run/nr1-2d40b616",
+  "peer_pid": 956754,
+  "env_keys": [
+   "GDK_BACKEND",
+   "HOME",
+   "LANG",
+   "NO_AT_BRIDGE",
+   "PATH",
+   "WAYLAND_DISPLAY",
+   "WEBKIT_DISABLE_COMPOSITING_MODE",
+   "XDG_RUNTIME_DIR"
+  ]
+ }
+}

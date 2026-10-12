@@ -14,6 +14,12 @@ independent QA [#31 WD2-D-Q](https://github.com/Ascendance3D/wrlforge/issues/31)
 - [PR #117](https://github.com/Ascendance3D/wrlforge/pull/117) merged at
   `f39c62612d79d217c795562787d6d92764508e48`.
 - X_ITE production pin: exactly `15.1.10`.
+- **Amendment (XITE-16-UPGRADE-2, 2026-10-11):** the pin is now per host
+  application. Electron stays exactly `15.1.10` (root `package.json`, G1/G2).
+  The Rust/Tauri app ships exactly `16.5.0` (`apps/desktop-tauri/xite/PIN`).
+  The adapter's runtime gate (V1) accepts exactly `['15.1.10', '16.5.0']`; the
+  G4 probe and every P-row check are unchanged. See
+  [`XITE_16_5_0_INTEGRATION.md`](../architecture/XITE_16_5_0_INTEGRATION.md).
 
 Final result, QA evidence, refusal model and known limitations:
 [`WD2_D_XITE_PICKING_CLOSEOUT.md`](WD2_D_XITE_PICKING_CLOSEOUT.md).
@@ -678,6 +684,13 @@ Current: `package.json` `"x_ite": "^15.1.10"`; lockfile and installed copy are
 lockfile's root `packages[""].dependencies` entry to match) before any private
 API is used. This lane changed neither file.
 
+**Amendment (XITE-16-UPGRADE-2, 2026-10-11).** One pin per host application:
+Electron `15.1.10` (root `package.json` + lockfile, G1/G2 unchanged) and
+Rust/Tauri `16.5.0` (`apps/desktop-tauri/xite/PIN` + per-file SHA-256
+manifest, checked by `build-ui.sh` and the Tauri G1/G3 tests). V1 becomes an
+exact-membership check against `XITE_VERSIONS = ['15.1.10', '16.5.0']`: no
+range, no prefix, no non-string. A third version needs its own lane.
+
 ## Upgrade guards
 
 Node tests (collected by `npm run check`, `test/preview/`):
@@ -803,6 +816,32 @@ active generation.
 No change: no IPC channel, no preload capability, no main-process code, no CSP
 edit, no network or filesystem access. The adapter wraps a method of X_ITE's
 own parser for the duration of one parse in the existing renderer page.
+
+## VISUAL-3A1 amendment — span binding (Tauri Move tool)
+
+Three methods are added to the adapter's public surface; the seven methods
+above and every rule for them are unchanged.
+
+- `snapshotSpan(generation, start, end)` — the reverse of `pick()`: the ONE
+  runtime node the generation's provenance recorded for the exact span
+  `[start, end)`, as the same plain-data chain snapshot `pick()` returns for
+  a hit Shape (outcome `found`), or `unsupported` /
+  `runtime-node-for-span-not-unique` (with `count`) when zero or several
+  runtime nodes carry it, `stale` for a generation that is not on screen,
+  `disabled` when compatibility is not proven. No search: both span ends
+  must match a recorded statement exactly.
+- `nodeAt(generation, start, end)` — that runtime node, under the same
+  rules, for the trusted JavaScript layer only (it never crosses into
+  Rust); `null` otherwise.
+- `spansOf(generation, node)` — a runtime node's provenance occurrences, as
+  plain data.
+
+A generation is usable while this adapter holds it (pending or active) and
+its scene is the one on screen; a retired, replaced or disposed generation
+answers nothing. The span index is built in the same pass as the occurrence
+map, per generation, never module state. Rust proves the snapshot
+(`wrlforge_vrml::pick::resolve_node`, the chain proof of a pick) before the
+Move tool binds anything.
 
 ## Deferred scope
 

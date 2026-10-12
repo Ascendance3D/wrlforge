@@ -1,0 +1,21 @@
+[package]
+name = "wrlforge-render"
+description = "NATIVE-RENDER-1: wgpu viewport renderer and render thread. Draws a wrlforge-scene projection; no document access, no fs, no network."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+wrlforge-scene = { path = "../scene" }
+glam = "=0.30.10"
+bytemuck = "=1.25.2"
+pollster = "=1.0.1"
+# Vulkan (Linux) and Metal (macOS) only: no DX12, no GLES, no WebGPU.
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl", "vulkan", "metal"] }
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

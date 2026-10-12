@@ -1,0 +1,372 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   WRL Forge desktop (Tauri) — component styles. Sizing follows
+   renderer/editor.html. Colors come ONLY from the semantic --wf-* tokens in
+   themes.css; no raw color value belongs in this file (enforced by the
+   protocol crate's theme tests). */
+:root { --ui: 13px; --wf-font-ui: -apple-system, "Segoe UI", "Cantarell", sans-serif;
+  --wf-font-mono: "JetBrains Mono", "DejaVu Sans Mono", monospace; }
+html { font-size: var(--ui); background: var(--wf-bg-app); }
+/* Hidden until the Rust UI sets the persisted theme (or its 1.5 s fallback):
+   no flash of the wrong theme. The html background is the Tokyo Night fallback. */
+html:not([data-theme]) body { visibility: hidden; }
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--wf-bg-app); color: var(--wf-text-primary); font-family: var(--wf-font-ui); }
+.app { height: 100%; display: flex; flex-direction: column; }
+.toolbar { display: flex; flex-wrap: wrap; row-gap: .35rem; gap: .46rem; align-items: center; padding: .5rem .8rem; background: var(--wf-surface-chrome); border-bottom: 1px solid var(--wf-border); }
+.toolbar button, .toolbar .theme-picker { white-space: nowrap; flex: none; }
+.brand { white-space: nowrap; font-weight: 700; color: var(--wf-text-brand); letter-spacing: .02em; margin-right: .6rem; }
+.toolbar .spacer, .statusbar .spacer { flex: 1 1 auto; }
+.sep { width: 1px; height: 1.4rem; background: var(--wf-separator); margin: 0 .3rem; }
+
+/* buttons */
+button { background: var(--wf-btn-primary-bg); color: var(--wf-btn-primary-fg); border: 1px solid transparent; border-radius: 4px; padding: .42rem .9rem; font-size: .96rem; font-family: inherit; cursor: pointer; }
+button:hover { background: var(--wf-btn-primary-hover-bg); }
+button:active { background: var(--wf-btn-primary-pressed-bg); }
+button.secondary { background: var(--wf-btn-secondary-bg); color: var(--wf-btn-secondary-fg); }
+button.secondary:hover { background: var(--wf-btn-secondary-hover-bg); }
+button.secondary:active { background: var(--wf-btn-secondary-pressed-bg); }
+button[aria-pressed="true"] { background: var(--wf-btn-selected-bg); color: var(--wf-btn-selected-fg); border-color: var(--wf-accent); }
+button.small { padding: .18rem .55rem; font-size: .85rem; }
+button:disabled, button:disabled:hover, button:disabled:active { background: var(--wf-btn-disabled-bg); color: var(--wf-btn-disabled-fg); border-color: var(--wf-border-subtle); cursor: not-allowed; }
+
+/* keyboard focus: one visible ring for every focusable control */
+button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 3px solid var(--wf-focus-ring); outline-offset: 2px; }
+
+/* form controls (Inspector fields, theme selector) */
+input, select { background: var(--wf-surface-input); color: var(--wf-text-editor); border: 1px solid var(--wf-border-control); border-radius: 3px; font-family: inherit; }
+input:focus, select:focus { border-color: var(--wf-input-focus-border); }
+input::placeholder, textarea::placeholder { color: var(--wf-text-placeholder); opacity: 1; }
+input[type="checkbox"] { accent-color: var(--wf-accent); }
+option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
+
+.profile { color: var(--wf-text-muted); font-size: .9rem; flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.theme-picker { display: flex; gap: .35rem; align-items: center; color: var(--wf-text-muted); font-size: .9rem; }
+.theme-picker select { padding: .25rem .4rem; font-size: .9rem; }
+.theme-error { color: var(--wf-error-fg); background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); border-radius: 3px; padding: .1rem .45rem; font-size: .85rem; max-width: 24rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Create control (VISUAL-1): a menu button and a raised menu, tokens only. */
+.create-menu { position: relative; display: inline-flex; }
+.create-list { position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; display: flex; flex-direction: column; min-width: 11rem; padding: .3rem; gap: .15rem; background: var(--wf-surface-raised); border: 1px solid var(--wf-border); border-radius: 4px; box-shadow: var(--wf-shadow); }
+.create-item { display: flex; align-items: center; gap: .55rem; text-align: left; background: transparent; color: var(--wf-text-primary); padding: .35rem .6rem; }
+.create-item:hover, .create-item:focus-visible { background: var(--wf-surface-hover); color: var(--wf-text-primary); }
+.create-item .glyph { display: inline-block; width: .9rem; height: .9rem; border: 2px solid var(--wf-icon-active); flex: none; }
+.create-item .glyph-box { border-radius: 1px; }
+.create-item .glyph-sphere { border-radius: 50%; }
+.create-item .glyph-cylinder { border-radius: 40% / 18%; }
+.create-item .glyph-extrusion { clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); background: var(--wf-icon-active); border: none; }
+.create-item .glyph-cone { width: 0; height: 0; border-width: 0 .5rem .9rem .5rem; border-color: transparent transparent var(--wf-icon-active) transparent; }
+.create-error { color: var(--wf-error-fg); background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); border-radius: 3px; padding: .1rem .45rem; font-size: .85rem; max-width: 28rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.banner { display: flex; gap: .6rem; align-items: center; padding: .5rem .8rem; background: var(--wf-warning-bg); border-bottom: 1px solid var(--wf-warning-border); color: var(--wf-warning-fg); }
+/* UI-DOCK-1: the workspace scrolls when the window is smaller than the
+   layout's minimum; panels never collapse below their minimum sizes. */
+.workspace { flex: 1 1 auto; min-height: 0; min-width: 0; position: relative; overflow: auto; }
+.pane-title { padding: .35rem .6rem; background: var(--wf-surface-header); color: var(--wf-text-primary); border-bottom: 1px solid var(--wf-border); font-weight: 600; font-size: .92rem; display: flex; align-items: center; gap: .4rem; white-space: nowrap; overflow: hidden; }
+.muted { color: var(--wf-text-muted); font-weight: 400; }
+.badge { font-weight: 400; font-size: .78rem; color: var(--wf-badge-fg); background: var(--wf-badge-bg); border: 1px solid var(--wf-badge-border); border-radius: 3px; padding: 0 .35rem; }
+
+/* Scene Tree */
+.tree-col { display: flex; flex-direction: column; min-width: 0; background: var(--wf-surface-panel); }
+.tree { list-style: none; margin: 0; padding: .2rem 0; overflow: auto; flex: 1 1 auto; font-size: .92rem; }
+.tree-item { padding: .14rem .4rem; cursor: pointer; white-space: nowrap; display: flex; gap: .4rem; color: var(--wf-text-primary); }
+.tree-item:hover { background: var(--wf-tree-hover-bg); }
+/* Selected is shown by color AND an inset bar, never color alone. */
+.tree-item.selected { background: var(--wf-tree-selected-bg); color: var(--wf-tree-selected-fg); box-shadow: inset 3px 0 0 var(--wf-tree-selected-indicator); }
+.tree-item .kind { color: var(--wf-tree-kind); font-size: .78rem; min-width: 3.6rem; }
+.tree-item.kind-route .label { color: var(--wf-tree-route); }
+.tree-item.kind-use .label { color: var(--wf-tree-use); }
+.tree-item.kind-proto .label, .tree-item.kind-externproto .label { color: var(--wf-tree-proto); }
+.tree-item.ref-unresolved .label { color: var(--wf-tree-unresolved); text-decoration: underline wavy var(--wf-tree-unresolved); }
+/* RUST-STAB-2A: ambiguous / recovered / unsupported. Shape, not color alone. */
+.tree-item.ref-uncertain .label { text-decoration: underline dotted; }
+.empty { color: var(--wf-text-muted); padding: .6rem; margin: 0; }
+
+/* Source editor */
+.editor-col { min-width: 0; display: flex; flex-direction: column; background: var(--wf-surface-editor); }
+/* Two layers with IDENTICAL text metrics (UI-SYNTAX-1): the textarea is the
+   only editing control and paints caret + selection; its glyphs are
+   transparent. The aria-hidden layer behind it paints the same text in
+   syntax colors, follows its scroll by transform, and takes no input.
+   Color, underline and nothing else may differ per token: no weight, style
+   or ligature change, so glyph advances never move. */
+.source-wrap { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--wf-surface-editor); }
+.source-metrics { font-family: var(--wf-font-mono); font-size: 13px; line-height: 18px; tab-size: 4;
+  white-space: pre; letter-spacing: normal; word-spacing: normal; font-variant-ligatures: none; font-kerning: none;
+  font-weight: 400; font-style: normal; text-transform: none; padding: .5rem .7rem; margin: 0; border: 0; }
+.source { position: absolute; inset: 0; width: 100%; height: 100%; resize: none; overflow: auto; z-index: 1;
+  background: transparent; color: transparent; -webkit-text-fill-color: transparent; caret-color: var(--wf-editor-caret); }
+.source::selection { background: var(--wf-editor-selection-bg); color: var(--wf-editor-selection-fg); -webkit-text-fill-color: var(--wf-editor-selection-fg); }
+.source::placeholder { -webkit-text-fill-color: var(--wf-text-placeholder); }
+.source:focus-visible { outline-offset: -3px; }
+.source-hl { position: absolute; top: 0; left: 0; min-width: 100%; min-height: 100%; overflow: visible;
+  color: var(--wf-text-editor); pointer-events: none; user-select: none; -webkit-user-select: none; will-change: transform; }
+.source-hl span { font: inherit; }
+.tk-header, .tk-keyword { color: var(--wf-syntax-keyword); }
+.tk-comment { color: var(--wf-syntax-comment); }
+.tk-route { color: var(--wf-syntax-route); }
+.tk-literal, .tk-number { color: var(--wf-syntax-number); }
+.tk-string { color: var(--wf-syntax-string); }
+.tk-node-type, .tk-field-type { color: var(--wf-syntax-node-type); }
+.tk-field { color: var(--wf-syntax-field); }
+.tk-def-name, .tk-def-ref { color: var(--wf-syntax-def-name); }
+.tk-punctuation { color: var(--wf-syntax-punctuation); }
+.tk-invalid { color: var(--wf-syntax-invalid); }
+/* Diagnostics are marked by an underline SHAPE as well as color. */
+.dg-error { text-decoration: underline wavy var(--wf-error-fg); text-decoration-skip-ink: none; }
+.dg-warning { text-decoration: underline dashed var(--wf-warning-fg); text-decoration-skip-ink: none; }
+/* Smoke-only registration check: the textarea's own glyphs are painted over
+   the color layer; any offset shows as doubled glyphs in a screenshot. */
+.source-wrap[data-align-check] .source { -webkit-text-fill-color: var(--wf-syntax-invalid); color: var(--wf-syntax-invalid); }
+.diag-head { color: var(--wf-text-muted); font-size: .8rem; margin-bottom: .15rem; }
+.diagnostics { overflow: auto; background: var(--wf-surface-panel); color: var(--wf-text-secondary); padding: .3rem .6rem; font-size: .88rem; }
+.diagnostics ul { margin: 0; padding: 0; list-style: none; }
+.diag { cursor: pointer; padding: .05rem 0; }
+.diag .sev { font-weight: 700; margin-right: .35rem; }
+.diag.error { color: var(--wf-error-fg); }
+.diag.warning { color: var(--wf-warning-fg); }
+.diag.info { color: var(--wf-info-fg); }
+.ok { color: var(--wf-success-fg); }
+
+/* Viewport + Inspector */
+.viewport { display: flex; flex-direction: column; min-height: 0; background: var(--wf-viewport-bg); }
+.viewport .pane-title { background: var(--wf-viewport-header-bg); border-bottom-color: var(--wf-viewport-border); }
+/* The canvas element's own background shows only before X_ITE paints; the
+   scene's authored Background is never overridden. */
+x3d-canvas#viewport { flex: 1 1 auto; width: 100%; min-height: 6rem; display: block; background: var(--wf-viewport-canvas-bg); }
+.preview-status.texture-warning, .preview-status.route-warning { color: var(--wf-warning-fg); }
+.preview-status { font-size: .82rem; color: var(--wf-viewport-status-fg); padding: .2rem .6rem; border-top: 1px solid var(--wf-viewport-border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toggle { font-weight: 400; font-size: .85rem; display: flex; gap: .2rem; align-items: center; margin-left: auto; }
+.inspector { overflow: auto; background: var(--wf-surface-panel); }
+.inspector h3 { margin: .5rem .6rem; font-size: 1rem; color: var(--wf-text-heading); }
+.fields { border-collapse: collapse; width: 100%; font-size: .88rem; }
+.fields tr { cursor: pointer; }
+.fields tr:hover { background: var(--wf-surface-hover); }
+.fields th { text-align: left; font-weight: 600; color: var(--wf-text-primary); padding: .18rem .6rem; vertical-align: top; white-space: nowrap; }
+.fields td { padding: .18rem .4rem; vertical-align: top; }
+.fields td.kind { color: var(--wf-tree-kind); font-size: .8rem; }
+.fields code { white-space: pre-wrap; word-break: break-all; color: var(--wf-text-editor); font-family: var(--wf-font-mono); font-size: 12px; }
+
+/* Status bar */
+.statusbar { display: flex; gap: 1.1rem; align-items: center; padding: .28rem .8rem; background: var(--wf-surface-chrome); border-top: 1px solid var(--wf-border); font-size: .88rem; color: var(--wf-text-secondary); white-space: nowrap; overflow: hidden; }
+.statusbar .msg { color: var(--wf-warning-fg); overflow: hidden; text-overflow: ellipsis; }
+
+/* Inspector field editing (TAURI-RUST-MIGRATION-2) */
+.fields.editable tr { cursor: default; }
+.fields.editable th { cursor: pointer; }
+.fields.editable tr.ro th { color: var(--wf-text-muted); }
+.fields .controls { display: flex; flex-wrap: wrap; gap: .25rem .4rem; align-items: center; }
+.fields .comp { display: inline-flex; gap: .2rem; align-items: center; color: var(--wf-tree-kind); font-size: .78rem; }
+.fields .comp input.num { width: 5.2rem; }
+.fields .comp input.text { width: 14rem; }
+.fields .comp input, .fields .comp select { padding: .1rem .25rem; font-family: var(--wf-font-mono); font-size: 12px; }
+.fields .reason { margin-left: .4rem; color: var(--wf-warning-fg); font-size: .74rem; }
+.field-error { margin: .4rem .6rem; padding: .3rem .5rem; background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); color: var(--wf-error-fg); border-radius: 3px; font-size: .85rem; }
+.readonly-note { margin: .3rem .6rem; color: var(--wf-warning-fg); font-size: .85rem; }
+
+/* Scrollbars: the standard property (Chromium / WebView2) and the WebKit
+   pseudo-elements (WebKitGTK, WKWebView). */
+* { scrollbar-color: var(--wf-scrollbar-thumb) var(--wf-scrollbar-track); }
+::-webkit-scrollbar { width: 12px; height: 12px; background: var(--wf-scrollbar-track); }
+::-webkit-scrollbar-thumb { background: var(--wf-scrollbar-thumb); border-radius: 6px; border: 3px solid var(--wf-scrollbar-track); }
+::-webkit-scrollbar-thumb:hover { background: var(--wf-scrollbar-thumb-hover); }
+::-webkit-scrollbar-thumb:active { background: var(--wf-scrollbar-thumb-active); }
+::-webkit-scrollbar-corner { background: var(--wf-scrollbar-track); }
+
+/* No theme or hover animation exists; this guards any future one. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
+/* VISUAL-2 viewport selection: Select mode cursor and the pick result line. */
+x3d-canvas.picking { cursor: crosshair; }
+.pick-status { padding: .2rem .6rem; font-size: .85rem; color: var(--wf-text-muted); border-top: 1px solid var(--wf-border-subtle); }
+.pick-status[data-kind="ok"] { color: var(--wf-text-primary); }
+.pick-status[data-kind="refused"] { color: var(--wf-warning-fg); background: var(--wf-warning-bg); }
+
+/* VISUAL-3A translation gizmo. The SVG covers the canvas but takes no
+   pointer input itself; only usable handles do. Axis colors are the theme's
+   --wf-axis-* tokens over a halo, so they read on any rendered background.
+   Disabled = faded, dashed, no pointer input: never looks usable. */
+.viewport-stage { position: relative; flex: 1 1 auto; min-height: 6rem; display: flex; }
+.viewport-stage x3d-canvas#viewport { flex: 1 1 auto; height: auto; }
+.gizmo { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.gizmo[data-state="hidden"] { display: none; }
+.gz-handle { pointer-events: none; }
+.gz-handle .gz-hit { stroke: transparent; stroke-width: 16; stroke-linecap: round; }
+.gz-handle .gz-halo { stroke: var(--wf-gizmo-halo); stroke-width: 7; stroke-linecap: round; }
+.gz-handle .gz-line { stroke-width: 3.5; stroke-linecap: round; }
+.gz-handle .gz-tip { stroke: var(--wf-gizmo-halo); stroke-width: 2.5; }
+#gz-x .gz-line { stroke: var(--wf-axis-x); } #gz-x .gz-tip { fill: var(--wf-axis-x); }
+#gz-y .gz-line { stroke: var(--wf-axis-y); } #gz-y .gz-tip { fill: var(--wf-axis-y); }
+#gz-z .gz-line { stroke: var(--wf-axis-z); } #gz-z .gz-tip { fill: var(--wf-axis-z); }
+.gizmo[data-state="ready"] .gz-handle:not(.disabled),
+.gizmo[data-state="dragging"] .gz-handle.active { pointer-events: stroke; cursor: grab; }
+.gizmo[data-state="ready"] .gz-handle:not(.disabled) .gz-tip { pointer-events: all; }
+.gizmo[data-state="ready"] .gz-handle:not(.disabled):hover .gz-line { stroke-width: 5.5; }
+.gizmo[data-state="ready"] .gz-handle:not(.disabled):hover .gz-halo { stroke-width: 9.5; }
+.gizmo[data-state="ready"] .gz-handle:not(.disabled):hover .gz-tip { r: 9; }
+.gz-handle.active { cursor: grabbing; }
+.gz-handle.active .gz-halo { stroke: var(--wf-gizmo-active); stroke-width: 10; }
+.gz-handle.active .gz-line { stroke-width: 5.5; }
+.gz-handle.active .gz-tip { stroke: var(--wf-gizmo-active); r: 9; }
+.gz-handle.disabled { opacity: .45; }
+.gz-handle.disabled .gz-line { stroke: var(--wf-gizmo-disabled); stroke-dasharray: 4 4; }
+.gz-handle.disabled .gz-tip { fill: none; stroke: var(--wf-gizmo-disabled); }
+/* VISUAL-4B: rotation rings and scale handles reuse the same tokens. */
+.gz-ring polyline { fill: none; stroke-linejoin: round; }
+.gz-ring .gz-hit { stroke-width: 14; }
+.gz-box { stroke: var(--wf-gizmo-halo); stroke-width: 2; }
+#gz-x .gz-box { fill: var(--wf-axis-x); } #gz-y .gz-box { fill: var(--wf-axis-y); } #gz-z .gz-box { fill: var(--wf-axis-z); }
+#gz-rx .gz-line { stroke: var(--wf-axis-x); } #gz-ry .gz-line { stroke: var(--wf-axis-y); } #gz-rz .gz-line { stroke: var(--wf-axis-z); }
+.gz-uniform .gz-hit { fill: transparent; stroke: none; }
+.gz-uniform .gz-box { fill: var(--wf-gizmo-halo); stroke: var(--wf-gizmo-active); }
+.gizmo[data-state="ready"] .gz-uniform:not(.disabled) .gz-hit { pointer-events: all; }
+.gz-handle.disabled .gz-box { fill: none; stroke: var(--wf-gizmo-disabled); }
+.gizmo:not([data-tool="rotate"]) .gz-ring,
+.gizmo[data-tool="rotate"] .gz-axis,
+.gizmo:not([data-tool="scale"]) .gz-uniform,
+.gizmo[data-tool="scale"] .gz-tip,
+.gizmo:not([data-tool="scale"]) .gz-box { display: none; }
+.gz-origin { fill: var(--wf-gizmo-halo); stroke: var(--wf-gizmo-active); stroke-width: 2; }
+.gizmo[data-state="disabled"] .gz-origin { stroke: var(--wf-gizmo-disabled); }
+
+/* NATIVE-RENDER-1 (hidden): the native viewport is a sibling pane of this
+   WebView, so the in-page viewport keeps only its title and status lines. */
+.viewport.native .viewport-stage { display: none; }
+.viewport-stage[hidden], .viewport .badge[hidden], .viewport button[hidden], .viewport .sep[hidden], .native-status[hidden] { display: none; }
+
+/* VISUAL-4A: Extrusion Inspector and the 2D outline editor. */
+.extrusion { margin: 0 .6rem .5rem; font-size: .86rem; }
+.extrusion h4 { margin: .6rem 0 .25rem; font-size: .9rem; color: var(--wf-text-heading); }
+.xnotes { list-style: none; margin: .2rem 0; padding: 0; }
+.xnotes li { margin: .1rem 0; color: var(--wf-text-secondary); }
+.xnotes li.warning { color: var(--wf-warning-fg); }
+.xnotes li.error { color: var(--wf-error-fg); }
+.xnotes .sev { font-weight: 600; margin-right: .35rem; }
+.xfield { margin: .15rem 0 .45rem; }
+.xfield-head { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
+.xfield-head code { font-family: var(--wf-font-mono); color: var(--wf-text-primary); }
+.xfield-head .kind { color: var(--wf-tree-kind); font-size: .78rem; }
+.xstatus { font-size: .76rem; color: var(--wf-text-muted); }
+.xstatus.authored { color: var(--wf-text-secondary); }
+.xlist { border-collapse: collapse; margin: .2rem 0; font-size: .82rem; }
+.xlist th { text-align: right; padding: .1rem .3rem; color: var(--wf-text-muted); font-weight: 500; }
+.xlist td { padding: .08rem .2rem; }
+.xlist input.num { width: 4.6rem; padding: .1rem .25rem; font-family: var(--wf-font-mono); font-size: 12px; }
+.xlist.default code { color: var(--wf-text-muted); font-family: var(--wf-font-mono); font-size: 12px; }
+.xrow-actions { white-space: nowrap; }
+.xexcerpt { display: block; font-family: var(--wf-font-mono); font-size: 12px; color: var(--wf-text-editor); }
+.outline-editor { position: fixed; left: 19rem; top: 4.2rem; z-index: 40; width: 23rem; padding: .5rem .6rem;
+  background: var(--wf-surface-raised); border: 1px solid var(--wf-border-control); border-radius: 4px;
+  box-shadow: 0 4px 18px var(--wf-gizmo-halo); }
+.outline-editor[hidden] { display: none; }
+.outline-head h3 { margin: 0 0 .1rem; font-size: .95rem; color: var(--wf-text-heading); }
+.outline-head .muted { font-size: .76rem; }
+.outline-svg { display: block; width: 320px; height: 320px; margin: .35rem auto; background: var(--wf-surface-editor);
+  border: 1px solid var(--wf-border); touch-action: none; }
+.outline-svg:focus-visible { outline: 2px solid var(--wf-focus-ring); }
+.outline-svg line.grid { stroke: var(--wf-border-subtle); stroke-width: 1; }
+.outline-svg line.axis { stroke: var(--wf-text-muted); stroke-width: 1.5; }
+.outline-svg .axis-label { fill: var(--wf-text-secondary); font-size: 11px; }
+.outline-svg line.seg { stroke: var(--wf-accent); stroke-width: 2; }
+.outline-svg line.seg-hit { stroke: transparent; stroke-width: 12; cursor: copy; }
+.outline-svg circle.pt { fill: var(--wf-icon-active); stroke: var(--wf-surface-editor); stroke-width: 2; cursor: grab; }
+.outline-svg circle.pt.selected { fill: var(--wf-gizmo-active); }
+.outline-svg .pt-label { fill: var(--wf-text-secondary); font-size: 10px; pointer-events: none; }
+.outline-status { font-size: .8rem; color: var(--wf-text-secondary); }
+.outline-message { margin: .25rem 0; padding: .2rem .4rem; font-size: .8rem; color: var(--wf-error-fg);
+  background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); border-radius: 3px; }
+.outline-stale { font-size: .8rem; color: var(--wf-warning-fg); }
+.outline-editor .controls { display: flex; flex-wrap: wrap; gap: .3rem .4rem; align-items: center; margin-top: .3rem; }
+.outline-editor .comp input.num { width: 5.5rem; padding: .1rem .25rem; font-family: var(--wf-font-mono); font-size: 12px; }
+
+/* RUST-STAB-1: the startup recovery choice. */
+.recovery-dialog { position: fixed; left: 50%; top: 4.2rem; transform: translateX(-50%); z-index: 50; width: min(40rem, 92vw);
+  max-height: 70vh; overflow: auto; padding: .7rem .9rem;
+  background: var(--wf-surface-raised); border: 1px solid var(--wf-border-control); border-radius: 4px;
+  box-shadow: 0 4px 18px var(--wf-gizmo-halo); color: var(--wf-text-primary); }
+.recovery-dialog h3 { margin: 0 0 .3rem; font-size: 1rem; color: var(--wf-text-heading); }
+.recovery-dialog p { margin: 0 0 .5rem; font-size: .86rem; }
+.recovery-list { list-style: none; margin: 0 0 .5rem; padding: 0; }
+.recovery-entry { display: flex; gap: .5rem; align-items: center; padding: .35rem 0; border-top: 1px solid var(--wf-border-subtle); }
+.recovery-text { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; }
+.recovery-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recovery-text .muted, .recovery-note { font-size: .8rem; }
+.recovery-note { color: var(--wf-warning-fg); }
+.recovery-actions { display: flex; justify-content: flex-end; }
+
+
+/* APP-SHELL-0: Help → About (non-modal; same surface as the recovery dialog). */
+.about-dialog { position: fixed; left: 50%; top: 4.2rem; transform: translateX(-50%); z-index: 50; width: min(32rem, 92vw);
+  padding: .7rem .9rem; background: var(--wf-surface-raised); border: 1px solid var(--wf-border-control); border-radius: 4px;
+  box-shadow: 0 4px 18px var(--wf-gizmo-halo); color: var(--wf-text-primary); }
+.about-dialog h3 { margin: 0 0 .3rem; font-size: 1rem; color: var(--wf-text-heading); }
+.about-dialog p { margin: 0 0 .5rem; font-size: .86rem; }
+.about-identity { font-weight: 600; color: var(--wf-text-brand); }
+.about-facts { display: grid; grid-template-columns: max-content 1fr; gap: .15rem .8rem; margin: 0 0 .5rem; font-size: .84rem; }
+.about-facts dt { color: var(--wf-text-muted); }
+.about-facts dd { margin: 0; overflow-wrap: anywhere; }
+.about-warning { color: var(--wf-warning-fg); }
+.about-actions { display: flex; justify-content: flex-end; }
+
+/* UI-DOCK-1: the dockable workspace. Panel hosts are mounted once and only
+   positioned; an inactive tab or a closed panel keeps its box but is not
+   painted (visibility), so its state is never torn down. The tab strip
+   height (30px) and divider thickness (6px) match protocol::layout. */
+.dock { position: relative; }
+.dock-panel { position: absolute; display: flex; flex-direction: column; overflow: hidden; min-width: 0; min-height: 0; }
+.dock-panel > * { flex: 1 1 auto; min-width: 0; min-height: 0; width: 100%; }
+.dock-panel[data-state="inactive"], .dock-panel[data-state="hidden"] { visibility: hidden; pointer-events: none; }
+.dock-strip { position: absolute; display: flex; align-items: stretch; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin;
+  background: var(--wf-tab-inactive-bg); border-bottom: 1px solid var(--wf-border); }
+.dock-tab { display: flex; align-items: center; gap: .3rem; padding: 0 .4rem 0 .7rem; white-space: nowrap; flex: none;
+  background: var(--wf-tab-inactive-bg); color: var(--wf-tab-inactive-fg); border-right: 1px solid var(--wf-border);
+  font-size: .88rem; font-weight: 600; cursor: grab; user-select: none; -webkit-user-select: none; touch-action: none; }
+.dock-tab:hover { background: var(--wf-surface-hover); }
+/* Active by color AND a top bar, never color alone. */
+.dock-tab[aria-selected="true"] { background: var(--wf-tab-active-bg); color: var(--wf-tab-active-fg); box-shadow: inset 0 2px 0 var(--wf-tab-active-border); }
+.dock-tab:focus-visible { outline: 3px solid var(--wf-focus-ring); outline-offset: -3px; }
+.dock-tab-close { background: transparent; color: inherit; padding: 0 .3rem; font-size: 1rem; line-height: 1.2; border-radius: 3px; }
+.dock-tab-close:hover { background: var(--wf-btn-secondary-hover-bg); color: var(--wf-text-primary); }
+.dock-divider { position: absolute; z-index: 5; background: var(--wf-separator); touch-action: none; }
+.dock-divider[aria-orientation="vertical"] { cursor: col-resize; }
+.dock-divider[aria-orientation="horizontal"] { cursor: row-resize; }
+.dock-divider:hover, .dock-divider[data-dragging="true"] { background: var(--wf-accent); }
+.dock-divider:focus-visible { outline: 3px solid var(--wf-focus-ring); outline-offset: 0; background: var(--wf-accent); }
+/* Drag guides: every drop area, the zone compass, and the snap guide. */
+.dock-overlay { position: absolute; inset: 0; z-index: 30; pointer-events: none; }
+.dock-target { position: absolute; border: 2px dashed var(--wf-border-control); border-radius: 4px; }
+.dock-target[data-hover="true"] { border-color: var(--wf-accent); }
+.dock-guide { position: absolute; border: 3px solid var(--wf-accent); border-radius: 4px; background: var(--wf-surface-selected); opacity: .55; }
+.dock-guide[data-valid="false"] { border-color: var(--wf-error-border); background: var(--wf-error-bg); border-style: dashed; }
+.dock-zone-tile { position: absolute; width: 32px; height: 32px; border: 2px solid var(--wf-border-control); border-radius: 4px; background: var(--wf-surface-raised); }
+.dock-zone-tile[data-valid="false"] { opacity: .35; border-style: dashed; }
+.dock-zone-tile[data-selected="true"] { background: var(--wf-accent); border-color: var(--wf-focus-ring); }
+.dock-ghost { position: absolute; transform: translate(14px, 14px); padding: .2rem .55rem; white-space: nowrap; font-size: .85rem;
+  background: var(--wf-surface-raised); color: var(--wf-text-primary); border: 1px solid var(--wf-accent); border-radius: 3px; box-shadow: var(--wf-shadow); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.layout-menu .create-list { min-width: 14rem; }
+.layout-menu .check { display: inline-block; width: 1rem; text-align: center; color: var(--wf-accent); }
+.menu-group { padding: .3rem .6rem .1rem; font-size: .75rem; color: var(--wf-text-muted); text-transform: uppercase; letter-spacing: .04em; }
+/* UI-DOCK-1 (APP-SHELL-0 §3.6): the viewport header wraps instead of
+   clipping; the four tools stay together and keep their pressed state. */
+.viewport .pane-title { flex-wrap: wrap; white-space: normal; row-gap: .3rem; overflow: visible; }
+.viewport .pane-title .badge { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viewport .pane-title .toggle { margin-left: auto; }
+.tool-group { display: inline-flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
+
+/* UI-MENU-1: the application menu bar (File … Help). Colors are --wf-* tokens. */
+.menubar { display: flex; align-items: center; gap: .1rem; padding: .1rem .5rem; background: var(--wf-surface-chrome); border-bottom: 1px solid var(--wf-border); position: relative; z-index: 30; }
+.menubar-menu { position: relative; display: inline-flex; }
+.menubar-button { background: transparent; color: var(--wf-text-primary); padding: .2rem .6rem; font-size: .92rem; border-radius: 3px; }
+.menubar-button:hover, .menubar-button[aria-expanded="true"] { background: var(--wf-surface-hover); }
+.menubar-button:focus-visible { outline-offset: -3px; }
+.menubar-button .mnemonic { text-decoration: underline; text-underline-offset: 2px; }
+.menubar-list { min-width: 17rem; top: calc(100% + 2px); z-index: 40; }
+.menu-item { width: 100%; }
+.menu-item .check { display: inline-block; width: 1rem; text-align: center; color: var(--wf-accent); flex: none; }
+.menu-item .menu-label { flex: 1 1 auto; }
+.menu-item .menu-key { color: var(--wf-text-muted); font-size: .85rem; padding-left: 1.5rem; white-space: nowrap; }
+.menu-item[aria-disabled="true"] { color: var(--wf-text-disabled); cursor: default; }
+.menu-item[aria-disabled="true"]:hover { background: transparent; color: var(--wf-text-disabled); }
+.menu-item[aria-disabled="true"]:focus-visible { background: var(--wf-surface-hover); color: var(--wf-text-disabled); }
+.menu-sep { height: 1px; margin: .2rem .3rem; background: var(--wf-separator); }

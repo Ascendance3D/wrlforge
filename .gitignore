@@ -37,3 +37,7 @@ renderer/vendor/
 .DS_Store
 Thumbs.db
 *.swp
+
+# Owner's local real-item test collection (UI-THEME-1). Never tracked, staged
+# or committed; only these two roots are approved for ad hoc item testing.
+/allowed-items-to-test/
