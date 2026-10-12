@@ -510,10 +510,15 @@ fn over_at(panel: PanelId, cx: f64, cy: f64) -> Option<Over> {
             zone,
             index: None,
         };
+        // STACK-REVIEW-1 (PR #142 review): a valid drop's guide is the moved
+        // panel's content box in the solved candidate layout (the live layout
+        // is not changed); only a refused drop shows the zone half.
+        let (w, h) = d.size.get_untracked();
+        let preview = lay::drop_preview(&layout, panel, target, w, h);
         return Some(Over {
-            valid: layout.can_dock(panel, target).is_ok(),
+            valid: preview.is_ok(),
             target,
-            guide: lay::zone_rect(g.content, zone),
+            guide: preview.unwrap_or_else(|_| lay::zone_rect(g.content, zone)),
             group: gi,
             strip: false,
         });

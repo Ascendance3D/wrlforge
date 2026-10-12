@@ -1087,6 +1087,10 @@ async fn main_phase(c: &Plan, r: &mut R) -> Option<()> {
     );
     resize_window(1440, 900).await;
 
+    // 15b. STACK-REVIEW-1: every snap guide is the box the panel gets.
+    snap_guides(r).await?;
+    menu("layout-view-preset-source").await?;
+
     // 16. A distinctive layout for the restart: Modeling + Inspector left
     //     of the Viewport.
     menu("layout-view-preset-modeling").await?;
@@ -1116,6 +1120,221 @@ async fn main_phase(c: &Plan, r: &mut R) -> Option<()> {
         !snap.dirty && snap.view == text && textarea()?.value() == text,
         format!("rev {} dirty {}", snap.revision, snap.dirty),
     );
+    Some(())
+}
+
+/// The tolerance between a snap guide and the panel box after the drop,
+/// in CSS pixels (both are placed from the same solved f64 rectangle; the
+/// slack only covers sub-pixel rounding of the bounding boxes).
+const GUIDE_TOL_PX: f64 = 1.0;
+
+fn dom_rect(id: &str) -> Option<lay::Rect> {
+    let r = rect_of(id)?;
+    Some(lay::Rect {
+        x: r.left(),
+        y: r.top(),
+        w: r.width(),
+        h: r.height(),
+    })
+}
+
+fn max_diff(a: lay::Rect, b: lay::Rect) -> f64 {
+    [a.x - b.x, a.y - b.y, a.w - b.w, a.h - b.h]
+        .iter()
+        .fold(0.0_f64, |m, d| m.max(d.abs()))
+}
+
+/// One real drag: the guide box just before the release, the moved panel's
+/// box after it, and their largest edge difference (CSS px).
+async fn guide_vs_result(
+    preset: PresetId,
+    panel: PanelId,
+    anchor: PanelId,
+    fx: f64,
+    fy: f64,
+) -> Option<(bool, String)> {
+    dock::set_preset(preset);
+    ipc::sleep(300).await;
+    let before = layout();
+    let to = content_point(anchor, fx, fy)?;
+    let from = tab_center(panel)?;
+    press_drag(from, to, 8).await?;
+    let (zone, _, valid) = guide()?;
+    let g = dom_rect("dock-guide")?;
+    let untouched = layout() == before;
+    release(to).await?;
+    ipc::sleep(150).await;
+    let after = layout();
+    let host = dom_rect(&format!("dock-panel-{}", panel.slug()))?;
+    let d = max_diff(g, host);
+    let focus = active_id();
+    let ok = valid == "true"
+        && untouched
+        && after != before
+        && d <= GUIDE_TOL_PX
+        && focus == format!("dock-tab-{}", panel.slug());
+    Some((
+        ok,
+        format!(
+            "{:?} {:?}->{:?} {zone}: guide {:.1},{:.1} {:.1}x{:.1} panel {:.1},{:.1} {:.1}x{:.1} diff {d:.2}px focus {focus}",
+            preset, panel, anchor, g.x, g.y, g.w, g.h, host.x, host.y, host.w, host.h
+        ),
+    ))
+}
+
+/// STACK-REVIEW-1 (PR #142 r4242637970): a valid drop's snap guide is the
+/// content box the moved panel has after the release, within GUIDE_TOL_PX;
+/// an invalid target keeps the zone-half fallback and changes nothing.
+async fn snap_guides(r: &mut R) -> Option<()> {
+    use PanelId::*;
+    let k0 = keep().await?;
+    let mut worst = 0.0_f64;
+    let cases: [(&str, PresetId, PanelId, PanelId, f64, f64); 9] = [
+        (
+            "edge left (last tab leaves a split)",
+            PresetId::Source,
+            Inspector,
+            Viewport,
+            0.08,
+            0.5,
+        ),
+        (
+            "edge right",
+            PresetId::Source,
+            Inspector,
+            Viewport,
+            0.92,
+            0.5,
+        ),
+        ("edge top", PresetId::Source, Inspector, Viewport, 0.5, 0.08),
+        (
+            "edge bottom",
+            PresetId::Source,
+            Inspector,
+            Viewport,
+            0.5,
+            0.92,
+        ),
+        (
+            "edge bottom, neighbor group stays",
+            PresetId::Source,
+            Diagnostics,
+            Viewport,
+            0.5,
+            0.92,
+        ),
+        (
+            "merge into a group (center)",
+            PresetId::Source,
+            Diagnostics,
+            Source,
+            0.5,
+            0.5,
+        ),
+        (
+            "split another group",
+            PresetId::Source,
+            SceneTree,
+            Source,
+            0.92,
+            0.5,
+        ),
+        (
+            "out of a two-tab group (one tab left)",
+            PresetId::Modeling,
+            Source,
+            Viewport,
+            0.92,
+            0.5,
+        ),
+        (
+            "into a two-tab group's edge",
+            PresetId::Modeling,
+            Inspector,
+            Diagnostics,
+            0.5,
+            0.92,
+        ),
+    ];
+    for (name, preset, panel, anchor, fx, fy) in cases {
+        let (ok, detail) = guide_vs_result(preset, panel, anchor, fx, fy).await?;
+        if let Some(d) = detail
+            .split("diff ")
+            .nth(1)
+            .and_then(|t| t.split("px").next())
+            .and_then(|t| t.parse::<f64>().ok())
+        {
+            worst = worst.max(d);
+        }
+        r.step(
+            &format!("snap guide == final panel box ({name}, tol {GUIDE_TOL_PX} px)"),
+            ok,
+            detail,
+        );
+    }
+    // Minimum sizes: a narrow window, where half of the Viewport is
+    // narrower than the Scene Tree's minimum.
+    resize_window(1000, 760).await?;
+    let (ok, detail) = guide_vs_result(PresetId::Source, SceneTree, Viewport, 0.08, 0.5).await?;
+    if let Some(d) = detail
+        .split("diff ")
+        .nth(1)
+        .and_then(|t| t.split("px").next())
+        .and_then(|t| t.parse::<f64>().ok())
+    {
+        worst = worst.max(d);
+    }
+    r.step(
+        &format!("snap guide == final panel box (minimum width binds, tol {GUIDE_TOL_PX} px)"),
+        ok,
+        detail,
+    );
+    resize_window(1440, 900).await?;
+    // An invalid target: the zone-half fallback, nothing docks.
+    dock::set_preset(PresetId::Source);
+    ipc::sleep(300).await;
+    let before = layout();
+    let refused0 = STATS.with_borrow(|s| s.refused);
+    let content = dock::dock().geo.get_untracked().group_of(Source)?.content;
+    let to = content_point(Source, 0.08, 0.5)?;
+    press_drag(tab_center(Source)?, to, 8).await?;
+    let (zone, _, valid) = guide()?;
+    let g = dom_rect("dock-guide")?;
+    let o = rect_of("dock")?;
+    let half = lay::zone_rect(content, Zone::Left);
+    let fallback = lay::Rect {
+        x: o.left() + half.x,
+        y: o.top() + half.y,
+        ..half
+    };
+    release(to).await?;
+    r.step(
+        "an invalid target shows the zone-half fallback guide and docks nothing",
+        valid == "false"
+            && zone == "left"
+            && max_diff(g, fallback) <= GUIDE_TOL_PX
+            && layout() == before
+            && STATS.with_borrow(|s| s.refused) == refused0 + 1,
+        format!("valid {valid} diff {:.2}px", max_diff(g, fallback)),
+    );
+    let k1 = keep().await?;
+    r.step(
+        "the snap-guide drags changed no document state, selection, preview or panel object",
+        k1 == k0,
+        diff(&k0, &k1),
+    );
+    r.step(
+        &format!("SNAP_GUIDE_MAX_DIFF_PX = {worst:.2} (tolerance {GUIDE_TOL_PX})"),
+        worst <= GUIDE_TOL_PX,
+        format!("{worst}"),
+    );
+    pick_check(
+        "after the snap-guide drags",
+        [0.0, 0.0, 0.0],
+        "Transform Crate",
+        r,
+    )
+    .await?;
     Some(())
 }
 
