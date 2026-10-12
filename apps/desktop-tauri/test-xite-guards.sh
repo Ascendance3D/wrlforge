@@ -14,7 +14,7 @@ expect() { # expect ok|refuse NAME CMD...
   local want="$1" name="$2"; shift 2
   local rc=0; "$@" >"$t/out" 2>&1 || rc=$?
   if { [[ "$want" == ok && $rc -eq 0 ]] || [[ "$want" == refuse && $rc -ne 0 ]]; }; then
-    echo "PASS $name (rc=$rc)"; pass=$((pass + 1))
+    echo "PASS $name (rc=$rc)${XG_WHY:+: $(head -1 "$t/out")}"; pass=$((pass + 1))
   else
     echo "FAIL $name (want $want, rc=$rc)"; sed 's/^/    /' "$t/out"; fail=$((fail + 1))
   fi
@@ -94,5 +94,120 @@ put "$G" "  var XITE_VERSION = '$ver';" "  var XITE_VERSION = '0.0.0'; // var XI
 expect refuse gizmo-version-only-in-comment  c "$P" "$G"
 put "$G" "  var XITE_VERSION = '$ver';" "  // var XITE_VERSION = '$ver';"
 expect refuse gizmo-declaration-commented    c "$P" "$G"
+
+# ---- STACK-REVIEW-1 follow-up: lexer-based declaration cases ---------------
+# Each case is a whole synthetic pick adapter (the real gizmo adapter stays),
+# so a case cannot pass because of the real file's own declaration.
+J="$t/js.js"
+js() { printf '%s\n' "$@" > "$J"; }
+cj() { "$here/check-xite-adapters.sh" "$J" "$giz" "$ver"; }
+iife() { js "'use strict';" '(function () {' "$@" '})();'; }
+ok1="  const XITE_VERSIONS = Object.freeze(['15.1.10', '$ver']);"
+iife "$ok1" '  return XITE_VERSIONS;'
+expect ok     js-current-one-line-declaration  cj
+iife '  // The pinned builds (see PIN).' "$ok1  // exact strings only" '  /* trailing block */'
+expect ok     js-normal-surrounding-comments  cj
+iife '/*' "$ok1" '*/' '  const XITE_VERSIONS = Object.freeze([' "    '15.1.10'" '  ]);'
+expect refuse js-block-comment-then-wrong-real cj
+iife '/*' "$ok1" '*/'
+expect refuse js-block-comment-only            cj
+iife "  /* $ok1 */"
+expect refuse js-inline-block-comment-only     cj
+iife "  const NOTE = \"$ok1\";" "  const XITE_VERSIONS = Object.freeze(['15.1.10']);"
+expect refuse js-declaration-in-string        cj
+iife '  const T = `' "$ok1" '`;' "  const XITE_VERSIONS = Object.freeze(['15.1.10']);"
+expect refuse js-declaration-in-template      cj
+iife '  const T = `${`' "$ok1" '`}`;'
+expect refuse js-declaration-in-nested-template cj
+iife '  const T = `${ "}" }' "$ok1" '`;' "  const XITE_VERSIONS = Object.freeze(['15.1.10']);"
+expect refuse js-template-brace-in-string     cj
+iife "  const OTHER = Object.freeze(['15.1.10', '$ver']);" "  const XITE_VERSIONS = Object.freeze(['15.1.10']);"
+expect refuse js-version-in-unrelated-variable cj
+iife "$ok1" "$ok1"
+expect refuse js-duplicate-declaration         cj
+iife "$ok1" "  let XITE_VERSIONS = ['$ver'];"
+expect refuse js-duplicate-other-keyword       cj
+iife "  const X = 1;"
+expect refuse js-missing-declaration           cj
+iife '  const XITE_VERSIONS = Object.freeze([' "    '15.1.10', '$ver'" '  ]);'
+expect refuse js-multi-line-shape-unsupported  cj
+iife "  const XITE_VERSIONS = Object.freeze([\"15.1.10\", \"$ver\"]);"
+expect refuse js-double-quoted-unsupported     cj
+iife "  const XITE_VERSIONS = Object.freeze(['15.1.10', '$ver', '1.0.0x']);"
+expect refuse js-malformed-element             cj
+iife '  if (false) {' "  $ok1" '  }'
+expect refuse js-declaration-in-dead-block     cj
+iife '  function unused() {' "  $ok1" '  }'
+expect refuse js-declaration-in-inner-function cj
+js "'use strict';" "$ok1" '(function () {' '})();'
+expect refuse js-declaration-outside-iife      cj
+js '(function () {' "$ok1" '})();' '(function () { })();'
+expect refuse js-second-top-level-statement    cj
+iife "$ok1" '  const s = /[/*]/;'
+expect refuse js-regex-literal-unsupported     cj
+iife "$ok1" "  const s = 'open"
+expect refuse js-unterminated-string           cj
+iife "$ok1" '  /* open'
+expect refuse js-unterminated-block-comment    cj
+iife "$ok1" '  const s = `open'
+expect refuse js-unterminated-template         cj
+iife "$ok1" "  const s = '\\" "';"
+expect refuse js-string-line-continuation      cj
+iife "$ok1" '  if (x) {'
+expect refuse js-unbalanced-brace              cj
+iife "$ok1" '  const half = a / 2; const q = (b) / c;'
+expect ok     js-division-is-code              cj
+# gizmo: the same lexer, through the var declaration
+gj() { "$here/check-xite-adapters.sh" "$pick" "$J" "$ver"; }
+okg="  var XITE_VERSION = '$ver';"
+js '(function () {' "$okg" '})();'
+expect ok     gizmo-js-one-line-declaration   gj
+js '(function () {' '/*' "$okg" '*/' "  var XITE_VERSION = '0.0.0';" '})();'
+expect refuse gizmo-js-block-comment-then-wrong gj
+js '(function () {' "$okg" "  XITE_VERSION = '0.0.0';" '})();'
+expect refuse gizmo-js-reassignment            gj
+js '(function () {' "$okg" "  XITE_VERSION += '.1';" '})();'
+expect refuse gizmo-js-compound-assignment     gj
+js '(function () {' '  const T = `' "$okg" '`;' '})();'
+expect refuse gizmo-js-declaration-in-template gj
+js '(function () {' "$okg" '  if (v === XITE_VERSION) { return v == XITE_VERSION; }' '})();'
+expect ok     gizmo-js-comparisons-are-reads   gj
+
+# ---- STACK-REVIEW-1 follow-up: the copied (embedded) files -----------------
+# --install copies a verified tree and re-verifies the COPY, so a source that
+# changes between the build check and the copy cannot ship.
+inst() { rm -rf "$t/dst"; "$k/fetch-xite.sh" --install "$1" "$t/dst"; }
+vc() { "$k/fetch-xite.sh" --verify-copy "$t/dst"; }
+expect ok     copy-valid-install             inst "$t/good/dist"
+expect ok     copy-valid-verify              vc
+fresh; expect ok copy-source-checked-first   v "$t/c/dist"
+printf 'x' >> "$t/c/dist/x_ite.min.js"   # changed after the check, before the copy
+expect refuse copy-source-changed-after-check inst "$t/c/dist"
+fresh; mv "$t/c/dist/assets/b.js" "$t/c/b.js"; ln -s ../../b.js "$t/c/dist/assets/b.js"
+expect refuse copy-source-became-symlink     inst "$t/c/dist"
+fresh; rm "$t/c/dist/assets/lib/a.js"
+expect refuse copy-source-file-removed       inst "$t/c/dist"
+inst "$t/good/dist" >/dev/null 2>&1; rm "$t/dst/assets/b.js"
+expect refuse copy-missing-file              vc
+inst "$t/good/dist" >/dev/null 2>&1; printf 'x' >> "$t/dst/assets/b.js"
+expect refuse copy-changed-bytes             vc
+inst "$t/good/dist" >/dev/null 2>&1; mv "$t/dst/x_ite.min.js" "$t/min.js"; ln -s "$t/min.js" "$t/dst/x_ite.min.js"
+expect refuse copy-file-symlink              vc
+inst "$t/good/dist" >/dev/null 2>&1; mv "$t/dst/assets/lib" "$t/lib2"; ln -s "$t/lib2" "$t/dst/assets/lib"
+expect refuse copy-dir-symlink               vc
+inst "$t/good/dist" >/dev/null 2>&1; printf 'extra' > "$t/dst/assets/extra.js"
+expect refuse copy-extra-file                vc
+inst "$t/good/dist" >/dev/null 2>&1; ln -s b.js "$t/dst/assets/alias.js"
+expect refuse copy-extra-symlink             vc
+inst "$t/good/dist" >/dev/null 2>&1
+expect refuse copy-destination-exists        "$k/fetch-xite.sh" --install "$t/good/dist" "$t/dst"
+rm -rf "$t/dst"; ln -s "$t/good/dist" "$t/dst"
+expect refuse copy-destination-symlink       vc
+rm -f "$t/dst"
+# build-ui.sh must embed through --install and stop (removing dist/) on refusal
+bu() { awk '/fetch-xite.sh" --install "\$xite" "\$here\/dist\/vendor\/x_ite" \|\| \{ rm -rf "\$here\/dist"; exit 4; \}/ { f = 1 } END { exit !f }' "$here/build-ui.sh"; }
+expect ok     build-ui-installs-with-copy-check bu
+nocp() { ! awk '/^[^#]*cp .*\$xite/ { f = 1 } END { exit !f }' "$here/build-ui.sh"; }
+expect ok     build-ui-has-no-unchecked-copy nocp
 printf '\nSUMMARY pass=%d fail=%d\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

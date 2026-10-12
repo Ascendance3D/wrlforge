@@ -71,8 +71,8 @@ Fixed on this branch: 1, 2, 3, 6, 11 (code) and 4, 5, 7, 8, 9, 10
   symlinked dist; symlinked `package.json`; hash and version mismatch; six
   bad manifest paths. All pass. The base script accepted 5 of the forbidden
   cases. The real pinned 16.5.0 tree still verifies.
-- **Limit.** `build-ui.sh` copies the files after the check. A tree that an
-  attacker can change between the check and the copy is out of scope.
+- **Limit (closed by §3.6).** `build-ui.sh` copied the files after the
+  check and did not check the copy. The follow-up verifies the copy.
 
 ### 3.2 #2 — X_ITE version guard (`309a310`)
 
@@ -90,6 +90,9 @@ Fixed on this branch: 1, 2, 3, 6, 11 (code) and 4, 5, 7, 8, 9, 10
   All pass. The base check accepted 7 of the forbidden cases. The Node
   adapter suites pass (47 pass, 1 skipped), including G10: 15.1.10 and
   16.5.0 pass the runtime gate. The pick smoke accepts the embedded 16.5.0.
+- **Defect found later (fixed in §3.6).** The line match accepted a valid
+  declaration line inside a `/* ... */` block comment, a template literal or
+  a dead block.
 - **Limit.** The check reads the line shapes that the adapters use now. A
   reformatted declaration (for example over several lines) is refused, not
   accepted; the check then needs an update.
@@ -177,6 +180,69 @@ Fixed on this branch: 1, 2, 3, 6, 11 (code) and 4, 5, 7, 8, 9, 10
 - **Limit.** A tab-strip drop still shows the insertion caret, not the
   content box; it marks the tab index.
 
+### 3.6 Follow-up — block-comment declaration and copied-file check
+
+This is an owner-requested follow-up to #1 and #2, not a new Copilot
+finding. It is one commit after `845e30a` on this branch.
+
+- **Defect.** `check-xite-adapters.sh` matched lines. It accepted this input
+  (the real declaration does not list `16.5.0`):
+
+  ```javascript
+  /*
+    const XITE_VERSIONS = Object.freeze(['15.1.10', '16.5.0']);
+  */
+  const XITE_VERSIONS = Object.freeze([
+    '15.1.10'
+  ]);
+  ```
+
+  Reproduced on `845e30a` before any change: exit 0. The same check also
+  accepted the declaration inside a template literal and inside
+  `if (false) { ... }` (exit 0 each).
+- **Change.** New `apps/desktop-tauri/xite-js-mask.awk`: a POSIX-awk
+  JavaScript lexer (about 70 lines, no Node.js, no new dependency). It turns
+  each comment into a space, each string into `'_'` (an exact version string
+  stays), and each template literal with all `${...}` expressions into
+  `` `_` ``. It reports the brace depth of each line and the depth-0 code.
+  It refuses (exit 3) an unterminated comment, string or template, a string
+  line continuation, unbalanced braces, and a `/` that could start a regular
+  expression. `check-xite-adapters.sh` then needs, on the masked code:
+  one top-level IIFE and nothing else; exactly one write to the name (`=`,
+  a compound assignment, `++`/`--`, a second `let`/`var`/`const`); and that
+  write as the one-line declaration at IIFE depth 1. The version rules are
+  unchanged: exact quoted elements, the pin in the list, the gizmo equal to
+  the pin. Comments around the declaration are now allowed.
+- **Copied files.** `build-ui.sh` verified the source and then copied it
+  with no further check. It now calls `fetch-xite.sh --install SRC DEST`,
+  which copies the manifest files into a new `dist/vendor/x_ite/` and runs
+  `--verify-copy` on the copy: each manifest file is a regular file with its
+  pinned SHA-256, no path component is a symlink, and the copy holds no
+  unlisted entry. On refusal `build-ui.sh` removes `dist/` and exits 4. The
+  release file list (129 files) and the pinned distribution are unchanged.
+- **Evidence.** `test-xite-guards.sh`: 77 cases, all pass. They are the 18
+  symlink/manifest and 10 adapter cases from §3.1/§3.2 (unchanged), 33 new
+  declaration cases (whole synthetic adapters: current one-line form, normal
+  surrounding comments, block comment then wrong real declaration, block
+  comment only, inline block comment, string, template, nested template,
+  `}` in a template string, version in an unrelated variable, duplicates,
+  missing, multi-line, double-quoted, malformed, dead block, inner function,
+  outside the IIFE, a second top-level statement, regex literal,
+  unterminated string/comment/template, line continuation, unbalanced brace,
+  division, and six gizmo cases including reassignment and `+=`), and 16
+  copy cases (valid install; source changed, linked or removed after the
+  check; copy with a missing file, changed bytes, file link, directory link,
+  extra file, extra link; existing or linked destination; and two static
+  checks that `build-ui.sh` embeds only through `--install`). With the
+  `845e30a` scripts, 18 of the 33 new declaration cases give the wrong
+  result, and the copy check does not exist. The lexer gives byte-identical
+  output for both real adapters under gawk, mawk and BusyBox awk. The real
+  pinned 16.5.0 tree installs and verifies (129 files).
+- **Limit.** The lexer does not support regular-expression literals,
+  string line continuations or destructuring writes. The first two refuse;
+  the adapters use none of them. The check does not prove that code before
+  the declaration cannot `return` or `throw`.
+
 ## 4. Documentation corrections (`4e94e3d`)
 
 - **#4.** The seventh excluded file is `x_ite.zip`. The full list comes from
@@ -248,7 +314,7 @@ that the gated SHA stays the final SHA.
 Threads stay unresolved until the owner decides.
 
 - **#1 (r4242714025):** Fixed in `309a310` on `review/copilot-stack-hardening-1`. `--verify` now refuses a link in any component of a manifest path, a linked dist or `package.json`, and any manifest path with an empty, `.` or `..` component. `test-xite-guards.sh` covers final-file, intermediate, deep, outside-tree and correct-hash links; the old check accepted five of them.
-- **#2 (r4242714046):** Fixed in `309a310`. `check-xite-adapters.sh` reads the single real `XITE_VERSIONS` declaration (and the gizmo `XITE_VERSION` line) and refuses a version that appears only in a comment or another string. 10 offline cases.
+- **#2 (r4242714046):** Fixed in `309a310` and hardened in the follow-up commit (§3.6). `check-xite-adapters.sh` lexes each adapter first, so only the one real `XITE_VERSIONS` declaration (and the gizmo `XITE_VERSION` line) at the IIFE top level counts; a version in a line or block comment, a string, a template literal or a nested block is refused. 43 offline adapter cases.
 - **#3 (r4242714062):** Fixed in `604718b`. The diagnostics are sorted by `(start, end, code)`, so the lookup binary-searches and stops at the ROUTE end. Warnings are identical to the old lookup on generated documents and all fixtures; 44,000 ROUTEs: 612 ms → 216 ms total.
 - **#4 (r4242714080):** Fixed in `4e94e3d`: the seventh file is `x_ite.zip`, confirmed by a name-by-name manifest comparison.
 - **#5 (r4242714093):** Fixed in `4e94e3d`: the record now lists which runs used `18c2fcf` and which used `c23646b`. Both have full evidence with identical verdicts; `c23646b` only adds the document.
@@ -267,8 +333,9 @@ Threads stay unresolved until the owner decides.
 ## 10. Remaining limits
 
 1. Windows and macOS are not tested (§7).
-2. The X_ITE build guards have a check-then-copy window (§3.1) and accept
-   only the current one-line declaration shape (§3.2).
+2. The X_ITE version guard accepts only the current one-line declaration
+   shape, and its lexer refuses regular-expression literals (§3.2, §3.6).
+   The check-then-copy window is closed: the copy is verified (§3.6).
 3. Tab-strip drops show an insertion caret, not a content box (§3.5).
 4. The About delay is a test hook (§3.4).
 5. The temporary `fx58` fixture set is gone; fixture comparisons use the

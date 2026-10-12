@@ -32,9 +32,8 @@ fi
 "$here/check-xite-adapters.sh" "$here/../../src/preview/xite-pick-adapter.js" "$here/ui/static/xite-gizmo-adapter.js" "$ver" || exit 4
 # Exactly the verified manifest files (x_ite.min.js, x_ite.css, LICENSE.md,
 # assets/): nothing unlisted is embedded, even from a fuller X_ITE_DIST.
-manifest="$here/xite/$(sed -n 's/^manifest=//p' "$here/xite/PIN" | head -1)"
-while read -r _ f; do
-  mkdir -p "$here/dist/vendor/x_ite/$(dirname "$f")"
-  cp "$xite/$f" "$here/dist/vendor/x_ite/$f"
-done < <(tr -d '\r' < "$manifest")
+# --install verifies the COPY again after copying (STACK-REVIEW-1 follow-up),
+# so a source that changes after the check above cannot ship. On refusal,
+# dist/ is removed so no later step can package a partial or changed copy.
+"$here/fetch-xite.sh" --install "$xite" "$here/dist/vendor/x_ite" || { rm -rf "$here/dist"; exit 4; }
 echo "dist ready: $(du -sh "$here/dist" | cut -f1) (X_ITE $ver from $xite)"

@@ -68,11 +68,21 @@ apps/desktop-tauri/
    the one real `const XITE_VERSIONS = Object.freeze([...]);` declaration of
    the pick adapter does not list the pinned version as an exact element, or
    the one real `var XITE_VERSION = '...';` line of the gizmo adapter is not
-   the pinned version. A version in a comment, a trailing comment or another
-   string does not count (STACK-REVIEW-1; the first version searched the
-   whole file). `test-xite-guards.sh` runs 28 offline cases for 3 and 4.
-5. `build-ui.sh` copies only the manifest files into `dist/vendor/x_ite/`.
-   An extra file in a fuller `X_ITE_DIST` is never embedded.
+   the pinned version. Each adapter is first masked by `xite-js-mask.awk`, a
+   small POSIX-awk JavaScript lexer, so a declaration in a comment (line or
+   block), a string or a template literal does not count. The declaration
+   must be the only write to its name and a direct statement of the
+   adapter's one top-level IIFE, so one in a nested or dead block does not
+   count either. The lexer refuses what it cannot lex with certainty
+   (STACK-REVIEW-1 and its follow-up; the first version searched the whole
+   file, the second matched lines and accepted a block comment).
+5. `build-ui.sh` embeds through `fetch-xite.sh --install`: it copies only the
+   manifest files into a new `dist/vendor/x_ite/` and then verifies the
+   **copy** (`--verify-copy`): every file is a regular file with its pinned
+   SHA-256, no path component is a symlink, and nothing unlisted is there.
+   A source that changes after step 3 is caught on the bytes that ship; on
+   refusal `dist/` is removed. An extra file in a fuller `X_ITE_DIST` is
+   never embedded. `test-xite-guards.sh` runs 77 offline cases for 3–5.
 
 No file is replaced after `build-ui.sh` runs. `packaging/package-linux.sh`
 runs `build-ui.sh` unchanged. The network is used only at build time, once
