@@ -31,4 +31,6 @@ features = [
   "Range", "TreeWalker", "Node", "DomRectList",
   "PointerEvent", "MouseEvent", "AddEventListenerOptions", "PointerEventInit",
   "Navigator", "ResizeObserver", "ResizeObserverEntry",
+  # UI-MENU-1: the menu focus record.
+  "FocusEvent",
 ]

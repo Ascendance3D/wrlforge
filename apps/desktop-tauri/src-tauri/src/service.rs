@@ -1683,21 +1683,34 @@ fn invalid_routes(text: &str) -> Vec<p::RouteWarning> {
         .routes
         .iter()
         .filter(|r| r.status.class() == "unresolved")
-        .map(|r| {
-            let inside = |d: &&wrlforge_vrml::scope::ScopeDiagnostic| {
-                d.range.start.offset >= r.range.start.offset
-                    && d.range.end.offset <= r.range.end.offset
-            };
-            p::RouteWarning {
-                line: r.range.start.line,
-                detail: findings
-                    .iter()
-                    .find(inside)
-                    .map(|d| format!("{}: {}", d.code, d.message))
-                    .unwrap_or_else(|| r.reason.to_string()),
-            }
+        .map(|r| p::RouteWarning {
+            line: r.range.start.line,
+            detail: first_finding_inside(&findings, r.range.start.offset, r.range.end.offset)
+                .map(|d| format!("{}: {}", d.code, d.message))
+                .unwrap_or_else(|| r.reason.to_string()),
         })
         .collect()
+}
+
+/// STACK-REVIEW-1 (PR #140 r4242714062): the first finding, in `findings`
+/// order, whose range lies inside `start..=end`. `ScopeGraph::diagnostics`
+/// sorts by (start, end, code), so a binary search finds the first finding
+/// that starts at or after `start`, and the scan stops at the first one that
+/// starts after `end` (a finding cannot end before it starts). The answer is
+/// the same one a linear `find` gives, without a full scan per ROUTE.
+fn first_finding_inside(
+    findings: &[wrlforge_vrml::scope::ScopeDiagnostic],
+    start: u32,
+    end: u32,
+) -> Option<&wrlforge_vrml::scope::ScopeDiagnostic> {
+    debug_assert!(findings
+        .windows(2)
+        .all(|w| w[0].range.start.offset <= w[1].range.start.offset));
+    let first = findings.partition_point(|d| d.range.start.offset < start);
+    findings[first..]
+        .iter()
+        .take_while(|d| d.range.start.offset <= end)
+        .find(|d| d.range.end.offset <= end)
 }
 
 #[cfg(test)]
@@ -1733,6 +1746,138 @@ mod tests {
     /// XITE-16-UPGRADE-2: the preview's ROUTE warning comes only from a
     /// PROVEN whole-ROUTE defect in the exact preview text. Uncertain answers
     /// never warn, the source and its history are untouched, and Save works.
+    /// The pre-STACK-REVIEW-1 lookup, kept verbatim as the reference that
+    /// the indexed lookup must reproduce exactly.
+    fn invalid_routes_linear(text: &str) -> Vec<(u32, String)> {
+        let parsed = wrlforge_vrml::parse(text);
+        let graph = wrlforge_vrml::scope::build(&parsed);
+        let findings = graph.diagnostics();
+        graph
+            .routes
+            .iter()
+            .filter(|r| r.status.class() == "unresolved")
+            .map(|r| {
+                let inside = |d: &&wrlforge_vrml::scope::ScopeDiagnostic| {
+                    d.range.start.offset >= r.range.start.offset
+                        && d.range.end.offset <= r.range.end.offset
+                };
+                (
+                    r.range.start.line,
+                    findings
+                        .iter()
+                        .find(inside)
+                        .map(|d| format!("{}: {}", d.code, d.message))
+                        .unwrap_or_else(|| r.reason.to_string()),
+                )
+            })
+            .collect()
+    }
+
+    fn indexed(text: &str) -> Vec<(u32, String)> {
+        invalid_routes(text)
+            .into_iter()
+            .map(|w| (w.line, w.detail))
+            .collect()
+    }
+
+    /// Many ROUTEs of every verdict: valid, each proven-invalid kind,
+    /// ambiguous, unsupported (EXTERNPROTO), before-DEF and across a PROTO.
+    fn many_routes(n: usize) -> String {
+        let mut t = String::from(
+            "#VRML V2.0 utf8\nEXTERNPROTO E [ eventOut SFFloat out ] \"e.wrl\"\nDEF A E { }\n\
+             DEF D TimeSensor { }\nDEF D TimeSensor { }\n\
+             PROTO Q [ ] { DEF In TimeSensor { } }\n",
+        );
+        for i in 0..n {
+            t.push_str(&format!(
+                "ROUTE Late{i}.fraction_changed TO P{i}.set_fraction\n"
+            ));
+            t.push_str(&format!("DEF T{i} TimeSensor {{ }}\nDEF P{i} PositionInterpolator {{ }}\nDEF Late{i} TimeSensor {{ }}\n"));
+            t.push_str(&format!(
+                "ROUTE T{i}.fraction_changed TO P{i}.set_fraction\n"
+            ));
+            t.push_str(&format!("ROUTE T{i}.isActive TO T{i}.enabled\n"));
+            t.push_str(&format!(
+                "ROUTE Ghost{i}.fraction_changed TO P{i}.set_fraction\n"
+            ));
+            t.push_str(&format!("ROUTE T{i}.nosuch TO P{i}.set_fraction\n"));
+            t.push_str(&format!("ROUTE P{i}.set_fraction TO T{i}.set_enabled\n"));
+            t.push_str(&format!(
+                "ROUTE T{i}.fraction_changed TO P{i}.value_changed\n"
+            ));
+            t.push_str(&format!(
+                "ROUTE P{i}.value_changed TO T{i}.set_cycleInterval\n"
+            ));
+            t.push_str(&format!("ROUTE D.fraction_changed TO P{i}.set_fraction\n"));
+            t.push_str(&format!("ROUTE A.other TO P{i}.set_fraction\n"));
+            t.push_str(&format!("ROUTE In.fraction_changed TO P{i}.set_fraction\n"));
+        }
+        t
+    }
+
+    #[test]
+    fn route_warning_lookup_matches_the_linear_reference() {
+        for n in [0, 1, 3, 40] {
+            let t = many_routes(n);
+            let want = invalid_routes_linear(&t);
+            assert_eq!(indexed(&t), want, "n={n}");
+            if n > 0 {
+                // 7 proven-invalid ROUTEs per block; the valid, ambiguous,
+                // unsupported ones never warn.
+                assert_eq!(want.len(), 7 * n, "n={n}: {want:?}");
+            }
+        }
+        // Every repository .wrl fixture (plain text) gives the same warnings.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let mut stack = vec![
+            root.join("test/fixtures"),
+            root.join("apps/desktop-tauri/src-tauri/tests/fixtures"),
+        ];
+        let (mut files, mut warned) = (0, 0);
+        while let Some(dir) = stack.pop() {
+            let Ok(rd) = fs::read_dir(&dir) else { continue };
+            for e in rd.flatten() {
+                let path = e.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|x| x == "wrl") {
+                    let Ok(t) = fs::read_to_string(&path) else {
+                        continue;
+                    };
+                    let want = invalid_routes_linear(&t);
+                    assert_eq!(indexed(&t), want, "{}", path.display());
+                    files += 1;
+                    warned += usize::from(!want.is_empty());
+                }
+            }
+        }
+        assert!(files > 50 && warned >= 2, "files={files} warned={warned}");
+    }
+
+    /// Timing only: `cargo test --release -- --ignored --nocapture route_warning_lookup_timing`
+    #[test]
+    #[ignore]
+    fn route_warning_lookup_timing() {
+        for n in [250, 1000, 4000] {
+            let t = many_routes(n);
+            let s = std::time::Instant::now();
+            let old = invalid_routes_linear(&t);
+            let t_old = s.elapsed();
+            let s = std::time::Instant::now();
+            let new = indexed(&t);
+            let t_new = s.elapsed();
+            assert_eq!(new, old);
+            let s = std::time::Instant::now();
+            let g = wrlforge_vrml::scope::build(&wrlforge_vrml::parse(&t));
+            let _ = g.diagnostics();
+            let t_base = s.elapsed();
+            println!(
+                "ROUTE-TIMING n_blocks={n} routes={} invalid={} linear={t_old:?} indexed={t_new:?} parse+scope+diagnostics={t_base:?}",
+                11 * n, old.len()
+            );
+        }
+    }
+
     #[test]
     fn route_warnings_report_only_proven_invalid_routes() {
         let lines = |t: &str| invalid_routes(t).iter().map(|w| w.line).collect::<Vec<_>>();

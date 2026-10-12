@@ -1366,6 +1366,27 @@ pub fn zone_rect(content: Rect, zone: Zone) -> Rect {
     }
 }
 
+/// STACK-REVIEW-1 (PR #142 r4242637970): the content rectangle `panel` gets
+/// if the drop `t` is accepted, in a `width` x `height` workspace. The drop is
+/// built on a COPY of `layout` (the live layout is not changed), validated by
+/// `Layout::dock`, and solved by the same `solve` the workspace uses, so the
+/// tab strips, dividers, minimum sizes, split merging and the space the
+/// moved panel frees all count. A refused drop returns its error; the caller
+/// then shows `zone_rect` as a fallback guide.
+pub fn drop_preview(
+    layout: &Layout,
+    panel: PanelId,
+    t: DropTarget,
+    width: f64,
+    height: f64,
+) -> Result<Rect, LayoutError> {
+    let candidate = layout.dock(panel, t)?;
+    solve(&candidate, width, height)
+        .group_of(panel)
+        .map(|g| g.content)
+        .ok_or(LayoutError::NotVisible(panel))
+}
+
 /// The tab-strip insertion index for pointer `x`, given each tab's
 /// horizontal center (left to right).
 pub fn insertion_index(centers: &[f64], x: f64) -> usize {

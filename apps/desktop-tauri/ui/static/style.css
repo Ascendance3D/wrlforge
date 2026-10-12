@@ -353,3 +353,20 @@ x3d-canvas.picking { cursor: crosshair; }
 .viewport .pane-title .badge { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .viewport .pane-title .toggle { margin-left: auto; }
 .tool-group { display: inline-flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
+
+/* UI-MENU-1: the application menu bar (File … Help). Colors are --wf-* tokens. */
+.menubar { display: flex; align-items: center; gap: .1rem; padding: .1rem .5rem; background: var(--wf-surface-chrome); border-bottom: 1px solid var(--wf-border); position: relative; z-index: 30; }
+.menubar-menu { position: relative; display: inline-flex; }
+.menubar-button { background: transparent; color: var(--wf-text-primary); padding: .2rem .6rem; font-size: .92rem; border-radius: 3px; }
+.menubar-button:hover, .menubar-button[aria-expanded="true"] { background: var(--wf-surface-hover); }
+.menubar-button:focus-visible { outline-offset: -3px; }
+.menubar-button .mnemonic { text-decoration: underline; text-underline-offset: 2px; }
+.menubar-list { min-width: 17rem; top: calc(100% + 2px); z-index: 40; }
+.menu-item { width: 100%; }
+.menu-item .check { display: inline-block; width: 1rem; text-align: center; color: var(--wf-accent); flex: none; }
+.menu-item .menu-label { flex: 1 1 auto; }
+.menu-item .menu-key { color: var(--wf-text-muted); font-size: .85rem; padding-left: 1.5rem; white-space: nowrap; }
+.menu-item[aria-disabled="true"] { color: var(--wf-text-disabled); cursor: default; }
+.menu-item[aria-disabled="true"]:hover { background: transparent; color: var(--wf-text-disabled); }
+.menu-item[aria-disabled="true"]:focus-visible { background: var(--wf-surface-hover); color: var(--wf-text-disabled); }
+.menu-sep { height: 1px; margin: .2rem .3rem; background: var(--wf-separator); }

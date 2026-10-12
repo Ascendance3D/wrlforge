@@ -123,6 +123,10 @@ An error **without** a `code` (a wasm trap) **poisons** the wasm **instance**
 (RUST-1A; RUST-1 poisoned only the engine that saw the trap): every later call
 through **any** engine on that instance refuses with `EENGINE`. A trapped
 instance is never trusted again. A separately loaded instance is unaffected.
+The poison check runs **first**, before argument checks, and covers
+facade-only operations such as `session.current()` (PR #130 review fix). Only
+three labels stay readable: `engine.poisoned`, `session.disposed` and
+`snapshot.revision`. A refused `dispose()` does not mark the session disposed.
 
 ## 5. Session ownership and revisions
 

@@ -513,6 +513,24 @@ the camera must survive every Move.
   `cargo test -p wrl-forge-desktop --test typed_regression`.
 - Not a full VRML97 or X3D conformance validator.
 
+### UI-MENU-1 — desktop menus and command integration
+
+- Seven in-window menus (File, Edit, View, Create, Tools, World, Help), drawn
+  from the typed command registry on every platform. Each item runs through
+  `command::run`, the toolbar's path. macOS also gets the standard
+  application menu (untested on macOS). Contract, IDs, keyboard, platform
+  limits and results: [UI_MENU_1](UI_MENU_1.md).
+- One window-level shortcut handler replaces the Source-only handler.
+  Text fields keep their own Undo and clipboard keys. IME composition, AltGr,
+  dialogs and drags block application shortcuts.
+- Quit (menu, Ctrl+Q, macOS) uses the existing CloseGate. Menu Cut and Paste
+  reach Rust only through the editor's `doc_edit` path
+  (`Action::SourceEdit`).
+- Mall Item and World Project items are present and disabled ("Not migrated
+  to the Rust application.").
+- Tests: `cargo test -p wrlforge-desktop-protocol command` and
+  `./smoke.sh --headless --menu`.
+
 ### Future backlog
 
 - VrmlPad scripting compatibility. Not started; needs its own approved lane.

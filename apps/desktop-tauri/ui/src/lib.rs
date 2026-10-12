@@ -6,6 +6,7 @@
 
 mod about;
 mod camera;
+mod clipboard;
 mod command;
 mod create;
 mod dock;
@@ -13,6 +14,7 @@ mod editor;
 mod extrusion;
 mod gizmo;
 mod ipc;
+mod menu;
 mod native;
 mod panels;
 mod pick;
@@ -40,8 +42,12 @@ pub fn start() {
     about::about();
     // UI-DOCK-1: the layout state, before any render effect exists.
     dock::init();
+    // UI-MENU-1: the menu state, before mount for the same reason.
+    menu::init();
     leptos::mount::mount_to_body(App);
     dock::install();
+    // UI-MENU-1: the one window-level shortcut handler and menu access.
+    menu::install();
     pick::install();
     gizmo::install();
     ui::start_external_watch();
@@ -54,6 +60,8 @@ pub fn start() {
         dock::load().await;
         theme::init().await;
         native::install().await;
+        // UI-MENU-1: the macOS application menu's About / Quit (once).
+        menu::listen_native().await;
         if let Ok(Some(o)) =
             ipc::call::<Option<p::OpenOutcome>>("startup_document", ipc::NoArgs {}).await
         {
@@ -75,6 +83,10 @@ pub fn start() {
             ipc::call::<Option<smoke::DockPlan>>("smoke_dock_plan", ipc::NoArgs {}).await
         {
             smoke::run_dock(plan).await;
+        } else if let Ok(Some(plan)) =
+            ipc::call::<Option<smoke::MenuPlan>>("smoke_menu_plan", ipc::NoArgs {}).await
+        {
+            smoke::run_menu(plan).await;
         }
     });
 }
@@ -102,7 +114,6 @@ pub(crate) fn SourcePanel() -> impl IntoView {
                     readonly=move || !has_doc()
                     on:input=move |_| editor::on_input()
                     on:beforeinput=on_beforeinput
-                    on:keydown=command::on_keydown
                     on:keyup=move |_| editor::update_cursor()
                     on:click=move |_| editor::update_cursor()
                     on:select=move |_| editor::update_cursor()
@@ -131,6 +142,8 @@ fn App() -> impl IntoView {
     // APP-SHELL-0: every File / Edit button runs through the registry.
     view! {
         <div class="app">
+            // UI-MENU-1: File | Edit | View | Create | Tools | World | Help.
+            <menu::MenuBar/>
             <header class="toolbar" role="toolbar" aria-label="File and edit commands">
                 <span class="brand" id="app-identity">{cmd::app_display_name()}</span>
                 <CommandButton command=CommandId::FileNewWorld dom_id="btn-new"/>

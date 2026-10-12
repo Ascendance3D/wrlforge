@@ -198,7 +198,7 @@ pub(super) async fn source() -> Option<Source> {
 
 /// The gizmo is drawn, usable and bound to the CURRENT selection, revision
 /// and preview generation.
-async fn gz_ready(ms: u32) -> Option<crate::gizmo::Target> {
+pub(super) async fn gz_ready(ms: u32) -> Option<crate::gizmo::Target> {
     wait_ms(ms, || {
         let t = GIZMO.with_borrow(|g| {
             (g.drag.is_none() && !g.committing && g.layout.is_some())
@@ -312,7 +312,7 @@ fn grab(axis: Axis) -> Option<((f64, f64), (f64, f64))> {
 
 /// Press on the handle, move `dist` px along its screen direction in
 /// `steps`, without releasing. Returns the last pointer position.
-async fn press_and_move(axis: Axis, dist: f64, steps: u32) -> Option<(f64, f64)> {
+pub(super) async fn press_and_move(axis: Axis, dist: f64, steps: u32) -> Option<(f64, f64)> {
     let (g, d) = grab(axis)?;
     real("down", g.0, g.1).await.ok()?;
     ipc::sleep(60).await;

@@ -112,6 +112,23 @@ fn actions_only_name_allowed_backend_commands() {
                 }
             }
             Action::UiOnly => assert!(!c.mutates_document, "{}", c.key),
+            // UI-MENU-1: a Source widget edit reaches Rust only through the
+            // editor's doc_edit path, and only with the Source focused.
+            Action::SourceEdit => {
+                assert!(c.mutates_document, "{}", c.key);
+                assert!(
+                    matches!(
+                        c.requires,
+                        Requires::SourceFocus | Requires::SourceSelection
+                    ),
+                    "{}",
+                    c.key
+                );
+            }
+            Action::Planned(why) => {
+                assert!(!c.mutates_document, "{}", c.key);
+                assert!(!why.is_empty(), "{}", c.key);
+            }
         }
     }
     // Nothing in the registry writes text directly: no doc_edit* or field edit.
@@ -212,4 +229,343 @@ fn layout_commands_never_touch_the_document() {
         ViewHideSceneTree.availability(shown),
         Availability::Disabled(PANEL_HIDDEN)
     );
+}
+
+// ---- UI-MENU-1 ----
+
+#[test]
+fn every_menu_shows_each_of_its_commands_exactly_once() {
+    let mut menus: Vec<Menu> = MENUS.iter().map(|m| m.menu).collect();
+    assert_eq!(
+        menus,
+        [
+            Menu::File,
+            Menu::Edit,
+            Menu::View,
+            Menu::Create,
+            Menu::Tools,
+            Menu::World,
+            Menu::Help
+        ]
+    );
+    menus.dedup();
+    assert_eq!(menus.len(), 7);
+    let mut seen = Vec::new();
+    for m in MENUS {
+        for e in m.entries {
+            let ids: Vec<CommandId> = match *e {
+                MenuEntry::Command(id) | MenuEntry::Preset(id) => vec![id],
+                MenuEntry::Panel(show, hide) => {
+                    assert_eq!(show.panel(), hide.panel());
+                    assert_eq!(CommandId::hide_for(show.panel().unwrap()), Some(hide));
+                    vec![show, hide]
+                }
+                MenuEntry::Separator | MenuEntry::Group(_) => vec![],
+            };
+            for id in ids {
+                assert_eq!(
+                    id.spec().menu,
+                    m.menu,
+                    "{} is in the {} menu",
+                    id.key(),
+                    m.label
+                );
+                seen.push(id);
+            }
+        }
+    }
+    for id in CommandId::ALL {
+        assert_eq!(
+            seen.iter().filter(|s| **s == id).count(),
+            1,
+            "{} must appear in exactly one menu entry",
+            id.key()
+        );
+    }
+    let mut mn: Vec<_> = MENUS.iter().map(|m| m.mnemonic).collect();
+    mn.sort_unstable();
+    mn.dedup();
+    assert_eq!(mn.len(), 7, "mnemonics are unique");
+}
+
+#[test]
+fn world_items_are_disabled_with_the_migration_reason() {
+    let ctx = CommandContext {
+        has_document: true,
+        ..CommandContext::default()
+    };
+    let world: Vec<_> = COMMANDS.iter().filter(|c| c.menu == Menu::World).collect();
+    assert_eq!(world.len(), 6);
+    for c in world {
+        assert_eq!(c.action, Action::Planned(NOT_MIGRATED), "{}", c.key);
+        assert_eq!(c.id.availability(ctx), Availability::Disabled(NOT_MIGRATED));
+        assert_eq!(c.id.refusal(ctx), Some(NOT_MIGRATED));
+    }
+    assert_eq!(NOT_MIGRATED, "Not migrated to the Rust application.");
+}
+
+#[test]
+fn planned_commands_never_run_in_any_state() {
+    use crate::layout::PanelId;
+    let all = CommandContext {
+        has_document: true,
+        can_undo: true,
+        can_redo: true,
+        shown: PanelSet::of(&PanelId::ALL),
+        focus: FocusKind::Source,
+        text_selected: true,
+        native_viewport: false,
+        outline_ready: true,
+    };
+    let planned: Vec<_> = COMMANDS
+        .iter()
+        .filter(|c| matches!(c.action, Action::Planned(_)))
+        .map(|c| c.key)
+        .collect();
+    assert_eq!(
+        planned,
+        [
+            "edit.find",
+            "edit.replace",
+            "edit.goToLine",
+            "edit.deleteNode",
+            "edit.duplicateNode",
+            "view.zoomIn",
+            "view.zoomOut",
+            "view.zoomReset",
+            "world.mall.validate",
+            "world.mall.repack",
+            "world.project.open",
+            "world.project.scan",
+            "world.project.preview",
+            "world.project.package",
+            "help.shortcuts",
+            "help.licenses",
+        ]
+    );
+    for c in COMMANDS {
+        if let Action::Planned(why) = c.action {
+            assert_eq!(c.id.availability(all), Availability::Disabled(why));
+            assert!(
+                c.shortcuts.is_empty() && c.native_keys.is_empty(),
+                "{}",
+                c.key
+            );
+        }
+    }
+}
+
+#[test]
+fn theme_commands_match_the_theme_registry() {
+    use crate::theme::THEMES;
+    let cmds: Vec<_> = COMMANDS
+        .iter()
+        .filter_map(|c| c.id.theme().map(|t| (c, t)))
+        .collect();
+    assert_eq!(cmds.len(), THEMES.len());
+    for t in THEMES {
+        let id = CommandId::theme_for(t.id).expect("a command per theme");
+        assert_eq!(id.spec().label, t.label);
+        assert_eq!(id.spec().menu, Menu::View);
+        assert!(!id.spec().mutates_document);
+    }
+    for (c, t) in cmds {
+        assert!(
+            crate::theme::is_known(t),
+            "{} names unknown theme {t}",
+            c.key
+        );
+    }
+}
+
+#[test]
+fn create_and_tool_commands_map_to_the_existing_actions() {
+    use crate::Primitive;
+    for prim in Primitive::ALL {
+        let id = CommandId::create_for(prim);
+        assert_eq!(id.primitive(), Some(prim));
+        assert_eq!(id.spec().label, prim.label());
+        assert_eq!(id.spec().action, Action::Backend(&["doc_create"]));
+        assert_eq!(id.spec().requires, Requires::Document);
+    }
+    use crate::gizmo::Tool;
+    assert_eq!(CommandId::ToolSelect.spec().check, Check::Pick);
+    assert_eq!(CommandId::ToolMove.spec().check, Check::Gizmo(Tool::Move));
+    assert_eq!(
+        CommandId::ToolRotate.spec().check,
+        Check::Gizmo(Tool::Rotate)
+    );
+    assert_eq!(CommandId::ToolScale.spec().check, Check::Gizmo(Tool::Scale));
+}
+
+#[test]
+fn quit_uses_the_window_close_gate_and_ctrl_q() {
+    let s = CommandId::AppQuit.spec();
+    assert_eq!(s.action, Action::Backend(&["app_quit"]));
+    assert!(ALLOWED_BACKEND.contains(&"app_quit"));
+    assert_eq!(from_shortcut("q", true, false), Some(CommandId::AppQuit));
+    assert_eq!(from_shortcut("q", false, false), None);
+    assert_eq!(s.shortcuts[0].label(Platform::MacOs), "⌘Q");
+    for id in MAC_APP_MENU {
+        assert!(matches!(id, CommandId::HelpAbout | CommandId::AppQuit));
+    }
+}
+
+#[test]
+fn clipboard_keys_stay_native_and_are_never_dispatched() {
+    use CommandId::*;
+    for (id, k) in [
+        (EditCut, "x"),
+        (EditCopy, "c"),
+        (EditPaste, "v"),
+        (EditSelectAll, "a"),
+    ] {
+        let s = id.spec();
+        assert!(s.shortcuts.is_empty(), "{}: no dispatched shortcut", s.key);
+        assert_eq!(s.native_keys[0].key, k);
+        assert_eq!(from_shortcut(k, true, false), None);
+    }
+    assert_eq!(EditCut.spec().action, Action::SourceEdit);
+    assert_eq!(EditPaste.spec().action, Action::SourceEdit);
+    assert_eq!(EditCopy.spec().action, Action::UiOnly);
+    assert_eq!(EditSelectAll.spec().action, Action::UiOnly);
+}
+
+#[test]
+fn focus_requirements_explain_why() {
+    use CommandId::*;
+    let base = CommandContext {
+        has_document: true,
+        ..CommandContext::default()
+    };
+    let src = CommandContext {
+        focus: FocusKind::Source,
+        ..base
+    };
+    let src_sel = CommandContext {
+        text_selected: true,
+        ..src
+    };
+    let field_sel = CommandContext {
+        focus: FocusKind::TextField,
+        text_selected: true,
+        ..base
+    };
+    assert_eq!(
+        EditPaste.availability(base),
+        Availability::Disabled(NEEDS_SOURCE)
+    );
+    assert_eq!(EditPaste.availability(src), Availability::Enabled);
+    assert_eq!(
+        EditPaste.availability(field_sel),
+        Availability::Disabled(NEEDS_SOURCE)
+    );
+    assert_eq!(
+        EditCut.availability(src),
+        Availability::Disabled(NEEDS_SOURCE_SELECTION)
+    );
+    assert_eq!(EditCut.availability(src_sel), Availability::Enabled);
+    assert_eq!(EditCut.refusal(field_sel), Some(NEEDS_SOURCE));
+    assert_eq!(
+        EditCopy.availability(base),
+        Availability::Disabled(NEEDS_TEXT_FOCUS)
+    );
+    assert_eq!(
+        EditCopy.availability(src),
+        Availability::Disabled(NEEDS_TEXT_SELECTION)
+    );
+    assert_eq!(EditCopy.availability(field_sel), Availability::Enabled);
+    assert_eq!(
+        EditSelectAll.availability(base),
+        Availability::Disabled(NEEDS_TEXT_FOCUS)
+    );
+    assert_eq!(EditSelectAll.availability(src), Availability::Enabled);
+    // No document: Source edits say so first.
+    let none = CommandContext {
+        focus: FocusKind::Source,
+        text_selected: true,
+        ..CommandContext::default()
+    };
+    assert_eq!(EditPaste.refusal(none), Some(NO_DOCUMENT));
+    // Viewport tools.
+    assert_eq!(
+        ToolMove.availability(CommandContext::default()),
+        Availability::Disabled(NO_DOCUMENT)
+    );
+    assert_eq!(ToolMove.availability(base), Availability::Enabled);
+    let native = CommandContext {
+        native_viewport: true,
+        ..base
+    };
+    assert_eq!(ToolSelect.refusal(native), Some(NEEDS_XITE));
+    assert_eq!(
+        ToolExtrusionOutline.availability(base),
+        Availability::Disabled(NEEDS_OUTLINE)
+    );
+    let ready = CommandContext {
+        outline_ready: true,
+        ..base
+    };
+    assert_eq!(
+        ToolExtrusionOutline.availability(ready),
+        Availability::Enabled
+    );
+}
+
+#[test]
+fn every_disabled_state_has_a_reason() {
+    use crate::layout::PanelId;
+    // Every combination of the boolean facts and focus kinds.
+    for bits in 0u32..64 {
+        for focus in [FocusKind::Other, FocusKind::Source, FocusKind::TextField] {
+            let ctx = CommandContext {
+                has_document: bits & 1 != 0,
+                can_undo: bits & 2 != 0,
+                can_redo: bits & 4 != 0,
+                shown: if bits & 8 != 0 {
+                    PanelSet::of(&PanelId::ALL)
+                } else {
+                    PanelSet::default()
+                },
+                focus,
+                text_selected: bits & 16 != 0,
+                native_viewport: bits & 32 != 0,
+                outline_ready: bits & 16 != 0,
+            };
+            for c in COMMANDS {
+                if let Availability::Disabled(why) = c.id.availability(ctx) {
+                    assert!(!why.is_empty(), "{}", c.key);
+                }
+                // A run-time refusal is always also shown as disabled.
+                if let Some(why) = c.id.refusal(ctx) {
+                    assert_eq!(
+                        c.id.availability(ctx),
+                        Availability::Disabled(why),
+                        "{}",
+                        c.key
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn native_menu_events_accept_only_app_menu_keys() {
+    assert_eq!(MENU_EVENT, "menu-command");
+    for c in MAC_APP_MENU {
+        assert_eq!(from_native_menu(c.key()), Some(*c));
+    }
+    // A real registry command outside the application menu is refused.
+    assert_eq!(from_native_menu(CommandId::FileSave.key()), None);
+    assert_eq!(from_native_menu(CommandId::EditCut.key()), None);
+    for bad in [
+        "",
+        "app.quit ",
+        "APP.QUIT",
+        "help",
+        "file.delete-everything",
+    ] {
+        assert_eq!(from_native_menu(bad), None, "{bad:?}");
+    }
 }
