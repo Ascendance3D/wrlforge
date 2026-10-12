@@ -209,5 +209,47 @@ bu() { awk '/fetch-xite.sh" --install "\$xite" "\$here\/dist\/vendor\/x_ite" \|\
 expect ok     build-ui-installs-with-copy-check bu
 nocp() { ! awk '/^[^#]*cp .*\$xite/ { f = 1 } END { exit !f }' "$here/build-ui.sh"; }
 expect ok     build-ui-has-no-unchecked-copy nocp
+
+# ---- PR #144 review r4244998855: the fetch path (tarball -> target/xite) ----
+# cp -P follows a link in a PARENT directory, so a linked package/dist/assets
+# used to be dereferenced into regular files that passed the final check.
+# --from-tarball is the fetch without the download; the SHA pin still applies.
+cp "$k/xite/PIN" "$t/PIN.bak"
+pk() { rm -rf "$t/pk"; mkdir -p "$t/pk"; cp -a "$t/good" "$t/pk/package"; }   # package/{package.json,dist}
+tgz() { # tgz: tar $t/pk into $t/x.tgz and pin its SHA-256
+  rm -f "$t/x.tgz"; tar -czf "$t/x.tgz" -C "$t/pk" package
+  sed "s/^tarball_sha256=.*/tarball_sha256=$(sha "$t/x.tgz")/" "$t/PIN.bak" > "$k/xite/PIN"
+}
+ft() { rm -rf "$k/target"; "$k/fetch-xite.sh" --from-tarball "$t/x.tgz"; }
+fdest="$k/target/xite/9.9.9"
+pk; tgz
+expect ok     fetch-tarball-valid              ft
+expect ok     fetch-tarball-result-verifies    "$k/fetch-xite.sh" --verify "$fdest/dist"
+nolinks() { [[ -z "$(find "$fdest" -type l)" ]]; }
+expect ok     fetch-tarball-result-has-no-link nolinks
+pk; mkdir -p "$t/pk/real"; mv "$t/pk/package/dist/assets" "$t/pk/real/"; ln -s ../../real/assets "$t/pk/package/dist/assets"; tgz
+expect refuse fetch-tarball-intermediate-dir-link ft
+nodest() { [[ ! -e "$fdest" ]]; }
+expect ok     fetch-tarball-refusal-writes-nothing nodest
+pk; mkdir -p "$t/pk/real"; mv "$t/pk/package/dist/assets/lib" "$t/pk/real/"; ln -s ../../../real/lib "$t/pk/package/dist/assets/lib"; tgz
+expect refuse fetch-tarball-deep-dir-link      ft
+pk; mv "$t/pk/package/dist/x_ite.min.js" "$t/pk/package/min.js"; ln -s ../min.js "$t/pk/package/dist/x_ite.min.js"; tgz
+expect refuse fetch-tarball-final-file-link    ft
+pk; mv "$t/pk/package/dist" "$t/pk/package/dist-real"; ln -s dist-real "$t/pk/package/dist"; tgz
+expect refuse fetch-tarball-dist-link          ft
+pk; mv "$t/pk/package/package.json" "$t/pk/package/p.json"; ln -s p.json "$t/pk/package/package.json"; tgz
+expect refuse fetch-tarball-package-json-link  ft
+pk; printf 'x' >> "$t/pk/package/dist/assets/b.js"; tgz
+expect refuse fetch-tarball-hash-mismatch      ft
+pk; tgz; printf 'x' >> "$t/x.tgz"
+expect refuse fetch-tarball-sha-not-pinned     ft
+pk; printf 'extra' > "$t/pk/package/dist/assets/extra.js"; tgz
+expect ok     fetch-tarball-extra-file-ignored ft
+noextra() { [[ ! -e "$fdest/dist/assets/extra.js" ]]; }
+expect ok     fetch-tarball-extra-not-copied   noextra
+cp "$t/PIN.bak" "$k/xite/PIN"; rm -rf "$k/target"
+# install_copy refuses a linked SOURCE before copying (cp would follow it)
+fresh; mv "$t/c/dist/assets" "$t/c/assets-real"; ln -s ../assets-real "$t/c/dist/assets"
+expect refuse install-source-intermediate-link inst "$t/c/dist"
 printf '\nSUMMARY pass=%d fail=%d\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

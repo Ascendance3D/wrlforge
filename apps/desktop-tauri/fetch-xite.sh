@@ -9,6 +9,10 @@
 #   ./fetch-xite.sh --verify-copy DIR
 #                                 DIR holds exactly the manifest files, each
 #                                 a regular file with its pinned SHA-256
+#   ./fetch-xite.sh --from-tarball TGZ
+#                                 the fetch without the download: install a
+#                                 local tarball (its SHA-256 must still match
+#                                 the pin) into target/xite/<version>/
 # The tarball's SHA-256 and every copied file's SHA-256 must match the pin,
 # and the package version must equal it. Nothing is ever rebuilt or patched.
 # The app never downloads X_ITE at runtime: build-ui.sh embeds this copy.
@@ -91,12 +95,34 @@ install_copy() {
   local src="$1" dest="$2" f
   while [[ "$src" == */ && "$src" != / ]]; do src="${src%/}"; done
   [[ ! -e "$dest" && ! -L "$dest" ]] || { echo "install destination $dest already exists; refusing" >&2; return 4; }
+  # cp -P keeps only a FINAL link; it follows a link in a parent directory.
+  # So refuse any link in SRC first, then verify the copy (authoritative).
+  [[ -d "$src" && ! -L "$src" ]] || { echo "install source $src is not a real directory (symlink or missing); refusing" >&2; return 4; }
+  verify_files "$src" || return
   mkdir -p "$dest"
   while read -r _ f; do
     mkdir -p "$dest/$(dirname "$f")"
     cp -P "$src/$f" "$dest/$f" || { echo "cannot copy $f; refusing" >&2; return 4; }
   done < <(tr -d '\r' < "$manifest")
   verify_copy "$dest"
+}
+
+# from_tarball TGZ: check the tarball SHA-256, extract, and verify the
+# EXTRACTED tree (version, package.json, a link in any path component)
+# BEFORE anything is copied -- cp follows a link in a parent directory, so
+# checking only the copy would let a linked package/dist/assets pass. Then
+# install_copy copies the manifest files and verifies the copy.
+from_tarball() {
+  local tgz="$1" got
+  got="$(sha256 "$tgz")"
+  [[ "$got" == "$tar_sha" ]] || { echo "tarball SHA-256 $got != pinned $tar_sha; refusing" >&2; return 5; }
+  mkdir "$tmp/ex"
+  tar -xzf "$tgz" -C "$tmp/ex" package/package.json package/dist || { echo "cannot extract $tgz; refusing" >&2; return 5; }
+  verify "$tmp/ex/package/dist" || return
+  rm -rf "$dest"; mkdir -p "$dest"
+  cp -P "$tmp/ex/package/package.json" "$dest/package.json" || return 4
+  install_copy "$tmp/ex/package/dist" "$dest/dist" || return
+  verify "$dest/dist"
 }
 
 case "${1:-}" in
@@ -106,23 +132,17 @@ case "${1:-}" in
 esac
 
 dest="$here/target/xite/$version"
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/wrlforge-xite.XXXXXX")"
+trap 'rm -rf "$tmp"' EXIT
+if [[ "${1:-}" == "--from-tarball" ]]; then
+  from_tarball "${2:?--from-tarball TGZ}" || exit
+  echo "X_ITE $version installed from ${2} and verified at $dest"
+  exit 0
+fi
 if [[ -d "$dest/dist" ]] && verify "$dest/dist" 2>/dev/null; then
   echo "X_ITE $version already verified at $dest"
   exit 0
 fi
-tmp="$(mktemp -d "${TMPDIR:-/tmp}/wrlforge-xite.XXXXXX")"
-trap 'rm -rf "$tmp"' EXIT
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 -o "$tmp/x_ite.tgz" "$tarball"
-got="$(sha256 "$tmp/x_ite.tgz")"
-[[ "$got" == "$tar_sha" ]] || { echo "tarball SHA-256 $got != pinned $tar_sha; refusing" >&2; exit 5; }
-mkdir "$tmp/ex"
-tar -xzf "$tmp/x_ite.tgz" -C "$tmp/ex" package/package.json package/dist
-# Copy ONLY the manifest's files (no extras), then verify the copy itself.
-rm -rf "$dest"; mkdir -p "$dest/dist"
-cp "$tmp/ex/package/package.json" "$dest/package.json"
-while read -r _ f; do
-  mkdir -p "$dest/dist/$(dirname "$f")"
-  cp -P "$tmp/ex/package/dist/$f" "$dest/dist/$f"   # a link stays a link, so verify refuses it
-done < <(tr -d '\r' < "$manifest")
-verify "$dest/dist"
+from_tarball "$tmp/x_ite.tgz" || exit
 echo "X_ITE $version fetched and verified at $dest"

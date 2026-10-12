@@ -136,7 +136,7 @@ Fixed on this branch: 1, 2, 3, 6, 11 (code) and 4, 5, 7, 8, 9, 10
   older open is dropped, so a late answer never reopens a closed dialog and
   never replaces a later open's state. Closing gives the focus back to the
   control that had it before the open. The version display is unchanged.
-- **Evidence.** Menu smoke, 5 new steps with a test-only delayed `app_info`
+- **Evidence.** Menu smoke, 6 new steps with a test-only delayed `app_info`
   (`about::show_with`, 1.5 s): focus on Close before the answer; Escape
   while loading closes it, focus returns to Source, no reopen; Close while
   loading, same; a late failing answer for an earlier open does not replace
@@ -220,7 +220,8 @@ finding. It is one commit after `845e30a` on this branch.
   pinned SHA-256, no path component is a symlink, and the copy holds no
   unlisted entry. On refusal `build-ui.sh` removes `dist/` and exits 4. The
   release file list (129 files) and the pinned distribution are unchanged.
-- **Evidence.** `test-xite-guards.sh`: 77 cases, all pass. They are the 18
+- **Evidence.** `test-xite-guards.sh`: 77 cases at this commit (91 after
+  §3.7), all pass. They are the 18
   symlink/manifest and 10 adapter cases from §3.1/§3.2 (unchanged), 33 new
   declaration cases (whole synthetic adapters: current one-line form, normal
   surrounding comments, block comment then wrong real declaration, block
@@ -242,6 +243,38 @@ finding. It is one commit after `845e30a` on this branch.
   string line continuations or destructuring writes. The first two refuse;
   the adapters use none of them. The check does not prove that code before
   the declaration cannot `return` or `throw`.
+
+### 3.7 PR #144 review (Copilot, on `845e30a`)
+
+Copilot review
+[5486909537](https://github.com/Ascendance3D/wrlforge/pull/144#pullrequestreview-5486909537)
+has two findings. Both are confirmed and fixed in one commit after §3.6.
+They are not counted in the 16 findings of PRs #139–#143.
+
+- **#144-A (high, [r4244998855](https://github.com/Ascendance3D/wrlforge/pull/144#discussion_r4244998855)):
+  the fetch path bypasses the intermediate-link guard.** `fetch-xite.sh`
+  extracted the tarball, copied each manifest file with `cp -P`, and
+  verified only the copy. `cp -P` keeps only a final link; it follows a link
+  in a parent directory. Reproduced on the `845e30a` script: with a linked
+  `package/dist/assets` whose files have the pinned hashes, `--verify` of the
+  extracted tree refuses (exit 5), but the copy has no link and its check —
+  the only check of the old fetch — passes (exit 0).
+  **Change.** The fetch now runs `verify` (version, `package.json`, a link in
+  any component, hashes) on the **extracted** tree before it copies
+  anything, then copies through `install_copy` and verifies the result.
+  `install_copy` also refuses a linked source before it copies; the check of
+  the copy stays authoritative. `--from-tarball TGZ` runs the same fetch path
+  on a local tarball (the SHA-256 pin still applies), so the path has
+  offline tests. **Evidence.** 14 new cases in `test-xite-guards.sh` (91 in
+  total, all pass): valid tarball, result verifies, no link in the result;
+  intermediate, deep, final-file, dist and `package.json` links refuse and
+  write nothing; hash mismatch; unpinned tarball; an unlisted tarball file
+  is not copied; linked install source. The real pinned 16.5.0 tarball,
+  downloaded through the new path into a temporary kit, verifies and is
+  byte-identical (129 files) to the existing pinned copy.
+- **#144-B (low, [r4244998880](https://github.com/Ascendance3D/wrlforge/pull/144#discussion_r4244998880)):
+  the About step count.** `about_dialog` adds six `r.step` checks, not five.
+  §3.4 now says 6. No code change.
 
 ## 4. Documentation corrections (`4e94e3d`)
 
@@ -329,6 +362,8 @@ Threads stay unresolved until the owner decides.
 - **#14 (r4243044078):** Fixed in `d19744f` (PR #143); seven stale-state race steps pass on the stack head.
 - **#15 (r4243044099):** Fixed in `d19744f` (PR #143); one validated listener, re-verified.
 - **#16 (r4243044118):** Fixed in `0772939` (PR #143); the F10 / Alt / shortcut steps pass on the stack head in both layouts.
+- **#144-A (r4244998855):** Confirmed and fixed (§3.7): the fetch now verifies the extracted tree — including every parent-directory link — before it copies, and still verifies the copy. `--from-tarball` gives the fetch path offline tests: intermediate, deep, final-file, dist and `package.json` links in a tarball all refuse and write nothing.
+- **#144-B (r4244998880):** Confirmed: six steps. The record now says 6.
 
 ## 10. Remaining limits
 

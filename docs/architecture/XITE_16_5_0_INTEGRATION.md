@@ -54,8 +54,13 @@ apps/desktop-tauri/
 2. `fetch-xite.sh` downloads the pinned tarball over HTTPS only (`curl
    --proto =https`). It refuses a tarball whose SHA-256 differs from the
    pin. It extracts only `package/package.json` and `package/dist` into a
-   new temporary directory. Then it copies **only the manifest files** into
+   new temporary directory, and runs the step 3 check on the **extracted**
+   tree before it copies anything (PR #144 review: `cp -P` follows a link in
+   a parent directory, so a check of the copy alone missed a linked
+   `package/dist/assets`). Then it copies **only the manifest files** into
    `target/xite/16.5.0/` (gitignored) and verifies the copy.
+   `--from-tarball TGZ` runs the same path on a local tarball, with the same
+   SHA-256 pin, for offline tests.
 3. `fetch-xite.sh --verify` runs on **every** dist, also one given by
    `X_ITE_DIST`. It refuses (exit 4) a package version that is not exactly
    `16.5.0`, a symlinked dist directory, or a symlinked `package.json`. It
@@ -82,7 +87,7 @@ apps/desktop-tauri/
    SHA-256, no path component is a symlink, and nothing unlisted is there.
    A source that changes after step 3 is caught on the bytes that ship; on
    refusal `dist/` is removed. An extra file in a fuller `X_ITE_DIST` is
-   never embedded. `test-xite-guards.sh` runs 77 offline cases for 3–5.
+   never embedded. `test-xite-guards.sh` runs 91 offline cases for 2–5.
 
 No file is replaced after `build-ui.sh` runs. `packaging/package-linux.sh`
 runs `build-ui.sh` unchanged. The network is used only at build time, once
