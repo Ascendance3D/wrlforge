@@ -31,6 +31,14 @@
 // at X_ITE's SHUTDOWN of the old world are written onto the PROVEN same
 // viewpoint in a microtask right after the new world binds -- before X_ITE
 // draws a frame of it.
+//
+// B2-CAMERA: Fit / standard views / Reset / the viewpoint list call the
+// gizmo adapter's view controls; a viewpoint crosses to Rust only as its
+// provenance span in the generation on screen, and comes back the same way
+// (nodeAt), exactly like a Move binding. A document's FIRST load may ask for
+// one automatic Fit (meta.autoFit), done only when the scene binds the
+// layer's default viewpoint -- an authored Viewpoint is never overridden.
+// The camera is view state: no source change, no dirty flag, no undo step.
 (function () {
   'use strict';
 
@@ -77,6 +85,8 @@
     // VISUAL-3A1 camera carry: the identity captured at retire, the result
     // of the newest load's carry, and a per-frame view-matrix trace (tests).
     capture: null, camera: null, trace: null,
+    // B2-CAMERA: the newest load's automatic-Fit result.
+    autoFit: null,
   };
 
   function adapterFor(browser) {
@@ -240,6 +250,31 @@
     };
   }
 
+  // B2-CAMERA: the first load of a document frames the scene once, only on
+  // the layer's default viewpoint (no authored Viewpoint is bound).
+  async function autoFit(browser, meta, mine, scene) {
+    var r = { seq: meta.seq, session: meta.session, status: 'skipped', reason: null };
+    try {
+      if (typeof browser.nextFrame === 'function') await browser.nextFrame();
+    } catch (e) { /* a frame is only a settle point */ }
+    if (mine !== pick.loadSeq || browser.currentScene !== scene) { r.reason = 'superseded'; pick.autoFit = r; return; }
+    var b = pick.gizmo ? pick.gizmo.boundViewpoint() : null;
+    if (!b) r.reason = 'camera-unavailable';
+    else if (!b.isDefault) r.reason = 'authored-viewpoint';
+    else {
+      var f = pick.gizmo.viewAll(0);
+      r.status = f.ok ? 'fitted' : 'failed';
+      r.reason = f.ok ? null : f.reason;
+    }
+    pick.autoFit = r;
+  }
+
+  function cameraGizmo() {
+    var c = canvas();
+    if (c && c.browser) adapterFor(c.browser);
+    return pick.gizmo;
+  }
+
   window.wrlforgePreview = {
     probe: function () {
       var t = document.createElement('canvas');
@@ -365,6 +400,7 @@
           pick.scene = scene;
           pick.generation = generation;
         }
+        if (meta && meta.autoFit && mine === pick.loadSeq) await autoFit(browser, meta, mine, scene);
         phase('done');
         return 'loaded: ' + scene.rootNodes.length + ' root node(s)';
       } catch (e) {
@@ -470,6 +506,57 @@
     },
     // The newest load's carry result, JSON, or ''.
     cameraResult: function () { return pick.camera ? JSON.stringify(pick.camera) : ''; },
+    // ---- B2-CAMERA view controls (plain data) --------------------------------
+    // Fit (X_ITE View All). `time`: transition seconds. JSON {ok, reason}.
+    cameraFit: function (time) {
+      var g = cameraGizmo();
+      return JSON.stringify(g ? g.viewAll(Number(time)) : { ok: false, reason: 'adapter-unavailable' });
+    },
+    // The FrameInput for protocol::camera, JSON (or {reason}).
+    cameraFrame: function () {
+      var g = cameraGizmo();
+      return JSON.stringify(g ? g.frameInput() : { reason: 'adapter-unavailable' });
+    },
+    // Write Rust's ViewOffsets (JSON) onto the bound viewpoint. JSON {ok, reason}.
+    cameraApply: function (json) {
+      var g = cameraGizmo();
+      var o = null;
+      try { o = JSON.parse(String(json)); } catch (e) { o = null; }
+      if (!g) return JSON.stringify({ ok: false, reason: 'adapter-unavailable' });
+      if (!o) return JSON.stringify({ ok: false, reason: 'bad-view' });
+      return JSON.stringify(g.applyView(o));
+    },
+    // Reset the bound viewpoint's user offsets. JSON {ok, reason, isDefault}.
+    cameraReset: function () {
+      var g = cameraGizmo();
+      return JSON.stringify(g ? g.resetView() : { ok: false, reason: 'adapter-unavailable' });
+    },
+    // The authored viewpoints of the generation on screen, each by its ONE
+    // provenance span: JSON {seq, items: [{from, to, description, name,
+    // bound}]}; a viewpoint without exactly one span is not listed.
+    cameraViewpoints: function () {
+      var g = cameraGizmo();
+      var out = { seq: pick.active ? pick.active.seq : null, items: [] };
+      if (!g || !pick.adapter || !pick.active || !pick.generation) return JSON.stringify(out);
+      var list = g.viewpoints() || [];
+      for (var i = 0; i < list.length; i++) {
+        var sp = pick.adapter.spansOf(pick.generation, list[i].node);
+        if (!sp || sp.length !== 1) continue;
+        out.items.push({ from: sp[0].start, to: sp[0].end, description: list[i].description, name: list[i].name, bound: list[i].bound });
+      }
+      return JSON.stringify(out);
+    },
+    // Bind the viewpoint at [from, to) of generation `seq`. JSON {ok, reason}.
+    cameraBind: function (seq, from, to) {
+      var g = cameraGizmo();
+      if (!g || !pick.adapter) return JSON.stringify({ ok: false, reason: 'adapter-unavailable' });
+      if (!pick.active || pick.active.seq !== seq || !pick.generation) return JSON.stringify({ ok: false, reason: 'preview-scene-replaced' });
+      var node = pick.adapter.nodeAt(pick.generation, Number(from), Number(to));
+      if (!node) return JSON.stringify({ ok: false, reason: 'viewpoint-not-proven' });
+      return JSON.stringify(g.bindViewpoint(node));
+    },
+    // The newest load's automatic-Fit result, JSON, or ''.
+    cameraAutoFit: function () { return pick.autoFit ? JSON.stringify(pick.autoFit) : ''; },
     // Tests: the bound viewpoint's offsets and view matrix, JSON, or ''.
     cameraState: function () {
       var st = pick.gizmo ? pick.gizmo.cameraState() : null;

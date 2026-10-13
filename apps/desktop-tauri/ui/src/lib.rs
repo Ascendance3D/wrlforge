@@ -65,6 +65,8 @@ pub fn start() {
         if let Ok(Some(o)) =
             ipc::call::<Option<p::OpenOutcome>>("startup_document", ipc::NoArgs {}).await
         {
+            // B2-CAMERA: a file named at startup is framed once, like Open.
+            camera::arm_auto_fit();
             ui::apply_open(o, "Opened").await;
         }
         // RUST-STAB-1: offer work left by a WRL Forge that did not exit

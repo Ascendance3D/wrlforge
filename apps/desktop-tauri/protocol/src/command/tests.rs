@@ -599,3 +599,77 @@ fn native_menu_events_accept_only_app_menu_keys() {
         assert_eq!(from_native_menu(bad), None, "{bad:?}");
     }
 }
+
+// ---- B2-CAMERA ----
+
+#[test]
+fn camera_commands_are_view_items_that_never_touch_the_document() {
+    use crate::camera::StandardView;
+    use CommandId::*;
+    let cams = [
+        ViewFitAll,
+        ViewFront,
+        ViewBack,
+        ViewLeft,
+        ViewRight,
+        ViewTop,
+        ViewBottom,
+        ViewResetCamera,
+    ];
+    for id in cams {
+        let s = id.spec();
+        assert_eq!(s.menu, Menu::View, "{}", s.key);
+        assert_eq!(s.action, Action::UiOnly, "{}", s.key);
+        assert!(!s.mutates_document, "{}", s.key);
+        assert_eq!(s.requires, Requires::ViewportCamera, "{}", s.key);
+        assert!(s.key.starts_with("view.camera."), "{}", s.key);
+    }
+    let views: Vec<_> = cams.iter().filter_map(|c| c.standard_view()).collect();
+    assert_eq!(views, StandardView::ALL);
+    assert_eq!(ViewFitAll.standard_view(), None);
+    assert_eq!(ViewResetCamera.standard_view(), None);
+    // One "Camera" group in View, in this order.
+    let view = MENUS.iter().find(|m| m.menu == Menu::View).unwrap();
+    let at = view
+        .entries
+        .iter()
+        .position(|e| *e == MenuEntry::Group("Camera"))
+        .expect("a Camera group");
+    let got: Vec<_> = view.entries[at + 1..at + 1 + cams.len()].to_vec();
+    assert_eq!(got, cams.map(MenuEntry::Command));
+    // Availability: a document in the X_ITE viewport.
+    assert_eq!(
+        ViewFitAll.availability(CommandContext::default()),
+        Availability::Disabled(NO_DOCUMENT)
+    );
+    let doc = CommandContext {
+        has_document: true,
+        ..CommandContext::default()
+    };
+    assert_eq!(ViewTop.availability(doc), Availability::Enabled);
+    let native = CommandContext {
+        native_viewport: true,
+        ..doc
+    };
+    assert_eq!(ViewTop.refusal(native), Some(NEEDS_XITE_CAMERA));
+}
+
+#[test]
+fn viewport_keys_fit_only_unmodified_and_never_shadow_a_shortcut() {
+    use CommandId::*;
+    assert_eq!(from_viewport_key("f", false), Some(ViewFitAll));
+    assert_eq!(from_viewport_key("F", false), Some(ViewFitAll));
+    assert_eq!(from_viewport_key("Home", false), Some(ViewFitAll));
+    assert_eq!(from_viewport_key("f", true), None);
+    assert_eq!(from_viewport_key("g", false), None);
+    assert_eq!(viewport_key_label(ViewFitAll), "F / Home");
+    assert_eq!(viewport_key_label(ViewTop), "");
+    assert_eq!(
+        ViewFitAll.title(Platform::Linux),
+        format!("{} (F / Home in the viewport)", ViewFitAll.spec().hint)
+    );
+    // No primary-modifier shortcut is a viewport key.
+    for (k, _) in VIEWPORT_KEYS {
+        assert_eq!(from_shortcut(k, true, false), None, "{k}");
+    }
+}

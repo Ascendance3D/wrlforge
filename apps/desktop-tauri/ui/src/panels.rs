@@ -660,6 +660,54 @@ pub fn Viewport() -> impl IntoView {
                     disabled=move || !crate::command::enabled(CommandId::ToolScale)
                     on:click=move |_| crate::command::run(CommandId::ToolScale)>"Scale"</button>
                 </span>
+                <span class="sep" hidden=move || u.native.with(|s| s.native_shown())></span>
+                // B2-CAMERA: the camera controls (View menu → Camera). The
+                // camera is view state: no source change, no dirty flag, no
+                // undo step.
+                <span class="tool-group" role="group" aria-label="Camera" hidden=move || u.native.with(|s| s.native_shown())>
+                <button id="btn-fit" class="secondary small"
+                    data-command=CommandId::ViewFitAll.key() title=crate::command::title(CommandId::ViewFitAll)
+                    disabled=move || !crate::command::enabled(CommandId::ViewFitAll)
+                    on:click=move |_| crate::command::run(CommandId::ViewFitAll)>"Fit"</button>
+                <select id="sel-view" class="small" aria-label="Standard view"
+                    title="Front, Back, Left, Right, Top or Bottom view of the whole scene, or Reset View (camera only)"
+                    disabled=move || !crate::command::enabled(CommandId::ViewFront)
+                    on:change=move |ev| {
+                        let v = event_target_value(&ev);
+                        if let Some(sel) = ev.target().and_then(|t| wasm_bindgen::JsCast::dyn_into::<web_sys::HtmlSelectElement>(t).ok()) {
+                            sel.set_value("");
+                        }
+                        if let Some(id) = CommandId::from_key(&v) {
+                            crate::command::run(id);
+                        }
+                    }>
+                    <option value="" selected>"View…"</option>
+                    {[CommandId::ViewFront, CommandId::ViewBack, CommandId::ViewLeft, CommandId::ViewRight,
+                      CommandId::ViewTop, CommandId::ViewBottom, CommandId::ViewResetCamera]
+                        .into_iter()
+                        .map(|c| view! { <option value=c.key() title=c.spec().hint>{c.spec().label}</option> })
+                        .collect_view()}
+                </select>
+                <select id="sel-viewpoint" class="small" aria-label="Viewpoint"
+                    title="Bind an authored Viewpoint (its description, else its DEF name). Camera only."
+                    disabled=move || !crate::command::enabled(CommandId::ViewFitAll)
+                    on:focus=move |_| crate::camera::refresh_viewpoints()
+                    on:pointerdown=move |_| crate::camera::refresh_viewpoints()
+                    on:change=move |ev| {
+                        if let Ok(i) = event_target_value(&ev).parse::<usize>() {
+                            crate::camera::choose_viewpoint(i);
+                        }
+                    }>
+                    <option value="" prop:selected=move || u.viewpoints.with(|v| !v.items.iter().any(|i| i.bound))>
+                        {move || u.viewpoints.with(|v| if v.items.is_empty() { "No viewpoints" } else { "Viewpoints…" })}
+                    </option>
+                    {move || u.viewpoints.with(|v| v.items.iter().enumerate().map(|(i, it)| {
+                        let label = crate::camera::viewpoint_label(it, i);
+                        let bound = it.bound;
+                        view! { <option value=i.to_string() prop:selected=bound>{label}</option> }
+                    }).collect_view())}
+                </select>
+                </span>
             </div>
             <div class="viewport-stage" hidden=move || u.native.with(|s| s.native_shown())>
                 <x3d-canvas id="viewport" class:picking=move || u.pick_mode.get() || u.move_mode.get() || u.rotate_mode.get() || u.scale_mode.get() splashScreen="false" contextMenu="false" notifications="false"

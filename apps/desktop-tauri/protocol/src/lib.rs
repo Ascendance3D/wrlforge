@@ -12,6 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod camera;
 pub mod command;
 pub mod gizmo;
 pub mod layout;

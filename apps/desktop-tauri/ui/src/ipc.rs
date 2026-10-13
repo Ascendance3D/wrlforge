@@ -77,6 +77,21 @@ extern "C" {
     fn camera_trace_start_js() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = cameraTraceStop, catch)]
     fn camera_trace_stop_js() -> Result<JsValue, JsValue>;
+    // B2-CAMERA view controls.
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = cameraFit, catch)]
+    fn camera_fit_js(time: f64) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = cameraFrame, catch)]
+    fn camera_frame_js() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = cameraApply, catch)]
+    fn camera_apply_js(json: &str) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = cameraReset, catch)]
+    fn camera_reset_js() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = cameraViewpoints, catch)]
+    fn camera_viewpoints_js() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = cameraBind, catch)]
+    fn camera_bind_js(seq: f64, from: f64, to: f64) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = cameraAutoFit, catch)]
+    fn camera_auto_fit_js() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = consoleTraceStart, catch)]
     fn console_trace_start_js() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = consoleTraceStop, catch)]
@@ -290,6 +305,117 @@ pub fn camera_trace_stop() -> Option<CameraTrace> {
     serde_json::from_str(&s).ok()
 }
 
+// ---- B2-CAMERA view controls ----------------------------------------------
+
+/// The adapter's `{ok, reason}` answer to a camera action.
+#[derive(serde::Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CameraAck {
+    pub ok: bool,
+    pub reason: Option<String>,
+    /// Fit / Reset: the bound viewpoint is the layer default.
+    pub is_default: Option<bool>,
+}
+
+fn ack(r: Result<JsValue, JsValue>) -> CameraAck {
+    let raw = match r {
+        Ok(v) => v.as_string().unwrap_or_default(),
+        Err(e) => {
+            return CameraAck {
+                reason: Some(js_err(e)),
+                ..CameraAck::default()
+            }
+        }
+    };
+    serde_json::from_str(&raw).unwrap_or_else(|e| CameraAck {
+        reason: Some(e.to_string()),
+        ..CameraAck::default()
+    })
+}
+
+/// Fit: X_ITE's View All with a `time` s transition.
+pub fn camera_fit(time: f64) -> CameraAck {
+    ack(camera_fit_js(time))
+}
+
+/// The scene bounds and bound viewpoint as `FrameInput`, or the reason.
+pub fn camera_frame() -> Result<p::camera::FrameInput, String> {
+    let raw = camera_frame_js()
+        .map_err(js_err)?
+        .as_string()
+        .ok_or("non-string camera frame")?;
+    #[derive(serde::Deserialize)]
+    struct Why {
+        reason: String,
+    }
+    match serde_json::from_str::<p::camera::FrameInput>(&raw) {
+        Ok(f) => Ok(f),
+        Err(e) => Err(serde_json::from_str::<Why>(&raw)
+            .map(|w| w.reason)
+            .unwrap_or_else(|_| e.to_string())),
+    }
+}
+
+/// Write a standard view's offsets onto the bound viewpoint.
+pub fn camera_apply(o: &p::camera::ViewOffsets) -> CameraAck {
+    match serde_json::to_string(o) {
+        Ok(j) => ack(camera_apply_js(&j)),
+        Err(e) => CameraAck {
+            reason: Some(e.to_string()),
+            ..CameraAck::default()
+        },
+    }
+}
+
+/// Reset the bound viewpoint's user offsets.
+pub fn camera_reset() -> CameraAck {
+    ack(camera_reset_js())
+}
+
+/// One authored viewpoint of the generation on screen, by its preview span.
+#[derive(serde::Deserialize, Clone, Debug, PartialEq)]
+pub struct ViewpointItem {
+    pub from: u64,
+    pub to: u64,
+    pub description: String,
+    pub name: String,
+    pub bound: bool,
+}
+
+#[derive(serde::Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct ViewpointList {
+    pub seq: Option<u64>,
+    pub items: Vec<ViewpointItem>,
+}
+
+pub fn camera_viewpoints() -> ViewpointList {
+    camera_viewpoints_js()
+        .ok()
+        .and_then(|v| v.as_string())
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Bind the viewpoint at the preview span `[from, to)` of generation `seq`.
+pub fn camera_bind(seq: u64, from: u64, to: u64) -> CameraAck {
+    ack(camera_bind_js(seq as f64, from as f64, to as f64))
+}
+
+/// The newest load's automatic-Fit result.
+#[derive(serde::Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct AutoFit {
+    pub seq: Option<u64>,
+    pub session: Option<u64>,
+    /// `fitted` | `skipped` | `failed`.
+    pub status: String,
+    pub reason: Option<String>,
+}
+
+pub fn camera_auto_fit() -> Option<AutoFit> {
+    let s = camera_auto_fit_js().ok()?.as_string()?;
+    serde_json::from_str(&s).ok()
+}
+
 /// XITE-16-UPGRADE-2 smoke evidence: the WebView console lines and the
 /// DOMParser call count between `console_trace_start` and `_stop`.
 #[derive(serde::Deserialize, Clone, Debug, Default)]
@@ -317,6 +443,7 @@ pub async fn preview_load(
     text: &str,
     meta: Option<&crate::pick::Gen>,
     camera: Option<CameraWant>,
+    auto_fit: bool,
     base: &str,
 ) -> String {
     #[derive(Serialize)]
@@ -324,10 +451,21 @@ pub async fn preview_load(
         #[serde(flatten)]
         gen: &'a crate::pick::Gen,
         camera: Option<CameraWant>,
+        /// B2-CAMERA: frame the scene once if it binds the default viewpoint.
+        #[serde(rename = "autoFit")]
+        auto_fit: bool,
     }
     let ser = serde_wasm_bindgen::Serializer::json_compatible();
     let meta = meta
-        .and_then(|gen| Meta { gen, camera }.serialize(&ser).ok())
+        .and_then(|gen| {
+            Meta {
+                gen,
+                camera,
+                auto_fit,
+            }
+            .serialize(&ser)
+            .ok()
+        })
         .unwrap_or(JsValue::NULL);
     match preview_load_js(text, meta, base).await {
         Ok(v) => v

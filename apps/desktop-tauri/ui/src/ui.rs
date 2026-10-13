@@ -44,6 +44,9 @@ pub struct Ui {
     pub create_error: RwSignal<Option<String>>,
     /// VISUAL-2: the viewport Select mode (a click selects, a drag navigates).
     pub pick_mode: RwSignal<bool>,
+    /// B2-CAMERA: the authored viewpoints of the scene on screen (the
+    /// viewport's viewpoint list). View state only.
+    pub viewpoints: RwSignal<crate::ipc::ViewpointList>,
     /// The last viewport pick result: (`ok` | `none` | `refused`, text).
     pub pick_message: RwSignal<Option<(String, String)>>,
     /// VISUAL-3A: the viewport Move tool (translation gizmo). One viewport
@@ -223,6 +226,7 @@ pub fn ui() -> Ui {
             preview_loads: RwSignal::new(0),
             create_error: RwSignal::new(None),
             pick_mode: RwSignal::new(false),
+            viewpoints: RwSignal::new(Default::default()),
             pick_message: RwSignal::new(None),
             move_mode: RwSignal::new(false),
             rotate_mode: RwSignal::new(false),
@@ -719,11 +723,20 @@ pub async fn preview(force: bool) {
             // VISUAL-3A1: keep the user's camera only onto a PROVEN same
             // viewpoint (crate::camera); otherwise X_ITE's own binding stands.
             let (camera, why) = crate::camera::want(session, src.revision).await;
+            // B2-CAMERA: a document's first shown scene is framed once when
+            // it has no authored Viewpoint bound.
+            let auto_fit = crate::camera::auto_fit_wanted(session);
             let t0 = crate::editor::now();
             let warnings = src.texture_warnings.clone();
             let routes = src.route_warnings.clone();
-            let status =
-                ipc::preview_load(&src.text, Some(&gen), camera, &src.resource_base).await;
+            let status = ipc::preview_load(
+                &src.text,
+                Some(&gen),
+                camera.clone(),
+                auto_fit,
+                &src.resource_base,
+            )
+            .await;
             let load_ms = crate::editor::now() - t0;
             crate::camera::LOAD_MS.with_borrow_mut(|v| v.push(load_ms));
             u.preview_loads.update(|n| *n += 1);
@@ -737,7 +750,10 @@ pub async fn preview(force: bool) {
                     u.route_warnings.set(routes);
                 }
                 u.texture_warnings.set(warnings);
-                let note = crate::camera::note(why);
+                let mut note = crate::camera::note(why);
+                if status.starts_with("loaded") {
+                    note = crate::camera::after_load(session, seq, auto_fit, camera, note);
+                }
                 u.preview_status
                     .set(format!("rev {} · {status}{note}", src.revision));
             }
@@ -751,7 +767,12 @@ pub fn open() {
     spawn_local(async {
         if confirm_discard().await {
             match call::<p::OpenOutcome>("open_document", NoArgs {}).await {
-                Ok(o) => apply_open(o, "Opened").await,
+                Ok(o) => {
+                    // B2-CAMERA: an opened file is framed once (no authored
+                    // Viewpoint bound).
+                    crate::camera::arm_auto_fit();
+                    apply_open(o, "Opened").await
+                }
                 Err(e) => flash(&format!("Open failed: {e}")),
             }
         }
@@ -777,6 +798,7 @@ pub async fn apply_open(o: p::OpenOutcome, verb: &str) {
             {
                 let _ = call::<()>("close_document", Session { session: old }).await;
             }
+            crate::camera::opened(Some(doc.session));
             editor::adopt(&doc);
             flash(&format!(
                 "{verb} {} ({}, {}{}{})",
@@ -791,8 +813,14 @@ pub async fn apply_open(o: p::OpenOutcome, verb: &str) {
                 if doc.bom { ", BOM" } else { "" }
             ));
         }
-        p::OpenOutcome::Canceled => flash("Open canceled — nothing changed."),
-        p::OpenOutcome::Failed { message } => flash(&format!("Could not open: {message}")),
+        p::OpenOutcome::Canceled => {
+            crate::camera::opened(None);
+            flash("Open canceled — nothing changed.")
+        }
+        p::OpenOutcome::Failed { message } => {
+            crate::camera::opened(None);
+            flash(&format!("Could not open: {message}"))
+        }
     }
 }
 
@@ -1031,7 +1059,8 @@ pub fn close() {
         // No document: the viewport shows an empty world, not the old one.
         u.texture_warnings.set(Vec::new());
         u.route_warnings.set(Vec::new());
-        let status = ipc::preview_load("#VRML V2.0 utf8\n", None, None, "").await;
+        u.viewpoints.set(Default::default());
+        let status = ipc::preview_load("#VRML V2.0 utf8\n", None, None, false, "").await;
         u.preview_loads.update(|n| *n += 1);
         u.preview_status.set(format!("no document · {status}"));
         flash("Closed.");

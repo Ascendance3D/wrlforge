@@ -1713,8 +1713,10 @@ mod tests {
         let preview = std::fs::read_to_string(dir.join("preview-adapter.js")).unwrap();
         assert!(gizmo.contains("function bind(scene, node, index, name, expected, verify)"));
         assert!(gizmo.contains("sf.getValue() === node"));
-        // rootNodes appears once, in the refusing assertion.
-        assert_eq!(gizmo.matches("rootNodes").count(), 1);
+        // rootNodes appears twice: in the refusing assertion, and (B2-CAMERA)
+        // as the start of the bbox-hint walk, which identifies nothing.
+        assert_eq!(gizmo.matches("rootNodes").count(), 2);
+        assert!(gizmo.contains("try { push(browser.currentScene.rootNodes); } catch (e) { return out; }"));
         assert!(gizmo.contains("'preview-root-order-disagrees'"));
         assert!(!gizmo.contains("getNamedNode(String(name)); } catch (e) { named = null; }\n      if (!named) return { ok: true"));
         assert!(preview.contains("var node = adapter.nodeAt(gen, f, t);"));
@@ -1741,6 +1743,12 @@ mod tests {
             "'positionOffset'",
             "_fieldOfViewScale",
             "defaultViewpoint",
+            // B2-CAMERA view controls.
+            "getBBox",
+            "X3D.Box3",
+            "getModelMatrix",
+            "getUserOrientation",
+            "resetUserOffsets",
         ];
         let mut seen = 0;
         for e in std::fs::read_dir(&dir).unwrap() {

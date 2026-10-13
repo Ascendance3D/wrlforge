@@ -39,7 +39,7 @@ tests:app_shell|5|0
 tests:flux_regression|6|0
 tests:scope_regression|3|0
 tests:typed_regression|3|0
-unittests:wrlforge_desktop_protocol|74|0
+unittests:wrlforge_desktop_protocol|85|0
 unittests:wrlforge_render|0|0
 unittests:wrlforge_scene|25|0
 unittests:wrlforge_ui|10|0

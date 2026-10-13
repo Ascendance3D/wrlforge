@@ -172,6 +172,17 @@ pub fn run(id: CommandId) {
         }
         CommandId::ViewLivePreview => ui().preview_enabled.update(|v| *v = !*v),
         CommandId::ViewUpdatePreview => spawn_local(ui::preview(true)),
+        // B2-CAMERA: the renderer's camera only (no source, dirty or undo).
+        CommandId::ViewFitAll => crate::camera::fit(),
+        CommandId::ViewFront
+        | CommandId::ViewBack
+        | CommandId::ViewLeft
+        | CommandId::ViewRight
+        | CommandId::ViewTop
+        | CommandId::ViewBottom => {
+            crate::camera::standard(id.standard_view().expect("standard view command"))
+        }
+        CommandId::ViewResetCamera => crate::camera::reset(),
         CommandId::CreateBox
         | CommandId::CreateSphere
         | CommandId::CreateCylinder
@@ -257,6 +268,19 @@ pub fn modal_or_drag() -> Option<&'static str> {
     None
 }
 
+/// B2-CAMERA: the focus is inside the 3D Viewport pane (its canvas or a
+/// toolbar button), not in a text field, list or check box there.
+fn viewport_focused() -> bool {
+    let Some(el) = active_element() else {
+        return false;
+    };
+    let tag = el.tag_name().to_ascii_uppercase();
+    if matches!(tag.as_str(), "INPUT" | "SELECT" | "TEXTAREA") {
+        return false;
+    }
+    el.closest("section.viewport").ok().flatten().is_some()
+}
+
 fn active_element() -> Option<web_sys::Element> {
     web_sys::window()?.document()?.active_element()
 }
@@ -272,8 +296,16 @@ pub fn on_window_keydown(ev: web_sys::KeyboardEvent) {
     if shortcut_blocked(&ev).is_some() {
         return;
     }
-    let Some(id) = c::from_shortcut(&ev.key(), ev.ctrl_key() || ev.meta_key(), ev.shift_key())
-    else {
+    let primary = ev.ctrl_key() || ev.meta_key();
+    let Some(id) = c::from_shortcut(&ev.key(), primary, ev.shift_key()) else {
+        // B2-CAMERA: an unmodified viewport key (F / Home) while the 3D
+        // Viewport has the focus. Never in the menu bar or a form control.
+        if let Some(id) = c::from_viewport_key(&ev.key(), primary || ev.shift_key()) {
+            if !menu::bar_has_focus() && !menu::is_open() && viewport_focused() {
+                ev.prevent_default();
+                run(id);
+            }
+        }
         return;
     };
     let in_menu = menu::bar_has_focus() || menu::is_open();
