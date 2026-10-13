@@ -37,3 +37,8 @@ renderer/vendor/
 .DS_Store
 Thumbs.db
 *.swp
+
+# Private agent guides (kept locally, not published)
+/CLAUDE.md
+/AGENTS.md
+/WD.md
