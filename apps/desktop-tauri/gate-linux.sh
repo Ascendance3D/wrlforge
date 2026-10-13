@@ -61,17 +61,17 @@ inv_gui='menu:report|93
 dock:main|65
 dock:restore|7
 dock:damaged|7
-pick:report|147
+pick:report|153
 create:report|53
 extrusion:report|58
-move:report|201
+move:report|206
 rotscale:report|107
 recovery:restore|34
 recovery:later|15
 theme:report|82
 texture:report|46
 native:report|46'
-guards_want=151; node_want=74; route_want=2; fx_want=58
+guards_want=151; node_want=74; route_want=2; fx_want=58; iso_want=9
 
 # ---- 0. the checkout -------------------------------------------------------
 head="$(git -C "$wt" rev-parse HEAD)"; dirty="$(git -C "$wt" status --porcelain | wc -l)"
@@ -133,6 +133,13 @@ res route-tests "$([[ $rc -eq 0 && "$n" == "$route_want" ]] && echo 1)" "exit=$r
 res route-timing-ignored-test "$([[ $rc -eq 0 ]] && rg -q 'ROUTE-TIMING' "$out/route-timing.txt" && echo 1)" "exit=$rc $(rg 'ROUTE-TIMING' "$out/route-timing.txt" | tail -1)"
 
 # ---- 4. GUI suites, each on its own display -------------------------------
+# Every app start is isolated (isolated-run.sh): prove the guard refuses an
+# unsafe profile BEFORE startup, and record the real profile's metadata
+# (path, size, mtime; never contents) to compare after the last GUI run.
+(cd "$app" && timeout 60 ./isolated-run.sh --self-test) >"$out/isolation-self-test.txt" 2>&1; rc=$?
+s="$(tail -1 "$out/isolation-self-test.txt")"
+res isolation-self-test "$([[ $rc -eq 0 && "$s" == "ISOLATION SELF-TEST pass=$iso_want fail=0 (want $iso_want)" ]] && echo 1)" "exit=$rc $s"
+profile_before="$(cd "$app" && bash -c 'source ./isolated-run.sh --source-only; snapshot')"
 gui() { local name=$1; shift; (cd "$app" && timeout 600 "$@") >"$out/gui-$name.txt" 2>&1; echo $? >"$out/gui-$name.rc"; }
 gui menu ./smoke.sh --headless --menu &
 gui dock ./smoke.sh --headless --dock &
@@ -146,7 +153,7 @@ gui theme ./smoke.sh --headless --theme tokyo-night-light "$wt/test/fixtures/vrm
 # texture: a fresh EMPTY plan dir; the report and logs stay outside it
 ( tex="$out/texture-plan"; mkdir -p "$tex" "$out/texture-config"
   python3 "$app/smoke-texture-plan.py" "$tex" >"$out/texture-plan.txt" 2>&1 &&
-  cd "$app" && timeout 400 env WRLFORGE_SMOKE_XVFB=1 xvfb-run -a -s "-screen 0 1600x1000x24" "$bin" --smoke-texture "$tex" --smoke-report "$out/texture-report.json" --config-dir "$out/texture-config" >"$out/gui-texture.txt" 2>&1
+  cd "$app" && timeout 400 env WRLFORGE_SMOKE_XVFB=1 xvfb-run -a -s "-screen 0 1600x1000x24" ./isolated-run.sh --root "$out/texture-profile" -- "$bin" --smoke-texture "$tex" --smoke-report "$out/texture-report.json" --config-dir "$out/texture-config" >"$out/gui-texture.txt" 2>&1
   echo $? >"$out/gui-texture.rc"; echo "report=$out/texture-report.json" >>"$out/gui-texture.txt" ) &
 ( timeout 300 python3 "$app/native-smoke/harness.py" xvfb "$out/native" "$bin" >"$out/gui-native.txt" 2>&1
   echo $? >"$out/gui-native.rc"; echo "report=$out/native/report.json" >>"$out/gui-native.txt" ) &
@@ -223,6 +230,11 @@ for mode in files inspector; do
   n="$(wc -l <"$out/$mode-new.tsv")"
   res "fixtures-$mode-vs-base" "$([[ $n -eq $fx_want && ${names:-0} -eq 0 && $vd -eq 0 && ${sd:-0} -eq 0 ]] && echo 1)" "$n files, name diffs=${names:-0} verdict diffs=$vd failing-step diffs=${sd:-0}"
 done
+
+# ---- 6. The owner's real profile: unchanged by every app start above -------
+profile_after="$(cd "$app" && bash -c 'source ./isolated-run.sh --source-only; snapshot')"
+changed="$(diff <(echo "$profile_before") <(echo "$profile_after") | rg -c '^[<>]' || true)"
+res real-profile-untouched "$([[ ${changed:-0} -eq 0 ]] && echo 1)" "metadata entries changed: ${changed:-0}"
 
 log "GATE $([[ $bad -eq 0 ]] && echo PASS || echo "FAIL ($bad failing groups)") HEAD=$head"
 [[ $bad -eq 0 ]]
