@@ -41,6 +41,7 @@ pub fn context() -> CommandContext {
         native_viewport: u.native.with(|s| s.native_shown()),
         outline_ready: outline_button().is_some(),
         node_selected: u.selected.with(|s| s.as_ref().is_some_and(|s| s.id.starts_with("node-"))),
+        interact: u.interact_mode.get(),
     }
 }
 
@@ -59,6 +60,7 @@ fn context_untracked() -> CommandContext {
         node_selected: u
             .selected
             .with_untracked(|s| s.as_ref().is_some_and(|s| s.id.starts_with("node-"))),
+        interact: u.interact_mode.get_untracked(),
     }
 }
 

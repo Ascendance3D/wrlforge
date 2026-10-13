@@ -324,6 +324,7 @@ fn planned_commands_never_run_in_any_state() {
         native_viewport: false,
         outline_ready: true,
         node_selected: true,
+        interact: false,
     };
     let planned: Vec<_> = COMMANDS
         .iter()
@@ -590,6 +591,7 @@ fn every_disabled_state_has_a_reason() {
                 native_viewport: bits & 32 != 0,
                 outline_ready: bits & 16 != 0,
                 node_selected: bits & 64 != 0,
+                interact: bits & 128 != 0,
             };
             for c in COMMANDS {
                 if let Availability::Disabled(why) = c.id.availability(ctx) {
@@ -750,4 +752,71 @@ fn interact_is_the_one_explicit_sensor_mode_and_never_edits() {
     assert!(ToolInteract.refusal(CommandContext::default()).is_some());
     // No viewport key fires it.
     assert!(VIEWPORT_KEYS.iter().all(|(_, id)| *id != ToolInteract));
+}
+
+#[test]
+fn interact_refuses_every_source_edit_and_nothing_else() {
+    use CommandId::*;
+    let edit = CommandContext {
+        has_document: true,
+        can_undo: true,
+        can_redo: true,
+        focus: FocusKind::Source,
+        text_selected: true,
+        node_selected: true,
+        ..Default::default()
+    };
+    let interact = CommandContext {
+        interact: true,
+        ..edit
+    };
+    let edits: Vec<CommandId> = CommandId::ALL
+        .into_iter()
+        .filter(|c| c.edits_source())
+        .collect();
+    for id in [
+        EditUndo,
+        EditRedo,
+        EditCut,
+        EditPaste,
+        EditDeleteNode,
+        EditDuplicateNode,
+        CreateBox,
+        CreateExtrusion,
+    ] {
+        assert!(edits.contains(&id), "{id:?} edits the source");
+        assert_eq!(id.refusal(interact), Some(INTERACT_ON), "{id:?}");
+        assert_eq!(
+            id.availability(interact),
+            Availability::Disabled(INTERACT_ON),
+            "{id:?}"
+        );
+    }
+    for id in &edits {
+        assert!(
+            id.spec().mutates_document && id.spec().menu != Menu::File,
+            "{id:?}"
+        );
+        assert_eq!(id.refusal(interact), Some(INTERACT_ON), "{id:?}");
+    }
+    // Not edits: File, view, selection and the tools that leave Interact.
+    for id in [
+        FileSave,
+        FileOpen,
+        FileClose,
+        FileReload,
+        EditCopy,
+        EditClearSelection,
+        ViewFitAll,
+        ToolSelect,
+        ToolMove,
+        ToolInteract,
+    ] {
+        assert!(!id.edits_source(), "{id:?}");
+        assert_eq!(id.refusal(interact), id.refusal(edit), "{id:?}");
+    }
+    // Outside Interact nothing changes.
+    for id in edits {
+        assert_ne!(id.refusal(edit), Some(INTERACT_ON), "{id:?}");
+    }
 }

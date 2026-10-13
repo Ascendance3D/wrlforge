@@ -510,44 +510,64 @@
     // touch() / getHit() are not gated, so pick refusals still see the authored
     // sensors. The wrappers are own properties of this one browser; dispose()
     // removes them. Installed (closed) by the first sceneInput() call, so a
-    // host that never asks (the Electron editor) keeps X_ITE's own behavior; a
-    // missing surface reports unavailable.
+    // host that never asks (the Electron editor) keeps X_ITE's own behavior.
+    // PR #149 review: every sceneInput() call VERIFIES that both entry points
+    // are still this adapter's wrappers. A missing surface, a foreign wrapper,
+    // a replaced wrapper or an install error reports unavailable and closes
+    // the gate (the host must then block the pointer); the next call tries to
+    // install again, so the gate recovers only through a passing check.
     const GATED = ['buttonPressEvent', 'motionNotifyEvent'];
-    const gate = { open: false, wrappers: null, reason: null, tried: false };
-    function installGate() {
-      gate.tried = true;
+    const gate = { open: false, wrappers: null, reason: 'pointer-sensor-gate-not-installed' };
+    function gateVerified() {
       const b = liveBrowser;
-      if (!b || !fn(b, 'buttonPressEvent') || !fn(b, 'motionNotifyEvent') || !fn(b, 'buttonReleaseEvent')) {
-        gate.reason = 'pointer-sensor-entry-missing';
-        return;
-      }
-      if (GATED.some((k) => Object.prototype.hasOwnProperty.call(b, k))) {
-        gate.reason = 'pointer-sensor-entry-already-wrapped';
-        return;
-      }
-      gate.wrappers = {};
-      for (const k of GATED) {
-        const original = b[k];
-        const wrapper = function () { return gate.open ? original.apply(this, arguments) : false; };
-        gate.wrappers[k] = wrapper;
-        b[k] = wrapper;
+      return !!(b && gate.wrappers && GATED.every((k) => b[k] === gate.wrappers[k]));
+    }
+
+    function installGate() {
+      const b = liveBrowser;
+      try {
+        if (!b || !fn(b, 'buttonPressEvent') || !fn(b, 'motionNotifyEvent') || !fn(b, 'buttonReleaseEvent')) {
+          gate.reason = 'pointer-sensor-entry-missing';
+          return;
+        }
+        const mine = (k) => !!gate.wrappers && b[k] === gate.wrappers[k];
+        if (GATED.some((k) => hasOwn(b, k) && !mine(k))) {
+          gate.reason = 'pointer-sensor-entry-already-wrapped';
+          return;
+        }
+        const wrappers = gate.wrappers || {};
+        gate.wrappers = wrappers;
+        for (const k of GATED) {
+          if (hasOwn(b, k) && mine(k)) continue;
+          const original = b[k];
+          const wrapper = function () { return gate.open ? original.apply(this, arguments) : false; };
+          wrappers[k] = wrapper;
+          b[k] = wrapper;
+        }
+        if (!gateVerified()) gate.reason = 'pointer-sensor-gate-not-verified';
+      } catch (e) {
+        gate.reason = 'pointer-sensor-gate-install-error';
       }
     }
 
     function removeGate() {
       const b = liveBrowser;
+      gate.open = false;
+      gate.reason = 'adapter-disposed';
       if (!b || !gate.wrappers) return;
       for (const k of GATED) if (b[k] === gate.wrappers[k]) delete b[k];
       gate.wrappers = null;
-      gate.open = false;
-      gate.reason = 'adapter-disposed';
     }
 
     // sceneInput(open?): open (true) only for the explicit Interact mode;
     // anything else closes. Returns 'interact' | 'edit' | 'unavailable:<why>'.
     function sceneInput(open) {
-      if (!gate.tried && !disposed) installGate();
-      if (!gate.wrappers) return `unavailable:${gate.reason}`;
+      if (disposed) return 'unavailable:adapter-disposed';
+      if (!gateVerified()) {
+        gate.open = false;
+        installGate();
+        if (!gateVerified()) return `unavailable:${gate.reason}`;
+      }
       if (open !== undefined) gate.open = open === true;
       return gate.open ? 'interact' : 'edit';
     }

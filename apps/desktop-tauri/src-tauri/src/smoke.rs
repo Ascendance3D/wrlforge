@@ -1135,6 +1135,8 @@ impl SmokeState {
                     "alt+Home",
                     "ctrl+alt+f",
                     "ctrl+alt+Home",
+                    // PR #149 review: Duplicate Node while Interact is on.
+                    "ctrl+d",
                 ];
                 if !KEYS.contains(&name) {
                     return Err(format!("key {name:?} is not in the smoke key set"));

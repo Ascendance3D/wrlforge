@@ -39,7 +39,7 @@ tests:app_shell|5|0
 tests:flux_regression|6|0
 tests:scope_regression|3|0
 tests:typed_regression|3|0
-unittests:wrlforge_desktop_protocol|127|0
+unittests:wrlforge_desktop_protocol|128|0
 unittests:wrlforge_render|0|0
 unittests:wrlforge_scene|25|0
 unittests:wrlforge_ui|25|0
@@ -61,7 +61,7 @@ inv_gui='menu:report|93
 dock:main|65
 dock:restore|7
 dock:damaged|7
-pick:report|164
+pick:report|172
 create:report|53
 extrusion:report|58
 move:report|206
@@ -71,7 +71,7 @@ recovery:later|15
 theme:report|82
 texture:report|46
 native:report|46'
-guards_want=151; node_want=81; route_want=2; fx_want=58; iso_want=9
+guards_want=151; node_want=85; route_want=2; fx_want=58; iso_want=9
 
 # ---- 0. the checkout -------------------------------------------------------
 head="$(git -C "$wt" rev-parse HEAD)"; dirty="$(git -C "$wt" status --porcelain | wc -l)"

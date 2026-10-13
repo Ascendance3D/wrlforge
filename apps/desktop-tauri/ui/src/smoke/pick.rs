@@ -873,6 +873,8 @@ async fn matrix(c: &p::PickSmoke, s: &mut Stats, r: &mut R) -> Option<()> {
         }
         if fx.id == "S1-edit-input-safety" {
             s.wrong += sensor_gate(c, fx, r).await?;
+            s.wrong += interact_session(c, fx, r).await?;
+            s.wrong += gate_unavailable(c, fx, i, r).await?;
         }
     }
     Some(())
@@ -1262,6 +1264,471 @@ async fn sensor_gate(c: &p::PickSmoke, fx: &p::PickFixture, r: &mut R) -> Option
         format!("status {status} · changed {ch:?}"),
     );
     Some(wrong)
+}
+
+/// The `data-state` of an overlay element ("" when absent).
+fn overlay_state(id: &str) -> String {
+    crate::element_by_id::<web_sys::Element>(id)
+        .and_then(|e| e.get_attribute("data-state"))
+        .unwrap_or_default()
+}
+
+/// The S1 runtime fields that show whether an authored sensor fired.
+const S1_WATCH: [(&str, &str, &str); 5] = [
+    ("DoorTouch", "touchTime", "-1"),
+    ("Door", "rotation", "0 0 1 0"),
+    ("Far", "isBound", "false"),
+    ("Slider", "translation", "0 0 0"),
+    ("L1", "color", "0.2 0.2 0.2"),
+];
+
+fn s1_changed() -> Vec<String> {
+    S1_WATCH
+        .iter()
+        .filter(|(d, f, v)| ipc::preview_scene_field(d, f) != *v)
+        .map(|(d, f, _)| format!("{d}.{f}={}", ipc::preview_scene_field(d, f)))
+        .collect()
+}
+
+/// PR #149 review (finding 2): entering Interact ends the edit session. A
+/// selection made with Move (outline and gizmo shown) is cleared with its
+/// pick cycle and status; while Interact runs every source edit is refused
+/// -- Duplicate and Delete (menu command and real keys), Create, Undo, an
+/// Inspector Apply for a node re-selected from STALE selection data, a
+/// pending Source edit request and real typing into the (read-only)
+/// Source -- and the source never changes. Leaving Interact restores normal
+/// editing: a Select click proves, Duplicate applies, Undo restores the
+/// text. Returns the WRONG count.
+async fn interact_session(c: &p::PickSmoke, fx: &p::PickFixture, r: &mut R) -> Option<u32> {
+    use p::command::CommandId as C;
+    let u = ui();
+    let mut wrong = 0u32;
+    let at = |id: &str| {
+        fx.clicks
+            .iter()
+            .find(|k| k.id == id)
+            .and_then(|k| project(k.world, fx.camera))
+    };
+    let (sx, sy) = at("static")?;
+    let start = untouched().await?;
+
+    // (9) Select with Move: outline, gizmo, pick status and cycle are set.
+    click("btn-move")?;
+    ipc::sleep(200).await;
+    let out = gesture(sx, sy).await;
+    let picked = out.as_ref().is_some_and(|o| o.is_proven());
+    let shown = wait_ms(4000, || {
+        (overlay_state("selection-outline") == "shown").then_some(())
+    })
+    .await;
+    let gizmo0 = overlay_state("gizmo");
+    let sel = u.selected.get_untracked();
+    let before = (
+        sel.is_some(),
+        u.inspection.with_untracked(|i| i.is_some()),
+        PICK.with_borrow(|p| p.cycle.is_some()),
+        u.pick_message.with_untracked(|m| m.is_some()),
+    );
+    click("btn-interact")?;
+    ipc::sleep(500).await;
+    let gate = ipc::preview_scene_input(None);
+    let after = (
+        selected_id().is_none(),
+        u.inspection.with_untracked(|i| i.is_none()),
+        PICK.with_borrow(|p| p.cycle.is_none() && p.last.is_none()),
+        u.pick_message.with_untracked(|m| m.is_none()),
+    );
+    let overlays = (overlay_state("selection-outline"), overlay_state("gizmo"));
+    let tools = (
+        u.move_mode.get_untracked(),
+        u.pick_mode.get_untracked(),
+        crate::gizmo::active_tool().is_none(),
+    );
+    let readonly = textarea().is_some_and(|t| t.read_only());
+    capture(c, "s1-interact-cleared").await;
+    r.step(
+        "S1 (#149): entering Interact clears a Move selection: no selection, Inspector, outline, gizmo, pick cycle or pick status; the gate opens; the Source is read-only",
+        picked
+            && shown.is_some()
+            && before.0
+            && before.1
+            && gate == "interact"
+            && after == (true, true, true, true)
+            && overlays.0 != "shown"
+            && overlays.1 != "shown"
+            && tools == (false, false, true)
+            && readonly,
+        format!(
+            "picked {picked} · outline was shown {} · gizmo was {gizmo0:?} · before {before:?} · gate {gate} · after {after:?} · overlays {overlays:?} · tools {tools:?} · read-only {readonly}",
+            shown.is_some()
+        ),
+    );
+
+    // (10) Every source edit is refused while Interact runs.
+    let refused0 = ipc::interact_refusals();
+    let mut notes = Vec::new();
+    // Stale selection data from the edit session (a Scene Tree selection of
+    // the same node is the same path): the Inspector shows it again.
+    let reselected = match &sel {
+        Some(s) => ui::pick_select(s.session, s.revision, s.id.clone())
+            .await
+            .is_ok(),
+        None => false,
+    };
+    ipc::sleep(400).await;
+    for id in [
+        C::EditDuplicateNode,
+        C::EditDeleteNode,
+        C::CreateBox,
+        C::EditUndo,
+    ] {
+        u.message.set(String::new());
+        crate::command::run(id);
+        ipc::sleep(150).await;
+        notes.push(format!(
+            "{id:?}: {:?}",
+            u.message
+                .get_untracked()
+                .chars()
+                .take(48)
+                .collect::<String>()
+        ));
+    }
+    // The real keys: Duplicate (Ctrl+D) and Undo (Ctrl+Z) from the viewport,
+    // Delete from the Scene Tree.
+    crate::command::run(C::ViewFocusViewport);
+    ipc::sleep(200).await;
+    for k in ["key-ctrl+d", "key-ctrl+z"] {
+        super::gizmo::real(k, sx, sy).await.ok()?;
+        ipc::sleep(300).await;
+    }
+    if let Some(li) = all("li.tree-item.selected").into_iter().next() {
+        li.dyn_ref::<HtmlElement>()?.focus().ok()?;
+        super::gizmo::real("key-Delete", sx, sy).await.ok()?;
+        ipc::sleep(300).await;
+    }
+    // An Inspector Apply on the re-selected node, and a pending Source edit
+    // request begun in the edit session: both refused before Rust.
+    let field = u.inspection.with_untracked(|i| {
+        i.as_ref()?
+            .node
+            .as_ref()?
+            .fields
+            .iter()
+            .find(|f| f.editable)
+            .map(|f| (f.index, f.name.clone(), f.components.len()))
+    });
+    let inspector = field.is_some();
+    if let Some((idx, name, n)) = field {
+        ui::edit_field(
+            idx,
+            name,
+            vec![p::FieldInput::Text { value: "7".into() }; n],
+        )
+        .await;
+    }
+    #[derive(serde::Serialize)]
+    struct A {
+        request: p::EditRequest,
+    }
+    let pending = call::<p::EditOutcome>(
+        "doc_edit",
+        A {
+            request: p::EditRequest {
+                session: start_session()?,
+                base_revision: start.revision,
+                from: 0,
+                to: 0,
+                insert: "# stale\n".into(),
+                item: None,
+            },
+        },
+    )
+    .await;
+    // Real typing into the read-only Source.
+    crate::command::run(C::ViewFocusSource);
+    ipc::sleep(200).await;
+    super::gizmo::real("key-a", sx, sy).await.ok()?;
+    ipc::sleep(400).await;
+    let refused = ipc::interact_refusals() - refused0;
+    let end = untouched().await?;
+    let same = (end.revision, end.dirty, end.view_hash, end.textarea_hash)
+        == (
+            start.revision,
+            start.dirty,
+            start.view_hash,
+            start.textarea_hash,
+        );
+    let pending_refused = matches!(&pending, Err(e) if e == ipc::INTERACT_REFUSAL);
+    let cmd_refused = notes.iter().all(|n| n.contains("Interact is on"));
+    if !same {
+        wrong += 1;
+    }
+    r.step(
+        "S1 (#149): while Interact runs, Duplicate, Delete, Create and Undo (menu and real keys), an Inspector Apply from stale selection data, a pending Source edit and real typing are refused; the source is unchanged",
+        reselected && inspector && cmd_refused && pending_refused && refused >= 2 && same && u.interact_mode.get_untracked(),
+        format!(
+            "reselected {reselected} · inspector field {inspector} · {} · pending {pending:?} · guard refusals {refused} · source same {same}",
+            notes.join(" · ")
+        ),
+    );
+
+    // (11) Leaving Interact restores normal editing on the authored scene.
+    let loads = u.preview_loads.get_untracked();
+    click("btn-select")?;
+    let reloaded = wait_ms(8000, || {
+        (u.preview_loads.get_untracked() > loads).then_some(())
+    })
+    .await;
+    ready(20_000).await?;
+    ipc::sleep(400).await;
+    let writable = textarea().is_some_and(|t| !t.read_only());
+    let out = gesture(sx, sy).await;
+    let proven = out.as_ref().is_some_and(|o| o.is_proven());
+    let rev0 = CORE.with_borrow(|c| c.revision);
+    crate::command::run(C::EditDuplicateNode);
+    let dup = wait_ms(5000, || {
+        (CORE.with_borrow(|c| c.revision) > rev0).then_some(())
+    })
+    .await;
+    ready(20_000).await;
+    editor::history(true).await;
+    let undone = wait_ms(5000, || {
+        (CORE.with_borrow(|c| c.revision) > rev0 + 1).then_some(())
+    })
+    .await;
+    ready(20_000).await;
+    ipc::sleep(300).await;
+    let back = untouched().await?;
+    let text_back = back.textarea_hash == start.textarea_hash && back.view_hash == start.view_hash;
+    r.step(
+        "S1 (#149): after Interact, editing works again: the Source is writable, a Select click proves, Duplicate applies, Undo restores the text",
+        reloaded.is_some() && writable && proven && dup.is_some() && undone.is_some() && text_back && s1_changed().iter().all(|f| f.starts_with("Far.isBound")),
+        format!(
+            "reloaded {} · writable {writable} · proven {proven} · duplicated {} · undone {} · text back {text_back} · changed {:?}",
+            reloaded.is_some(),
+            dup.is_some(),
+            undone.is_some(),
+            s1_changed()
+        ),
+    );
+    crate::ui::clear_selection();
+    Some(wrong)
+}
+
+fn start_session() -> Option<u64> {
+    CORE.with_borrow(|c| c.session)
+}
+
+/// PR #149 review (finding 1): the gate FAILS CLOSED. With the gate made
+/// unavailable while X_ITE's own sensor entry points are LIVE (the worst
+/// case) -- after a scene reload, and from the first load of a newly opened
+/// document -- real clicks and a drag on the door, Anchor, PlaneSensor and
+/// nested PROTO sensor reach nothing: no sensor fires, nothing is picked or
+/// selected, every tool and Interact are refused with the reason shown, and
+/// the source is unchanged. Ending the fault, the gate must pass its check
+/// again; it comes back closed (edit), never in Interact, and a Select click
+/// on the door refuses as usual. Returns the WRONG count.
+async fn gate_unavailable(
+    c: &p::PickSmoke,
+    fx: &p::PickFixture,
+    index: usize,
+    r: &mut R,
+) -> Option<u32> {
+    let u = ui();
+    let mut wrong = 0u32;
+    let at = |id: &str| {
+        fx.clicks
+            .iter()
+            .find(|k| k.id == id)
+            .and_then(|k| project(k.world, fx.camera))
+    };
+    let (door, anchor, plane, lamp, stat) = (
+        at("door")?,
+        at("anchor")?,
+        at("plane")?,
+        at("lamp-in-proto")?,
+        at("static")?,
+    );
+    if !u.pick_mode.get_untracked() {
+        click("btn-select")?;
+    }
+    for (phase, reopen) in [
+        ("after a scene reload", false),
+        ("from the first load of an opened document", true),
+    ] {
+        let loads = u.preview_loads.get_untracked();
+        let fault = ipc::preview_scene_input_fault(&format!(
+            "smoke-fault-{}",
+            if reopen { "open" } else { "reload" }
+        ));
+        if reopen {
+            #[derive(serde::Serialize)]
+            struct A {
+                index: usize,
+            }
+            let o = call::<p::OpenOutcome>("smoke_open_fixture", A { index })
+                .await
+                .ok()?;
+            ui::apply_open(o, "Opened").await;
+        } else {
+            spawn_preview();
+        }
+        wait_ms(8000, || {
+            (u.preview_loads.get_untracked() > loads).then_some(())
+        })
+        .await?;
+        ready(20_000).await?;
+        ipc::sleep(500).await;
+        let start = untouched().await?;
+        let gate = ipc::preview_scene_input(None);
+        let tools_off = !u.pick_mode.get_untracked()
+            && !u.move_mode.get_untracked()
+            && !u.interact_mode.get_untracked();
+        let note = u
+            .pick_message
+            .with_untracked(|m| m.as_ref().map(|(_, t)| t.clone()))
+            .unwrap_or_default();
+        let blocked0 = ipc::preview_scene_input_blocked();
+        let picks = PICK.with_borrow(|p| p.completed);
+        for (x, y) in [door, anchor, lamp, stat] {
+            super::gizmo::real("click", x, y).await.ok()?;
+            ipc::sleep(400).await;
+        }
+        super::gizmo::real("down", plane.0, plane.1).await.ok()?;
+        for k in 1..=6 {
+            super::gizmo::real("move", plane.0 + 10.0 * k as f64, plane.1)
+                .await
+                .ok()?;
+            ipc::sleep(30).await;
+        }
+        super::gizmo::real("up", plane.0 + 60.0, plane.1)
+            .await
+            .ok()?;
+        ipc::sleep(900).await;
+        let blocked = ipc::preview_scene_input_blocked() - blocked0;
+        let fired = s1_changed();
+        // Every tool and Interact refuse while the gate is unavailable.
+        u.message.set(String::new());
+        click("btn-select")?;
+        let sel_msg = u.message.get_untracked();
+        click("btn-interact")?;
+        let int_msg = u.message.get_untracked();
+        let refused = !u.pick_mode.get_untracked()
+            && !u.interact_mode.get_untracked()
+            && sel_msg.contains("not available")
+            && int_msg.contains("not available");
+        let none_picked = PICK.with_borrow(|p| p.completed) == picks && selected_id().is_none();
+        let end = untouched().await?;
+        let same = start.same_doc(&end);
+        if !fired.is_empty() || !none_picked || !same {
+            wrong += 1;
+        }
+        capture(
+            c,
+            &format!(
+                "s1-gate-unavailable-{}",
+                if reopen { "open" } else { "reload" }
+            ),
+        )
+        .await;
+        r.step(
+            &format!("S1 (#149): gate unavailable {phase}: real clicks and a drag on the door, Anchor, PlaneSensor and PROTO sensor fire nothing and pick nothing; tools and Interact refuse with the reason; the source is unchanged"),
+            fault.starts_with("unavailable:")
+                && gate.starts_with("unavailable:")
+                && tools_off
+                && note.contains("blocked")
+                && blocked >= 5
+                && fired.is_empty()
+                && refused
+                && none_picked
+                && same,
+            format!(
+                "fault {fault} · gate {gate} · tools off {tools_off} · note {:?} · presses blocked {blocked} · fired {fired:?} · refusals {sel_msg:?} / {int_msg:?} · none picked {none_picked} · source same {same}",
+                note.chars().take(70).collect::<String>()
+            ),
+        );
+
+        // Recovery: only through a passing check, closed, never Interact.
+        let loads = u.preview_loads.get_untracked();
+        let cleared = ipc::preview_scene_input_fault("");
+        spawn_preview();
+        wait_ms(8000, || {
+            (u.preview_loads.get_untracked() > loads).then_some(())
+        })
+        .await?;
+        ready(20_000).await?;
+        ipc::sleep(400).await;
+        let gate = ipc::preview_scene_input(None);
+        let note_gone = u.pick_message.with_untracked(|m| m.is_none());
+        let interact = u.interact_mode.get_untracked();
+        click("btn-select")?;
+        ipc::sleep(200).await;
+        let out = gesture(door.0, door.1).await;
+        ipc::sleep(500).await;
+        let status = out.as_ref().map(|o| o.status.clone()).unwrap_or_default();
+        if out.as_ref().is_some_and(|o| o.is_proven()) {
+            wrong += 1;
+        }
+        let fired = s1_changed();
+        r.step(
+            &format!("S1 (#149): gate recovered {phase}: closed (edit), never Interact; the warning clears; a Select click on the door refuses (REFUSED_SENSOR_CONFLICT) and the door stays shut"),
+            cleared == "edit" && gate == "edit" && !interact && note_gone && status == "REFUSED_SENSOR_CONFLICT" && fired.is_empty(),
+            format!("cleared {cleared} · gate {gate} · interact {interact} · warning gone {note_gone} · status {status} · fired {fired:?}"),
+        );
+    }
+
+    // The gate fails WHILE Interact runs: Interact ends, the next press is
+    // blocked, and the world's runtime state (the open door) is replaced by
+    // the source-backed preview before any edit can see it.
+    let start = untouched().await?;
+    click("btn-interact")?;
+    ipc::sleep(300).await;
+    super::gizmo::real("click", door.0, door.1).await.ok()?;
+    ipc::sleep(900).await;
+    let opened = s1_changed().iter().any(|f| f.starts_with("Door.rotation"));
+    let loads = u.preview_loads.get_untracked();
+    ipc::preview_scene_input_fault("smoke-fault-interact");
+    let blocked0 = ipc::preview_scene_input_blocked();
+    super::gizmo::real("click", lamp.0, lamp.1).await.ok()?;
+    let reloaded = wait_ms(8000, || {
+        (u.preview_loads.get_untracked() > loads).then_some(())
+    })
+    .await;
+    ready(20_000).await;
+    ipc::sleep(500).await;
+    let blocked = ipc::preview_scene_input_blocked() - blocked0;
+    let interact = u.interact_mode.get_untracked();
+    let fired: Vec<String> = s1_changed()
+        .into_iter()
+        .filter(|f| !f.starts_with("Far.isBound"))
+        .collect();
+    let end = untouched().await?;
+    let same = (end.revision, end.dirty, end.textarea_hash)
+        == (start.revision, start.dirty, start.textarea_hash);
+    let loads = u.preview_loads.get_untracked();
+    let cleared = ipc::preview_scene_input_fault("");
+    spawn_preview();
+    wait_ms(8000, || {
+        (u.preview_loads.get_untracked() > loads).then_some(())
+    })
+    .await?;
+    ready(20_000).await?;
+    click("btn-select")?;
+    ipc::sleep(300).await;
+    r.step(
+        "S1 (#149): the gate fails while Interact runs: Interact ends, the press is blocked, the preview reloads from the source (door shut), the source is unchanged",
+        opened && blocked >= 1 && !interact && reloaded.is_some() && fired.is_empty() && same && cleared == "edit",
+        format!(
+            "door opened in Interact {opened} · presses blocked {blocked} · interact {interact} · reloaded {} · changed {fired:?} · source same {same} · cleared {cleared}",
+            reloaded.is_some()
+        ),
+    );
+    Some(wrong)
+}
+
+fn spawn_preview() {
+    leptos::task::spawn_local(crate::ui::preview(true));
 }
 
 fn slug(id: &str) -> String {

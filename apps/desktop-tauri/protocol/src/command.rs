@@ -299,6 +299,9 @@ pub struct CommandContext {
     pub outline_ready: bool,
     /// B2: a Scene Tree node item is selected.
     pub node_selected: bool,
+    /// PR #149 review: the explicit Interact mode is on. Every command that
+    /// edits the source is refused until the user leaves Interact.
+    pub interact: bool,
 }
 
 /// A set of [`PanelId`]s (UI-DOCK-1).
@@ -1078,6 +1081,9 @@ impl CommandId {
         if let Action::Planned(why) = s.action {
             return Availability::Disabled(why);
         }
+        if ctx.interact && self.edits_source() {
+            return Availability::Disabled(INTERACT_ON);
+        }
         match s.requires {
             Requires::UndoHistory if !ctx.can_undo => Availability::Disabled("Nothing to undo"),
             Requires::RedoHistory if !ctx.can_redo => Availability::Disabled("Nothing to redo"),
@@ -1095,7 +1101,18 @@ impl CommandId {
         if let Action::Planned(why) = s.action {
             return Some(why);
         }
+        if ctx.interact && self.edits_source() {
+            return Some(INTERACT_ON);
+        }
         unmet(s.requires, ctx)
+    }
+
+    /// PR #149 review: the command can change the source text (Undo, Redo,
+    /// Cut, Paste, Delete, Duplicate, Create). Interact refuses these. The
+    /// File commands are not edits: they never read the runtime scene.
+    pub fn edits_source(self) -> bool {
+        let s = self.spec();
+        s.mutates_document && s.menu != Menu::File
     }
 
     /// UI-MENU-1: the primitive a Create command inserts.
@@ -1209,6 +1226,8 @@ pub const NEEDS_OUTLINE: &str = "Select an Extrusion with an editable crossSecti
 pub const NEEDS_XITE_CAMERA: &str =
     "The camera commands need the X_ITE viewport (the native test view has Reset view)";
 pub const NEEDS_NODE: &str = "Select a node in the Scene Tree or the viewport first";
+/// PR #149 review: a source edit while the world runs its own sensors.
+pub const INTERACT_ON: &str = "Interact is on; leave Interact (Select, Move, Rotate, Scale or Interact again) to edit the source";
 
 /// The first requirement `ctx` does not meet, if any (history excluded:
 /// that is the backend's run-time decision).

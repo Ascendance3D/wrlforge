@@ -317,7 +317,9 @@ pub async fn click(client_x: f64, client_y: f64) -> Option<p::PickOutcome> {
     });
     let mut layer = None;
     let out = resolve(session, client_x, client_y, want, &mut layer).await;
-    if PICK.with_borrow(|p| p.seq) != seq {
+    // PR #149 review: a pick still resolving when Interact started selects
+    // nothing (Interact cleared the selection and picks nothing).
+    if PICK.with_borrow(|p| p.seq) != seq || ui().interact_mode.get_untracked() {
         PICK.with_borrow_mut(|p| {
             p.superseded += 1;
             p.completed += 1;

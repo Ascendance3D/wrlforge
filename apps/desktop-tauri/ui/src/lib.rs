@@ -55,6 +55,7 @@ pub fn start() {
     // UI-MENU-1: the one window-level shortcut handler and menu access.
     menu::install();
     pick::install();
+    panels::install_scene_input_warning();
     gizmo::install();
     highlight::install();
     tooltip::install();
@@ -151,7 +152,8 @@ pub(crate) fn SourcePanel() -> impl IntoView {
                 <textarea id="source" class="source source-metrics" spellcheck="false" wrap="off"
                     autocomplete="off" autocapitalize="off" aria-label="VRML source"
                     placeholder="Start a New World (Ctrl+N) or open a .wrl / .wrz file (Ctrl+O). Plain and gzip VRML97 are supported."
-                    readonly=move || !has_doc()
+                    // PR #149 review: Interact makes the source read-only.
+                    readonly=move || !has_doc() || crate::ui::ui().interact_mode.get()
                     on:input=move |_| editor::on_input()
                     on:beforeinput=on_beforeinput
                     on:keyup=move |_| editor::update_cursor()

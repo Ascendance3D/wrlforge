@@ -1424,6 +1424,9 @@ pub fn reveal_tree_item_soon(id: &str) {
 /// unchanged from the button's handler: one viewport tool at a time.
 pub fn toggle_select() {
     let u = ui();
+    if !u.pick_mode.get_untracked() && refuse_unsafe_tool("Select") {
+        return;
+    }
     u.pick_mode.update(|m| *m = !*m);
     if u.pick_mode.get_untracked() {
         leave_interact();
@@ -1441,11 +1444,14 @@ pub fn toggle_select() {
 pub fn toggle_gizmo(tool: wrlforge_desktop_protocol::gizmo::Tool) {
     use wrlforge_desktop_protocol::gizmo::Tool;
     let u = ui();
-    let (mine, others) = match tool {
-        Tool::Move => (u.move_mode, [u.rotate_mode, u.scale_mode]),
-        Tool::Rotate => (u.rotate_mode, [u.move_mode, u.scale_mode]),
-        Tool::Scale => (u.scale_mode, [u.move_mode, u.rotate_mode]),
+    let (mine, others, name) = match tool {
+        Tool::Move => (u.move_mode, [u.rotate_mode, u.scale_mode], "Move"),
+        Tool::Rotate => (u.rotate_mode, [u.move_mode, u.scale_mode], "Rotate"),
+        Tool::Scale => (u.scale_mode, [u.move_mode, u.rotate_mode], "Scale"),
     };
+    if !mine.get_untracked() && refuse_unsafe_tool(name) {
+        return;
+    }
     mine.update(|m| *m = !*m);
     if mine.get_untracked() {
         leave_interact();
@@ -1466,10 +1472,25 @@ pub fn toggle_gizmo(tool: wrlforge_desktop_protocol::gizmo::Tool) {
 /// preview from the source, so state the world changed while it ran (an
 /// open door, a moved PlaneSensor target) is never edited against. The
 /// runtime never writes the source.
+///
+/// PR #149 review: entering Interact ends the edit session. Any gesture is
+/// canceled, the selection, outline, gizmo, pick cycle and pick status are
+/// cleared, and from then on every source edit is refused (the registry,
+/// and `ipc::call` for anything begun earlier and still pending) and the
+/// Source pane is read-only, until the user leaves Interact. The gate opens
+/// only after all of that, and only when it verifies.
 pub fn toggle_interact() {
     let u = ui();
     if u.interact_mode.get_untracked() {
         leave_interact();
+        return;
+    }
+    let state = crate::ipc::preview_scene_input(None);
+    if !gate_safe(&state) {
+        gate_unavailable(&state);
+        crate::ui::flash(&format!(
+            "Interact is not available: the scene input gate is {state}. Viewport input stays blocked until the gate passes its check."
+        ));
         return;
     }
     crate::gizmo::cancel("Interact started");
@@ -1477,14 +1498,20 @@ pub fn toggle_interact() {
     u.move_mode.set(false);
     u.rotate_mode.set(false);
     u.scale_mode.set(false);
+    // Refuse every source edit from here on (also one already pending).
+    u.interact_mode.set(true);
+    crate::ui::clear_selection();
+    crate::pick::forget_selection();
+    crate::pick::non_pick_selection();
     u.pick_message.set(None);
     u.gizmo_message.set(None);
-    u.interact_mode.set(true);
     let state = crate::ipc::preview_scene_input(Some(true));
     if state != "interact" {
-        // Fail closed and say why: the editor keeps the pointer.
+        // Fail closed and say why: the gate stays closed, the editor keeps
+        // the pointer, and editing comes back as it was (nothing selected).
         u.interact_mode.set(false);
-        crate::ipc::preview_scene_input(Some(false));
+        let state = crate::ipc::preview_scene_input(Some(false));
+        gate_unavailable(&state);
         crate::ui::flash(&format!("Interact is not available: the scene input gate is {state}."));
     }
 }
@@ -1501,15 +1528,98 @@ pub fn leave_interact() {
     spawn_local(crate::ui::preview(true));
 }
 
+/// A verified gate: `edit` or `interact`. Anything else is `unavailable:*`.
+pub fn gate_safe(state: &str) -> bool {
+    state == "edit" || state == "interact"
+}
+
+/// PR #149 review: refuse an editing tool while the gate is not verified
+/// (the adapter blocks every pointer event to the canvas then; the tool
+/// could not work and would only look available). True when refused.
+fn refuse_unsafe_tool(tool: &str) -> bool {
+    let state = crate::ipc::preview_scene_input(None);
+    if gate_safe(&state) {
+        return false;
+    }
+    gate_unavailable(&state);
+    crate::ui::flash(&format!(
+        "{tool} is not available: the scene input gate is {state}. Viewport input is blocked until the gate passes its check."
+    ));
+    true
+}
+
+/// PR #149 review: the gate is not verified. The adapter already blocks
+/// every pointer event to the canvas; here every viewport tool and Interact
+/// end (Interact reloads the preview from the source), any gesture is
+/// canceled, and the reason is shown. Nothing is selected or edited, and
+/// Interact is never entered by itself.
+pub fn gate_unavailable(state: &str) {
+    let u = ui();
+    crate::gizmo::cancel("the scene input gate is unavailable");
+    u.pick_mode.set(false);
+    u.move_mode.set(false);
+    u.rotate_mode.set(false);
+    u.scale_mode.set(false);
+    if u.interact_mode.get_untracked() {
+        // Interact ends with the gate: the world's runtime state is replaced
+        // by the source-backed preview before any edit can see it.
+        u.interact_mode.set(false);
+        spawn_local(crate::ui::preview(true));
+    }
+    u.pick_message.set(Some((
+        "refused".into(),
+        format!(
+            "{BLOCKED_NOTE}: the scene input gate is {state}. The world's sensors cannot be kept from editing clicks, so the 3D Viewport takes no clicks or drags until the gate passes its check."
+        ),
+    )));
+}
+
+/// Read the gate after a load (or a blocked click) and act on it.
+pub fn check_scene_input() -> String {
+    let state = crate::ipc::preview_scene_input(None);
+    if !gate_safe(&state) {
+        gate_unavailable(&state);
+    } else if ui()
+        .pick_message
+        .with_untracked(|m| m.as_ref().is_some_and(|(_, m)| m.starts_with(BLOCKED_NOTE)))
+    {
+        // Verified again: the warning goes; the tools stay off until chosen.
+        ui().pick_message.set(None);
+    }
+    state
+}
+
+const BLOCKED_NOTE: &str = "Viewport input blocked";
+
+/// PR #149 review: the adapter blocked a press on the canvas because the
+/// gate is not verified: say so (once per press) and end the tools.
+pub fn install_scene_input_warning() {
+    use wasm_bindgen::{closure::Closure, JsCast};
+    let Some(w) = web_sys::window() else { return };
+    let f = Closure::<dyn Fn(web_sys::Event)>::new(|_| {
+        let state = check_scene_input();
+        if !gate_safe(&state) {
+            crate::ui::flash(&format!(
+                "Viewport input blocked: the scene input gate is {state}."
+            ));
+        }
+    });
+    let _ = w.add_event_listener_with_callback(
+        "wrlforge-scene-input-blocked",
+        f.as_ref().unchecked_ref(),
+    );
+    f.forget();
+}
+
 /// The viewport status suffix for the sensor gate: nothing while editing
 /// (the normal state), a reminder in Interact, a warning when the gate is
-/// missing (the world's sensors would then respond to editing clicks).
+/// missing (the viewport then takes no pointer input at all).
 pub fn scene_input_note() -> String {
-    let state = crate::ipc::preview_scene_input(None);
+    let state = check_scene_input();
     match state.as_str() {
         "edit" => String::new(),
-        "interact" => " · Interact: the world responds to clicks".into(),
-        _ => format!(" · WARNING: scene sensors are not blocked while editing ({state})"),
+        "interact" => " · Interact: the world responds to clicks; source edits are refused".into(),
+        _ => format!(" · WARNING: viewport input blocked, the scene sensor gate is {state}"),
     }
 }
 

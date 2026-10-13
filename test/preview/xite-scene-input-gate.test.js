@@ -122,3 +122,59 @@ test('a dispose never removes a wrapper it does not own', () => {
   assert.equal(browser.buttonPressEvent, later);
   assert.equal(own(browser, 'motionNotifyEvent'), false);
 });
+
+// ---- PR #149 review: the gate is verified on every call and fails closed ----
+
+test('a wrapper replaced after install is unavailable, the gate closes, and it never reopens on its own', () => {
+  const { X3D, browser, log } = sensorBrowser();
+  const a = createXitePickAdapter({ X3D, browser });
+  assert.equal(a.sceneInput(true), 'interact');
+  const foreign = function () { return 'foreign'; };
+  browser.buttonPressEvent = foreign;
+  assert.equal(a.sceneInput(), 'unavailable:pointer-sensor-entry-already-wrapped');
+  assert.equal(a.sceneInput(true), 'unavailable:pointer-sensor-entry-already-wrapped', 'Interact cannot open it');
+  assert.equal(browser.buttonPressEvent, foreign, 'a foreign wrapper is never replaced');
+  // The other entry point is still this adapter's wrapper, and it is CLOSED.
+  assert.equal(browser.motionNotifyEvent(1, 1), false);
+  assert.deepEqual(log, []);
+});
+
+test('recovery only through a passing check: the gate comes back CLOSED (edit), never in Interact', () => {
+  const { X3D, browser, log } = sensorBrowser();
+  const a = createXitePickAdapter({ X3D, browser });
+  assert.equal(a.sceneInput(true), 'interact');
+  browser.buttonPressEvent = () => 'foreign';
+  assert.match(a.sceneInput(), /^unavailable:/);
+  delete browser.buttonPressEvent; // the foreign wrapper goes away
+  assert.equal(a.sceneInput(), 'edit', 'reinstalled, verified, closed');
+  assert.equal(browser.buttonPressEvent(2, 2), false);
+  assert.equal(browser.motionNotifyEvent(2, 2), false);
+  assert.deepEqual(log, []);
+  assert.equal(a.sceneInput(true), 'interact');
+  assert.equal(browser.buttonPressEvent(3, 3), true);
+  assert.deepEqual(log, [['press', 3, 3]]);
+});
+
+test('an entry point that appears later recovers on the next call', () => {
+  const { X3D, browser, proto } = sensorBrowser({ omit: 'motionNotifyEvent' });
+  const a = createXitePickAdapter({ X3D, browser });
+  assert.equal(a.sceneInput(false), 'unavailable:pointer-sensor-entry-missing');
+  proto.motionNotifyEvent = () => true;
+  assert.equal(a.sceneInput(), 'edit');
+  assert.equal(browser.motionNotifyEvent(0, 0), false);
+});
+
+test('an install error is unavailable, not a crash', () => {
+  const { X3D, browser } = sensorBrowser();
+  const a = createXitePickAdapter({ X3D, browser });
+  Object.defineProperty(browser, 'motionNotifyEvent', {
+    configurable: true,
+    get() { return function () { return true; }; },
+    set() { throw new Error('read-only'); },
+  });
+  // The getter makes it an own, foreign entry point: refused before any write.
+  assert.equal(a.sceneInput(false), 'unavailable:pointer-sensor-entry-already-wrapped');
+  delete browser.motionNotifyEvent;
+  Object.preventExtensions(browser);
+  assert.equal(a.sceneInput(false), 'unavailable:pointer-sensor-gate-install-error');
+});
