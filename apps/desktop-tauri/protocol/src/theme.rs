@@ -220,6 +220,8 @@ pub const REQUIRED_TOKENS: &[&str] = &[
     "--wf-gizmo-halo",
     "--wf-gizmo-active",
     "--wf-gizmo-disabled",
+    // B2 selection outline (cyan, drawn over the gizmo halo)
+    "--wf-selection-outline",
     // elevation
     "--wf-shadow",
 ];

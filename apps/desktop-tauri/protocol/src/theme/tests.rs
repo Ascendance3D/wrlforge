@@ -422,6 +422,8 @@ const UI_PAIRS: &[(&str, &str)] = &[
     ("--wf-axis-z", "--wf-gizmo-halo"),
     ("--wf-gizmo-active", "--wf-gizmo-halo"),
     ("--wf-gizmo-disabled", "--wf-gizmo-halo"),
+    // B2 selection outline, over the same halo.
+    ("--wf-selection-outline", "--wf-gizmo-halo"),
 ];
 
 #[test]

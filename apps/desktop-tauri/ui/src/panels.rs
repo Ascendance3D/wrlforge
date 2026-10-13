@@ -388,6 +388,28 @@ fn node_fields(n: p::NodeFields, session: u64, rev: u64) -> impl IntoView {
         .into_iter()
         .filter(|f| !(is_x && crate::extrusion::is_extrusion_field(&f.name)))
         .collect();
+    // B2 (Spazz3D Texture page / Flux texture panel): an Appearance with
+    // no texture field offers "Add texture…" (choose an image, then ONE edit).
+    let node_type = n.node_type.clone().unwrap_or_default();
+    let add_texture = (node_type == "Appearance"
+        && n.editable
+        && !fields.iter().any(|f| f.name == "texture"))
+        .then(|| {
+            view! {
+                <p class="add-texture">
+                    <button type="button" class="small" id="inspector-add-texture"
+                        title="Choose an image in the document's folder and add texture ImageTexture { url \"…\" } (one edit, one undo step)"
+                        disabled=move || ui().revision.get() != rev
+                        on:click=move |_| {
+                            spawn_local(async move {
+                                if ui::add_texture().await {
+                                    ui::preview(false).await;
+                                }
+                            });
+                        }>"Add texture…"</button>
+                </p>
+            }
+        });
     let empty = (fields.is_empty() && !is_x).then(|| {
         view! { <p class="empty">"No explicitly authored fields (defaults are not listed)."</p> }
     });
@@ -396,15 +418,140 @@ fn node_fields(n: p::NodeFields, session: u64, rev: u64) -> impl IntoView {
         {banner}
         {extrusion}
         {empty}
+        {add_texture}
         <table class="fields editable">
             <tbody>
-            {fields.into_iter().map(|f| field_row(f, session, rev)).collect_view()}
+            {fields.into_iter().map(|f| field_row(f, &node_type, session, rev)).collect_view()}
             </tbody>
         </table>
     }
 }
 
-fn field_row(f: p::EditableField, session: u64, rev: u64) -> impl IntoView {
+fn string_id(field: u32, i: usize) -> String {
+    format!("fs-{field}-{i}")
+}
+
+/// B2: an MFString list editor. Each entry is edited, removed or (for an
+/// `ImageTexture.url`) replaced by a chosen image; a new entry is appended.
+/// Every action is ONE request naming the exact list shown; Rust encodes,
+/// proves and applies it as one undo step.
+fn string_list(
+    name: &str,
+    field: u32,
+    values: Vec<String>,
+    image: bool,
+    rev: u64,
+) -> impl IntoView {
+    let stale = move || ui().revision.get() != rev;
+    let send = {
+        let (name, values) = (name.to_string(), values.clone());
+        move |op: p::StringOp| {
+            let (name, values) = (name.clone(), values.clone());
+            spawn_local(async move {
+                if ui::edit_strings(field, name, values, vec![op]).await {
+                    ui::preview(false).await;
+                }
+            });
+        }
+    };
+    let choose = {
+        let send = send.clone();
+        move |op: fn(u32, String) -> p::StringOp, index: u32| {
+            let send = send.clone();
+            spawn_local(async move {
+                if let Some(url) = ui::choose_texture().await {
+                    send(op(index, url));
+                }
+            });
+        }
+    };
+    let n = values.len();
+    let rows = values
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let id = string_id(field, i);
+            let (s_enter, s_set, s_del) = (send.clone(), send.clone(), send.clone());
+            let (id_enter, id_set) = (id.clone(), id.clone());
+            let pick = image.then(|| {
+                let choose = choose.clone();
+                view! {
+                    <button type="button" class="small" id=format!("fs-{field}-{i}-choose")
+                        title="Choose an image in the document's folder (written as a relative url)"
+                        disabled=stale
+                        on:click=move |_| choose(|index, value| p::StringOp::Set { index, value }, i as u32)>
+                        "Choose image…"</button>
+                }
+            });
+            view! {
+                <li data-entry=i.to_string()>
+                    <input id=id class="text" type="text" spellcheck="false" prop:value=v.clone()
+                        aria-label=format!("{name} entry {}", i + 1)
+                        on:keydown=move |ev: web_sys::KeyboardEvent| {
+                            if ev.key() == "Enter" {
+                                ev.prevent_default();
+                                if let Some(inp) = crate::element_by_id::<web_sys::HtmlInputElement>(&id_enter) {
+                                    s_enter(p::StringOp::Set { index: i as u32, value: inp.value() });
+                                }
+                            }
+                        } />
+                    <button type="button" class="small" id=format!("fs-{field}-{i}-set") title="Apply this entry"
+                        disabled=stale
+                        on:click=move |_| {
+                            if let Some(inp) = crate::element_by_id::<web_sys::HtmlInputElement>(&id_set) {
+                                s_set(p::StringOp::Set { index: i as u32, value: inp.value() });
+                            }
+                        }>"Apply"</button>
+                    {pick}
+                    <button type="button" class="small" id=format!("fs-{field}-{i}-del") title="Remove this entry"
+                        disabled=stale
+                        on:click=move |_| s_del(p::StringOp::Delete { index: i as u32 })>"Remove"</button>
+                </li>
+            }
+        })
+        .collect_view();
+    let new_id = format!("fs-{field}-new");
+    let (s_add, s_enter, id_add, id_enter) = (send.clone(), send.clone(), new_id.clone(), new_id.clone());
+    let pick_new = image.then(|| {
+        let choose = choose.clone();
+        view! {
+            <button type="button" class="small" id=format!("fs-{field}-new-choose")
+                title="Choose an image in the document's folder and append it"
+                disabled=stale
+                on:click=move |_| choose(|index, value| p::StringOp::Insert { index, value }, n as u32)>
+                "Choose image…"</button>
+        }
+    });
+    view! {
+        <div class="strings" data-count=n.to_string()>
+            <ol class="string-list">{rows}</ol>
+            <div class="string-add">
+                <input id=new_id class="text" type="text" spellcheck="false" placeholder="new entry"
+                    aria-label=format!("{name}: new entry")
+                    on:keydown=move |ev: web_sys::KeyboardEvent| {
+                        if ev.key() == "Enter" {
+                            ev.prevent_default();
+                            if let Some(inp) = crate::element_by_id::<web_sys::HtmlInputElement>(&id_enter) {
+                                s_enter(p::StringOp::Insert { index: n as u32, value: inp.value() });
+                                inp.set_value("");
+                            }
+                        }
+                    } />
+                <button type="button" class="small" id=format!("fs-{field}-add") title="Append this entry"
+                    disabled=stale
+                    on:click=move |_| {
+                        if let Some(inp) = crate::element_by_id::<web_sys::HtmlInputElement>(&id_add) {
+                            s_add(p::StringOp::Insert { index: n as u32, value: inp.value() });
+                            inp.set_value("");
+                        }
+                    }>"Add"</button>
+                {pick_new}
+            </div>
+        </div>
+    }
+}
+
+fn field_row(f: p::EditableField, node_type: &str, session: u64, rev: u64) -> impl IntoView {
     let (from, to) = (f.view_from, f.view_to);
     let ty = f.field_type.clone().unwrap_or_else(|| "?".into());
     let title = [
@@ -419,6 +566,10 @@ fn field_row(f: p::EditableField, session: u64, rev: u64) -> impl IntoView {
     let value = if let (true, Some(list)) = (f.editable, f.list.clone()) {
         // VISUAL-4A: an editable MFVec2f / MFVec3f / MFRotation list.
         crate::extrusion::list_table(&f.name, f.index, &list, rev).into_any()
+    } else if let (true, Some(strings)) = (f.editable, f.strings.clone()) {
+        // B2: an editable MFString list (url, info, ...).
+        let image = node_type == "ImageTexture" && f.name == "url";
+        string_list(&f.name, f.index, strings.values, image, rev).into_any()
     } else if f.editable {
         let idx = f.index;
         let kind = f.kind.clone().unwrap_or_default();
@@ -712,6 +863,19 @@ pub fn Viewport() -> impl IntoView {
             <div class="viewport-stage" hidden=move || u.native.with(|s| s.native_shown())>
                 <x3d-canvas id="viewport" class:picking=move || u.pick_mode.get() || u.move_mode.get() || u.rotate_mode.get() || u.scale_mode.get() splashScreen="false" contextMenu="false" notifications="false"
                     timings="false" cache="false"></x3d-canvas>
+                // B2: the selection outline (view state only), under the
+                // gizmo. Drawn from the renderer's camera by `highlight.rs`;
+                // it never takes pointer input.
+                <svg id="selection-outline" class="selection-outline" data-state="hidden" aria-hidden="true">
+                    <path id="hl-halo" class="hl-halo"></path>
+                    <path id="hl-line" class="hl-line"></path>
+                </svg>
+                // B2: why the selection has no outline. Floats over the
+                // canvas so it never changes the viewport's size.
+                <div class="highlight-status" id="highlight-status" role="status" aria-live="polite"
+                    hidden=move || u.highlight_message.with(|m| m.is_none())>
+                    {move || u.highlight_message.get().unwrap_or_default()}
+                </div>
                 // The gizmo overlay. Drawn from the renderer's camera by
                 // `gizmo.rs`; only the handles take pointer input.
                 <svg id="gizmo" class="gizmo" data-state="hidden" data-tool="move" role="group" aria-label="Manipulation handles">

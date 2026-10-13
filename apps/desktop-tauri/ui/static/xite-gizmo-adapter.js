@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// VISUAL-3A / 3A1 -- the ONE narrow X_ITE manipulation adapter (Tauri app).
+// VISUAL-3A / 3A1 / B2 -- the ONE narrow X_ITE manipulation adapter (Tauri app).
 //
-// Every X_ITE surface the translation gizmo and the camera carry need is
-// touched here and nowhere else, and nothing leaves this file toward Rust
-// except PLAIN DATA (numbers, strings, booleans). Three things only:
+// Every X_ITE surface the translation gizmo, the camera carry and the selection
+// highlight need is touched here and nowhere else, and nothing leaves this file
+// toward Rust except PLAIN DATA (numbers, strings, booleans). Four things only:
 //
 //   1. CAMERA. The active layer's viewpoint view and projection matrices, the
 //      layer viewport rectangle and the canvas rectangle, exactly as X_ITE
@@ -40,6 +40,10 @@
 //      the layer's traversed viewpoints (getViewpoints) and binds one
 //      through the PUBLIC browser.bindViewpoint. All of it is editor view
 //      state: never an authored field, never the source.
+//
+//   5. SELECTION HIGHLIGHT (B2). The rendered bounding box of a PROVEN
+//      runtime node and its proven ancestors' frames, read-only (PRIVATE:
+//      X3D.Box3, getInnerNode, getBBox; PUBLIC SAI for Transform fields).
 //
 // Binding (VISUAL-3A1): the runtime node is NOT found here. The pick
 // adapter's provenance generation names the ONE runtime node X_ITE's parser
@@ -553,6 +557,53 @@
       }
     }
 
+    // ---- B2 selection highlight (read-only, plain data out) ------------------
+    // The rendered bounding box of a PROVEN runtime node (the pick adapter's
+    // nodeAt for a span Rust proved): X_ITE's Box3 frame -- a matrix mapping
+    // the cube [-1, 1]^3 onto the box -- in the node's PARENT coordinates
+    // (PRIVATE X_ITE 16.5.0 surfaces: X3D.Box3, X3DNode.getInnerNode,
+    // X3DNode.getBBox). A PROTO instance is measured through getInnerNode,
+    // X_ITE's own "the node this instance renders as". Nothing is written.
+    function bounds(node) {
+      if (!compatibility().ok || typeof X3D.Box3 !== 'function') return { ok: false, reason: 'bounds-unavailable' };
+      if (!node || typeof node !== 'object') return { ok: false, reason: 'runtime-node-not-proven' };
+      try {
+        var inner = fn(node, 'getInnerNode') ? node.getInnerNode() : node;
+        if (!inner || !fn(inner, 'getBBox')) return { ok: false, reason: 'node-has-no-rendered-bounds' };
+        // Geometry nodes return their own box and ignore the argument.
+        var b = inner.getBBox(new X3D.Box3(), false);
+        var m = b ? m16(b.matrix) : null;
+        return m ? { ok: true, box: m } : { ok: false, reason: 'node-has-no-rendered-bounds' };
+      } catch (e) {
+        return { ok: false, reason: 'node-has-no-rendered-bounds' };
+      }
+    }
+
+    // A proven ancestor's runtime type and, for a Transform, its rendered
+    // fields (PUBLIC SAI only), or null when unreadable.
+    function ancestor(node) {
+      if (!compatibility().ok || typeof X3D.SFNode !== 'function' || !node || typeof node !== 'object') return null;
+      try {
+        var sf = new X3D.SFNode(node);
+        if (sf.getValue() !== node) return null;
+        var type = sf.getNodeTypeName();
+        if (typeof type !== 'string') return null;
+        if (type !== 'Transform') return { type: type };
+        var t = sf.translation, r = sf.rotation, s = sf.scale, so = sf.scaleOrientation, c = sf.center;
+        var f = {
+          translation: [t.x, t.y, t.z].map(Number),
+          rotation: [r.x, r.y, r.z, r.angle].map(Number),
+          scale: [s.x, s.y, s.z].map(Number),
+          scaleOrientation: [so.x, so.y, so.z, so.angle].map(Number),
+          center: [c.x, c.y, c.z].map(Number),
+        };
+        var all = f.translation.concat(f.rotation, f.scale, f.scaleOrientation, f.center);
+        return finiteAll(all) ? { type: type, frame: f } : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
     // Bind one of viewpoints()' nodes through the PUBLIC browser service.
     function bindViewpoint(node) {
       var b = boundLayer();
@@ -573,6 +624,7 @@
       viewAll: viewAll, frameInput: frameInput, applyView: applyView, resetView: resetView, viewpoints: viewpoints, bindViewpoint: bindViewpoint,
       compatibility: compatibility, camera: camera, bind: bind, set: set, setField: setField, restore: restore, release: release, unbind: unbind, rendered: rendered, frame: frame,
       boundViewpoint: boundViewpoint, readCamera: readCamera, writeCamera: writeCamera, viewMatrix: viewMatrix, cameraState: cameraState,
+      bounds: bounds, ancestor: ancestor,
     });
   }
 

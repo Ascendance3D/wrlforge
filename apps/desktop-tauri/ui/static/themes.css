@@ -155,6 +155,7 @@
   --wf-gizmo-halo: #16161e;
   --wf-gizmo-active: #e0af68;
   --wf-gizmo-disabled: #737aa2;
+  --wf-selection-outline: #7dcfff;
 
   --wf-shadow: 0 4px 14px #00000080;
 }
@@ -277,6 +278,7 @@
   --wf-gizmo-halo: #16161e;
   --wf-gizmo-active: #e0af68;
   --wf-gizmo-disabled: #737aa2;
+  --wf-selection-outline: #7dcfff;
 
   --wf-shadow: 0 4px 14px #00000073;
 }
@@ -401,6 +403,7 @@
   --wf-gizmo-halo: #ffffff;
   --wf-gizmo-active: #8f5e15;
   --wf-gizmo-disabled: #8990b3;
+  --wf-selection-outline: #007197;
 
   --wf-shadow: 0 4px 14px #00000033;
 }

@@ -481,6 +481,34 @@
       };
       return JSON.stringify(pick.gizmo.bind(pick.scene, node, Number(index), String(name || ''), [Number(x), Number(y), Number(z)], verify));
     },
+    // ---- B2 selection highlight (read-only, plain data) ---------------------
+    // The rendered bounds of the runtime node generation `seq` recorded for
+    // [from, to) -- the span Rust just PROVED -- plus each proven ancestor
+    // (`spans`: flat [from, to, ...], the direct parent first, as Rust
+    // returned them). Every node comes from nodeAt (exactly one runtime node
+    // per span), never a search. JSON {ok, box, ancestors} or {ok, reason}.
+    highlightBounds: function (seq, from, to, spans) {
+      var c = canvas();
+      if (c && c.browser) adapterFor(c.browser);
+      var out = function (o) { return JSON.stringify(o); };
+      if (!pick.gizmo || !pick.adapter) return out({ ok: false, reason: 'adapter-unavailable' });
+      if (!pick.active || pick.active.seq !== seq || !pick.generation) return out({ ok: false, reason: 'preview-scene-replaced' });
+      var gen = pick.generation, a = pick.adapter;
+      var node = a.nodeAt(gen, Number(from), Number(to));
+      if (!node) return out({ ok: false, reason: 'runtime-node-for-span-not-unique' });
+      var b = pick.gizmo.bounds(node);
+      if (!b.ok) return out(b);
+      var list = Array.prototype.slice.call(spans || []);
+      if (list.length % 2) return out({ ok: false, reason: 'runtime-node-not-proven' });
+      var ancestors = [];
+      for (var i = 0; i < list.length; i += 2) {
+        var an = a.nodeAt(gen, Number(list[i]), Number(list[i + 1]));
+        var info = an ? pick.gizmo.ancestor(an) : null;
+        if (!info) return out({ ok: false, reason: 'runtime-ancestor-not-proven' });
+        ancestors.push(info);
+      }
+      return out({ ok: true, box: b.box, ancestors: ancestors });
+    },
     gizmoSet: function (x, y, z) { return !!pick.gizmo && pick.gizmo.set(x, y, z); },
     // VISUAL-4B: name is translation / rotation / scale; values a number array.
     gizmoSetField: function (name, values) { return !!pick.gizmo && pick.gizmo.setField(String(name), values); },

@@ -996,6 +996,14 @@ impl SmokeState {
                     "ctrl+alt+z",
                     "a",
                     "b",
+                    // B2: Find / Replace / Go to Line and their inputs.
+                    "ctrl+f",
+                    "ctrl+h",
+                    "ctrl+g",
+                    "ctrl+a",
+                    "2",
+                    "9",
+                    "z",
                 ];
                 if !KEYS.contains(&name) {
                     return Err(format!("key {name:?} is not in the smoke key set"));

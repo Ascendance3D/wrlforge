@@ -66,6 +66,14 @@ extern "C" {
     fn gizmo_unbind_js() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = gizmoRendered, catch)]
     fn gizmo_rendered_js() -> Result<JsValue, JsValue>;
+    // B2 selection highlight (read-only).
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = highlightBounds, catch)]
+    fn highlight_bounds_js(
+        seq: f64,
+        from: f64,
+        to: f64,
+        spans: Vec<f64>,
+    ) -> Result<JsValue, JsValue>;
     // VISUAL-3A1 camera carry.
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = cameraCapture, catch)]
     fn camera_capture_js() -> Result<JsValue, JsValue>;
@@ -191,6 +199,46 @@ pub fn gizmo_unbind() {
 pub fn gizmo_rendered() -> Option<[f64; 3]> {
     let s = gizmo_rendered_js().ok()?.as_string()?;
     serde_json::from_str(&s).ok()
+}
+
+/// B2: the rendered bounds of the runtime node generation `seq` recorded
+/// for the PROVEN preview span `span`, and its proven ancestors' frames
+/// (`ancestors`: preview spans, the direct parent first). `Err` is the
+/// reason none can be read.
+pub fn highlight_bounds(
+    seq: u64,
+    span: (u64, u64),
+    ancestors: &[(u64, u64)],
+) -> Result<p::highlight::Bounds, String> {
+    #[derive(serde::Deserialize)]
+    struct R {
+        ok: bool,
+        reason: Option<String>,
+        #[serde(rename = "box")]
+        bx: Option<[f64; 16]>,
+        #[serde(default)]
+        ancestors: Vec<p::highlight::RenderedAncestor>,
+    }
+    let spans = ancestors
+        .iter()
+        .flat_map(|(f, t)| [*f as f64, *t as f64])
+        .collect();
+    let raw = highlight_bounds_js(seq as f64, span.0 as f64, span.1 as f64, spans)
+        .map_err(js_err)?
+        .as_string()
+        .ok_or("non-string bounds")?;
+    match serde_json::from_str::<R>(&raw).map_err(|e| e.to_string())? {
+        R {
+            ok: true,
+            bx: Some(b),
+            ancestors,
+            ..
+        } => Ok(p::highlight::Bounds {
+            r#box: b,
+            ancestors,
+        }),
+        R { reason, .. } => Err(reason.unwrap_or_else(|| "bounds-unreadable".into())),
+    }
 }
 
 /// Fraction of viewport pixels that differ from the background after the

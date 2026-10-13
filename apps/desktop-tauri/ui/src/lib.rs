@@ -12,7 +12,10 @@ mod create;
 mod dock;
 mod editor;
 mod extrusion;
+mod find;
+mod findbar;
 mod gizmo;
+mod highlight;
 mod ipc;
 mod menu;
 mod native;
@@ -44,12 +47,15 @@ pub fn start() {
     dock::init();
     // UI-MENU-1: the menu state, before mount for the same reason.
     menu::init();
+    // B2: the Find / Go to Line bar state, before mount likewise.
+    findbar::init();
     leptos::mount::mount_to_body(App);
     dock::install();
     // UI-MENU-1: the one window-level shortcut handler and menu access.
     menu::install();
     pick::install();
     gizmo::install();
+    highlight::install();
     ui::start_external_watch();
     syntax::install();
     // The UI stays hidden (style.css) until `<html data-theme>` is set, so a
@@ -113,6 +119,14 @@ pub(crate) fn SourcePanel() -> impl IntoView {
                 "Source"
                 <span class="muted">{move || u.doc.with(|d| d.as_ref().map(|d| format!(" — {}", d.display_path)).unwrap_or_default())}</span>
             </div>
+            // B2: Find / Replace / Go to Line (hidden while closed).
+            <findbar::FindBar/>
+            <div class="source-row">
+            // B2: line numbers. Only the lines near the viewport are
+            // written (syntax.rs); the gutter follows the scroll.
+            <div class="source-gutter" aria-hidden="true">
+                <pre id="source-gutter" class="source-gutter-nums source-metrics"></pre>
+            </div>
             // The textarea is the ONLY editing control (its glyphs are
             // transparent); the aria-hidden layer behind it paints the
             // same text in syntax colors and takes no input.
@@ -129,6 +143,7 @@ pub(crate) fn SourcePanel() -> impl IntoView {
                     on:select=move |_| editor::update_cursor()
                     on:scroll=move |_| syntax::on_scroll()
                 ></textarea>
+            </div>
             </div>
         </section>
     }

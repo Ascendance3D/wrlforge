@@ -89,7 +89,26 @@ option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
    syntax colors, follows its scroll by transform, and takes no input.
    Color, underline and nothing else may differ per token: no weight, style
    or ligature change, so glyph advances never move. */
-.source-wrap { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--wf-surface-editor); }
+.source-row { position: relative; flex: 1 1 auto; min-height: 0; display: flex; }
+.source-wrap { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; background: var(--wf-surface-editor); }
+/* B2: line numbers. Same metrics as the text (rows align); only lines near
+   the viewport exist, moved by transform with the textarea's scroll. */
+.source-gutter { flex: none; position: relative; overflow: hidden; background: var(--wf-surface-editor);
+  border-right: 1px solid var(--wf-border-subtle); user-select: none; -webkit-user-select: none; pointer-events: none; }
+/* Absolutely placed: the numbers never give the panel an intrinsic height. */
+.source-gutter { width: calc(2ch + 1.1rem); font-family: var(--wf-font-mono); font-size: 13px; }
+.source-gutter-nums { position: absolute; top: 0; left: 0; right: 0; padding-left: .4rem; padding-right: .5rem;
+  text-align: right; color: var(--wf-text-muted); will-change: transform; }
+.source-gutter-nums .cur { color: var(--wf-text-editor); }
+/* B2: Find / Replace / Go to Line bar. */
+.findbar { display: flex; flex-direction: column; gap: .2rem; padding: .25rem .5rem; background: var(--wf-surface-panel); border-bottom: 1px solid var(--wf-border-subtle); font-size: .85rem; }
+.findbar[hidden], .findbar-row[hidden] { display: none; }
+.findbar-row { display: flex; align-items: center; gap: .35rem; }
+.findbar-row input[type=text] { flex: 0 1 18rem; min-width: 6rem; font-family: var(--wf-font-mono); }
+.findbar-row label { display: inline-flex; align-items: center; gap: .15rem; color: var(--wf-text-secondary); }
+.findbar-row .spacer { flex: 1 1 auto; }
+.findbar-status { color: var(--wf-text-muted); min-height: 1em; }
+.findbar-status.error { color: var(--wf-error-fg); }
 .source-metrics { font-family: var(--wf-font-mono); font-size: 13px; line-height: 18px; tab-size: 4;
   white-space: pre; letter-spacing: normal; word-spacing: normal; font-variant-ligatures: none; font-kerning: none;
   font-weight: 400; font-style: normal; text-transform: none; padding: .5rem .7rem; margin: 0; border: 0; }
@@ -155,6 +174,11 @@ x3d-canvas#viewport { flex: 1 1 auto; width: 100%; min-height: 6rem; display: bl
 .fields.editable th { cursor: pointer; }
 .fields.editable tr.ro th { color: var(--wf-text-muted); }
 .fields .controls { display: flex; flex-wrap: wrap; gap: .25rem .4rem; align-items: center; }
+/* B2: MFString lists (url, info, ...) and Add texture. */
+.fields .string-list { margin: 0; padding-left: 1.4rem; }
+.fields .string-list li, .fields .string-add { display: flex; flex-wrap: wrap; gap: .25rem .4rem; align-items: center; margin-bottom: .2rem; }
+.fields .string-list input.text, .fields .string-add input.text { min-width: 10rem; flex: 1 1 10rem; }
+.add-texture { margin: .3rem 0; }
 .fields .comp { display: inline-flex; gap: .2rem; align-items: center; color: var(--wf-tree-kind); font-size: .78rem; }
 .fields .comp input.num { width: 5.2rem; }
 .fields .comp input.text { width: 14rem; }
@@ -195,6 +219,16 @@ x3d-canvas.picking { cursor: crosshair; }
 .gizmo { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .gizmo[data-state="hidden"] { display: none; }
 .gz-handle { pointer-events: none; }
+/* B2 selection outline: a cyan box over a dark halo, view state only. */
+.selection-outline { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.selection-outline[data-state="hidden"] { display: none; }
+.selection-outline path { fill: none; stroke-linejoin: round; stroke-linecap: round; }
+.selection-outline .hl-halo { stroke: var(--wf-gizmo-halo); stroke-width: 3.5; opacity: .5; }
+.highlight-status { position: absolute; left: .4rem; bottom: .4rem; max-width: calc(100% - .8rem); pointer-events: none;
+  font-size: .78rem; padding: .1rem .4rem; border-radius: 3px; color: var(--wf-warning-fg); background: var(--wf-warning-bg);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.highlight-status[hidden] { display: none; }
+.selection-outline .hl-line { stroke: var(--wf-selection-outline); stroke-width: 1.6; }
 .gz-handle .gz-hit { stroke: transparent; stroke-width: 16; stroke-linecap: round; }
 .gz-handle .gz-halo { stroke: var(--wf-gizmo-halo); stroke-width: 7; stroke-linecap: round; }
 .gz-handle .gz-line { stroke-width: 3.5; stroke-linecap: round; }
