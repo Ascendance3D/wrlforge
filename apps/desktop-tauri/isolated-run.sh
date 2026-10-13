@@ -77,7 +77,12 @@ check_env() {
 # Check the started child's environment and wait for it.
 check_child() {
   local pid="$1" root="$2" v want got
-  local envf="/proc/$pid/environ"
+  local envf="/proc/$pid/environ" self
+  # Until the forked child execs, /proc/PID/environ is still THIS shell's
+  # original block (bash exports do not rewrite it), so a read under load
+  # saw the owner's HOME and refused a safe launch. Wait for the exec.
+  self="$(readlink "/proc/$$/exe")"
+  for _ in $(seq 1 150); do [[ "$(readlink "/proc/$pid/exe" 2>/dev/null)" != "$self" ]] && break; sleep 0.02; done
   for _ in 1 2 3 4 5 6 7 8 9 10; do [[ -r "$envf" ]] && break; sleep 0.05; done
   [[ -r "$envf" ]] || return 0 # Already gone: the exit check still runs.
   for v in HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME XDG_RUNTIME_DIR GDK_BACKEND; do
