@@ -72,7 +72,7 @@ pub fn start() {
         menu::listen_native().await;
         // The GUI suites were written for the authored camera: a smoke run
         // gets no automatic Fit, decided before the startup document opens.
-        for cmd in ["smoke_plan", "smoke_recovery_plan", "smoke_dock_plan", "smoke_menu_plan"] {
+        for cmd in ["smoke_plan", "smoke_recovery_plan", "smoke_dock_plan", "smoke_menu_plan", "smoke_perf_plan"] {
             if let Ok(Some(_)) =
                 ipc::call::<Option<serde::de::IgnoredAny>>(cmd, ipc::NoArgs {}).await
             {
@@ -115,6 +115,10 @@ pub fn start() {
             // D4: the GUI suites were written for origin placement.
             ui::ui().place_origin.set(true);
             smoke::run_menu(plan).await;
+        } else if let Ok(Some(plan)) =
+            ipc::call::<Option<smoke::PerfPlan>>("smoke_perf_plan", ipc::NoArgs {}).await
+        {
+            smoke::run_perf(plan).await;
         }
     });
 }

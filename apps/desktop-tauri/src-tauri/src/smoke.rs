@@ -739,6 +739,9 @@ impl SmokeState {
 
     /// Smoke only: fixture `index` of the picking or gizmo run.
     pub fn pick_fixture(&self, index: usize) -> Option<PathBuf> {
+        if crate::smoke_perf::armed() {
+            return crate::smoke_perf::fixture(index);
+        }
         if crate::smoke_dock::armed() {
             return crate::smoke_dock::fixture(index);
         }
@@ -828,6 +831,10 @@ impl SmokeState {
         }
         if crate::smoke_menu::armed() {
             return crate::smoke_menu::confirm();
+        }
+        // The frame-timing run edits a shared PROTO Material: always Edit.
+        if crate::smoke_perf::armed() {
+            return Some(true);
         }
         // The picking and gizmo runs start a fresh New World per theme: discard.
         if self.2.lock().ok()?.is_some()
@@ -1039,7 +1046,8 @@ impl SmokeState {
             || self.3.lock().map_err(|e| e.to_string())?.is_some()
             || self.6.lock().map_err(|e| e.to_string())?.is_some()
             || crate::smoke_dock::armed()
-            || crate::smoke_menu::armed();
+            || crate::smoke_menu::armed()
+            || crate::smoke_perf::armed();
         if !armed {
             return Err("no picking or gizmo smoke run is armed".into());
         }
@@ -1182,6 +1190,9 @@ pub fn finish(app: &AppHandle, report: p::SmokeReport) {
         return;
     }
     if crate::smoke_menu::finish(app, &report) {
+        return;
+    }
+    if crate::smoke_perf::finish(app, &report) {
         return;
     }
     let state = app.state::<SmokeState>();

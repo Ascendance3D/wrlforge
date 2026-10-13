@@ -797,6 +797,12 @@ pub fn app_quit(app: AppHandle) -> Result<(), String> {
     w.close().map_err(|e| e.to_string())
 }
 
+/// The viewport frame-timing smoke plan (`--smoke-perf` only).
+#[tauri::command]
+pub fn smoke_perf_plan() -> Option<crate::smoke_perf::Plan> {
+    crate::smoke_perf::plan()
+}
+
 /// UI-MENU-1: the menu smoke plan (`--smoke-menu` only).
 #[tauri::command]
 pub fn smoke_menu_plan() -> Option<crate::smoke_menu::Plan> {

@@ -664,6 +664,52 @@
       tr.on = false;
       return JSON.stringify({ frames: tr.frames, missing: tr.missing, maxDelta: tr.maxDelta, worstFrame: tr.worstFrame, hadRef: !!tr.ref });
     },
+    // Tests ONLY (--smoke-perf): the WebGL renderer of the viewport's own
+    // X_ITE context, JSON, or '' when the context is unavailable.
+    glInfo: function () {
+      var c = canvas();
+      var gl = c && c.browser && c.browser.getContext ? c.browser.getContext() : null;
+      if (!gl) return '';
+      var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      return JSON.stringify({
+        version: gl.getParameter(gl.VERSION),
+        vendor: dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR),
+        renderer: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
+      });
+    },
+    // Tests ONLY (--smoke-perf): record animation-frame timestamps from now
+    // on; stop returns the frame statistics as JSON (intervals in ms) and
+    // X_ITE's own current frame rate.
+    frameStatsStart: function () {
+      var st = { t: [], on: true };
+      if (pick.fstat) pick.fstat.on = false;
+      pick.fstat = st;
+      var step = function (ts) {
+        if (!st.on) return;
+        st.t.push(ts);
+        window.requestAnimationFrame(step);
+      };
+      window.requestAnimationFrame(step);
+      return true;
+    },
+    frameStatsStop: function () {
+      var st = pick.fstat;
+      pick.fstat = null;
+      if (!st) return '';
+      st.on = false;
+      var d = [];
+      for (var i = 1; i < st.t.length; i++) d.push(st.t[i] - st.t[i - 1]);
+      var s = d.slice().sort(function (a, b) { return a - b; });
+      var q = function (p) { return s.length ? s[Math.min(s.length - 1, Math.round((s.length - 1) * p))] : 0; };
+      var span = st.t.length > 1 ? st.t[st.t.length - 1] - st.t[0] : 0;
+      var c = canvas();
+      return JSON.stringify({
+        frames: st.t.length, ms: span, fps: span > 0 ? (st.t.length - 1) * 1000 / span : 0,
+        p50: q(0.5), p95: q(0.95), max: s.length ? s[s.length - 1] : 0,
+        slow: d.filter(function (x) { return x > 50; }).length,
+        xiteFps: c && c.browser ? c.browser.currentFrameRate : -1,
+      });
+    },
     // XITE-16-UPGRADE-2 tests ONLY (--smoke-texture): between start and
     // stop, copy console log/info/warn/error lines (truncated) and count
     // DOMParser.parseFromString calls, then restore both exactly. Nothing is

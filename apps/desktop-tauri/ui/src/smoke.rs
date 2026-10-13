@@ -16,6 +16,7 @@ mod dock;
 mod extrusion;
 mod gizmo;
 mod menu;
+mod perf;
 mod pick;
 mod recovery;
 mod rotscale;
@@ -143,6 +144,25 @@ pub use menu::Plan as MenuPlan;
 pub async fn run_menu(plan: MenuPlan) {
     let mut r = R(vec![]);
     if menu::run(&plan, &mut r).await.is_none() {
+        r.step(
+            "smoke script ran to completion",
+            false,
+            "a required DOM element or reply was missing",
+        );
+    }
+    let _ = call::<()>(
+        "smoke_finish",
+        serde_json::json!({ "report": p::SmokeReport { steps: r.0 } }),
+    )
+    .await;
+}
+
+/// The viewport frame-timing smoke (`smoke_perf_plan`).
+pub use perf::Plan as PerfPlan;
+
+pub async fn run_perf(plan: PerfPlan) {
+    let mut r = R(vec![]);
+    if perf::run(&plan, &mut r).await.is_none() {
         r.step(
             "smoke script ran to completion",
             false,
