@@ -122,11 +122,23 @@ thread_local! {
     static AUTO_FIT: Cell<Option<u64>> = const { Cell::new(None) };
     /// File → Open / startup armed the next opened document.
     static ARMED: Cell<bool> = const { Cell::new(false) };
+    /// A GUI smoke run is active: no automatic Fit at all.
+    static SUPPRESSED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// The next document `apply_open` adopts gets one automatic Fit.
 pub fn arm_auto_fit() {
-    ARMED.with(|a| a.set(true));
+    if !SUPPRESSED.with(|s| s.get()) {
+        ARMED.with(|a| a.set(true));
+    }
+}
+
+/// No automatic Fit for the rest of this run. The GUI smoke suites were
+/// written for the authored (unframed) camera.
+pub fn suppress_auto_fit() {
+    SUPPRESSED.with(|s| s.set(true));
+    ARMED.with(|a| a.set(false));
+    AUTO_FIT.with(|f| f.set(None));
 }
 
 /// `apply_open` adopted `session` (or nothing, with `None`).

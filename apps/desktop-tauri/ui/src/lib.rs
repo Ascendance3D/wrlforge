@@ -68,6 +68,16 @@ pub fn start() {
         native::install().await;
         // UI-MENU-1: the macOS application menu's About / Quit (once).
         menu::listen_native().await;
+        // The GUI suites were written for the authored camera: a smoke run
+        // gets no automatic Fit, decided before the startup document opens.
+        for cmd in ["smoke_plan", "smoke_recovery_plan", "smoke_dock_plan", "smoke_menu_plan"] {
+            if let Ok(Some(_)) =
+                ipc::call::<Option<serde::de::IgnoredAny>>(cmd, ipc::NoArgs {}).await
+            {
+                camera::suppress_auto_fit();
+                break;
+            }
+        }
         if let Ok(Some(o)) =
             ipc::call::<Option<p::OpenOutcome>>("startup_document", ipc::NoArgs {}).await
         {
