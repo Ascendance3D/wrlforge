@@ -311,7 +311,7 @@ async fn select_object(
             .filter(|i| i.title == label && i.revision == rev && i.id == want)
     })
     .await;
-    let tr_inputs = all("tr[data-field=\"translation\"] input")
+    let tr_inputs = all("tr[data-field=\"translation\"] input[type=\"text\"]")
         .into_iter()
         .filter_map(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
         .map(|i| i.value())

@@ -986,7 +986,7 @@ async fn main_phase(c: &Plan, r: &mut R) -> Option<()> {
     super::settle().await;
     ipc::sleep(800).await;
     let insp0 = ui().inspection.get_untracked();
-    let input: web_sys::HtmlInputElement = el("tr[data-field=\"translation\"] input")?
+    let input: web_sys::HtmlInputElement = el("tr[data-field=\"translation\"] input[type=\"text\"]")?
         .dyn_into()
         .ok()?;
     input.set_value("7.25");
@@ -1016,7 +1016,7 @@ async fn main_phase(c: &Plan, r: &mut R) -> Option<()> {
         format!("group {group:?} focus {now:?}"),
     );
     menu("layout-panel-inspector").await?;
-    let input2: web_sys::HtmlInputElement = el("tr[data-field=\"translation\"] input")?
+    let input2: web_sys::HtmlInputElement = el("tr[data-field=\"translation\"] input[type=\"text\"]")?
         .dyn_into()
         .ok()?;
     r.step(

@@ -329,7 +329,7 @@ pub(super) async fn press_and_move(axis: Axis, dist: f64, steps: u32) -> Option<
 
 /// The Inspector's translation inputs.
 fn inspector_translation() -> Vec<String> {
-    all("tr[data-field=\"translation\"] input")
+    all("tr[data-field=\"translation\"] input[type=\"text\"]")
         .into_iter()
         .filter_map(|e| e.dyn_into::<web_sys::HtmlInputElement>().ok())
         .map(|i| i.value())
