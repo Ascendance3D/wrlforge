@@ -424,18 +424,18 @@ pub fn FindBar() -> impl IntoView {
                     prop:value=move || s.query.get()
                     on:input=move |ev| { s.query.set(value_of(&ev)); refresh_count(); }
                     on:keydown=move |ev| on_key(ev, Mode::Find)/>
-                <label title="Match case"><input id="find-case" type="checkbox"
+                <label data-tip="Match case"><input id="find-case" type="checkbox"
                     prop:checked=move || s.match_case.get()
                     on:change=move |_| { s.match_case.update(|v| *v = !*v); refresh_count(); }/>"Aa"</label>
-                <label title="Wrap around at the end of the document"><input id="find-wrap" type="checkbox"
+                <label data-tip="Wrap around at the end of the document"><input id="find-wrap" type="checkbox"
                     prop:checked=move || s.wrap.get()
                     on:change=move |_| s.wrap.update(|v| *v = !*v)/>"Wrap"</label>
-                <button id="find-prev" class="secondary" title="Previous match (Shift+Enter)"
+                <button id="find-prev" class="secondary" data-tip="Previous match (Shift+Enter)"
                     on:click=move |_| step(false)>"↑"</button>
-                <button id="find-next" class="secondary" title="Next match (Enter)"
+                <button id="find-next" class="secondary" data-tip="Next match (Enter)"
                     on:click=move |_| step(true)>"↓"</button>
                 <span class="spacer"></span>
-                <button id="find-close" class="secondary" title="Close (Esc)" aria-label="Close"
+                <button id="find-close" class="secondary" data-tip="Close (Esc)" aria-label="Close"
                     on:click=move |_| close()>"×"</button>
             </div>
             <div class="findbar-row" hidden=move || !replacing()>
@@ -444,9 +444,9 @@ pub fn FindBar() -> impl IntoView {
                     prop:value=move || s.replacement.get()
                     on:input=move |ev| s.replacement.set(value_of(&ev))
                     on:keydown=move |ev| on_key(ev, Mode::Replace)/>
-                <button id="find-replace" class="secondary" title="Replace the selected match, then find the next (Enter)"
+                <button id="find-replace" class="secondary" data-tip="Replace the selected match, then find the next (Enter)"
                     on:click=move |_| spawn_local(replace_one())>"Replace"</button>
-                <button id="find-replace-all" class="secondary" title="Replace every match as one undo step"
+                <button id="find-replace-all" class="secondary" data-tip="Replace every match as one undo step"
                     on:click=move |_| spawn_local(replace_all())>"Replace All"</button>
             </div>
             <div class="findbar-row" hidden=move || !going()>
@@ -458,7 +458,7 @@ pub fn FindBar() -> impl IntoView {
                     on:keydown=move |ev| on_key(ev, Mode::GoTo)/>
                 <button id="goto-go" class="secondary" on:click=move |_| go()>"Go"</button>
                 <span class="spacer"></span>
-                <button id="goto-close" class="secondary" title="Close (Esc)" aria-label="Close"
+                <button id="goto-close" class="secondary" data-tip="Close (Esc)" aria-label="Close"
                     on:click=move |_| close()>"×"</button>
             </div>
             <div class="findbar-status" id="find-status" role="status" aria-live="polite"

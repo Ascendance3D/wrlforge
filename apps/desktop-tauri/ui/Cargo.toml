@@ -33,4 +33,6 @@ features = [
   "Navigator", "ResizeObserver", "ResizeObserverEntry",
   # UI-MENU-1: the menu focus record.
   "FocusEvent",
+  # LV2: the app-drawn tooltip keeps its accessible text in sync.
+  "MutationObserver", "MutationObserverInit", "MutationRecord",
 ]

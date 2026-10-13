@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! B2: the selection highlight -- a cyan bounding-box outline of the
-//! selected node's rendered geometry over the viewport (Spazz3D / Flux
-//! parity).
+//! B2: the selection highlight -- an outline of the selected node's
+//! rendered geometry over the viewport (Spazz3D / Flux parity).
+//!
+//! LV2: the outline follows the geometry. The renderer reports the shapes
+//! X_ITE draws for the SAME proven node (its own shape list: matrices and
+//! triangle / line vertices); `protocol::highlight::display` draws their
+//! boundary, crease and silhouette edges every frame. The bounding box is
+//! the fallback only, drawn dashed with the reason in the status note. A
+//! non-geometry node (Material, Appearance, a texture, Coordinate, ...) has
+//! no bounds of its own: Rust proves its owning Shape in the same chain and
+//! that Shape is outlined, dotted and labeled as the owner.
 //!
 //! VIEW STATE ONLY. Nothing here writes the source, marks the document
 //! dirty or adds an undo step; the scene is never mutated (the outline is an
@@ -68,17 +76,40 @@ pub struct Proven {
     /// B3 (LV2): the preview span of the PROTO instance the body copy was
     /// proven through (its bounds are read on exactly that copy).
     pub inst: Option<(u64, u64)>,
+    /// LV2: the selected node is not drawn by itself (Material, ...): this
+    /// is its owning Shape's preview span, outlined instead (`span` stays
+    /// the selected node's own).
+    pub owner: Option<(u64, u64)>,
+}
+
+impl Proven {
+    /// The span whose runtime node is outlined.
+    fn drawn_span(&self) -> (u64, u64) {
+        self.owner.unwrap_or(self.span)
+    }
 }
 
 /// B3 (LV2): the most OTHER instances a secondary outline is proven for.
 const MAX_OTHERS: usize = 64;
+
+/// LV2: one outlined runtime node's cached reads.
+#[derive(Clone, Debug, Default)]
+pub struct Reads {
+    /// The rendered bounds, re-read at most every `BOUNDS_MS`.
+    bounds: Option<(f64, Result<hl::Bounds, String>)>,
+    /// The welded edge mesh of the drawn node's shapes, or why there is
+    /// none (the box is drawn then). Keyed by the shape list's
+    /// fingerprint, so a failure is not retried until the list changes.
+    mesh: Option<(Vec<(u8, u32)>, Result<hl::Mesh, String>)>,
+}
 
 #[derive(Default)]
 pub struct HighlightState {
     key: Option<Key>,
     req_seq: u64,
     pub target: Option<Proven>,
-    bounds: Option<(f64, Result<hl::Bounds, String>)>,
+    /// The selected node's cached reads (bounds and edge mesh).
+    reads: Reads,
     drawn: String,
     loop_on: bool,
     // ---- test / diagnostics counters --------------------------------------
@@ -88,14 +119,23 @@ pub struct HighlightState {
     /// The SVG path data last drawn ("" when hidden).
     pub path: String,
     /// B3 (LV2): the OTHER instances of a selected shared PROTO body node,
-    /// each proven like the selected copy, with its cached bounds.
-    pub others: Vec<(Proven, Option<(f64, Result<hl::Bounds, String>)>)>,
+    /// each proven like the selected copy, with its own cached reads (LV2:
+    /// bounds and edge mesh -- each copy is outlined precisely when it can
+    /// be, else by its box).
+    pub others: Vec<(Proven, Reads)>,
     /// Other copies that could not be proven (no secondary outline).
     pub others_unproven: u32,
     /// The secondary outline path data last drawn ("" when hidden), and
     /// how many instances it outlines.
     pub shared_path: String,
     pub shared_drawn: usize,
+    /// LV2: what the overlay shows: "precise", "box", "owner-precise",
+    /// "owner-box" or "" (hidden).
+    pub mode: &'static str,
+    /// LV2: why the precise outline was not drawn, while the box is.
+    pub box_reason: Option<String>,
+    /// LV2: the owner note shown while an owner Shape is outlined.
+    owner_note: Option<String>,
 }
 
 type FrameCallback = Closure<dyn FnMut(f64)>;
@@ -112,36 +152,51 @@ fn note(text: Option<String>) {
     }
 }
 
+fn info(text: Option<String>) {
+    let u = ui();
+    if u.highlight_info.get_untracked() != text {
+        u.highlight_info.set(text);
+    }
+}
+
 fn refused(reason: &str) {
+    refused_because(reason, None);
+}
+
+/// Record a refusal and show its TRUE reason. `detail`: Rust's own
+/// sentence, used where it names more than the code can (the ancestor's
+/// node type, the never-drawn node's type).
+fn refused_because(reason: &str, detail: Option<&str>) {
     HIGHLIGHT.with_borrow_mut(|h| {
         h.refusals += 1;
         h.last_refusal = Some(reason.to_string());
     });
-    note(Some(format!("No outline: {} [{reason}]", explain(reason))));
+    info(None);
+    note(Some(refusal_text(reason, detail)));
 }
 
-/// One short sentence per refusal family.
-fn explain(reason: &str) -> &'static str {
-    match reason {
-        "runtime-node-for-span-not-unique" | "proto-instance" => {
-            "the preview draws this node more than once or inside a PROTO definition"
+/// "No outline: <why> [code]".
+pub fn refusal_text(reason: &str, detail: Option<&str>) -> String {
+    let why = match detail {
+        Some(d) if reason == hl::refusal::ANCESTOR || reason == hl::refusal::NOT_RENDERED => {
+            lower_first(d.trim_end_matches('.'))
         }
-        "proto-instance-not-picked" => {
-            "its PROTO has several instances on screen; click the instance in the viewport to outline it"
-        }
-        "runtime-node-referenced-by-several-source-occurrences"
-        | "runtime-node-has-several-live-parents" => "it is drawn by a shared (DEF/USE) node",
-        hl::refusal::ANCESTOR => {
-            "it is inside a Billboard or another node the outline cannot follow"
-        }
-        hl::refusal::NO_BOUNDS | "bounds-unavailable" => "it has no rendered geometry",
-        hl::refusal::BEHIND_CAMERA => "part of it is behind the camera",
-        "document-has-syntax-errors" | "document-parse-capped" => {
-            "the document must parse cleanly first"
-        }
-        "not-a-node" => "only a node instance can be outlined",
-        _ => "the preview cannot prove which rendered object this is",
+        _ => explain(reason).to_string(),
+    };
+    format!("No outline: {why} [{reason}]")
+}
+
+fn lower_first(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(f) => f.to_lowercase().chain(c).collect(),
+        None => String::new(),
     }
+}
+
+/// One short sentence per refusal code (`protocol::highlight`).
+fn explain(reason: &str) -> &'static str {
+    hl::refusal_message(reason)
 }
 
 /// The current (session, selection, active generation) key, if an outline
@@ -167,9 +222,18 @@ fn request(key: Key) {
     spawn_local(async move {
         let (session, item, revision, gen_seq) = key.clone();
         let current = || {
-            HIGHLIGHT.with_borrow(|h| h.req_seq == seq && h.key.as_ref() == Some(&key))
+            let ok = HIGHLIGHT.with_borrow(|h| h.req_seq == seq && h.key.as_ref() == Some(&key))
                 && current_key().as_ref() == Some(&key)
-                && CORE.with_borrow(|c| c.revision == revision && !c.busy)
+                && CORE.with_borrow(|c| c.revision == revision && !c.busy);
+            // LV2: only BUSY interrupted this (same request, same key):
+            // let the next frame ask again rather than leave no outline.
+            if !ok
+                && CORE.with_borrow(|c| c.busy)
+                && HIGHLIGHT.with_borrow(|h| h.req_seq == seq && h.key.as_ref() == Some(&key))
+            {
+                HIGHLIGHT.with_borrow_mut(|h| h.key = None);
+            }
+            ok
         };
         if !current() {
             return;
@@ -200,7 +264,9 @@ fn request(key: Key) {
                 preview_to,
                 body,
             }) if r == revision && i == item => ((preview_from, preview_to), body),
-            Ok(p::HighlightTargetOutcome::Refused { reason, .. }) => return refused(&reason),
+            Ok(p::HighlightTargetOutcome::Refused { reason, message }) => {
+                return refused_because(&reason, Some(&message))
+            }
             Ok(_) => return,
             Err(e) => return refused(&e),
         };
@@ -218,19 +284,29 @@ fn request(key: Key) {
         let t = match r {
             Ok(Some(t)) => t,
             Ok(None) => return,
-            Err(why) => return refused(&why),
+            Err((why, message)) => return refused_because(&why, message.as_deref()),
         };
         let mine = t.inst;
+        // LV2: a node not drawn by itself is shown by its owning Shape.
+        let owner_note = t.owner.map(|_| {
+            format!(
+                "{} is not drawn by itself: the dotted outline is the Shape that uses it{}",
+                t.node_type,
+                crate::panels::owner_line_note()
+            )
+        });
         HIGHLIGHT.with_borrow_mut(|h| {
             h.proofs += 1;
             h.target = Some(t);
-            h.bounds = None;
+            h.reads = Reads::default();
             h.drawn.clear();
+            h.owner_note = owner_note.clone();
             h.others.clear();
             h.others_unproven = 0;
             h.shared_drawn = 0;
         });
         note(None);
+        info(owner_note);
         // B3 (LV2): the OTHER instances this shared definition renders --
         // an edit changes them too. Each is proven exactly like the
         // selected copy (located by its instance span, chain proven by
@@ -240,7 +316,7 @@ fn request(key: Key) {
         let mut others = Vec::new();
         for inst in list.into_iter().filter(|i| *i != mine).take(MAX_OTHERS) {
             match prove_one(session, revision, gen_seq, gen.hash, &item, span, true, Some(inst)).await {
-                Ok(Some(o)) => others.push((o, None)),
+                Ok(Some(o)) => others.push((o, Reads::default())),
                 _ => unproven += 1,
             }
             if !current() {
@@ -256,7 +332,8 @@ fn request(key: Key) {
 
 /// Locate `item` (a body node: the copy of instance `inst`, or of the
 /// picked instance) and have Rust prove its runtime chain. `Ok(None)`: the
-/// world moved on (stale); `Err` is the refusal reason.
+/// world moved on (stale); `Err` is the refusal reason and, when Rust gave
+/// one, its own sentence (LV2: the TRUE refusal message).
 #[allow(clippy::too_many_arguments)]
 async fn prove_one(
     session: u64,
@@ -267,8 +344,8 @@ async fn prove_one(
     span: (u64, u64),
     body: bool,
     inst: Option<(u64, u64)>,
-) -> Result<Option<Proven>, String> {
-    let snapshot = ipc::gizmo_locate(gen_seq, span.0, span.1, body, inst)?;
+) -> Result<Option<Proven>, (String, Option<String>)> {
+    let snapshot = ipc::gizmo_locate(gen_seq, span.0, span.1, body, inst).map_err(|e| (e, None))?;
     #[derive(serde::Serialize)]
     struct A {
         request: p::HighlightProveRequest,
@@ -286,13 +363,15 @@ async fn prove_one(
             },
         },
     )
-    .await?;
+    .await
+    .map_err(|e| (e, None))?;
     match r {
         p::HighlightProveOutcome::Proven {
             revision: rev,
             item: it,
             node_type,
             ancestors,
+            owner,
         } if rev == revision && it == item => {
             let ancestors: Vec<((u64, u64), String, bool)> = ancestors
                 .into_iter()
@@ -304,10 +383,10 @@ async fn prove_one(
             let found = match (body, proven.as_slice()) {
                 (false, []) => None,
                 (true, [one]) => Some(*one),
-                _ => return Err("proto-instance-not-proven".into()),
+                _ => return Err(("proto-instance-not-proven".into(), None)),
             };
             if inst.is_some() && found != inst {
-                return Err("proto-instance-changed".into());
+                return Err(("proto-instance-changed".into(), None));
             }
             Ok(Some(Proven {
                 seq: gen_seq,
@@ -316,36 +395,33 @@ async fn prove_one(
                 ancestors,
                 body,
                 inst: found,
+                owner: owner.as_ref().map(|o| (o.preview_from, o.preview_to)),
             }))
         }
-        p::HighlightProveOutcome::Proven { .. } => Err("proof-for-another-node".into()),
-        p::HighlightProveOutcome::Refused { reason, .. } => Err(reason),
+        p::HighlightProveOutcome::Proven { .. } => Err(("proof-for-another-node".into(), None)),
+        p::HighlightProveOutcome::Refused { reason, message } => Err((reason, Some(message))),
         p::HighlightProveOutcome::Stale { .. } => Ok(None),
     }
 }
 
 /// The proven node's bounds, re-read at most every `BOUNDS_MS`. The
-/// renderer's ancestor types must equal the proven source types.
-fn bounds_of(t: &Proven) -> Result<hl::Bounds, String> {
-    let fresh = HIGHLIGHT.with_borrow(|h| {
-        h.bounds
-            .as_ref()
-            // A gizmo drag moves the rendered node every frame: follow it.
-            .filter(|(at, _)| !crate::gizmo::dragging() && now() - at < BOUNDS_MS)
-            .map(|(_, b)| b.clone())
-    });
+/// renderer's ancestor types must equal the proven source types. LV2: the
+/// same read carries the node's shape list (counts and matrices); a new
+/// list -- or none yet -- reads the vertices once and rebuilds the mesh.
+/// `reads` is that node's own cache (the selected copy's, or one OTHER
+/// instance's: every copy is read on its own proven runtime node).
+fn bounds_of(t: &Proven, reads: &mut Reads) -> Result<hl::Bounds, String> {
+    let fresh = reads
+        .bounds
+        .as_ref()
+        // A gizmo drag moves the rendered node every frame: follow it.
+        .filter(|(at, _)| !crate::gizmo::dragging() && now() - at < BOUNDS_MS)
+        .map(|(_, b)| b.clone());
     if let Some(b) = fresh {
         return b;
     }
-    let b = read_bounds(t);
-    HIGHLIGHT.with_borrow_mut(|h| h.bounds = Some((now(), b.clone())));
-    b
-}
-
-/// One fresh read of `t`'s rendered bounds, checked against its proof.
-fn read_bounds(t: &Proven) -> Result<hl::Bounds, String> {
     let spans: Vec<(u64, u64)> = t.ancestors.iter().map(|(s, _, _)| *s).collect();
-    ipc::highlight_bounds(t.seq, t.span, &spans, t.body, t.inst).and_then(|mut b| {
+    let agree = |mut b: hl::Bounds| {
         let agrees = b.ancestors.len() == t.ancestors.len()
             && b.ancestors
                 .iter()
@@ -360,46 +436,79 @@ fn read_bounds(t: &Proven) -> Result<hl::Bounds, String> {
         } else {
             Err(hl::refusal::ANCESTOR_DISAGREES.to_string())
         }
-    })
+    };
+    let read = |g| ipc::highlight_bounds(t.seq, t.drawn_span(), &spans, t.body, t.inst, g);
+    let b = match read(ipc::Geometry::Counts) {
+        Ok((b, shapes)) => {
+            let fp = match &shapes {
+                Some(Ok(s)) => hl::fingerprint(s),
+                _ => Vec::new(),
+            };
+            let have_mesh = match (&mut reads.mesh, &shapes) {
+                (Some((f, Ok(m))), Some(Ok(s))) if *f == fp => m.update_matrices(s),
+                // A failure stays one until the shape list changes.
+                (Some((f, Err(_))), Some(Ok(_))) => *f == fp,
+                (Some((_, Err(_))), Some(Err(_))) => true,
+                _ => false,
+            };
+            if !have_mesh {
+                let mesh = match shapes {
+                    Some(Err(why)) => Err(why),
+                    None => Err(hl::refusal::GEOMETRY_UNAVAILABLE.to_string()),
+                    Some(Ok(_)) => match read(ipc::Geometry::Vertices) {
+                        Ok((_, Some(Ok(full)))) => hl::build_mesh(&full).map_err(String::from),
+                        Ok((_, Some(Err(why)))) => Err(why),
+                        Ok((_, None)) | Err(_) => Err(hl::refusal::GEOMETRY_UNAVAILABLE.to_string()),
+                    },
+                };
+                reads.mesh = Some((fp, mesh));
+            }
+            agree(b)
+        }
+        Err(e) => Err(e),
+    };
+    reads.bounds = Some((now(), b.clone()));
+    b
 }
 
-/// B3 (LV2): the secondary outline edges of every OTHER proven instance
-/// (bounds re-read like the selected one's). An instance whose outline
-/// cannot be drawn now is skipped, never approximated.
-fn others_edges() -> Vec<[hl::Edge; 12]> {
-    let Some(cam) = ipc::gizmo_camera() else {
-        return Vec::new();
+/// LV2: what one proven node's outline is this frame: its geometry's own
+/// edges, else its bounding box saying why, else `Err` (nothing drawn).
+fn display_of(t: &Proven, reads: &mut Reads) -> Result<hl::Display, String> {
+    let b = bounds_of(t, reads)?;
+    let cam = ipc::gizmo_camera().ok_or("camera-unavailable")?;
+    let mesh = match &reads.mesh {
+        Some((_, Ok(m))) => Ok(m),
+        Some((_, Err(e))) => Err(e.as_str()),
+        None => Err(hl::refusal::GEOMETRY_UNAVAILABLE),
     };
-    let n = HIGHLIGHT.with_borrow(|h| h.others.len());
-    let mut out = Vec::with_capacity(n);
-    for i in 0..n {
-        let Some((t, cached)) = HIGHLIGHT.with_borrow(|h| h.others.get(i).cloned()) else {
-            break;
-        };
-        let b = match cached.filter(|(at, _)| !crate::gizmo::dragging() && now() - at < BOUNDS_MS) {
-            Some((_, b)) => b,
-            None => {
-                let b = read_bounds(&t);
-                HIGHLIGHT.with_borrow_mut(|h| {
-                    if let Some(o) = h.others.get_mut(i) {
-                        o.1 = Some((now(), b.clone()));
-                    }
-                });
-                b
-            }
-        };
-        if let Ok(e) = b
-            .and_then(|b| hl::world_corners(&b).map_err(String::from))
-            .and_then(|c| hl::outline(&cam, &c).map_err(String::from))
-        {
-            out.push(e);
+    hl::display(&cam, &b, mesh).map_err(String::from)
+}
+
+/// B3 (LV2): the secondary outline edges of every OTHER proven instance,
+/// each read on its own runtime copy like the selected one (LV2: precise
+/// when its own geometry can be meshed, else its box). An instance whose
+/// outline cannot be drawn now is skipped, never approximated.
+fn others_edges() -> Vec<Vec<hl::Edge>> {
+    let mut list = HIGHLIGHT.with_borrow_mut(|h| std::mem::take(&mut h.others));
+    let mut out = Vec::with_capacity(list.len());
+    for (t, reads) in list.iter_mut() {
+        match display_of(t, reads) {
+            Ok(hl::Display::Precise(e)) => out.push(e),
+            Ok(hl::Display::Box { edges, .. }) => out.push(edges.to_vec()),
+            Err(_) => {}
         }
     }
+    HIGHLIGHT.with_borrow_mut(|h| {
+        // Put the reads back unless a new proof replaced the list meanwhile.
+        if h.others.is_empty() {
+            h.others = list;
+        }
+    });
     out
 }
 
 /// Update the secondary (other shared instances) overlay; empty hides it.
-fn draw_shared(edges: &[[hl::Edge; 12]]) {
+fn draw_shared(edges: &[Vec<hl::Edge>]) {
     let Some(svg) = crate::element_by_id::<web_sys::Element>("shared-outline") else {
         return;
     };
@@ -468,16 +577,23 @@ fn tick() {
         HIGHLIGHT.with_borrow_mut(|h| {
             h.key = key.clone();
             h.target = None;
-            h.bounds = None;
+            h.owner_note = None;
+            h.reads = Reads::default();
             h.others.clear();
             h.others_unproven = 0;
         });
         note(None);
+        info(None);
         draw(None);
         draw_shared(&[]);
         if let Some(k) = key.clone() {
             if CORE.with_borrow(|c| c.revision == k.2 && !c.busy) {
                 request(k);
+            } else {
+                // LV2: the document is busy (a Create, an edit in flight):
+                // ask again next frame instead of never (the outline was
+                // missing after Create).
+                HIGHLIGHT.with_borrow_mut(|h| h.key = None);
             }
         }
     }
@@ -486,24 +602,37 @@ fn tick() {
         draw_shared(&[]);
         return;
     };
-    let outline = bounds_of(&t)
-        .and_then(|b| hl::world_corners(&b).map_err(String::from))
-        .and_then(|c| {
-            let cam = ipc::gizmo_camera().ok_or("camera-unavailable")?;
-            hl::outline(&cam, &c).map_err(String::from)
-        });
-    match outline {
-        Ok(edges) => {
+    let mut reads = HIGHLIGHT.with_borrow_mut(|h| std::mem::take(&mut h.reads));
+    let shown = display_of(&t, &mut reads);
+    HIGHLIGHT.with_borrow_mut(|h| h.reads = reads);
+    let owned = t.owner.is_some();
+    match shown {
+        Ok(hl::Display::Precise(edges)) => {
             if ui().highlight_message.get_untracked().is_some() {
                 note(None);
             }
-            draw(Some(&edges));
+            HIGHLIGHT.with_borrow_mut(|h| h.box_reason = None);
+            info(HIGHLIGHT.with_borrow(|h| h.owner_note.clone()));
+            draw(Some((&edges, if owned { "owner-precise" } else { "precise" })));
+            draw_shared(&others_edges());
+        }
+        Ok(hl::Display::Box { edges, reason }) => {
+            let msg = Some(format!(
+                "Bounding box shown: {} [{reason}]",
+                explain(&reason)
+            ));
+            if ui().highlight_message.get_untracked() != msg {
+                note(msg);
+            }
+            HIGHLIGHT.with_borrow_mut(|h| h.box_reason = Some(reason));
+            info(HIGHLIGHT.with_borrow(|h| h.owner_note.clone()));
+            draw(Some((&edges, if owned { "owner-box" } else { "box" })));
             draw_shared(&others_edges());
         }
         Err(why) => {
             draw(None);
             draw_shared(&[]);
-            let msg = Some(format!("No outline: {} [{why}]", explain(&why)));
+            let msg = Some(refusal_text(&why, None));
             if ui().highlight_message.get_untracked() != msg {
                 refused(&why);
             }
@@ -511,25 +640,28 @@ fn tick() {
     }
 }
 
-/// Update the overlay; `None` hides it.
-fn draw(edges: Option<&[hl::Edge; 12]>) {
+/// Update the overlay; `None` hides it. The mode ("precise", "box",
+/// "owner-precise", "owner-box") styles it.
+fn draw(edges: Option<(&[hl::Edge], &'static str)>) {
     let Some(svg) = crate::element_by_id::<web_sys::Element>("selection-outline") else {
         return;
     };
-    let d = match edges {
-        Some(e) => {
+    let (d, mode) = match edges {
+        Some((e, mode)) => {
             let r = svg.get_bounding_client_rect();
-            hl::svg_path(e, r.left(), r.top())
+            (hl::svg_path(e, r.left(), r.top()), mode)
         }
-        None => String::new(),
+        None => (String::new(), ""),
     };
-    if HIGHLIGHT.with_borrow(|h| h.drawn == d) {
+    if HIGHLIGHT.with_borrow(|h| h.drawn == d && h.mode == mode) {
         return;
     }
     HIGHLIGHT.with_borrow_mut(|h| {
         h.drawn = d.clone();
         h.path = d.clone();
+        h.mode = mode;
     });
+    let _ = svg.set_attribute("data-mode", mode);
     if d.is_empty() {
         let _ = svg.set_attribute("data-state", "hidden");
         return;
@@ -575,16 +707,25 @@ pub fn install() {
                 h.loop_on = false;
                 h.key = None;
                 h.target = None;
-                h.bounds = None;
+                h.owner_note = None;
+                h.reads = Reads::default();
                 h.others.clear();
+                h.others_unproven = 0;
             });
             note(None);
+            info(None);
             draw(None);
             draw_shared(&[]);
         }
     });
     FRAME.with_borrow_mut(|f| *f = Some(cb));
-    if ui().selected.get_untracked().is_some() {
-        start();
-    }
+    // LV2: EVERY way a selection appears starts the loop -- not only
+    // `adopt_selection`. A Create (or an Undo / field edit) carries its
+    // selection through `editor` / `ui` directly; after New World stopped
+    // the loop, a created object was left with no outline.
+    Effect::new(move |_| {
+        if ui().selected.with(|s| s.is_some()) {
+            start();
+        }
+    });
 }

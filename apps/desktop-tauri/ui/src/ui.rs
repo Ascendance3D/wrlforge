@@ -62,6 +62,8 @@ pub struct Ui {
     /// B1 (PR #146 review): shared-PROTO confirmations asked so far. Every
     /// shared-definition mutation asks again; nothing is remembered.
     pub shared_asked: RwSignal<u64>,
+    /// LV2: a neutral note about what the outline shows (an owner Shape).
+    pub highlight_info: RwSignal<Option<String>>,
     /// D4: Create places new objects at the origin (else in view).
     pub place_origin: RwSignal<bool>,
     /// NATIVE-RENDER-1: the hidden native viewport's state (default off).
@@ -245,6 +247,7 @@ pub fn ui() -> Ui {
             gizmo_message: RwSignal::new(None),
             highlight_message: RwSignal::new(None),
             shared_asked: RwSignal::new(0),
+            highlight_info: RwSignal::new(None),
             place_origin: RwSignal::new(false),
             native: RwSignal::new(p::NativeState::default()),
         })

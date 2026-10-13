@@ -501,6 +501,13 @@ pub fn update_cursor() {
     CORE.with_borrow_mut(|c| c.perf.cursor_ms = now() - t0);
 }
 
+/// LV2: the 1-based Source line of view offset `pos` (the text the editor
+/// shows now), or `None` without an editor.
+pub fn line_of(pos: u32) -> Option<u32> {
+    let ta = textarea()?;
+    Some(line_col(&ta, pos).0)
+}
+
 /// 1-based line / UTF-16 column of `pos`: from the color layer's line index
 /// when it holds the widget's text, else by scanning the widget value.
 fn line_col(ta: &HtmlTextAreaElement, pos: u32) -> (u32, u32) {

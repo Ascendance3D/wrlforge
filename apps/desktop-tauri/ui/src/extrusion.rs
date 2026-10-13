@@ -198,7 +198,7 @@ fn field_block(
                 let (fi, tuples) = (f.index, list.tuples.clone());
                 view! {
                     <button class="small" id="btn-outline" disabled=move || ui().revision.get() != rev
-                        title="Open the 2D outline editor: move, add, insert and delete points; Apply makes one undo step, Cancel changes nothing"
+                        data-tip="Open the 2D outline editor: move, add, insert and delete points; Apply makes one undo step, Cancel changes nothing"
                         on:click=move |_| open_outline(rev, fi, tuples.clone(), closed)>"Edit outline…"</button>
                 }
             });
@@ -235,7 +235,7 @@ fn field_block(
                 let (name, tuples) = (name.clone(), tuples.clone());
                 view! {
                     <button class="small" id=format!("xadd-{name}") disabled=move || ui().revision.get() != rev
-                        title="Write this field into the source with the values shown (one undo step)"
+                        data-tip="Write this field into the source with the values shown (one undo step)"
                         on:click=move |_| {
                             let (n, t) = (name.clone(), tuples.clone());
                             spawn_local(async move {
@@ -342,7 +342,7 @@ fn single_default(xf: p::ExtrusionField, rev: u64, editable: bool) -> impl IntoV
             {control}
             {editable.then(|| view! {
                 <button class="small" id=format!("xadd-{name}") disabled=move || ui().revision.get() != rev
-                    title="Write this field into the source with the chosen value (one undo step)"
+                    data-tip="Write this field into the source with the chosen value (one undo step)"
                     on:click=move |_| {
                         let value = if bool_type {
                             crate::element_by_id::<web_sys::HtmlSelectElement>(&id)
@@ -412,7 +412,7 @@ pub fn list_table(name: &str, field_index: u32, list: &p::ListField, rev: u64) -
             let angle = rotation
                 .then(|| num(&t[3]))
                 .flatten()
-                .map(|a| view! { <td class="muted" title="The angle in degrees (display only; the source keeps radians as written)">{format!("{}°", fmt_num(a.to_degrees(), 3))}</td> });
+                .map(|a| view! { <td class="muted" data-tip="The angle in degrees (display only; the source keeps radians as written)">{format!("{}°", fmt_num(a.to_degrees(), 3))}</td> });
             let (n_set, n_ins, n_del) = (n.clone(), n.clone(), n.clone());
             let proposal = proposed_after(&tuples, r, rotation);
             view! {
@@ -421,7 +421,7 @@ pub fn list_table(name: &str, field_index: u32, list: &p::ListField, rev: u64) -
                     {cells}
                     {angle}
                     <td class="xrow-actions">
-                        <button class="small" id=format!("le-{n}-{r}-set") title="Apply this row"
+                        <button class="small" id=format!("le-{n}-{r}-set") data-tip="Apply this row"
                             disabled=move || ui().revision.get() != rev
                             on:click=move |_| {
                                 let comps: Option<Vec<String>> = (0..arity).map(|c| input_value(&row_id(&n_set, r, c))).collect();
@@ -429,10 +429,10 @@ pub fn list_table(name: &str, field_index: u32, list: &p::ListField, rev: u64) -
                                     send(n_set.clone(), p::ListOp::Set { index: r as u32, components });
                                 }
                             }>"Apply"</button>
-                        <button class="small secondary" id=format!("le-{n}-{r}-ins") title="Insert a point after this one"
+                        <button class="small secondary" id=format!("le-{n}-{r}-ins") data-tip="Insert a point after this one"
                             disabled=move || ui().revision.get() != rev
                             on:click=move |_| send(n_ins.clone(), p::ListOp::Insert { index: r as u32 + 1, components: proposal.clone() })>"+"</button>
-                        <button class="small secondary" id=format!("le-{n}-{r}-del") title="Delete this point"
+                        <button class="small secondary" id=format!("le-{n}-{r}-del") data-tip="Delete this point"
                             aria-label=format!("Delete point {}", r + 1)
                             disabled=move || ui().revision.get() != rev
                             on:click=move |_| send(n_del.clone(), p::ListOp::Delete { index: r as u32 })>"×"</button>
@@ -452,7 +452,7 @@ pub fn list_table(name: &str, field_index: u32, list: &p::ListField, rev: u64) -
             <tbody>{rows}</tbody>
         </table>
         <button class="small secondary" id=format!("le-{name}-add") disabled=move || ui().revision.get() != rev
-            title="Add a point after the last one"
+            data-tip="Add a point after the last one"
             on:click=move |_| send(n_add.clone(), p::ListOp::Insert { index: count, components: add_tuple.clone() })>"Add at end"</button>
     }
 }
@@ -832,7 +832,7 @@ pub fn OutlineEditor() -> impl IntoView {
                 <label class="comp">"z"<input id="outline-z" class="num" type="text" spellcheck="false"
                     prop:value=move || w(&|o| o.selected.and_then(|i| o.points.get(i)).map(|p| p[1].clone()).unwrap_or_default()) /></label>
                 <button class="small" id="outline-set" disabled=move || o.with(|o| o.as_ref().is_none_or(|o| o.selected.is_none()))
-                    title="Set the selected point to these coordinates (exact text, validated by Rust on Apply)"
+                    data-tip="Set the selected point to these coordinates (exact text, validated by Rust on Apply)"
                     on:click=move |_| {
                         let (Some(x), Some(z)) = (input_value("outline-x"), input_value("outline-z")) else { return };
                         update(|o| if let Some(i) = o.selected { set_point(o, i, x.trim().to_string(), z.trim().to_string()); o.message = None; refit(o); });
@@ -842,7 +842,7 @@ pub fn OutlineEditor() -> impl IntoView {
                     on:change=move |ev| { let on = event_target_checked(&ev); update(|o| o.snap = on); } />"Snap drags to grid"</label>
             </div>
             <div class="controls outline-actions">
-                <button class="small secondary" id="outline-add" title="Add a point: after the last point of an open outline, or between the last two points of a closed one"
+                <button class="small secondary" id="outline-add" data-tip="Add a point: after the last point of an open outline, or between the last two points of a closed one"
                     on:click=move |_| update(|o| {
                         let n = o.points.len();
                         if n == 0 { insert_point(o, 0, "0".into(), "0".into()); return; }
@@ -850,7 +850,7 @@ pub fn OutlineEditor() -> impl IntoView {
                         if let Some((x, z)) = midpoint(o, from) { insert_point(o, at, x, z); }
                     })>"Add point"</button>
                 <button class="small secondary" id="outline-insert" disabled=move || o.with(|o| o.as_ref().is_none_or(|o| o.selected.is_none()))
-                    title="Insert a point halfway between the selected point and the next one (or click a segment)"
+                    data-tip="Insert a point halfway between the selected point and the next one (or click a segment)"
                     on:click=move |_| update(|o| {
                         if let Some(i) = o.selected {
                             if let Some((x, z)) = midpoint(o, i) { insert_point(o, i + 1, x, z); }
@@ -860,9 +860,9 @@ pub fn OutlineEditor() -> impl IntoView {
                     on:click=move |_| update(|o| if let Some(i) = o.selected { delete_point(o, i) })>"Delete point"</button>
                 <span class="sep"></span>
                 <button class="small" id="outline-apply" on:click=move |_| spawn_local(apply_outline())
-                    title="Write all changes to the source as one undo step">"Apply"</button>
+                    data-tip="Write all changes to the source as one undo step">"Apply"</button>
                 <button class="small secondary" id="outline-cancel" on:click=move |_| cancel_outline("Cancel")
-                    title="Discard all changes; the source and undo history stay unchanged">"Cancel"</button>
+                    data-tip="Discard all changes; the source and undo history stay unchanged">"Cancel"</button>
             </div>
         </div>
     }

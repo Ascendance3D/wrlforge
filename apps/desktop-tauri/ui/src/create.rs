@@ -86,7 +86,7 @@ pub fn CreateMenu() -> impl IntoView {
                 // a shown tooltip on screen after `title` changes, so one shown
                 // before the click covered "Box" in the opened list. The
                 // reason is kept while disabled (the list cannot open then).
-                title=move || if has_doc() {
+                data-tip=move || if has_doc() {
                     ""
                 } else {
                     "Open a file or start a New World first"
@@ -108,7 +108,7 @@ pub fn CreateMenu() -> impl IntoView {
                         // UI-MENU-1: the same registry command as Create → <prim>.
                         <button id=item_id(prim) role="menuitem" class="create-item"
                             data-command=CommandId::create_for(prim).key()
-                            title=crate::command::title(CommandId::create_for(prim))
+                            data-tip=crate::command::title(CommandId::create_for(prim))
                             on:click=move |_| {
                                 close(true);
                                 crate::command::run(CommandId::create_for(prim));
@@ -118,7 +118,7 @@ pub fn CreateMenu() -> impl IntoView {
                         </button>
                     }).collect_view()}
                     // D4: the explicit origin placement.
-                    <label class="create-origin" title="Place new objects at 0 0 0 instead of in front of the camera">
+                    <label class="create-origin" data-tip="Place new objects at 0 0 0 instead of in front of the camera">
                         <input type="checkbox" id="create-place-origin"
                             prop:checked=move || u.place_origin.get()
                             on:change=move |ev| u.place_origin.set(event_target_checked(&ev))/>
@@ -128,7 +128,7 @@ pub fn CreateMenu() -> impl IntoView {
             })}
         </div>
         {move || u.create_error.get().map(|e| view! {
-            <span class="create-error" id="create-error" role="alert" title=e.clone()>{e.clone()}</span>
+            <span class="create-error" id="create-error" role="alert" data-tip=e.clone()>{e.clone()}</span>
         })}
     }
 }

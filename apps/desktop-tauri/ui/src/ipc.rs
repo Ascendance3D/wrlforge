@@ -77,6 +77,7 @@ extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = gizmoRendered, catch)]
     fn gizmo_rendered_js() -> Result<JsValue, JsValue>;
     // B2 selection highlight (read-only).
+    #[allow(clippy::too_many_arguments)]
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = highlightBounds, catch)]
     fn highlight_bounds_js(
         seq: f64,
@@ -86,6 +87,7 @@ extern "C" {
         body: bool,
         i_from: f64,
         i_to: f64,
+        geometry: f64,
     ) -> Result<JsValue, JsValue>;
     // B3 (LV2): the instances rendering a PROTO body statement.
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = bodyInstances, catch)]
@@ -263,9 +265,11 @@ pub fn highlight_bounds(
     ancestors: &[(u64, u64)],
     body: bool,
     inst: Option<(u64, u64)>,
-) -> Result<p::highlight::Bounds, String> {
+    geometry: Geometry,
+) -> Result<(p::highlight::Bounds, Option<Result<Vec<p::highlight::ShapeReport>, String>>), String> {
     let (i0, i1) = hint_args(inst);
     #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct R {
         ok: bool,
         reason: Option<String>,
@@ -273,12 +277,20 @@ pub fn highlight_bounds(
         bx: Option<[f64; 16]>,
         #[serde(default)]
         ancestors: Vec<p::highlight::RenderedAncestor>,
+        #[serde(default)]
+        shapes: Option<Vec<p::highlight::ShapeReport>>,
+        #[serde(default)]
+        shapes_reason: Option<String>,
     }
     let spans = ancestors
         .iter()
         .flat_map(|(f, t)| [*f as f64, *t as f64])
         .collect();
-    let raw = highlight_bounds_js(seq as f64, span.0 as f64, span.1 as f64, spans, body, i0, i1)
+    let g = match geometry {
+        Geometry::Counts => 1.0,
+        Geometry::Vertices => 2.0,
+    };
+    let raw = highlight_bounds_js(seq as f64, span.0 as f64, span.1 as f64, spans, body, i0, i1, g)
         .map_err(js_err)?
         .as_string()
         .ok_or("non-string bounds")?;
@@ -287,13 +299,33 @@ pub fn highlight_bounds(
             ok: true,
             bx: Some(b),
             ancestors,
+            shapes,
+            shapes_reason,
             ..
-        } => Ok(p::highlight::Bounds {
-            r#box: b,
-            ancestors,
-        }),
+        } => {
+            let shapes = match (shapes, shapes_reason) {
+                (Some(s), _) => Some(Ok(s)),
+                (None, why) => Some(Err(why.unwrap_or_else(|| "geometry-unavailable".into()))),
+            };
+            Ok((
+                p::highlight::Bounds {
+                    r#box: b,
+                    ancestors,
+                },
+                shapes,
+            ))
+        }
         R { reason, .. } => Err(reason.unwrap_or_else(|| "bounds-unreadable".into())),
     }
+}
+
+/// LV2: how much of the node's shape list `highlight_bounds` reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Geometry {
+    /// Matrices, types and vertex counts (cheap; every refresh).
+    Counts,
+    /// And the vertices (once per mesh).
+    Vertices,
 }
 
 /// Fraction of viewport pixels that differ from the background after the

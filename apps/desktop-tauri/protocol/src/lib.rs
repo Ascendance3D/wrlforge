@@ -891,6 +891,11 @@ pub enum HighlightProveOutcome {
         item: String,
         node_type: String,
         ancestors: Vec<HighlightAncestor>,
+        /// LV2: the node is not a rendered object of its own (Material,
+        /// Coordinate, ...): the outline is of THIS owning Shape (proven in
+        /// the same chain), and `ancestors` start above it.
+        #[serde(default)]
+        owner: Option<HighlightAncestor>,
     },
     Refused {
         reason: String,

@@ -878,7 +878,7 @@ fn strip(key: String) -> impl IntoView {
                 let active = move || geo.get().is_some_and(|g| g.1 == p);
                 let close = CommandId::hide_for(p).map(|c| view! {
                     <button class="dock-tab-close" tabindex="-1" data-command=c.key()
-                        aria-label=c.spec().label title=crate::command::title(c)
+                        aria-label=c.spec().label data-tip=crate::command::title(c)
                         on:pointerdown=|ev: PointerEvent| ev.stop_propagation()
                         on:click=move |ev| { ev.stop_propagation(); crate::command::run(c); }>"×"</button>
                 });
@@ -888,7 +888,7 @@ fn strip(key: String) -> impl IntoView {
                         aria-selected=move || if active() { "true" } else { "false" }
                         aria-controls=format!("dock-panel-{}", p.slug())
                         tabindex=move || if active() { "0" } else { "-1" }
-                        title=format!("{}: drag to dock (left, right, top, bottom or onto a tab group); Shift+Left/Right reorders", p.title())
+                        data-tip=format!("{}: drag to dock (left, right, top, bottom or onto a tab group); Shift+Left/Right reorders", p.title())
                         on:pointerdown=move |ev: PointerEvent| on_tab_down(p, ev)
                         on:pointermove=on_tab_move
                         on:pointerup=on_tab_up
@@ -948,7 +948,7 @@ fn divider(key: String) -> impl IntoView {
             aria-valuemin="0" aria-valuemax="100"
             aria-valuenow=move || geo.get().map(|g| g.percent().to_string()).unwrap_or_default()
             aria-label=move || format!("Resize {}", names().unwrap_or_else(|| "panels".into()))
-            title="Drag to resize; arrow keys move it (Shift: larger steps), Home / End go to the limits"
+            data-tip="Drag to resize; arrow keys move it (Shift: larger steps), Home / End go to the limits"
             data-dragging=move || if d.resizing.get().as_deref() == Some(k3.as_str()) { "true" } else { "false" }
             style:left=move || px(geo.get().map(|g| g.rect.x).unwrap_or_default())
             style:top=move || px(geo.get().map(|g| g.rect.y).unwrap_or_default())
@@ -1190,7 +1190,7 @@ pub fn LayoutMenu() -> impl IntoView {
             <button role="menuitemcheckbox" class="create-item" id=format!("layout-panel-{}", p.slug())
                 aria-checked=move || if on() { "true" } else { "false" }
                 data-command=move || if on() { hide.key() } else { show.key() }
-                title=move || crate::command::title(if on() { hide } else { show })
+                data-tip=move || crate::command::title(if on() { hide } else { show })
                 on:click=move |_| run(if on() { hide } else { show })>
                 <span class="check" aria-hidden="true">{move || if on() { "✓" } else { "" }}</span>
                 {p.title()}
@@ -1202,7 +1202,7 @@ pub fn LayoutMenu() -> impl IntoView {
         view! {
             <button role="menuitemradio" class="create-item" id=format!("layout-{}", c.key().replace('.', "-"))
                 aria-checked=move || if on() { "true" } else { "false" }
-                data-command=c.key() title=crate::command::title(c)
+                data-command=c.key() data-tip=crate::command::title(c)
                 on:click=move |_| run(c)>
                 <span class="check" aria-hidden="true">{move || if on() { "●" } else { "" }}</span>
                 {c.spec().label}
@@ -1212,7 +1212,7 @@ pub fn LayoutMenu() -> impl IntoView {
     let plain_item = move |c: CommandId| {
         view! {
             <button role="menuitem" class="create-item" id=format!("layout-{}", c.key().replace('.', "-"))
-                data-command=c.key() title=crate::command::title(c)
+                data-command=c.key() data-tip=crate::command::title(c)
                 on:click=move |_| run(c)>
                 <span class="check" aria-hidden="true"></span>
                 {c.spec().label}
@@ -1224,7 +1224,7 @@ pub fn LayoutMenu() -> impl IntoView {
             <button id="btn-layout" class="secondary" aria-haspopup="menu"
                 aria-expanded=move || if open.get() { "true" } else { "false" }
                 aria-controls="layout-list"
-                title="Panels and workspace layouts (saved for next launch)"
+                data-tip="Panels and workspace layouts (saved for next launch)"
                 on:click=move |_| toggle()
                 on:keydown=move |ev: KeyboardEvent| {
                     if ev.key() == "ArrowDown" && !open.get_untracked() {
@@ -1251,7 +1251,7 @@ pub fn LayoutMenu() -> impl IntoView {
             })}
         </div>
         {move || d.notice.get().map(|n| view! {
-            <span class="theme-error" id="layout-notice" role="alert" title=n.clone()>{n.clone()}</span>
+            <span class="theme-error" id="layout-notice" role="alert" data-tip=n.clone()>{n.clone()}</span>
         })}
     }
 }

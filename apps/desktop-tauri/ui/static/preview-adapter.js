@@ -505,7 +505,10 @@
     // (bodyNodeAt), its ancestors followed up THAT copy's runtime chain and
     // checked span by span (chainOf).
     // LV2: `iFrom` / `iTo` -- the instance hint, as for gizmoLocate.
-    highlightBounds: function (seq, from, to, spans, body, iFrom, iTo) {
+    // LV2: `geometry` 1 adds the node's shape list (matrices, types, vertex
+    // counts), 2 the vertices too -- for the precise outline -- as `shapes`,
+    // or `shapesReason` when they cannot be read (the box stays usable).
+    highlightBounds: function (seq, from, to, spans, body, iFrom, iTo, geometry) {
       var c = canvas();
       if (c && c.browser) adapterFor(c.browser);
       var out = function (o) { return JSON.stringify(o); };
@@ -528,7 +531,13 @@
         if (!info) return out({ ok: false, reason: 'runtime-ancestor-not-proven' });
         ancestors.push(info);
       }
-      return out({ ok: true, box: b.box, ancestors: ancestors });
+      var result = { ok: true, box: b.box, ancestors: ancestors };
+      if (geometry === 1 || geometry === 2) {
+        var sh = pick.gizmo.shapes(node, geometry === 2);
+        if (sh.ok) result.shapes = sh.shapes;
+        else result.shapesReason = sh.reason;
+      }
+      return out(result);
     },
     // B3 (LV2): the document instances rendering a copy of the PROTO body
     // statement [from, to) in generation `seq`, as JSON

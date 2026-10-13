@@ -290,8 +290,55 @@ pub(super) async fn run(c: &p::CreateSmoke, r: &mut R) -> Option<()> {
         format!("active {}", active_id()),
     );
 
+    // --- LV2: the app-drawn tooltip (never a native `title`). ---
+    let tip_shown = |on: bool| {
+        crate::element_by_id::<HtmlElement>(crate::tooltip::TIP_ID).is_some_and(|t| t.hidden() != on)
+    };
+    let hover = |id: &str, ty: &str| {
+        let Some(e) = crate::element_by_id::<web_sys::Element>(id) else { return };
+        let init = web_sys::PointerEventInit::new();
+        init.set_bubbles(true);
+        if let Ok(ev) = web_sys::PointerEvent::new_with_event_init_dict(ty, &init) {
+            let _ = e.dispatch_event(&ev);
+        }
+    };
+    let (shown0, _) = crate::tooltip::counts();
+    hover("btn-save", "pointerover");
+    let shown = wait_ms(2000, || tip_shown(true).then_some(())).await;
+    let tip_text = crate::element_by_id::<HtmlElement>(crate::tooltip::TIP_ID)
+        .and_then(|t| t.text_content())
+        .unwrap_or_default();
+    // A press (here: on the Create button, which opens its menu) hides it.
+    hover("btn-create", "pointerdown");
+    let hidden = wait_ms(500, || tip_shown(false).then_some(())).await;
+    let no_title = all("button[title], .tree-item[title]").is_empty();
+    r.step(
+        "tooltip: hovering Save shows the app-drawn tip; a press hides it; no native title on buttons",
+        shown.is_some()
+            && tip_text.contains("Save")
+            && hidden.is_some()
+            && crate::tooltip::counts().0 > shown0
+            && no_title
+            && el("#btn-save").and_then(|b| b.get_attribute("aria-description")).is_some_and(|d| d.contains("Save")),
+        format!("shown {:?} text {tip_text:?} hidden {:?} no-title {no_title}", shown.is_some(), hidden.is_some()),
+    );
+
     // --- Create Box. ---
     let name = create_one(c, p::Primitive::Box, 1, 1, r).await?;
+    // LV2: the outline appears for the created (auto-selected) object --
+    // after New World stopped the frame loop it used not to -- and it is
+    // the Box's own edges, not its bounding box.
+    let outlined = wait_ms(5000, || {
+        crate::highlight::HIGHLIGHT.with_borrow(|h| (h.mode == "precise" && !h.path.is_empty()).then_some(()))
+    })
+    .await;
+    r.step(
+        "Create Box: the selection outline is drawn on the new Box's own edges (precise, not a bounding box)",
+        outlined.is_some(),
+        crate::highlight::HIGHLIGHT.with_borrow(|h| {
+            format!("mode {:?} box {:?} refusal {:?} path {}", h.mode, h.box_reason, h.last_refusal, h.path.len())
+        }),
+    );
 
     // --- Inspector: translation. ---
     let t = apply_field("translation", &c.translation).await;

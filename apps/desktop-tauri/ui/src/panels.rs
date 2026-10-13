@@ -28,7 +28,7 @@ pub fn SceneTree() -> impl IntoView {
     view! {
         <aside class="tree-col" aria-label="Scene Tree">
             <div class="pane-title">"Scene Tree"
-                <span class="muted" title="USE and ROUTE node names are resolved by the lexical scope graph (ISO 4.6.2, 4.8.4, 4.10.2). ROUTE events and PROTO types are checked by typed analysis (ISO 4.8, 4.10.2). Read-only and advisory.">
+                <span class="muted" data-tip="USE and ROUTE node names are resolved by the lexical scope graph (ISO 4.6.2, 4.8.4, 4.10.2). ROUTE events and PROTO types are checked by typed analysis (ISO 4.8, 4.10.2). Read-only and advisory.">
                     {move || u.analysis.with(|a| a.as_ref().map(|a| format!(" · {} items · {} scope", a.items.len(), a.resolution_scope)).unwrap_or_default())}
                 </span>
                 <span class="tree-updating" id="tree-updating">{move || stale().then_some(" · updating…")}</span>
@@ -60,7 +60,7 @@ pub fn SceneTree() -> impl IntoView {
                     let act = move || { ui::tree_select(session, rev, id2.clone(), from, to); };
                     let act2 = act.clone();
                     view! {
-                        <li role="treeitem" class=class style=pad title=title data-id=id.clone() tabindex="-1"
+                        <li role="treeitem" class=class style=pad data-tip=title data-id=id.clone() tabindex="-1"
                             data-ref=ref_data(&it.refs)
                             data-typed=typed_data(it.typed.as_ref())
                             class:selected=move || sel.selected(&key)
@@ -204,18 +204,116 @@ pub(crate) fn reason_words(id: &str) -> String {
         "field-value-shape-does-not-match-type" | "field-value-token-invalid" => {
             "value not understood; edit in Source".into()
         }
-        "field-not-in-schema" | "field-is-x3d-only" | "field-is-not-a-stored-field" => {
-            "not a VRML97 stored field".into()
-        }
+        // LV2: each says what is actually the case.
+        "field-not-in-schema" => "not a field of this node type".into(),
+        "field-is-x3d-only" => "X3D-only field (not in VRML97)".into(),
+        "field-is-not-a-stored-field" => "an event, not a stored field".into(),
         "field-authored-more-than-once" => "written more than once".into(),
-        "node-type-is-a-proto-name" | "node-type-not-standard-vrml97" => {
-            "PROTO instance field; edit in Source".into()
+        "node-type-is-a-proto-name" => "PROTO instance field; edit in Source".into(),
+        "node-type-not-standard-vrml97" => "not a standard VRML97 node; edit in Source".into(),
+        "document-has-syntax-errors" => "fix the syntax errors first".into(),
+        "document-parse-incomplete" => "the document is too large or deep to parse fully".into(),
+        "node-incomplete" => "the node is not complete; fix it in Source".into(),
+        "node-inside-proto-scope" => "inside a PROTO; edit in Source".into(),
+        "proto-name-declared-more-than-once" => {
+            "its PROTO name is declared more than once; edit in Source".into()
         }
-        "document-has-syntax-errors" | "document-parse-incomplete" => {
-            "fix the syntax errors first".into()
+        "shared-proto-definition-not-confirmed" => {
+            "shared PROTO definition; allow editing first".into()
+        }
+        "node-identity-ambiguous" | "node-not-found-at-span" | "not-a-node-instance" => {
+            "this node cannot be identified exactly; edit in Source".into()
         }
         other => other.replace('-', " "),
     }
+}
+
+/// LV2: the read-only words for a field of type `field_type`. A node-valued
+/// field is not edited as a value here: its node has its own fields.
+pub(crate) fn field_reason_words(id: &str, field_type: Option<&str>) -> String {
+    match (id, field_type) {
+        ("field-type-not-editable-in-wd2b", Some("SFNode" | "MFNode")) => {
+            "open the node to edit it, or edit in Source".into()
+        }
+        _ => reason_words(id),
+    }
+}
+
+/// LV2: what is selected, read from the SAME revision's Scene Tree and
+/// Inspector (display only).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectionFacts {
+    pub node_type: String,
+    pub def: Option<String>,
+    /// The Source line of the node (when the editor shows this revision).
+    pub line: Option<u32>,
+    /// A non-geometry node's owning Shape: (Scene Tree label, line).
+    pub owner: Option<(String, Option<u32>)>,
+    /// `inside PROTO X (shared, N instances)`.
+    pub context: Option<String>,
+}
+
+/// The [`SelectionFacts`] of the current selection (reactive).
+pub fn selection_facts() -> Option<SelectionFacts> {
+    let u = ui();
+    let sel = u.selected.get()?;
+    let current = u.revision.get();
+    let (node_type, context) = u
+        .inspection
+        .with(|i| {
+            i.as_ref().filter(|i| i.id == sel.id && i.revision == sel.revision).map(|i| {
+                let n = i.node.as_ref();
+                (
+                    n.and_then(|n| n.node_type.clone()),
+                    n.and_then(|n| n.shared.as_ref())
+                        .map(|s| p::highlight::proto_context(&s.proto, s.instances)),
+                )
+            })
+        })
+        .unwrap_or((None, None));
+    u.analysis.with(|a| {
+        let a = a
+            .as_ref()
+            .filter(|a| a.revision == sel.revision && a.session == sel.session)?;
+        let idx = a.items.iter().position(|it| it.id == sel.id)?;
+        let it = &a.items[idx];
+        let def = (it.kind == "Node" && it.detail.as_deref() == Some("DEF"))
+            .then(|| it.label.split_once(' ').map(|(_, d)| d.to_string()))
+            .flatten();
+        let ty = node_type.unwrap_or_else(|| {
+            it.label.split(' ').next().unwrap_or(&it.label).to_string()
+        });
+        // Offsets of `sel.revision` are lines of the editor text only while
+        // the document is still at that revision.
+        let line_at = |pos: u64| (current == sel.revision).then(|| crate::editor::line_of(pos as u32)).flatten();
+        let owner = (p::highlight::node_role(&ty) == p::highlight::NodeRole::Property)
+            .then(|| {
+                let depths: Vec<u32> = a.items.iter().map(|x| x.depth).collect();
+                ancestors(&depths, idx).into_iter().rev().find_map(|j| {
+                    let o = &a.items[j];
+                    (o.kind == "Node" && o.label.split(' ').next() == Some("Shape"))
+                        .then(|| (o.label.clone(), line_at(o.view_from)))
+                })
+            })
+            .flatten();
+        Some(SelectionFacts {
+            node_type: ty,
+            def,
+            line: line_at(it.view_from),
+            owner,
+            context,
+        })
+    })
+}
+
+/// LV2: " (line N)" of the selected non-geometry node's owning Shape, for
+/// the outline note; "" when unknown.
+pub fn owner_line_note() -> String {
+    untrack(selection_facts)
+        .and_then(|f| f.owner)
+        .and_then(|(_, l)| l)
+        .map(|l| format!(" (line {l})"))
+        .unwrap_or_default()
 }
 
 /// B3: the ancestors of item `idx` in a depth-first item list, outermost
@@ -371,15 +469,15 @@ pub fn Inspector() -> impl IntoView {
     view! {
         <section class="inspector" aria-label="Inspector">
             <div class="pane-title">"Inspector"
-                <span class="badge" title="Field edits are planned, validated and applied by Rust (wrlforge-vrml field_edit)">
-                    "SF fields editable · Rust-validated"
+                <span class="badge" data-tip="Field edits are planned, validated and applied by Rust (wrlforge-vrml field_edit)">
+                    "Edits validated by Rust"
                 </span>
             </div>
             {move || u.field_error.get().map(|e| view! {
                 <p class="field-error" id="inspector-error" role="alert">{e}</p>
             })}
             {move || match u.inspection.get() {
-                None => view! { <p class="empty">"Select a Scene Tree item."</p> }.into_any(),
+                None => view! { <p class="empty">"Select a Scene Tree item, or click an object in the viewport with Select."</p> }.into_any(),
                 Some(i) => {
                     let rev = i.revision;
                     let session = crate::editor::CORE.with_borrow(|c| c.session).unwrap_or(0);
@@ -466,12 +564,12 @@ fn inspector_head(i: &p::Inspection, session: u64) -> impl IntoView {
                     <nav class="crumbs" id="inspector-path" aria-label="Node path">
                         <button type="button" class="small secondary crumb-up" id="inspector-up"
                             disabled=move || none || ui().revision.get() != rev
-                            title=up_title
+                            data-tip=up_title
                             on:click={let parent = parent.clone(); move |_| if let Some((p, _)) = parent.clone() { go(p) }}>
                             "↑ Parent"
                         </button>
                         <button type="button" class="small secondary" id="inspector-show-source"
-                            title="Show this node in the Source panel (selects its text; no edit)"
+                            data-tip="Show this node in the Source panel (selects its text; no edit)"
                             disabled=move || ui().revision.get() != rev
                             on:click=move |_| show_in_source(session, rev, span)>
                             "Show in Source"
@@ -479,7 +577,7 @@ fn inspector_head(i: &p::Inspection, session: u64) -> impl IntoView {
                         {path.into_iter().map(|(pid, l)| {
                             let go = go2.clone();
                             view! {
-                                <button type="button" class="crumb" data-item=pid.clone() title=format!("Select {l}")
+                                <button type="button" class="crumb" data-item=pid.clone() data-tip=format!("Select {l}")
                                     disabled=move || ui().revision.get() != rev
                                     on:click=move |_| go(pid.clone())>{l.clone()}</button>
                                 <span class="crumb-sep" aria-hidden="true">"›"</span>
@@ -492,9 +590,21 @@ fn inspector_head(i: &p::Inspection, session: u64) -> impl IntoView {
             <h3 id="inspector-title">
                 <span class="ty">{kind}</span>
                 {move || found2().and_then(|(def, _, _, _)| def).map(|d| view! {
-                    " "<span class="def" title="DEF name">{d}</span>
+                    " "<span class="def" data-tip="DEF name">{d}</span>
+                })}
+                // LV2: where it is, always visible.
+                {move || selection_facts().and_then(|f| f.line).map(|l| view! {
+                    " "<span class="line-badge" id="inspector-line">{format!("line {l}")}</span>
                 })}
             </h3>
+            // LV2: a non-geometry node is not a rendered object of its own:
+            // say what owns it (the viewport outlines that Shape, dotted).
+            {move || selection_facts().and_then(|f| f.owner.map(|(label, line)| (f.node_type, label, line))).map(|(ty, label, line)| view! {
+                <p class="inspector-owner" id="inspector-owner">
+                    <span class="owner-badge">{p::highlight::owner_badge(&ty, &label, line)}</span>
+                    " · not drawn by itself; the viewport outlines its Shape"
+                </p>
+            })}
             {context.map(|c| view! { <p class="inspector-context" id="inspector-context">{c}</p> })}
         </div>
     }
@@ -531,8 +641,8 @@ fn shared_banner(s: p::SharedProto, _session: u64) -> impl IntoView {
     );
     view! {
         <div class="shared-proto" id="inspector-shared" role="note" data-proto=proto.clone()>
-            <p title=text><strong>"Shared definition"</strong>{format!(" · changes all {} instance{} of PROTO {}", instances, if instances == 1 { "" } else { "s" }, proto)}</p>
-            <p class="shared-ok" id="inspector-shared-ask">"Each change asks for confirmation."</p>
+            <p data-tip=text><strong>"Shared definition"</strong>{format!(" · a change here changes every instance of PROTO {} ({} in this document)", proto, instances)}</p>
+            <p class="shared-ok" id="inspector-shared-ask" data-tip="WRL Forge asks before every change to a shared PROTO definition; nothing is remembered.">"Each change asks for confirmation."</p>
         </div>
     }
 }
@@ -599,7 +709,7 @@ fn node_fields(n: p::NodeFields, session: u64, rev: u64) -> impl IntoView {
     let banner = (!n.editable).then(|| {
         view! {
             <p class="readonly-note" id="inspector-readonly">
-                {format!("Read-only node: {}", n.reason)}
+                {format!("Read-only node: {}", reason_words(&n.reason))}
             </p>
         }
     });
@@ -626,7 +736,7 @@ fn node_fields(n: p::NodeFields, session: u64, rev: u64) -> impl IntoView {
             view! {
                 <p class="add-texture">
                     <button type="button" class="small" id="inspector-add-texture"
-                        title="Choose an image in the document's folder and add texture ImageTexture { url \"…\" } (one edit, one undo step)"
+                        data-tip="Choose an image in the document's folder and add texture ImageTexture { url \"…\" } (one edit, one undo step)"
                         disabled=move || ui().revision.get() != rev
                         on:click=move |_| {
                             spawn_local(async move {
@@ -705,7 +815,7 @@ fn string_list(
                 let choose = choose.clone();
                 view! {
                     <button type="button" class="small" id=format!("fs-{field}-{i}-choose")
-                        title="Choose an image in the document's folder (written as a relative url)"
+                        data-tip="Choose an image in the document's folder (written as a relative url)"
                         disabled=stale
                         on:click=move |_| choose(|index, value| p::StringOp::Set { index, value }, i as u32)>
                         "Choose image…"</button>
@@ -723,7 +833,7 @@ fn string_list(
                                 }
                             }
                         } />
-                    <button type="button" class="small" id=format!("fs-{field}-{i}-set") title="Apply this entry"
+                    <button type="button" class="small" id=format!("fs-{field}-{i}-set") data-tip="Apply this entry"
                         disabled=stale
                         on:click=move |_| {
                             if let Some(inp) = crate::element_by_id::<web_sys::HtmlInputElement>(&id_set) {
@@ -731,7 +841,7 @@ fn string_list(
                             }
                         }>"Apply"</button>
                     {pick}
-                    <button type="button" class="small" id=format!("fs-{field}-{i}-del") title="Remove this entry"
+                    <button type="button" class="small" id=format!("fs-{field}-{i}-del") data-tip="Remove this entry"
                         disabled=stale
                         on:click=move |_| s_del(p::StringOp::Delete { index: i as u32 })>"Remove"</button>
                 </li>
@@ -744,7 +854,7 @@ fn string_list(
         let choose = choose.clone();
         view! {
             <button type="button" class="small" id=format!("fs-{field}-new-choose")
-                title="Choose an image in the document's folder and append it"
+                data-tip="Choose an image in the document's folder and append it"
                 disabled=stale
                 on:click=move |_| choose(|index, value| p::StringOp::Insert { index, value }, n as u32)>
                 "Choose image…"</button>
@@ -765,7 +875,7 @@ fn string_list(
                             }
                         }
                     } />
-                <button type="button" class="small" id=format!("fs-{field}-add") title="Append this entry"
+                <button type="button" class="small" id=format!("fs-{field}-add") data-tip="Append this entry"
                     disabled=stale
                     on:click=move |_| {
                         if let Some(inp) = crate::element_by_id::<web_sys::HtmlInputElement>(&id_add) {
@@ -847,7 +957,7 @@ fn field_row(f: p::EditableField, node_type: &str, session: u64, rev: u64) -> im
             let (name, kind) = (f.name.clone(), kind.clone());
             view! {
                 <input type="color" class="swatch" id=format!("fe-color-{idx}")
-                    title="Pick a color (applies as one edit, one undo step)"
+                    data-tip="Pick a color (applies as one edit, one undo step)"
                     prop:value=hex
                     disabled=move || ui().revision.get() != rev
                     on:change=move |ev| {
@@ -877,7 +987,7 @@ fn field_row(f: p::EditableField, node_type: &str, session: u64, rev: u64) -> im
             let label = format!("Open {} ›", f.name);
             view! {
                 <button class="small node-open" data-item=id.clone()
-                    title="Select this node in the Scene Tree and show its fields"
+                    data-tip="Select this node in the Scene Tree and show its fields"
                     on:click=move |_| {
                         let id = id.clone();
                         spawn_local(async move {
@@ -929,7 +1039,7 @@ fn field_row(f: p::EditableField, node_type: &str, session: u64, rev: u64) -> im
         let full = (summary != excerpt.trim()).then(|| {
             view! {
                 <details class="value-full">
-                    <summary title="Show the full value as written in the source">"Show source"</summary>
+                    <summary data-tip="Show the full value as written in the source">"Show source"</summary>
                     <code>{excerpt.clone()}</code>
                 </details>
             }
@@ -939,8 +1049,8 @@ fn field_row(f: p::EditableField, node_type: &str, session: u64, rev: u64) -> im
             <div class="ro-value">
                 {open}
                 {kid_buttons}
-                <code class="value-summary" title=excerpt.clone()>{summary}</code>
-                <span class="reason" data-reason=f.reason.clone() title=reason_title>{reason_words(&f.reason)}</span>
+                <code class="value-summary" data-tip=excerpt.clone()>{summary}</code>
+                <span class="reason" data-reason=f.reason.clone() data-tip=reason_title>{field_reason_words(&f.reason, f.field_type.as_deref())}</span>
                 {full}
             </div>
         }
@@ -948,7 +1058,7 @@ fn field_row(f: p::EditableField, node_type: &str, session: u64, rev: u64) -> im
     };
     view! {
         <tr class:ro=!f.editable data-field=f.name.clone()>
-            <th title=title on:click=move |_| { ui::select_from("Inspector", session, rev, from, to); }>{f.name.clone()}</th>
+            <th data-tip=title on:click=move |_| { ui::select_from("Inspector", session, rev, from, to); }>{f.name.clone()}</th>
             <td class="kind">{ty}</td>
             <td>{value}</td>
         </tr>
@@ -975,7 +1085,7 @@ pub fn Diagnostics() -> impl IntoView {
                 let (session, rev) = (a.session, a.revision);
                 view! {
                     <div class="diag-scope" id="diag-scope" data-revision=rev.to_string()
-                        title="Advisory scope findings: node names SCOPE0xx (ISO 4.6.2, 4.8.4, 4.10.2) and typed references SCOPE1xx (ISO 4.8, Table 4.4, 4.10.2). Never block Save; uncertain cases are not listed.">
+                        data-tip="Advisory scope findings: node names SCOPE0xx (ISO 4.6.2, 4.8.4, 4.10.2) and typed references SCOPE1xx (ISO 4.8, Table 4.4, 4.10.2). Never block Save; uncertain cases are not listed.">
                         <div class="diag-head">{format!("Scope (advisory) · rev {rev}")}</div>
                         <ul>
                             {a.scope_diagnostics.iter().take(200).map(|d| {
@@ -1032,18 +1142,18 @@ pub fn Viewport() -> impl IntoView {
         <section class="viewport" class:native=move || u.native.with(|s| s.native_shown()) aria-label="3D Viewport">
             <div class="pane-title">"3D Viewport"
                 <span class="badge" hidden=move || u.native.with(|s| s.native_shown())
-                    title="X_ITE is a JavaScript renderer hosted through a narrow adapter">"X_ITE 16.5.0 (JavaScript) · temporary"</span>
+                    data-tip="X_ITE is a JavaScript renderer hosted through a narrow adapter">"X_ITE 16.5.0 (JavaScript) · temporary"</span>
                 // NATIVE-RENDER-1 (hidden): the native viewport is the pane
                 // beside this window. Click selects, drag orbits, wheel zooms,
                 // Escape clears, Home resets the view. Selection only.
                 <span class="badge native-badge" hidden=move || !u.native.with(|s| s.native_shown())
-                    title=move || u.native.with(|s| s.info.clone().unwrap_or_default())>"Native (wgpu) · test · beside →"</span>
+                    data-tip=move || u.native.with(|s| s.info.clone().unwrap_or_default())>"Native (wgpu) · test · beside →"</span>
                 <button class="secondary small" hidden=move || !u.native.with(|s| s.native_shown())
-                    title="Reset the native view to frame the scene (Home)"
+                    data-tip="Reset the native view to frame the scene (Home)"
                     on:click=move |_| crate::native::reset_camera()>"Reset view"</button>
                 // UI-MENU-1: the same registry commands as View → Live
                 // Preview / Update Preview.
-                <label class="toggle" title=crate::command::title(CommandId::ViewLivePreview)>
+                <label class="toggle" data-tip=crate::command::title(CommandId::ViewLivePreview)>
                     <input type="checkbox" id="chk-live" data-command=CommandId::ViewLivePreview.key()
                         prop:checked=move || u.preview_enabled.get()
                         on:change=move |ev| {
@@ -1054,7 +1164,7 @@ pub fn Viewport() -> impl IntoView {
                     "Live"
                 </label>
                 <button class="secondary small" id="btn-update-preview" data-command=CommandId::ViewUpdatePreview.key()
-                    title=crate::command::title(CommandId::ViewUpdatePreview)
+                    data-tip=crate::command::title(CommandId::ViewUpdatePreview)
                     disabled=move || !crate::command::enabled(CommandId::ViewUpdatePreview)
                     on:click=move |_| crate::command::run(CommandId::ViewUpdatePreview)>"Update"</button>
                 <span class="sep" hidden=move || u.native.with(|s| s.native_shown())></span>
@@ -1063,7 +1173,7 @@ pub fn Viewport() -> impl IntoView {
                 // VISUAL-2: an explicit selection mode. A click selects the
                 // exact authored object; a drag still moves the camera.
                 <button id="btn-select" class="secondary small" hidden=move || u.native.with(|s| s.native_shown())
-                    data-command=CommandId::ToolSelect.key() title=crate::command::title(CommandId::ToolSelect)
+                    data-command=CommandId::ToolSelect.key() data-tip=crate::command::title(CommandId::ToolSelect)
                     aria-pressed=move || if u.pick_mode.get() { "true" } else { "false" }
                     disabled=move || !crate::command::enabled(CommandId::ToolSelect)
                     on:click=move |_| crate::command::run(CommandId::ToolSelect)>"Select"</button>
@@ -1071,19 +1181,19 @@ pub fn Viewport() -> impl IntoView {
                 // selected top-level Transform; a click still selects, a drag
                 // elsewhere still moves the camera.
                 <button id="btn-move" class="secondary small" hidden=move || u.native.with(|s| s.native_shown())
-                    data-command=CommandId::ToolMove.key() title=crate::command::title(CommandId::ToolMove)
+                    data-command=CommandId::ToolMove.key() data-tip=crate::command::title(CommandId::ToolMove)
                     aria-pressed=move || if u.move_mode.get() { "true" } else { "false" }
                     disabled=move || !crate::command::enabled(CommandId::ToolMove)
                     on:click=move |_| crate::command::run(CommandId::ToolMove)>"Move"</button>
                 // VISUAL-4B: Rotate (rings about the world axes through the
                 // object's center) and Scale (its own scale axes + uniform).
                 <button id="btn-rotate" class="secondary small" hidden=move || u.native.with(|s| s.native_shown())
-                    data-command=CommandId::ToolRotate.key() title=crate::command::title(CommandId::ToolRotate)
+                    data-command=CommandId::ToolRotate.key() data-tip=crate::command::title(CommandId::ToolRotate)
                     aria-pressed=move || if u.rotate_mode.get() { "true" } else { "false" }
                     disabled=move || !crate::command::enabled(CommandId::ToolRotate)
                     on:click=move |_| crate::command::run(CommandId::ToolRotate)>"Rotate"</button>
                 <button id="btn-scale" class="secondary small" hidden=move || u.native.with(|s| s.native_shown())
-                    data-command=CommandId::ToolScale.key() title=crate::command::title(CommandId::ToolScale)
+                    data-command=CommandId::ToolScale.key() data-tip=crate::command::title(CommandId::ToolScale)
                     aria-pressed=move || if u.scale_mode.get() { "true" } else { "false" }
                     disabled=move || !crate::command::enabled(CommandId::ToolScale)
                     on:click=move |_| crate::command::run(CommandId::ToolScale)>"Scale"</button>
@@ -1094,11 +1204,11 @@ pub fn Viewport() -> impl IntoView {
                 // undo step.
                 <span class="tool-group" role="group" aria-label="Camera" hidden=move || u.native.with(|s| s.native_shown())>
                 <button id="btn-fit" class="secondary small"
-                    data-command=CommandId::ViewFitAll.key() title=crate::command::title(CommandId::ViewFitAll)
+                    data-command=CommandId::ViewFitAll.key() data-tip=crate::command::title(CommandId::ViewFitAll)
                     disabled=move || !crate::command::enabled(CommandId::ViewFitAll)
                     on:click=move |_| crate::command::run(CommandId::ViewFitAll)>"Fit"</button>
                 <select id="sel-view" class="small" aria-label="Standard view"
-                    title="Front, Back, Left, Right, Top or Bottom view of the whole scene, or Reset View (camera only)"
+                    data-tip="Front, Back, Left, Right, Top or Bottom view of the whole scene, or Reset View (camera only)"
                     disabled=move || !crate::command::enabled(CommandId::ViewFront)
                     on:change=move |ev| {
                         let v = event_target_value(&ev);
@@ -1117,7 +1227,7 @@ pub fn Viewport() -> impl IntoView {
                         .collect_view()}
                 </select>
                 <select id="sel-viewpoint" class="small" aria-label="Viewpoint"
-                    title="Bind an authored Viewpoint (its description, else its DEF name). Camera only."
+                    data-tip="Bind an authored Viewpoint (its description, else its DEF name). Camera only."
                     disabled=move || !crate::command::enabled(CommandId::ViewFitAll)
                     on:focus=move |_| crate::camera::refresh_viewpoints()
                     on:pointerdown=move |_| crate::camera::refresh_viewpoints()
@@ -1158,10 +1268,17 @@ pub fn Viewport() -> impl IntoView {
                     <path id="hl-line" class="hl-line"></path>
                 </svg>
                 // B2: why the selection has no outline. Floats over the
-                // canvas so it never changes the viewport's size.
-                <div class="highlight-status" id="highlight-status" role="status" aria-live="polite"
-                    hidden=move || u.highlight_message.with(|m| m.is_none())>
-                    {move || u.highlight_message.get().unwrap_or_default()}
+                // canvas so it never changes the viewport's size. LV2: what
+                // the outline shows when it is not the node itself.
+                <div class="highlight-notes">
+                    <div class="highlight-info" id="highlight-info" role="status" aria-live="polite"
+                        hidden=move || u.highlight_info.with(|m| m.is_none())>
+                        {move || u.highlight_info.get().unwrap_or_default()}
+                    </div>
+                    <div class="highlight-status" id="highlight-status" role="status" aria-live="polite"
+                        hidden=move || u.highlight_message.with(|m| m.is_none())>
+                        {move || u.highlight_message.get().unwrap_or_default()}
+                    </div>
                 </div>
                 // The gizmo overlay. Drawn from the renderer's camera by
                 // `gizmo.rs`; only the handles take pointer input.
@@ -1194,7 +1311,7 @@ pub fn Viewport() -> impl IntoView {
             <div class="preview-status" id="preview-status">{move || format!("Preview: {}", u.preview_status.get())}</div>
             <div class="preview-status texture-warning" id="texture-warnings" role="status" aria-live="polite"
                 hidden=move || u.texture_warnings.with(|w| w.is_empty())
-                title=move || u.texture_warnings.with(|w| w.iter().map(|t| format!("line {} · {}: {}", t.line, t.node, t.detail)).collect::<Vec<_>>().join("\n"))>
+                data-tip=move || u.texture_warnings.with(|w| w.iter().map(|t| format!("line {} · {}: {}", t.line, t.node, t.detail)).collect::<Vec<_>>().join("\n"))>
                 {move || u.texture_warnings.with(|w| match w.first() {
                     None => String::new(),
                     Some(t) => format!("⚠ {} texture{} not loaded · line {} · {}: {}{}", w.len(), if w.len() == 1 { "" } else { "s" },
@@ -1204,7 +1321,7 @@ pub fn Viewport() -> impl IntoView {
             // XITE-16-UPGRADE-2: Rust diagnostics, not the picture, decide this.
             <div class="preview-status route-warning" id="route-warning" role="status" aria-live="polite"
                 hidden=move || u.route_warnings.with(|w| w.is_empty()) || u.native.with(|s| s.native_shown())
-                title=move || u.route_warnings.with(|w| w.iter().map(|r| format!("line {} · {}", r.line, r.detail)).collect::<Vec<_>>().join("\n"))>
+                data-tip=move || u.route_warnings.with(|w| w.iter().map(|r| format!("line {} · {}", r.line, r.detail)).collect::<Vec<_>>().join("\n"))>
                 {move || u.route_warnings.with(|w| match w.first() {
                     None => String::new(),
                     Some(r) => format!("⚠ The preview may be incomplete because one or more ROUTEs are invalid. · line {}{}",
@@ -1225,7 +1342,7 @@ pub fn Viewport() -> impl IntoView {
                     crate::gizmo::GIZMO.with_borrow(|g| g.missing_field).map(|f| view! {
                         " "
                         <button id="gz-write-field" class="secondary small"
-                            title=format!("Write the VRML97 default {f} value into this Transform (one undo step)")
+                            data-tip=format!("Write the VRML97 default {f} value into this Transform (one undo step)")
                             on:click=move |_| spawn_local(crate::gizmo::write_missing_field())>
                             {format!("Write {f}")}
                         </button>
@@ -1353,6 +1470,43 @@ mod tests {
         assert_eq!(node_summary("NULL"), "NULL");
         assert_eq!(first_line("a b\nc"), "a b");
         assert_eq!(reason_words("field-type-not-editable-in-wd2b"), "edit in Source");
+    }
+
+    #[test]
+    fn inspector_reasons_say_what_is_actually_the_case() {
+        use super::{field_reason_words, reason_words};
+        // Distinct facts get distinct words (they were one sentence).
+        let ids = [
+            "field-not-in-schema",
+            "field-is-x3d-only",
+            "field-is-not-a-stored-field",
+            "node-type-is-a-proto-name",
+            "node-type-not-standard-vrml97",
+            "document-has-syntax-errors",
+            "document-parse-incomplete",
+        ];
+        let w = ids.map(reason_words);
+        for (i, a) in w.iter().enumerate() {
+            assert_ne!(*a, ids[i].replace('-', " "), "{a}: a raw reason code");
+            for b in &w[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+        assert!(!reason_words("node-type-not-standard-vrml97").contains("PROTO"));
+        assert!(!reason_words("document-parse-incomplete").contains("syntax"));
+        // A node-valued field points at its Open button.
+        assert!(field_reason_words("field-type-not-editable-in-wd2b", Some("SFNode")).starts_with("open the node"));
+        assert!(field_reason_words("field-type-not-editable-in-wd2b", Some("MFNode")).starts_with("open the node"));
+        assert_eq!(field_reason_words("field-type-not-editable-in-wd2b", Some("MFVec3f")), "edit in Source");
+        for id in [
+            "node-incomplete",
+            "node-inside-proto-scope",
+            "proto-name-declared-more-than-once",
+            "shared-proto-definition-not-confirmed",
+            "node-identity-ambiguous",
+        ] {
+            assert_ne!(reason_words(id), id.replace('-', " "), "{id} has words");
+        }
     }
 
     #[test]
