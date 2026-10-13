@@ -929,8 +929,14 @@ async fn duplicate_offset(
         && a16[to + inserted..] == b16[to..];
     let copy = String::from_utf16_lossy(&a16[to..to + inserted]);
     let want = "\nTransform { translation 5 0 2 children [ ";
+    // The selection is set from the edit result; the scene-tree analysis of
+    // the new revision can arrive a little later (a loaded machine), so the
+    // copy's span is read once that analysis lists it.
     let sel = selected_id();
-    let sel_span = sel.as_deref().and_then(item_span);
+    let sel_span = match sel.as_deref() {
+        Some(id) => wait_ms(5000, || item_span(id)).await,
+        None => None,
+    };
     let expect_span = (to as u32 + 1, (to + inserted) as u32);
     let ok = proven.is_some()
         && applied.is_some()
