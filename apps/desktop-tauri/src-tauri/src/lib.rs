@@ -394,6 +394,7 @@ pub fn run() {
             commands::open_document,
             commands::new_document,
             commands::doc_create,
+            commands::doc_structure_edit,
             commands::close_document,
             commands::doc_snapshot,
             commands::doc_edit,

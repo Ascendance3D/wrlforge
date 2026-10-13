@@ -20,7 +20,9 @@ use std::time::SystemTime;
 use wrlforge_desktop_protocol as p;
 use wrlforge_document::{map_span, view_of, Applied, Document, SpanChange, ViewEdit};
 use wrlforge_text::Edit;
-use wrlforge_vrml::{create, extrusion, field_edit, highlight, manipulate, mf_edit, scene};
+use wrlforge_vrml::{
+    create, extrusion, field_edit, highlight, manipulate, mf_edit, scene, structure_edit,
+};
 
 use crate::files::{self, FileError, Format, SaveOptions, Stamp};
 use crate::recovery::{self, Recovery};
@@ -996,6 +998,75 @@ impl Service {
                             reason: field_edit::reason::TRANSACTION_REJECTED.into(),
                             message: e.to_string(),
                         },
+                    }
+                }
+            }
+        })
+    }
+
+    /// B2: Delete / Duplicate the node at the item's span. Rust re-proves the
+    /// revision, the node (exactly one at that span), its place, its DEF
+    /// references and -- by re-parsing -- the whole result. Applied as ONE
+    /// transaction (one undo step) whose result must equal the planned text.
+    pub fn structure_edit(
+        &self,
+        r: &p::StructureEditRequest,
+    ) -> Result<p::StructureEditOutcome, String> {
+        self.with(r.session, |s| {
+            let refused = |reason: &str, message: String| p::StructureEditOutcome::Refused {
+                reason: reason.into(),
+                message,
+            };
+            if r.base_revision != s.doc.revision() {
+                return refused(
+                    "parse-session-is-stale",
+                    format!(
+                        "The document changed (revision {} → {}); re-select the node.",
+                        r.base_revision,
+                        s.doc.revision()
+                    ),
+                );
+            }
+            let Some((from, to)) = node_span(&r.item) else {
+                return refused(
+                    field_edit::reason::NOT_A_NODE,
+                    "The selection is not a node.".into(),
+                );
+            };
+            let plan = match r.op {
+                p::StructureOp::Delete => {
+                    structure_edit::plan_delete(s.doc.text(), from, to, r.confirm_shared)
+                }
+                p::StructureOp::Duplicate => {
+                    structure_edit::plan_duplicate(s.doc.text(), from, to, r.confirm_shared)
+                }
+            };
+            match plan {
+                structure_edit::Plan::Refused { reason, message } => refused(reason, message),
+                structure_edit::Plan::Ready {
+                    edit,
+                    new_text,
+                    node,
+                    renamed,
+                } => {
+                    let edit = Edit {
+                        from: edit.from,
+                        to: edit.to,
+                        insert: edit.insert,
+                    };
+                    match s
+                        .doc
+                        .apply_source_transaction(r.base_revision, &[edit], &new_text)
+                    {
+                        Ok(a) => p::StructureEditOutcome::Applied {
+                            state: Self::state(s, a),
+                            view: s.doc.view(),
+                            item: node.map(|(f, t)| format!("node-{f}-{t}")),
+                            renamed,
+                        },
+                        Err(e) => {
+                            refused(field_edit::reason::TRANSACTION_REJECTED, e.to_string())
+                        }
                     }
                 }
             }
@@ -2179,6 +2250,84 @@ mod tests {
             .unwrap();
         assert!(matches!(r, p::EditOutcome::Refused { .. }));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// B2: Delete and Duplicate are one undo step each, exact text both
+    /// ways, revision-checked, and refused without consent in a PROTO body.
+    #[test]
+    fn delete_and_duplicate_apply_undo_redo_exactly() {
+        let svc = Service::new(clock);
+        let text = "#VRML V2.0 utf8\r\nGroup {\r\n  children [\r\n    DEF A Shape {}\r\n    Transform {}\r\n  ]\r\n}\r\n";
+        let id = svc.open_text_for_test(text);
+        let span = |t: &str, needle: &str| {
+            let b = t.find(needle).unwrap();
+            let f = t[..b].encode_utf16().count();
+            format!("node-{f}-{}", f + needle.encode_utf16().count())
+        };
+        let req = |rev: u64, item: String, op| p::StructureEditRequest {
+            session: id,
+            base_revision: rev,
+            item,
+            op,
+            confirm_shared: false,
+        };
+        // Duplicate: the copy is selected, its DEF renamed.
+        let o = svc
+            .structure_edit(&req(0, span(text, "DEF A Shape {}"), p::StructureOp::Duplicate))
+            .unwrap();
+        let p::StructureEditOutcome::Applied { state, item, renamed, .. } = o else {
+            panic!("{o:?}")
+        };
+        let dup = text.replacen("DEF A Shape {}\r\n", "DEF A Shape {}\r\n    DEF A_2 Shape {}\r\n", 1);
+        assert_eq!(svc.text(id).unwrap(), dup);
+        assert_eq!((state.revision, state.can_undo), (1, true));
+        assert_eq!(item, Some(span(&dup, "DEF A_2 Shape {}")));
+        assert_eq!(renamed, vec![("A".to_string(), "A_2".to_string())]);
+        // A stale revision is refused and changes nothing.
+        let stale = svc
+            .structure_edit(&req(0, span(&dup, "Transform {}"), p::StructureOp::Delete))
+            .unwrap();
+        assert!(matches!(stale, p::StructureEditOutcome::Refused { ref reason, .. } if reason == "parse-session-is-stale"));
+        assert_eq!(svc.text(id).unwrap(), dup);
+        // Delete.
+        let o = svc
+            .structure_edit(&req(1, span(&dup, "Transform {}"), p::StructureOp::Delete))
+            .unwrap();
+        let p::StructureEditOutcome::Applied { state, item, .. } = o else {
+            panic!("{o:?}")
+        };
+        let del = dup.replacen("    Transform {}\r\n", "", 1);
+        assert_eq!(svc.text(id).unwrap(), del);
+        assert_eq!((state.revision, item), (2, None));
+        // One undo step each, exact text both ways.
+        assert!(matches!(svc.undo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), dup);
+        assert!(matches!(svc.undo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), text);
+        assert!(matches!(svc.redo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), dup);
+        assert!(matches!(svc.redo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), del);
+
+        // A PROTO body node needs consent.
+        let proto = "#VRML V2.0 utf8\nPROTO P [] { Group { children [ Shape {} ] } }\nP {}\n";
+        let id = svc.open_text_for_test(proto);
+        let mut r = p::StructureEditRequest {
+            session: id,
+            base_revision: 0,
+            item: span(proto, "Shape {}"),
+            op: p::StructureOp::Delete,
+            confirm_shared: false,
+        };
+        let o = svc.structure_edit(&r).unwrap();
+        assert!(matches!(o, p::StructureEditOutcome::Refused { ref reason, .. }
+            if reason == field_edit::reason::SHARED_DEFINITION_UNCONFIRMED));
+        r.confirm_shared = true;
+        assert!(matches!(svc.structure_edit(&r).unwrap(), p::StructureEditOutcome::Applied { .. }));
+        assert_eq!(
+            svc.text(id).unwrap(),
+            "#VRML V2.0 utf8\nPROTO P [] { Group { children [ ] } }\nP {}\n"
+        );
     }
 
     #[test]

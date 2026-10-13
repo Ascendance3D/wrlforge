@@ -169,9 +169,17 @@ fn ref_title(refs: &[p::SceneRef], items: &[p::SceneItem]) -> String {
 }
 
 /// Arrow keys move focus between items (no selection change); Enter/Space
-/// on an item selects it through the same revision check as a click.
+/// on an item selects it through the same revision check as a click; Delete
+/// deletes the selected node (B2).
 fn tree_keydown(ev: web_sys::KeyboardEvent) {
     use wasm_bindgen::JsCast;
+    // B2: Delete removes the SELECTED node (the registry command; Rust
+    // re-proves it). A modified Delete is not this command.
+    if ev.key() == "Delete" && !(ev.ctrl_key() || ev.meta_key() || ev.alt_key() || ev.shift_key()) {
+        ev.prevent_default();
+        crate::command::run(CommandId::EditDeleteNode);
+        return;
+    }
     let down = match ev.key().as_str() {
         "ArrowDown" => true,
         "ArrowUp" => false,

@@ -189,7 +189,7 @@ fn utf16_len(s: &str) -> u64 {
 
 /// The line ending new text uses: the document's most frequent one (ties
 /// prefer LF, then CRLF), LF when it has none -- the same rule as typing.
-fn dominant_eol(text: &str) -> &'static str {
+pub(crate) fn dominant_eol(text: &str) -> &'static str {
     let b = text.as_bytes();
     let (mut lf, mut crlf, mut cr) = (0u64, 0u64, 0u64);
     let mut i = 0;
@@ -244,7 +244,7 @@ fn unprovable(p: &ParseResult) -> Option<Plan> {
 }
 
 /// Any parser-recovered node anywhere under `a`.
-fn incomplete(a: &Ast) -> bool {
+pub(crate) fn incomplete(a: &Ast) -> bool {
     match a {
         Ast::Node(n) => n.incomplete || n.fields.iter().any(incomplete),
         Ast::Field(f) => f.value.as_deref().is_some_and(incomplete),

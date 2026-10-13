@@ -198,6 +198,8 @@ pub enum Requires {
     ViewportTool,
     /// UI-MENU-1: the Inspector shows an editable Extrusion `crossSection`.
     ExtrusionOutline,
+    /// B2: a node is selected (Scene Tree or viewport) in an open document.
+    NodeSelected,
 }
 
 /// Where the work is done.
@@ -278,6 +280,8 @@ pub struct CommandContext {
     pub native_viewport: bool,
     /// UI-MENU-1: the Inspector offers the Extrusion outline editor.
     pub outline_ready: bool,
+    /// B2: a Scene Tree node item is selected.
+    pub node_selected: bool,
 }
 
 /// A set of [`PanelId`]s (UI-DOCK-1).
@@ -593,8 +597,33 @@ pub const COMMANDS: &[CommandSpec] = &[
     planned(CommandId::EditFind, "edit.find", "Find…", Menu::Edit, FUTURE_LANE),
     planned(CommandId::EditReplace, "edit.replace", "Replace…", Menu::Edit, FUTURE_LANE),
     planned(CommandId::EditGoToLine, "edit.goToLine", "Go to Line…", Menu::Edit, FUTURE_LANE),
-    planned(CommandId::EditDeleteNode, "edit.deleteNode", "Delete Node", Menu::Edit, FUTURE_LANE),
-    planned(CommandId::EditDuplicateNode, "edit.duplicateNode", "Duplicate Node", Menu::Edit, FUTURE_LANE),
+    // B2: Rust plans, proves and applies the structural edit as one undo step.
+    CommandSpec {
+        id: CommandId::EditDeleteNode,
+        key: "edit.deleteNode",
+        label: "Delete Node",
+        menu: Menu::Edit,
+        shortcuts: &[],
+        requires: Requires::NodeSelected,
+        action: Action::Backend(&["doc_structure_edit"]),
+        mutates_document: true,
+        hint: "Delete the selected node from the source (Delete in the Scene Tree)",
+        native_keys: &[],
+        check: Check::None,
+    },
+    CommandSpec {
+        id: CommandId::EditDuplicateNode,
+        key: "edit.duplicateNode",
+        label: "Duplicate Node",
+        menu: Menu::Edit,
+        shortcuts: &[Shortcut { key: "d", shift: S }],
+        requires: Requires::NodeSelected,
+        action: Action::Backend(&["doc_structure_edit"]),
+        mutates_document: true,
+        hint: "Insert a copy of the selected node right after it (DEF names in the copy are renamed)",
+        native_keys: &[],
+        check: Check::None,
+    },
     theme_cmd(CommandId::ViewThemeTokyoNight, "view.theme.tokyoNight", "Tokyo Night", "tokyo-night"),
     theme_cmd(CommandId::ViewThemeTokyoNightStorm, "view.theme.tokyoNightStorm", "Tokyo Night Storm", "tokyo-night-storm"),
     theme_cmd(CommandId::ViewThemeTokyoNightLight, "view.theme.tokyoNightLight", "Tokyo Night Light", "tokyo-night-light"),
@@ -799,6 +828,8 @@ pub const ALLOWED_BACKEND: &[&str] = &[
     "theme_set",
     "doc_create",
     "doc_preview_source",
+    // B2.
+    "doc_structure_edit",
 ];
 
 impl CommandId {
@@ -992,6 +1023,7 @@ pub const NEEDS_TEXT_SELECTION: &str = "Select text first";
 pub const NEEDS_TEXT_FOCUS: &str = "Works in a text field or the Source editor";
 pub const NEEDS_XITE: &str = "The viewport tools need the X_ITE viewport";
 pub const NEEDS_OUTLINE: &str = "Select an Extrusion with an editable crossSection first";
+pub const NEEDS_NODE: &str = "Select a node in the Scene Tree or the viewport first";
 
 /// The first requirement `ctx` does not meet, if any (history excluded:
 /// that is the backend's run-time decision).
@@ -1018,6 +1050,9 @@ fn unmet(r: Requires, ctx: CommandContext) -> Option<&'static str> {
         Requires::ViewportTool => None,
         Requires::ExtrusionOutline if !ctx.outline_ready => Some(NEEDS_OUTLINE),
         Requires::ExtrusionOutline => None,
+        Requires::NodeSelected if !ctx.has_document => Some(NO_DOCUMENT),
+        Requires::NodeSelected if !ctx.node_selected => Some(NEEDS_NODE),
+        Requires::NodeSelected => None,
     }
 }
 

@@ -1743,8 +1743,6 @@ async fn world_and_reserved(r: &mut R) -> Option<()> {
         CommandId::EditFind,
         CommandId::EditReplace,
         CommandId::EditGoToLine,
-        CommandId::EditDeleteNode,
-        CommandId::EditDuplicateNode,
     ]
     .iter()
     .all(|c| attr(&dom_id(*c), "aria-disabled").as_deref() == Some("true"));
@@ -1764,7 +1762,7 @@ async fn world_and_reserved(r: &mut R) -> Option<()> {
     real("escape", 0.0, 0.0).await.ok()?;
     ipc::sleep(200).await;
     r.step(
-        "Edit reserves Find / Replace / Go to Line / Delete Node / Duplicate Node (disabled); Help → About opens the About dialog with the app identity",
+        "Edit reserves Find / Replace / Go to Line (disabled); Help → About opens the About dialog with the app identity",
         reserved && help && about.is_some(),
         format!("{about:?}"),
     );

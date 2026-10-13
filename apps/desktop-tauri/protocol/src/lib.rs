@@ -590,6 +590,47 @@ pub enum CreateOutcome {
     Refused { reason: String, message: String },
 }
 
+/// B2: which structural edit a [`StructureEditRequest`] asks for.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum StructureOp {
+    Delete,
+    Duplicate,
+}
+
+/// B2: delete or duplicate the node named by `item` (a Scene Tree id of
+/// `base_revision`). Rust re-proves the node and the whole result.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StructureEditRequest {
+    pub session: SessionId,
+    pub base_revision: u64,
+    pub item: String,
+    pub op: StructureOp,
+    /// The user confirmed editing a shared PROTO definition.
+    #[serde(default)]
+    pub confirm_shared: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum StructureEditOutcome {
+    /// Applied as ONE undo step.
+    Applied {
+        state: DocState,
+        view: String,
+        /// Duplicate: the copy's Scene Tree id in the NEW revision. Delete:
+        /// `None` (the selection is cleared).
+        #[serde(default)]
+        item: Option<String>,
+        /// Duplicate: `[old, new]` DEF names renamed in the copy.
+        #[serde(default)]
+        renamed: Vec<(String, String)>,
+    },
+    /// Refused; the buffer and revision are unchanged.
+    Refused { reason: String, message: String },
+}
+
 /// VISUAL-3A: may the translation gizmo move `item` as it is in `revision`?
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

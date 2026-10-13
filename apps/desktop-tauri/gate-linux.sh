@@ -33,13 +33,13 @@ res() { if [[ "$2" == 1 ]]; then log "PASS $1 :: $3"; else log "FAIL $1 :: $3"; 
 # ---- the complete inventory at this commit --------------------------------
 # cargo: "<binary>|passed|ignored" per test target, doc-tests included. Each
 # must run, with exactly these counts, 0 failed and 0 filtered out.
-inv_app='unittests:wrl_forge_desktop|84|1
+inv_app='unittests:wrl_forge_desktop|85|1
 unittests:wrl_forge|0|0
 tests:app_shell|5|0
 tests:flux_regression|6|0
 tests:scope_regression|3|0
 tests:typed_regression|3|0
-unittests:wrlforge_desktop_protocol|73|0
+unittests:wrlforge_desktop_protocol|74|0
 unittests:wrlforge_render|0|0
 unittests:wrlforge_scene|25|0
 unittests:wrlforge_ui|10|0
@@ -50,7 +50,7 @@ doc:wrlforge_scene|0|0
 doc:wrlforge_ui|0|0'
 inv_crates='unittests:wrlforge_document|15|0
 unittests:wrlforge_text|25|0
-unittests:wrlforge_vrml|159|0
+unittests:wrlforge_vrml|174|0
 unittests:wrlforge_wasm|3|0
 doc:wrlforge_document|0|0
 doc:wrlforge_text|0|0

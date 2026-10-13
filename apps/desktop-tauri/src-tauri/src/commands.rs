@@ -139,6 +139,16 @@ pub fn doc_create(
     svc.create(&request)
 }
 
+/// B2: Delete / Duplicate the selected node. Synchronous for the same
+/// ordering reason as `doc_edit`.
+#[tauri::command]
+pub fn doc_structure_edit(
+    svc: State<'_, Service>,
+    request: p::StructureEditRequest,
+) -> Result<p::StructureEditOutcome, String> {
+    svc.structure_edit(&request)
+}
+
 #[tauri::command]
 pub fn close_document(svc: State<'_, Service>, session: p::SessionId) -> Result<(), String> {
     svc.close(session)

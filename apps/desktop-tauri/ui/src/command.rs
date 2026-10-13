@@ -14,6 +14,7 @@ use wrlforge_desktop_protocol::command::{
     self as c, Availability, CommandContext, CommandId, FocusKind,
 };
 use wrlforge_desktop_protocol::gizmo::Tool;
+use wrlforge_desktop_protocol as p;
 
 use crate::ui::{self, ui};
 use crate::{about, clipboard, dock, editor, extrusion, gizmo, menu, panels, theme};
@@ -39,6 +40,7 @@ pub fn context() -> CommandContext {
         text_selected,
         native_viewport: u.native.with(|s| s.native_shown()),
         outline_ready: outline_button().is_some(),
+        node_selected: u.selected.with(|s| s.as_ref().is_some_and(|s| s.id.starts_with("node-"))),
     }
 }
 
@@ -54,6 +56,9 @@ fn context_untracked() -> CommandContext {
         text_selected,
         native_viewport: u.native.with_untracked(|s| s.native_shown()),
         outline_ready: outline_button().is_some(),
+        node_selected: u
+            .selected
+            .with_untracked(|s| s.as_ref().is_some_and(|s| s.id.starts_with("node-"))),
     }
 }
 
@@ -184,12 +189,17 @@ pub fn run(id: CommandId) {
                 b.click();
             }
         }
+        // B2: Rust plans, proves and applies; one undo step.
+        CommandId::EditDeleteNode => spawn_local(ui::structure_edit(
+            p::StructureOp::Delete,
+        )),
+        CommandId::EditDuplicateNode => spawn_local(ui::structure_edit(
+            p::StructureOp::Duplicate,
+        )),
         // Planned: refused above, never reached.
         CommandId::EditFind
         | CommandId::EditReplace
         | CommandId::EditGoToLine
-        | CommandId::EditDeleteNode
-        | CommandId::EditDuplicateNode
         | CommandId::ViewZoomIn
         | CommandId::ViewZoomOut
         | CommandId::ViewZoomReset

@@ -316,6 +316,7 @@ fn planned_commands_never_run_in_any_state() {
         text_selected: true,
         native_viewport: false,
         outline_ready: true,
+        node_selected: true,
     };
     let planned: Vec<_> = COMMANDS
         .iter()
@@ -328,8 +329,6 @@ fn planned_commands_never_run_in_any_state() {
             "edit.find",
             "edit.replace",
             "edit.goToLine",
-            "edit.deleteNode",
-            "edit.duplicateNode",
             "view.zoomIn",
             "view.zoomOut",
             "view.zoomReset",
@@ -396,6 +395,36 @@ fn create_and_tool_commands_map_to_the_existing_actions() {
         Check::Gizmo(Tool::Rotate)
     );
     assert_eq!(CommandId::ToolScale.spec().check, Check::Gizmo(Tool::Scale));
+}
+
+#[test]
+fn delete_and_duplicate_need_a_selected_node() {
+    let none = CommandContext::default();
+    let doc = CommandContext {
+        has_document: true,
+        ..Default::default()
+    };
+    let sel = CommandContext {
+        has_document: true,
+        node_selected: true,
+        ..Default::default()
+    };
+    for id in [CommandId::EditDeleteNode, CommandId::EditDuplicateNode] {
+        let s = id.spec();
+        assert_eq!(s.action, Action::Backend(&["doc_structure_edit"]));
+        assert!(s.mutates_document);
+        assert_eq!(id.availability(none), Availability::Disabled(NO_DOCUMENT));
+        assert_eq!(id.availability(doc), Availability::Disabled(NEEDS_NODE));
+        assert_eq!(id.refusal(doc), Some(NEEDS_NODE));
+        assert_eq!(id.availability(sel), Availability::Enabled);
+        assert_eq!(id.refusal(sel), None);
+    }
+    assert_eq!(
+        from_shortcut("d", true, false),
+        Some(CommandId::EditDuplicateNode)
+    );
+    assert_eq!(from_shortcut("d", true, true), None);
+    assert!(CommandId::EditDeleteNode.spec().shortcuts.is_empty());
 }
 
 #[test]
@@ -516,7 +545,7 @@ fn focus_requirements_explain_why() {
 fn every_disabled_state_has_a_reason() {
     use crate::layout::PanelId;
     // Every combination of the boolean facts and focus kinds.
-    for bits in 0u32..64 {
+    for bits in 0u32..128 {
         for focus in [FocusKind::Other, FocusKind::Source, FocusKind::TextField] {
             let ctx = CommandContext {
                 has_document: bits & 1 != 0,
@@ -531,6 +560,7 @@ fn every_disabled_state_has_a_reason() {
                 text_selected: bits & 16 != 0,
                 native_viewport: bits & 32 != 0,
                 outline_ready: bits & 16 != 0,
+                node_selected: bits & 64 != 0,
             };
             for c in COMMANDS {
                 if let Availability::Disabled(why) = c.id.availability(ctx) {

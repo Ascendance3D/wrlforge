@@ -896,6 +896,111 @@ pub async fn create(prim: p::Primitive) {
     }
 }
 
+/// B2: Delete / Duplicate the selected node through Rust
+/// (`doc_structure_edit`). The UI sends only the selection's item id and the
+/// revision it belongs to; Rust plans, proves and applies the edit as ONE
+/// undo step. After Delete nothing is selected; after Duplicate the copy is.
+pub async fn structure_edit(op: p::StructureOp) {
+    editor::idle().await;
+    let u = ui();
+    let verb = match op {
+        p::StructureOp::Delete => "Delete",
+        p::StructureOp::Duplicate => "Duplicate",
+    };
+    let Some(sel) = u.selected.get_untracked() else {
+        flash(&format!("Not changed — {verb}: no node is selected."));
+        return;
+    };
+    if let Some(why) = stale_reason(sel.session, sel.revision) {
+        flash(&format!("Not changed — {verb}: the selection is updating ({why})."));
+        return;
+    }
+    // A PROTO body node: the same consent path as an Inspector edit, read
+    // from the Inspector of exactly this selection. Rust refuses without it.
+    let shared = u.inspection.with_untracked(|i| {
+        i.as_ref()
+            .filter(|i| i.id == sel.id && i.revision == sel.revision)
+            .and_then(|i| i.node.as_ref()?.shared.clone())
+    });
+    let confirm = match shared {
+        Some(sh) => {
+            if !confirm_shared(sel.session, sh).await {
+                flash(&format!("Not changed — {verb}: the shared PROTO definition was not confirmed."));
+                return;
+            }
+            true
+        }
+        None => false,
+    };
+    #[derive(serde::Serialize)]
+    struct A {
+        request: p::StructureEditRequest,
+    }
+    let request = p::StructureEditRequest {
+        session: sel.session,
+        base_revision: sel.revision,
+        item: sel.id.clone(),
+        op,
+        confirm_shared: confirm,
+    };
+    match call::<p::StructureEditOutcome>("doc_structure_edit", A { request }).await {
+        Ok(p::StructureEditOutcome::Applied {
+            state,
+            view,
+            item,
+            renamed,
+        }) => {
+            crate::gizmo::cancel("the selected node changed");
+            u.field_error.set(None);
+            u.inspection.set(None);
+            u.selected.set(item.map(|id| Selected {
+                session: sel.session,
+                revision: state.revision,
+                id,
+            }));
+            editor::adopt_change(&state, view);
+            let names = renamed
+                .iter()
+                .map(|(a, b)| format!("{a} → {b}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let done = match op {
+                p::StructureOp::Delete => "Deleted the node",
+                p::StructureOp::Duplicate => "Duplicated the node",
+            };
+            if names.is_empty() {
+                flash(&format!("{done} (revision {}).", state.revision));
+            } else {
+                flash(&format!(
+                    "{done} (revision {}); DEF names in the copy: {names}.",
+                    state.revision
+                ));
+            }
+            // One discrete command: show it everywhere now.
+            analyze().await;
+            let span = u.analysis.with_untracked(|a| {
+                a.as_ref().and_then(|a| {
+                    let sel = u.selected.get_untracked()?;
+                    (a.revision == sel.revision)
+                        .then(|| a.items.iter().find(|i| sel.is(&i.id)))
+                        .flatten()
+                        .map(|i| (a.session, a.revision, i.view_from, i.view_to))
+                })
+            });
+            if let Some((s, r, from, to)) = span {
+                select_from(verb, s, r, from, to);
+            }
+            preview(false).await;
+        }
+        Ok(p::StructureEditOutcome::Refused { reason, message }) => {
+            let m = format!("Not changed — {verb}: {message}");
+            u.field_error.set(Some(format!("{m} [{reason}]")));
+            flash(&m);
+        }
+        Err(e) => flash(&format!("{verb} failed: {e}")),
+    }
+}
+
 /// File → Close. Like Open, a dirty document is never discarded silently.
 pub fn close() {
     spawn_local(async {
