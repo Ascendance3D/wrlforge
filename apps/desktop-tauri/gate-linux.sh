@@ -42,7 +42,7 @@ tests:typed_regression|3|0
 unittests:wrlforge_desktop_protocol|96|0
 unittests:wrlforge_render|0|0
 unittests:wrlforge_scene|25|0
-unittests:wrlforge_ui|18|0
+unittests:wrlforge_ui|21|0
 doc:wrl_forge_desktop|0|0
 doc:wrlforge_desktop_protocol|0|0
 doc:wrlforge_render|0|0
@@ -61,7 +61,7 @@ inv_gui='menu:report|89
 dock:main|65
 dock:restore|7
 dock:damaged|7
-pick:report|130
+pick:report|133
 create:report|51
 extrusion:report|58
 move:report|156

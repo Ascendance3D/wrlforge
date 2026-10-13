@@ -27,7 +27,7 @@ button.secondary { background: var(--wf-btn-secondary-bg); color: var(--wf-btn-s
 button.secondary:hover { background: var(--wf-btn-secondary-hover-bg); }
 button.secondary:active { background: var(--wf-btn-secondary-pressed-bg); }
 button[aria-pressed="true"] { background: var(--wf-btn-selected-bg); color: var(--wf-btn-selected-fg); border-color: var(--wf-accent); }
-button.small { padding: .18rem .55rem; font-size: .85rem; }
+button.small { padding: .2rem .55rem; font-size: 1rem; }
 button:disabled, button:disabled:hover, button:disabled:active { background: var(--wf-btn-disabled-bg); color: var(--wf-btn-disabled-fg); border-color: var(--wf-border-subtle); cursor: not-allowed; }
 
 /* keyboard focus: one visible ring for every focusable control */
@@ -40,10 +40,10 @@ input::placeholder, textarea::placeholder { color: var(--wf-text-placeholder); o
 input[type="checkbox"] { accent-color: var(--wf-accent); }
 option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
 
-.profile { color: var(--wf-text-muted); font-size: .9rem; flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.theme-picker { display: flex; gap: .35rem; align-items: center; color: var(--wf-text-muted); font-size: .9rem; }
-.theme-picker select { padding: .25rem .4rem; font-size: .9rem; }
-.theme-error { color: var(--wf-error-fg); background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); border-radius: 3px; padding: .1rem .45rem; font-size: .85rem; max-width: 24rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile { color: var(--wf-text-secondary); white-space: nowrap; }
+.theme-picker { display: flex; gap: .35rem; align-items: center; color: var(--wf-text-muted); font-size: 1rem; }
+.theme-picker select { padding: .25rem .4rem; font-size: 1rem; }
+.theme-error { color: var(--wf-error-fg); background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); border-radius: 3px; padding: .1rem .45rem; font-size: .96rem; max-width: 24rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Create control (VISUAL-1): a menu button and a raised menu, tokens only. */
 .create-menu { position: relative; display: inline-flex; }
 .create-list { position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; display: flex; flex-direction: column; min-width: 11rem; padding: .3rem; gap: .15rem; background: var(--wf-surface-raised); border: 1px solid var(--wf-border); border-radius: 4px; box-shadow: var(--wf-shadow); }
@@ -55,24 +55,28 @@ option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
 .create-item .glyph-cylinder { border-radius: 40% / 18%; }
 .create-item .glyph-extrusion { clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); background: var(--wf-icon-active); border: none; }
 .create-item .glyph-cone { width: 0; height: 0; border-width: 0 .5rem .9rem .5rem; border-color: transparent transparent var(--wf-icon-active) transparent; }
-.create-error { color: var(--wf-error-fg); background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); border-radius: 3px; padding: .1rem .45rem; font-size: .85rem; max-width: 28rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.create-error { color: var(--wf-error-fg); background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); border-radius: 3px; padding: .1rem .45rem; font-size: .96rem; max-width: 28rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .banner { display: flex; gap: .6rem; align-items: center; padding: .5rem .8rem; background: var(--wf-warning-bg); border-bottom: 1px solid var(--wf-warning-border); color: var(--wf-warning-fg); }
 /* UI-DOCK-1: the workspace scrolls when the window is smaller than the
    layout's minimum; panels never collapse below their minimum sizes. */
 .workspace { flex: 1 1 auto; min-height: 0; min-width: 0; position: relative; overflow: auto; }
-.pane-title { padding: .35rem .6rem; background: var(--wf-surface-header); color: var(--wf-text-primary); border-bottom: 1px solid var(--wf-border); font-weight: 600; font-size: .92rem; display: flex; align-items: center; gap: .4rem; white-space: nowrap; overflow: hidden; }
+.pane-title { padding: .35rem .6rem; background: var(--wf-surface-header); color: var(--wf-text-primary); border-bottom: 1px solid var(--wf-border); font-weight: 600; font-size: 1rem; display: flex; align-items: center; gap: .4rem; white-space: nowrap; overflow: hidden; }
 .muted { color: var(--wf-text-muted); font-weight: 400; }
-.badge { font-weight: 400; font-size: .78rem; color: var(--wf-badge-fg); background: var(--wf-badge-bg); border: 1px solid var(--wf-badge-border); border-radius: 3px; padding: 0 .35rem; }
+.badge { font-weight: 400; font-size: .92rem; color: var(--wf-badge-fg); background: var(--wf-badge-bg); border: 1px solid var(--wf-badge-border); border-radius: 3px; padding: 0 .35rem; }
 
 /* Scene Tree */
 .tree-col { display: flex; flex-direction: column; min-width: 0; background: var(--wf-surface-panel); }
-.tree { list-style: none; margin: 0; padding: .2rem 0; overflow: auto; flex: 1 1 auto; font-size: .92rem; }
-.tree-item { padding: .14rem .4rem; cursor: pointer; white-space: nowrap; display: flex; gap: .4rem; color: var(--wf-text-primary); }
+.tree { list-style: none; margin: 0; padding: .2rem 0; overflow: auto; flex: 1 1 auto; font-size: 1rem; }
+/* B3: a row is as wide as its text (the tree scrolls sideways instead of
+   clipping a name), and at least as wide as the panel. */
+.tree-item { padding: .16rem .6rem .16rem .4rem; cursor: pointer; white-space: nowrap; display: flex; gap: .3rem; color: var(--wf-text-primary); width: max-content; min-width: 100%; }
 .tree-item:hover { background: var(--wf-tree-hover-bg); }
 /* Selected is shown by color AND an inset bar, never color alone. */
-.tree-item.selected { background: var(--wf-tree-selected-bg); color: var(--wf-tree-selected-fg); box-shadow: inset 3px 0 0 var(--wf-tree-selected-indicator); }
-.tree-item .kind { color: var(--wf-tree-kind); font-size: .78rem; min-width: 3.6rem; }
+.tree-item.selected { background: var(--wf-tree-selected-bg); color: var(--wf-tree-selected-fg); font-weight: 600;
+  box-shadow: inset 5px 0 0 var(--wf-tree-selected-indicator), inset 0 0 0 1px var(--wf-tree-selected-indicator); }
+.tree-item .kind { color: var(--wf-tree-kind); flex: none; width: 1rem; text-align: center; }
+.tree-item .label .def, .inspector h3 .def { font-weight: 700; }
 .tree-item.kind-route .label { color: var(--wf-tree-route); }
 .tree-item.kind-use .label { color: var(--wf-tree-use); }
 .tree-item.kind-proto .label, .tree-item.kind-externproto .label { color: var(--wf-tree-proto); }
@@ -100,8 +104,10 @@ option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
 .source-gutter-nums { position: absolute; top: 0; left: 0; right: 0; padding-left: .4rem; padding-right: .5rem;
   text-align: right; color: var(--wf-text-muted); will-change: transform; }
 .source-gutter-nums .cur { color: var(--wf-text-editor); }
+/* B3: the selected span's lines (e.g. a picked node), visible without focus. */
+.source-gutter-nums .mark { display: inline-block; min-width: 100%; background: var(--wf-editor-selection-bg); color: var(--wf-editor-selection-fg); box-shadow: inset 3px 0 0 var(--wf-accent); }
 /* B2: Find / Replace / Go to Line bar. */
-.findbar { display: flex; flex-direction: column; gap: .2rem; padding: .25rem .5rem; background: var(--wf-surface-panel); border-bottom: 1px solid var(--wf-border-subtle); font-size: .85rem; }
+.findbar { display: flex; flex-direction: column; gap: .2rem; padding: .25rem .5rem; background: var(--wf-surface-panel); border-bottom: 1px solid var(--wf-border-subtle); font-size: .96rem; }
 .findbar[hidden], .findbar-row[hidden] { display: none; }
 .findbar-row { display: flex; align-items: center; gap: .35rem; }
 .findbar-row input[type=text] { flex: 0 1 18rem; min-width: 6rem; font-family: var(--wf-font-mono); }
@@ -136,8 +142,8 @@ option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
 /* Smoke-only registration check: the textarea's own glyphs are painted over
    the color layer; any offset shows as doubled glyphs in a screenshot. */
 .source-wrap[data-align-check] .source { -webkit-text-fill-color: var(--wf-syntax-invalid); color: var(--wf-syntax-invalid); }
-.diag-head { color: var(--wf-text-muted); font-size: .8rem; margin-bottom: .15rem; }
-.diagnostics { overflow: auto; background: var(--wf-surface-panel); color: var(--wf-text-secondary); padding: .3rem .6rem; font-size: .88rem; }
+.diag-head { color: var(--wf-text-muted); font-size: .92rem; margin-bottom: .15rem; }
+.diagnostics { overflow: auto; background: var(--wf-surface-panel); color: var(--wf-text-secondary); padding: .3rem .6rem; font-size: 1rem; }
 .diagnostics ul { margin: 0; padding: 0; list-style: none; }
 .diag { cursor: pointer; padding: .05rem 0; }
 .diag .sev { font-weight: 700; margin-right: .35rem; }
@@ -153,21 +159,37 @@ option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
    scene's authored Background is never overridden. */
 x3d-canvas#viewport { flex: 1 1 auto; width: 100%; min-height: 6rem; display: block; background: var(--wf-viewport-canvas-bg); }
 .preview-status.texture-warning, .preview-status.route-warning { color: var(--wf-warning-fg); }
-.preview-status { font-size: .82rem; color: var(--wf-viewport-status-fg); padding: .2rem .6rem; border-top: 1px solid var(--wf-viewport-border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.toggle { font-weight: 400; font-size: .85rem; display: flex; gap: .2rem; align-items: center; margin-left: auto; }
+.preview-status { font-size: .92rem; color: var(--wf-viewport-status-fg); padding: .2rem .6rem; border-top: 1px solid var(--wf-viewport-border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toggle { font-weight: 400; font-size: 1rem; display: flex; gap: .2rem; align-items: center; margin-left: auto; }
 .inspector { overflow: auto; background: var(--wf-surface-panel); }
-.inspector h3 { margin: .5rem .6rem; font-size: 1rem; color: var(--wf-text-heading); }
-.fields { border-collapse: collapse; width: 100%; font-size: .88rem; }
+.inspector h3 { margin: .2rem .6rem .3rem; font-size: 1.15rem; color: var(--wf-text-heading); overflow-wrap: anywhere; }
+/* B3: the selection header: path (clickable), node type + DEF, PROTO context. */
+.inspector-head { padding: .35rem 0 .2rem; border-bottom: 1px solid var(--wf-border-subtle); margin-bottom: .3rem; }
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: .2rem .25rem; margin: 0 .6rem .2rem; font-size: .92rem; }
+.crumbs .crumb-up { margin-right: .3rem; }
+.crumbs button.crumb { background: transparent; color: var(--wf-accent); padding: .05rem .2rem; font-size: .92rem; text-decoration: underline; text-underline-offset: 2px; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crumbs button.crumb:hover { background: var(--wf-surface-hover); }
+.crumbs button.crumb:disabled { background: transparent; color: var(--wf-text-disabled); }
+.crumbs .crumb.current { color: var(--wf-text-primary); font-weight: 600; }
+.crumbs .crumb-sep { color: var(--wf-text-muted); }
+.inspector-context { margin: 0 .6rem .2rem; color: var(--wf-warning-fg); font-size: .96rem; }
+.fields { border-collapse: collapse; width: 100%; font-size: 1rem; }
 .fields tr { cursor: pointer; }
 .fields tr:hover { background: var(--wf-surface-hover); }
 .fields th { text-align: left; font-weight: 600; color: var(--wf-text-primary); padding: .18rem .6rem; vertical-align: top; white-space: nowrap; }
 .fields td { padding: .18rem .4rem; vertical-align: top; }
-.fields td.kind { color: var(--wf-tree-kind); font-size: .8rem; }
-.fields code { white-space: pre-wrap; word-break: break-all; color: var(--wf-text-editor); font-family: var(--wf-font-mono); font-size: 12px; }
+.fields td.kind { color: var(--wf-tree-kind); font-size: .92rem; }
+.fields code { white-space: pre-wrap; word-break: break-all; color: var(--wf-text-editor); font-family: var(--wf-font-mono); font-size: 13px; }
 
 /* Status bar */
-.statusbar { display: flex; gap: 1.1rem; align-items: center; padding: .28rem .8rem; background: var(--wf-surface-chrome); border-top: 1px solid var(--wf-border); font-size: .88rem; color: var(--wf-text-secondary); white-space: nowrap; overflow: hidden; }
-.statusbar .msg { color: var(--wf-warning-fg); overflow: hidden; text-overflow: ellipsis; }
+.statusbar { display: flex; gap: 1.1rem; align-items: center; padding: .28rem .8rem; background: var(--wf-surface-chrome); border-top: 1px solid var(--wf-border); font-size: 1rem; color: var(--wf-text-secondary); white-space: nowrap; overflow: hidden; }
+/* B3: the fixed facts never shrink; the message takes the rest and
+   ellipsizes (full text in its tooltip); the credit goes first. */
+.statusbar > span { flex: none; }
+.statusbar > span.msg { color: var(--wf-warning-fg); overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 4rem; }
+.statusbar > span.spacer { flex: 1 1 auto; }
+.statusbar > span.credit { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 1500px) { .statusbar > span.credit { display: none; } }
 
 /* Inspector field editing (TAURI-RUST-MIGRATION-2) */
 .fields.editable tr { cursor: default; }
@@ -178,16 +200,16 @@ x3d-canvas#viewport { flex: 1 1 auto; width: 100%; min-height: 6rem; display: bl
 .fields .string-list { margin: 0; padding-left: 1.4rem; }
 .fields .string-list li, .fields .string-add { display: flex; flex-wrap: wrap; gap: .25rem .4rem; align-items: center; margin-bottom: .2rem; }
 .fields .string-list input.text, .fields .string-add input.text { min-width: 10rem; flex: 1 1 10rem; }
-.add-texture { margin: .3rem 0; }
-.fields .comp { display: inline-flex; gap: .2rem; align-items: center; color: var(--wf-tree-kind); font-size: .78rem; }
+.add-texture { margin: .3rem .6rem; }
+.fields .comp { display: inline-flex; gap: .2rem; align-items: center; color: var(--wf-tree-kind); font-size: .92rem; }
 .fields .comp input.num { width: 5.2rem; }
 .fields .comp input.text { width: 14rem; }
-.fields .comp input, .fields .comp select { padding: .1rem .25rem; font-family: var(--wf-font-mono); font-size: 12px; }
-.fields .reason { margin-left: .4rem; color: var(--wf-warning-fg); font-size: .74rem; }
-.field-error { margin: .4rem .6rem; padding: .3rem .5rem; background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); color: var(--wf-error-fg); border-radius: 3px; font-size: .85rem; }
-.readonly-note { margin: .3rem .6rem; color: var(--wf-warning-fg); font-size: .85rem; }
+.fields .comp input, .fields .comp select { padding: .1rem .25rem; font-family: var(--wf-font-mono); font-size: 13px; }
+.fields .reason { margin-left: .4rem; color: var(--wf-warning-fg); font-size: .92rem; }
+.field-error { margin: .4rem .6rem; padding: .3rem .5rem; background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); color: var(--wf-error-fg); border-radius: 3px; font-size: .96rem; }
+.readonly-note { margin: .3rem .6rem; color: var(--wf-warning-fg); font-size: .96rem; }
 .swatch { width: 2.2rem; height: 1.6rem; padding: 0; border: 1px solid var(--wf-warning-fg); vertical-align: middle; cursor: pointer; }
-.shared-proto { margin: .3rem .6rem; padding: .4rem .6rem; border: 1px solid var(--wf-warning-fg); border-radius: 4px; font-size: .85rem; }
+.shared-proto { margin: .3rem .6rem; padding: .4rem .6rem; border: 1px solid var(--wf-warning-fg); border-radius: 4px; font-size: .96rem; }
 .shared-proto p { margin: 0 0 .3rem; }
 .shared-proto .shared-ok { color: var(--wf-warning-fg); margin: 0; }
 
@@ -206,7 +228,7 @@ x3d-canvas#viewport { flex: 1 1 auto; width: 100%; min-height: 6rem; display: bl
 }
 /* VISUAL-2 viewport selection: Select mode cursor and the pick result line. */
 x3d-canvas.picking { cursor: crosshair; }
-.pick-status { padding: .2rem .6rem; font-size: .85rem; color: var(--wf-text-muted); border-top: 1px solid var(--wf-border-subtle); }
+.pick-status { padding: .2rem .6rem; font-size: .96rem; color: var(--wf-text-muted); border-top: 1px solid var(--wf-border-subtle); }
 .pick-status[data-kind="ok"] { color: var(--wf-text-primary); }
 .pick-status[data-kind="refused"] { color: var(--wf-warning-fg); background: var(--wf-warning-bg); }
 
@@ -225,7 +247,7 @@ x3d-canvas.picking { cursor: crosshair; }
 .selection-outline path { fill: none; stroke-linejoin: round; stroke-linecap: round; }
 .selection-outline .hl-halo { stroke: var(--wf-gizmo-halo); stroke-width: 3.5; opacity: .5; }
 .highlight-status { position: absolute; left: .4rem; bottom: .4rem; max-width: calc(100% - .8rem); pointer-events: none;
-  font-size: .78rem; padding: .1rem .4rem; border-radius: 3px; color: var(--wf-warning-fg); background: var(--wf-warning-bg);
+  font-size: .92rem; padding: .1rem .4rem; border-radius: 3px; color: var(--wf-warning-fg); background: var(--wf-warning-bg);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .highlight-status[hidden] { display: none; }
 .selection-outline .hl-line { stroke: var(--wf-selection-outline); stroke-width: 1.6; }
@@ -273,8 +295,8 @@ x3d-canvas.picking { cursor: crosshair; }
 .viewport-stage[hidden], .viewport .badge[hidden], .viewport button[hidden], .viewport .sep[hidden], .native-status[hidden] { display: none; }
 
 /* VISUAL-4A: Extrusion Inspector and the 2D outline editor. */
-.extrusion { margin: 0 .6rem .5rem; font-size: .86rem; }
-.extrusion h4 { margin: .6rem 0 .25rem; font-size: .9rem; color: var(--wf-text-heading); }
+.extrusion { margin: 0 .6rem .5rem; font-size: 1rem; }
+.extrusion h4 { margin: .6rem 0 .25rem; font-size: 1rem; color: var(--wf-text-heading); }
 .xnotes { list-style: none; margin: .2rem 0; padding: 0; }
 .xnotes li { margin: .1rem 0; color: var(--wf-text-secondary); }
 .xnotes li.warning { color: var(--wf-warning-fg); }
@@ -283,23 +305,27 @@ x3d-canvas.picking { cursor: crosshair; }
 .xfield { margin: .15rem 0 .45rem; }
 .xfield-head { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
 .xfield-head code { font-family: var(--wf-font-mono); color: var(--wf-text-primary); }
-.xfield-head .kind { color: var(--wf-tree-kind); font-size: .78rem; }
-.xstatus { font-size: .76rem; color: var(--wf-text-muted); }
+.xfield-head .kind { color: var(--wf-tree-kind); font-size: .92rem; }
+.xstatus { font-size: .92rem; color: var(--wf-text-muted); }
 .xstatus.authored { color: var(--wf-text-secondary); }
-.xlist { border-collapse: collapse; margin: .2rem 0; font-size: .82rem; }
+.xlist { border-collapse: collapse; margin: .2rem 0; font-size: .96rem; }
 .xlist th { text-align: right; padding: .1rem .3rem; color: var(--wf-text-muted); font-weight: 500; }
 .xlist td { padding: .08rem .2rem; }
-.xlist input.num { width: 4.6rem; padding: .1rem .25rem; font-family: var(--wf-font-mono); font-size: 12px; }
-.xlist.default code { color: var(--wf-text-muted); font-family: var(--wf-font-mono); font-size: 12px; }
+.xlist input.num { width: 4.6rem; padding: .1rem .25rem; font-family: var(--wf-font-mono); font-size: 13px; }
+.xlist.default code { color: var(--wf-text-muted); font-family: var(--wf-font-mono); font-size: 13px; }
 .xrow-actions { white-space: nowrap; }
-.xexcerpt { display: block; font-family: var(--wf-font-mono); font-size: 12px; color: var(--wf-text-editor); }
-.outline-editor { position: fixed; left: 19rem; top: 4.2rem; z-index: 40; width: 23rem; padding: .5rem .6rem;
+.xexcerpt { display: block; font-family: var(--wf-font-mono); font-size: 13px; color: var(--wf-text-editor); }
+/* D3: the dialog fits the window (it scrolls inside itself when the window
+   is short) and the canvas fits the dialog: the pointer maths reads the
+   canvas's rendered rectangle, so any rendered size maps correctly. */
+.outline-editor { position: fixed; left: 19rem; top: 4.2rem; z-index: 40; width: min(25rem, calc(100vw - 20rem)); min-width: 18rem; padding: .5rem .6rem;
+  max-height: calc(100vh - 6rem); overflow: auto;
   background: var(--wf-surface-raised); border: 1px solid var(--wf-border-control); border-radius: 4px;
   box-shadow: 0 4px 18px var(--wf-gizmo-halo); }
 .outline-editor[hidden] { display: none; }
-.outline-head h3 { margin: 0 0 .1rem; font-size: .95rem; color: var(--wf-text-heading); }
-.outline-head .muted { font-size: .76rem; }
-.outline-svg { display: block; width: 320px; height: 320px; margin: .35rem auto; background: var(--wf-surface-editor);
+.outline-head h3 { margin: 0 0 .1rem; font-size: 1.05rem; color: var(--wf-text-heading); }
+.outline-head .muted { font-size: .92rem; }
+.outline-svg { display: block; width: 100%; max-width: 320px; height: auto; aspect-ratio: 1 / 1; margin: .35rem auto; background: var(--wf-surface-editor);
   border: 1px solid var(--wf-border); touch-action: none; }
 .outline-svg:focus-visible { outline: 2px solid var(--wf-focus-ring); }
 .outline-svg line.grid { stroke: var(--wf-border-subtle); stroke-width: 1; }
@@ -310,12 +336,12 @@ x3d-canvas.picking { cursor: crosshair; }
 .outline-svg circle.pt { fill: var(--wf-icon-active); stroke: var(--wf-surface-editor); stroke-width: 2; cursor: grab; }
 .outline-svg circle.pt.selected { fill: var(--wf-gizmo-active); }
 .outline-svg .pt-label { fill: var(--wf-text-secondary); font-size: 10px; pointer-events: none; }
-.outline-status { font-size: .8rem; color: var(--wf-text-secondary); }
-.outline-message { margin: .25rem 0; padding: .2rem .4rem; font-size: .8rem; color: var(--wf-error-fg);
+.outline-status { font-size: .92rem; color: var(--wf-text-secondary); }
+.outline-message { margin: .25rem 0; padding: .2rem .4rem; font-size: .92rem; color: var(--wf-error-fg);
   background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); border-radius: 3px; }
-.outline-stale { font-size: .8rem; color: var(--wf-warning-fg); }
+.outline-stale { font-size: .92rem; color: var(--wf-warning-fg); }
 .outline-editor .controls { display: flex; flex-wrap: wrap; gap: .3rem .4rem; align-items: center; margin-top: .3rem; }
-.outline-editor .comp input.num { width: 5.5rem; padding: .1rem .25rem; font-family: var(--wf-font-mono); font-size: 12px; }
+.outline-editor .comp input.num { width: 5.5rem; padding: .1rem .25rem; font-family: var(--wf-font-mono); font-size: 13px; }
 
 /* RUST-STAB-1: the startup recovery choice. */
 .recovery-dialog { position: fixed; left: 50%; top: 4.2rem; transform: translateX(-50%); z-index: 50; width: min(40rem, 92vw);
@@ -323,12 +349,12 @@ x3d-canvas.picking { cursor: crosshair; }
   background: var(--wf-surface-raised); border: 1px solid var(--wf-border-control); border-radius: 4px;
   box-shadow: 0 4px 18px var(--wf-gizmo-halo); color: var(--wf-text-primary); }
 .recovery-dialog h3 { margin: 0 0 .3rem; font-size: 1rem; color: var(--wf-text-heading); }
-.recovery-dialog p { margin: 0 0 .5rem; font-size: .86rem; }
+.recovery-dialog p { margin: 0 0 .5rem; font-size: 1rem; }
 .recovery-list { list-style: none; margin: 0 0 .5rem; padding: 0; }
 .recovery-entry { display: flex; gap: .5rem; align-items: center; padding: .35rem 0; border-top: 1px solid var(--wf-border-subtle); }
 .recovery-text { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; }
 .recovery-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.recovery-text .muted, .recovery-note { font-size: .8rem; }
+.recovery-text .muted, .recovery-note { font-size: .92rem; }
 .recovery-note { color: var(--wf-warning-fg); }
 .recovery-actions { display: flex; justify-content: flex-end; }
 
@@ -338,9 +364,9 @@ x3d-canvas.picking { cursor: crosshair; }
   padding: .7rem .9rem; background: var(--wf-surface-raised); border: 1px solid var(--wf-border-control); border-radius: 4px;
   box-shadow: 0 4px 18px var(--wf-gizmo-halo); color: var(--wf-text-primary); }
 .about-dialog h3 { margin: 0 0 .3rem; font-size: 1rem; color: var(--wf-text-heading); }
-.about-dialog p { margin: 0 0 .5rem; font-size: .86rem; }
+.about-dialog p { margin: 0 0 .5rem; font-size: 1rem; }
 .about-identity { font-weight: 600; color: var(--wf-text-brand); }
-.about-facts { display: grid; grid-template-columns: max-content 1fr; gap: .15rem .8rem; margin: 0 0 .5rem; font-size: .84rem; }
+.about-facts { display: grid; grid-template-columns: max-content 1fr; gap: .15rem .8rem; margin: 0 0 .5rem; font-size: .96rem; }
 .about-facts dt { color: var(--wf-text-muted); }
 .about-facts dd { margin: 0; overflow-wrap: anywhere; }
 .about-warning { color: var(--wf-warning-fg); }
@@ -358,7 +384,7 @@ x3d-canvas.picking { cursor: crosshair; }
   background: var(--wf-tab-inactive-bg); border-bottom: 1px solid var(--wf-border); }
 .dock-tab { display: flex; align-items: center; gap: .3rem; padding: 0 .4rem 0 .7rem; white-space: nowrap; flex: none;
   background: var(--wf-tab-inactive-bg); color: var(--wf-tab-inactive-fg); border-right: 1px solid var(--wf-border);
-  font-size: .88rem; font-weight: 600; cursor: grab; user-select: none; -webkit-user-select: none; touch-action: none; }
+  font-size: 1rem; font-weight: 600; cursor: grab; user-select: none; -webkit-user-select: none; touch-action: none; }
 .dock-tab:hover { background: var(--wf-surface-hover); }
 /* Active by color AND a top bar, never color alone. */
 .dock-tab[aria-selected="true"] { background: var(--wf-tab-active-bg); color: var(--wf-tab-active-fg); box-shadow: inset 0 2px 0 var(--wf-tab-active-border); }
@@ -379,12 +405,12 @@ x3d-canvas.picking { cursor: crosshair; }
 .dock-zone-tile { position: absolute; width: 32px; height: 32px; border: 2px solid var(--wf-border-control); border-radius: 4px; background: var(--wf-surface-raised); }
 .dock-zone-tile[data-valid="false"] { opacity: .35; border-style: dashed; }
 .dock-zone-tile[data-selected="true"] { background: var(--wf-accent); border-color: var(--wf-focus-ring); }
-.dock-ghost { position: absolute; transform: translate(14px, 14px); padding: .2rem .55rem; white-space: nowrap; font-size: .85rem;
+.dock-ghost { position: absolute; transform: translate(14px, 14px); padding: .2rem .55rem; white-space: nowrap; font-size: .96rem;
   background: var(--wf-surface-raised); color: var(--wf-text-primary); border: 1px solid var(--wf-accent); border-radius: 3px; box-shadow: var(--wf-shadow); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .layout-menu .create-list { min-width: 14rem; }
 .layout-menu .check { display: inline-block; width: 1rem; text-align: center; color: var(--wf-accent); }
-.menu-group { padding: .3rem .6rem .1rem; font-size: .75rem; color: var(--wf-text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.menu-group { padding: .3rem .6rem .1rem; font-size: .88rem; color: var(--wf-text-muted); text-transform: uppercase; letter-spacing: .04em; }
 /* UI-DOCK-1 (APP-SHELL-0 §3.6): the viewport header wraps instead of
    clipping; the four tools stay together and keep their pressed state. */
 .viewport .pane-title { flex-wrap: wrap; white-space: normal; row-gap: .3rem; overflow: visible; }
@@ -395,7 +421,7 @@ x3d-canvas.picking { cursor: crosshair; }
 /* UI-MENU-1: the application menu bar (File … Help). Colors are --wf-* tokens. */
 .menubar { display: flex; align-items: center; gap: .1rem; padding: .1rem .5rem; background: var(--wf-surface-chrome); border-bottom: 1px solid var(--wf-border); position: relative; z-index: 30; }
 .menubar-menu { position: relative; display: inline-flex; }
-.menubar-button { background: transparent; color: var(--wf-text-primary); padding: .2rem .6rem; font-size: .92rem; border-radius: 3px; }
+.menubar-button { background: transparent; color: var(--wf-text-primary); padding: .2rem .6rem; font-size: 1rem; border-radius: 3px; }
 .menubar-button:hover, .menubar-button[aria-expanded="true"] { background: var(--wf-surface-hover); }
 .menubar-button:focus-visible { outline-offset: -3px; }
 .menubar-button .mnemonic { text-decoration: underline; text-underline-offset: 2px; }
@@ -403,8 +429,20 @@ x3d-canvas.picking { cursor: crosshair; }
 .menu-item { width: 100%; }
 .menu-item .check { display: inline-block; width: 1rem; text-align: center; color: var(--wf-accent); flex: none; }
 .menu-item .menu-label { flex: 1 1 auto; }
-.menu-item .menu-key { color: var(--wf-text-muted); font-size: .85rem; padding-left: 1.5rem; white-space: nowrap; }
+.menu-item .menu-key { color: var(--wf-text-muted); font-size: .92rem; padding-left: 1.5rem; white-space: nowrap; }
 .menu-item[aria-disabled="true"] { color: var(--wf-text-disabled); cursor: default; }
 .menu-item[aria-disabled="true"]:hover { background: transparent; color: var(--wf-text-disabled); }
 .menu-item[aria-disabled="true"]:focus-visible { background: var(--wf-surface-hover); color: var(--wf-text-disabled); }
 .menu-sep { height: 1px; margin: .2rem .3rem; background: var(--wf-separator); }
+
+/* B3: read-only values are one line; the full source is one click away. */
+.fields .ro-value { display: flex; flex-wrap: wrap; align-items: center; gap: .2rem .4rem; }
+.fields .ro-value .value-summary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; word-break: normal; }
+.fields .ro-value .reason { margin-left: 0; font-style: italic; }
+.fields .value-full { flex: 1 1 100%; }
+.fields .value-full summary { cursor: pointer; color: var(--wf-accent); font-size: .92rem; }
+.fields .value-full code { display: block; max-height: 12rem; overflow: auto; margin-top: .2rem; }
+/* B3: the shared-definition note is one line plus its button. */
+.shared-proto { display: flex; flex-wrap: wrap; align-items: center; gap: .2rem .5rem; padding: .25rem .5rem; }
+.shared-proto p { margin: 0; }
+.fields .mf-open { display: inline-flex; flex-wrap: wrap; gap: .2rem .3rem; }

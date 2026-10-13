@@ -492,6 +492,12 @@ pub fn update_cursor() {
     let (line, col) = line_col(&ta, pos);
     ui::cursor(line, col, end.saturating_sub(pos));
     syntax::set_caret_line(line);
+    // B3: a selection's lines are marked in the gutter (visible without focus).
+    if end > pos {
+        syntax::set_mark_lines(line, line_col(&ta, end).0);
+    } else {
+        syntax::set_mark_lines(0, 0);
+    }
     CORE.with_borrow_mut(|c| c.perf.cursor_ms = now() - t0);
 }
 
