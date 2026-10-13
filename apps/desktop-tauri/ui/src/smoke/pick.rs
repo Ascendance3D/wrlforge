@@ -864,10 +864,90 @@ async fn matrix(c: &p::PickSmoke, s: &mut Stats, r: &mut R) -> Option<()> {
             opened.is_some() && loaded.is_some() && ok == run && wrong == 0,
             detail.join(" "),
         );
+        if layered {
+            stale_status(fx, r).await?;
+        }
         if fx.id == "L1-coat-over-paint" {
             duplicate_offset(c, fx, s, r).await?;
         }
     }
+    Some(())
+}
+
+/// LV2-C: the pick status line ("Shape 2 of 2 under the pointer") belongs to
+/// the selection, revision and tool it was written for. Each other way of
+/// changing those clears it (and the hit cycle): a Scene Tree click, a
+/// breadcrumb, Parent and a tool switch here; Undo in `duplicate_offset`.
+async fn stale_status(fx: &p::PickFixture, r: &mut R) -> Option<()> {
+    let ck = fx.clicks.iter().find(|k| !k.then.is_empty())?;
+    let (x, y) = project(ck.world, fx.camera)?;
+    let el = |q: &str| -> Option<HtmlElement> {
+        doc_el()?.query_selector(q).ok()??.dyn_into::<HtmlElement>().ok()
+    };
+    let usable = |q: &str| {
+        el(q).filter(|b| !b.dyn_ref::<web_sys::HtmlButtonElement>().is_some_and(|b| b.disabled()))
+    };
+    let cleared = || {
+        pick_text().trim_matches(|c: char| c.is_whitespace() || c == '\u{a0}').is_empty()
+            && PICK.with_borrow(|p| p.cycle.is_none())
+    };
+    let mut done = Vec::new();
+    for action in ["tree", "crumb", "parent", "tool"] {
+        // Two clicks at one place: the second names the Shape behind.
+        let _ = gesture(x, y).await;
+        let _ = gesture(x, y).await;
+        let shown = pick_text();
+        let cycled = shown.contains(" of ") && PICK.with_borrow(|p| p.cycle.is_some());
+        let before = selected_id();
+        let acted = match action {
+            "tree" => {
+                let other = ui().analysis.with_untracked(|a| {
+                    a.as_ref()?
+                        .items
+                        .iter()
+                        .find(|i| Some(&i.id) != before.as_ref())
+                        .map(|i| i.id.clone())
+                });
+                other
+                    .and_then(|id| el(&format!(".tree-item[data-id=\"{id}\"]")))
+                    .map(|li| li.click())
+                    .is_some()
+            }
+            "crumb" => usable("#inspector-path button.crumb").map(|b| b.click()).is_some(),
+            "parent" => usable("#inspector-up").map(|b| b.click()).is_some(),
+            _ => click("btn-move").is_some(),
+        };
+        if !acted {
+            done.push(format!("{action}:n/a"));
+            continue;
+        }
+        let changed = wait_ms(3000, || {
+            (action == "tool" || selected_id() != before).then_some(())
+        })
+        .await
+        .is_some();
+        let ok = wait_ms(3000, || cleared().then_some(())).await.is_some();
+        r.step(
+            &format!("{}: pick status cleared after {action}", fx.id),
+            cycled && changed && ok,
+            format!(
+                "before {:?} · cycled {cycled} · selection changed {changed} · after {:?}",
+                shown.chars().take(80).collect::<String>(),
+                pick_text()
+            ),
+        );
+        done.push(format!("{action}:{}", cycled && changed && ok));
+        if action == "tool" {
+            click("btn-select")?;
+        }
+    }
+    // Leave the front Shape selected, as the matrix did (Duplicate next).
+    let _ = gesture(x, y).await;
+    r.step(
+        &format!("{}: stale pick status actions covered", fx.id),
+        done.iter().any(|d| d.starts_with("tree:")),
+        done.join(" "),
+    );
     Some(())
 }
 
@@ -983,6 +1063,20 @@ async fn duplicate_offset(
         "Undo after Duplicate restores the exact source bytes (one step)",
         undone.is_some(),
         format!("revision {}", CORE.with_borrow(|c| c.revision)),
+    );
+    // LV2-C: the copy's pick message does not outlive the Undo.
+    let stale = pick_text();
+    let cleared = wait_ms(3000, || {
+        pick_text()
+            .trim_matches(|c: char| c.is_whitespace() || c == '\u{a0}')
+            .is_empty()
+            .then_some(())
+    })
+    .await;
+    r.step(
+        "Undo clears the pick status of the undone selection",
+        cleared.is_some(),
+        format!("before {stale:?} · after {:?}", pick_text()),
     );
     let _ = ready(20_000).await;
     Some(())

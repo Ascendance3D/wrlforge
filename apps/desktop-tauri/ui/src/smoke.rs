@@ -11,6 +11,7 @@ use crate::editor::{self, textarea, CORE};
 use crate::ipc::{self, call, Session};
 use crate::ui::{self, ui};
 
+mod clip;
 mod create;
 mod dock;
 mod extrusion;

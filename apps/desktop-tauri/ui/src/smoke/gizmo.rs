@@ -136,7 +136,7 @@ async fn zoom(notches: u32) -> Option<(gz::Camera, gz::Camera)> {
 }
 
 /// Resize OUR window with real X input; waits for the canvas to follow.
-async fn resize(w: i32, h: i32) -> Option<()> {
+pub(super) async fn resize(w: i32, h: i32) -> Option<()> {
     #[derive(serde::Serialize)]
     struct A {
         w: i32,
@@ -1486,7 +1486,30 @@ async fn proto_body(tag: &str, r: &mut R) -> Option<()> {
         format!("{others:?} · want {:?} · {note:?}", nested_at(&after.text)),
     );
     capture("lv2-proto-move-continued-secondary").await;
+    // LV2-C: Undo and Redo keep the selection on the SAME instance, proven
+    // by Rust through the exact change (never another instance).
+    let mut kept = Vec::new();
+    for (undo, want_text) in [(true, &before.text), (false, &after.text)] {
+        editor::history(undo).await;
+        editor::idle().await;
+        let rev = CORE.with_borrow(|c| c.revision);
+        let t3 = gz_ready(10_000).await;
+        let inst = t3.as_ref().and_then(|t| t.instance.as_ref().map(|i| i.item.clone()));
+        kept.push((
+            text() == **want_text
+                && crate::pick::instance_hint(session, rev).is_some()
+                && inst.is_some()
+                && inst == top_at(&text()),
+            format!("{} → rev {rev} · instance {inst:?} want {:?}", if undo { "Undo" } else { "Redo" }, top_at(&text())),
+        ));
+    }
+    r.step(
+        &format!("{tag}: Undo and Redo keep the selected body node on the SAME picked instance (Rust carries it through the exact change)"),
+        kept.iter().all(|k| k.0),
+        kept.iter().map(|k| k.1.clone()).collect::<Vec<_>>().join(" · "),
+    );
     // A second drag on the continued binding: one more token, same body.
+    let t2 = gz_ready(10_000).await;
     let t2 = t2?;
     still_camera().await?;
     let (b0, b1) = item_span(&t2.item)?;
@@ -2050,6 +2073,7 @@ pub(super) async fn run(c: &p::GizmoSmoke, r: &mut R) -> Option<()> {
         other_theme(th, &mut perf, r).await;
     }
     fixtures(c, &mut perf, r).await;
+    super::clip::run(r).await;
     let (mv, fr, lat, prove, bind) = GIZMO.with_borrow(|g| {
         (
             g.move_ms.clone(),
