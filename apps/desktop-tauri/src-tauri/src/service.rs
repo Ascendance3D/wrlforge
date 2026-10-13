@@ -21,7 +21,8 @@ use wrlforge_desktop_protocol as p;
 use wrlforge_document::{map_span, view_of, Applied, Document, SpanChange, ViewEdit};
 use wrlforge_text::Edit;
 use wrlforge_vrml::{
-    create, extrusion, field_edit, highlight, manipulate, mf_edit, scene, structure_edit,
+    create, extrusion, field_edit, highlight, manipulate, mf_edit, scene, string_edit,
+    structure_edit,
 };
 
 use crate::files::{self, FileError, Format, SaveOptions, Stamp};
@@ -306,9 +307,101 @@ fn node_fields(
                     },
                     tuples: l.lexemes(),
                 }),
+                strings: f.strings.map(|l| p::StringListField {
+                    form: match l.form {
+                        string_edit::Form::Bracketed { .. } => "bracketed".into(),
+                        string_edit::Form::Bare => "bare".into(),
+                    },
+                    values: l.values(),
+                }),
             })
             .collect(),
     }
+}
+
+/// The MFString plan in the shape `apply_list_plan` applies (no lexemes).
+fn string_plan(plan: string_edit::Plan) -> mf_edit::Plan {
+    match plan {
+        string_edit::Plan::Unchanged => mf_edit::Plan::Unchanged,
+        string_edit::Plan::Refused {
+            reason,
+            message,
+            op_index,
+        } => mf_edit::Plan::Refused {
+            reason,
+            message,
+            op_index,
+            component_index: None,
+        },
+        string_edit::Plan::Ready {
+            edit,
+            new_text,
+            node_from,
+            node_to,
+            ..
+        } => mf_edit::Plan::Ready {
+            edit,
+            new_text,
+            node_from,
+            node_to,
+            lexemes: Vec::new(),
+        },
+    }
+}
+
+/// B2: the url to write for an image the user chose in the document's
+/// folder: relative, `/`-separated, with `%`, `#` and `?` percent-encoded
+/// (the preview decodes them; the WebView encodes the rest). Proven by
+/// resolving the url exactly as the preview does: it must name the chosen
+/// file (same real path) and carry an image signature. `Err` is the message
+/// for the user. A file outside the folder tree is refused, never copied.
+pub fn texture_url(folder: &Path, chosen: &Path) -> Result<String, String> {
+    let outside = || {
+        "The image is outside the document's folder. Put it in the folder (or a subfolder) of the .wrl and choose it again; files are not copied.".to_string()
+    };
+    let root = folder
+        .canonicalize()
+        .map_err(|e| format!("The document's folder cannot be read: {e}."))?;
+    let real = chosen
+        .canonicalize()
+        .map_err(|e| format!("The image cannot be read: {e}."))?;
+    let rel = real.strip_prefix(&root).map_err(|_| outside())?;
+    let mut segs = Vec::new();
+    for c in rel.components() {
+        let std::path::Component::Normal(c) = c else {
+            return Err(outside());
+        };
+        let c = c
+            .to_str()
+            .ok_or_else(|| "The image's name is not valid UTF-8.".to_string())?;
+        let mut seg = String::with_capacity(c.len());
+        for ch in c.chars() {
+            match ch {
+                '%' => seg.push_str("%25"),
+                '#' => seg.push_str("%23"),
+                '?' => seg.push_str("%3F"),
+                '\\' | '"' | '\n' | '\r' => {
+                    return Err("The image's name holds a character a texture url cannot carry; rename it.".into())
+                }
+                _ => seg.push(ch),
+            }
+        }
+        segs.push(seg);
+    }
+    if segs.is_empty() {
+        return Err(outside());
+    }
+    let url = segs.join("/");
+    let decoded = resources::decode_segments(&url)
+        .map_err(|e| format!("The image's name cannot be used as a url ({}).", e.as_str()))?;
+    let resolved = resources::resolve(&root, &decoded)
+        .map_err(|e| format!("The image cannot be served to the preview ({}).", e.as_str()))?;
+    if resolved != real {
+        return Err(outside());
+    }
+    resources::check_url(&url, Some(&root))
+        .map_err(|e| format!("The file is not a usable image ({}).", e.as_str()))?;
+    Ok(url)
 }
 
 fn refused_field(
@@ -1140,6 +1233,70 @@ impl Service {
             };
             let plan = mf_edit::plan_add_field(s.doc.text(), &req);
             Self::apply_list_plan(s, r.base_revision, plan)
+        })
+    }
+
+    /// B2: an MFString edit (`url`, `info`, ...). Rust re-proves the
+    /// revision, the node, the field and the exact list shown, plans every
+    /// operation and applies the ONE resulting span edit as ONE transaction.
+    pub fn edit_strings(&self, r: &p::StringEditRequest) -> Result<p::FieldEditOutcome, String> {
+        self.with(r.session, |s| {
+            if r.base_revision != s.doc.revision() {
+                return stale_field(r.base_revision, s.doc.revision());
+            }
+            let Some((node_from, node_to)) = node_span(&r.item) else {
+                return refused_field(field_edit::reason::NOT_A_NODE, None, None);
+            };
+            let req = string_edit::Request {
+                confirm_shared: r.confirm_shared,
+                node_from,
+                node_to,
+                field_index: r.field_index as usize,
+                field_name: r.field_name.clone(),
+                expected: r.expected.clone(),
+                ops: r
+                    .ops
+                    .iter()
+                    .map(|o| match o {
+                        p::StringOp::Set { index, value } => string_edit::Op::Set {
+                            index: *index as usize,
+                            value: value.clone(),
+                        },
+                        p::StringOp::Insert { index, value } => string_edit::Op::Insert {
+                            index: *index as usize,
+                            value: value.clone(),
+                        },
+                        p::StringOp::Delete { index } => string_edit::Op::Delete {
+                            index: *index as usize,
+                        },
+                    })
+                    .collect(),
+            };
+            let plan = string_edit::plan_string_edit(s.doc.text(), &req);
+            Self::apply_list_plan(s, r.base_revision, string_plan(plan))
+        })
+    }
+
+    /// B2: add `texture ImageTexture { url "<url>" }` to an Appearance that
+    /// has none, because the user chose an image. One transaction.
+    pub fn add_texture(&self, r: &p::AddTextureRequest) -> Result<p::FieldEditOutcome, String> {
+        self.with(r.session, |s| {
+            if r.base_revision != s.doc.revision() {
+                return stale_field(r.base_revision, s.doc.revision());
+            }
+            let Some((node_from, node_to)) = node_span(&r.item) else {
+                return refused_field(field_edit::reason::NOT_A_NODE, None, None);
+            };
+            let plan = string_edit::plan_add_texture(
+                s.doc.text(),
+                &string_edit::AddTextureRequest {
+                    node_from,
+                    node_to,
+                    url: r.url.clone(),
+                    confirm_shared: r.confirm_shared,
+                },
+            );
+            Self::apply_list_plan(s, r.base_revision, string_plan(plan))
         })
     }
 
@@ -2250,6 +2407,147 @@ mod tests {
             .unwrap();
         assert!(matches!(r, p::EditOutcome::Refused { .. }));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// B2 texture assignment: an MFString url edit and Add texture are one
+    /// undo step each, exact text both ways, revision- and list-checked.
+    #[test]
+    fn texture_url_edits_apply_undo_redo_exactly() {
+        let svc = Service::new(clock);
+        let text = "#VRML V2.0 utf8\r\nShape {\r\n  appearance Appearance {\r\n    texture ImageTexture { url [ \"a.png\" \"b.png\" ] }\r\n  }\r\n}\r\nShape { appearance Appearance { material Material {} } }\r\n";
+        let id = svc.open_text_for_test(text);
+        let span = |t: &str, needle: &str| {
+            let b = t.find(needle).unwrap();
+            let f = t[..b].encode_utf16().count();
+            format!("node-{f}-{}", f + needle.encode_utf16().count())
+        };
+        let tex = "ImageTexture { url [ \"a.png\" \"b.png\" ] }";
+        let p::InspectOutcome::Found { inspection } = svc.inspect(id, &span(text, tex), 0).unwrap()
+        else {
+            panic!()
+        };
+        let f = &inspection.node.unwrap().fields[0];
+        assert!(f.editable, "{}", f.reason);
+        let strings = f.strings.clone().expect("an MFString list");
+        assert_eq!((strings.form.as_str(), strings.values.clone()), ("bracketed", vec!["a.png".to_string(), "b.png".to_string()]));
+        let req = |rev: u64, expected: Vec<String>, ops| p::StringEditRequest {
+            session: id,
+            base_revision: rev,
+            item: span(text, tex),
+            field_index: 0,
+            field_name: "url".into(),
+            expected,
+            ops,
+            confirm_shared: false,
+        };
+        // A list other than the one shown is refused and changes nothing.
+        let o = svc
+            .edit_strings(&req(0, vec!["x".into()], vec![p::StringOp::Delete { index: 0 }]))
+            .unwrap();
+        assert!(matches!(o, p::FieldEditOutcome::Refused { ref reason, .. } if reason == "string-list-changed"), "{o:?}");
+        assert_eq!(svc.text(id).unwrap(), text);
+        // Set one entry and remove the other: ONE edit.
+        let o = svc
+            .edit_strings(&req(
+                0,
+                strings.values.clone(),
+                vec![
+                    p::StringOp::Set { index: 0, value: "tex/wood \"1\".png".into() },
+                    p::StringOp::Delete { index: 1 },
+                ],
+            ))
+            .unwrap();
+        let p::FieldEditOutcome::Applied { state, .. } = o else {
+            panic!("{o:?}")
+        };
+        let one = text.replacen("[ \"a.png\" \"b.png\" ]", "[ \"tex/wood \\\"1\\\".png\" ]", 1);
+        assert_eq!(svc.text(id).unwrap(), one);
+        assert_eq!(state.revision, 1);
+        // A stale revision is refused.
+        let o = svc
+            .edit_strings(&req(0, strings.values.clone(), vec![p::StringOp::Delete { index: 0 }]))
+            .unwrap();
+        assert!(matches!(o, p::FieldEditOutcome::Refused { ref reason, .. } if reason == "parse-session-is-stale"));
+        // Add texture to the second Appearance.
+        let app = "Appearance { material Material {} }";
+        let o = svc
+            .add_texture(&p::AddTextureRequest {
+                session: id,
+                base_revision: 1,
+                item: span(&one, app),
+                url: "img/brick.png".into(),
+                confirm_shared: false,
+            })
+            .unwrap();
+        assert!(matches!(o, p::FieldEditOutcome::Applied { .. }), "{o:?}");
+        let two = one.replacen(
+            app,
+            "Appearance { material Material {} texture ImageTexture { url \"img/brick.png\" } }",
+            1,
+        );
+        assert_eq!(svc.text(id).unwrap(), two);
+        // An Appearance that has a texture is refused.
+        let o = svc
+            .add_texture(&p::AddTextureRequest {
+                session: id,
+                base_revision: 2,
+                item: span(&two, "Appearance {\r\n    texture"),
+                url: "c.png".into(),
+                confirm_shared: false,
+            })
+            .unwrap();
+        assert!(matches!(o, p::FieldEditOutcome::Refused { .. }), "{o:?}");
+        // One undo step each, exact text both ways.
+        assert!(matches!(svc.undo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), one);
+        assert!(matches!(svc.undo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), text);
+        assert!(matches!(svc.redo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), one);
+        assert!(matches!(svc.redo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), two);
+    }
+
+    /// B2: the chosen image must be inside the document's folder tree; the
+    /// url is relative, `/`-separated and resolves to exactly that file.
+    #[test]
+    fn texture_url_is_relative_and_confined() {
+        let root = tmp("texurl");
+        let doc = root.join("world");
+        fs::create_dir_all(doc.join("tex/sub")).unwrap();
+        let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01\0\0\0\x01\x08\x02\0\0\0";
+        for f in ["a.png", "tex/sub/b c.png", "tex/50%#1.png"] {
+            fs::write(doc.join(f), png).unwrap();
+        }
+        fs::write(root.join("outside.png"), png).unwrap();
+        fs::write(doc.join("notes.txt"), "x").unwrap();
+        fs::write(doc.join("fake.png"), "not an image").unwrap();
+        assert_eq!(texture_url(&doc, &doc.join("a.png")).unwrap(), "a.png");
+        assert_eq!(
+            texture_url(&doc, &doc.join("tex/sub/b c.png")).unwrap(),
+            "tex/sub/b c.png"
+        );
+        assert_eq!(
+            texture_url(&doc, &doc.join("tex/50%#1.png")).unwrap(),
+            "tex/50%25%231.png"
+        );
+        // Through `..` back inside is fine (the real path decides).
+        assert_eq!(
+            texture_url(&doc, &doc.join("tex/../a.png")).unwrap(),
+            "a.png"
+        );
+        let e = texture_url(&doc, &root.join("outside.png")).unwrap_err();
+        assert!(e.contains("outside the document's folder"), "{e}");
+        assert!(texture_url(&doc, &doc.join("notes.txt")).is_err());
+        assert!(texture_url(&doc, &doc.join("fake.png")).is_err());
+        assert!(texture_url(&doc, &doc.join("missing.png")).is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("outside.png"), doc.join("link.png")).unwrap();
+            let e = texture_url(&doc, &doc.join("link.png")).unwrap_err();
+            assert!(e.contains("outside the document's folder"), "{e}");
+        }
+        let _ = fs::remove_dir_all(&root);
     }
 
     /// B2: Delete and Duplicate are one undo step each, exact text both

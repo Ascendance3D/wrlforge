@@ -296,6 +296,75 @@ pub fn doc_add_field(
     svc.add_field(&request)
 }
 
+/// B2: an MFString edit (`url`, `info`, ...). Synchronous like
+/// `doc_edit_field`.
+#[tauri::command]
+pub fn doc_edit_strings(
+    svc: State<'_, Service>,
+    request: p::StringEditRequest,
+) -> Result<p::FieldEditOutcome, String> {
+    svc.edit_strings(&request)
+}
+
+/// B2: add an ImageTexture to an Appearance that has no texture.
+#[tauri::command]
+pub fn doc_add_texture(
+    svc: State<'_, Service>,
+    request: p::AddTextureRequest,
+) -> Result<p::FieldEditOutcome, String> {
+    svc.add_texture(&request)
+}
+
+const IMAGE_FILTER_EXT: &[&str] = &["png", "jpg", "jpeg", "gif", "PNG", "JPG", "JPEG", "GIF"];
+
+/// B2: "Choose image…". A native dialog run by Rust, starting in the
+/// document's folder. The chosen file must lie in that folder tree; the
+/// reply is its RELATIVE url (never a path). Nothing is written or copied
+/// here: the UI sends the url as an ordinary, re-proven edit.
+#[tauri::command]
+pub async fn doc_choose_texture(app: AppHandle, session: p::SessionId) -> p::TextureChoice {
+    let Some(folder) = app.state::<Service>().folder(session) else {
+        return p::TextureChoice::Refused {
+            message: "Save the document first: a texture url is relative to the document's folder.".into(),
+        };
+    };
+    let picked = match std::env::var_os("WRLFORGE_SMOKE_TEXTURE_PICK") {
+        // Visual QA only, and only inside the harness's private Xvfb
+        // (`WRLFORGE_SMOKE_XVFB=1`): no one is there to click the GTK
+        // dialog, so Rust reads the stand-in path from its own environment.
+        // The WebView still names no path, and the folder rule below holds.
+        Some(path) if crate::smoke::real_pointer_available() => Some(std::path::PathBuf::from(path)),
+        _ => {
+            let mut dialog = app.dialog().file();
+            if let Some(dir) = dialog_dir(&app, Some(session)) {
+                dialog = dialog.set_directory(dir);
+            }
+            match dialog
+                .set_title("Choose texture image")
+                .add_filter("Images (.png, .jpg, .jpeg, .gif)", IMAGE_FILTER_EXT)
+                .blocking_pick_file()
+            {
+                None => return p::TextureChoice::Canceled,
+                Some(fp) => match fp.into_path() {
+                    Ok(path) => Some(path),
+                    Err(e) => {
+                        return p::TextureChoice::Refused {
+                            message: format!("unsupported dialog result: {e}"),
+                        }
+                    }
+                },
+            }
+        }
+    };
+    let Some(path) = picked else {
+        return p::TextureChoice::Canceled;
+    };
+    match crate::service::texture_url(&folder, &path) {
+        Ok(url) => p::TextureChoice::Chosen { url },
+        Err(message) => p::TextureChoice::Refused { message },
+    }
+}
+
 /// VISUAL-3A: whether the gizmo may move an item. Read-only; async like
 /// `doc_inspect` because it parses.
 #[tauri::command]

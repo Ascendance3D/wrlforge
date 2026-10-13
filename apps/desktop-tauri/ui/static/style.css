@@ -155,6 +155,11 @@ x3d-canvas#viewport { flex: 1 1 auto; width: 100%; min-height: 6rem; display: bl
 .fields.editable th { cursor: pointer; }
 .fields.editable tr.ro th { color: var(--wf-text-muted); }
 .fields .controls { display: flex; flex-wrap: wrap; gap: .25rem .4rem; align-items: center; }
+/* B2: MFString lists (url, info, ...) and Add texture. */
+.fields .string-list { margin: 0; padding-left: 1.4rem; }
+.fields .string-list li, .fields .string-add { display: flex; flex-wrap: wrap; gap: .25rem .4rem; align-items: center; margin-bottom: .2rem; }
+.fields .string-list input.text, .fields .string-add input.text { min-width: 10rem; flex: 1 1 10rem; }
+.add-texture { margin: .3rem 0; }
 .fields .comp { display: inline-flex; gap: .2rem; align-items: center; color: var(--wf-tree-kind); font-size: .78rem; }
 .fields .comp input.num { width: 5.2rem; }
 .fields .comp input.text { width: 14rem; }

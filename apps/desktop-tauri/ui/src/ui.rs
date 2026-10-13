@@ -606,6 +606,88 @@ pub async fn add_field(field_name: String, value: p::AddFieldValue) -> bool {
     field_outcome(session, &field_name, o).await
 }
 
+/// B2: one MFString change (`url`, `info`, ...). `expected` is the list the
+/// Inspector showed; Rust refuses any other. One undo step.
+pub async fn edit_strings(
+    field_index: u32,
+    field_name: String,
+    expected: Vec<String>,
+    ops: Vec<p::StringOp>,
+) -> bool {
+    let Some((session, insp)) = field_target(&field_name).await else {
+        return false;
+    };
+    #[derive(serde::Serialize)]
+    struct A {
+        request: p::StringEditRequest,
+    }
+    let confirm_shared = match shared_consent(session, &insp).await {
+        Some(false) => return Default::default(),
+        c => c.is_some(),
+    };
+    let request = p::StringEditRequest {
+        confirm_shared,
+        session,
+        base_revision: insp.revision,
+        item: insp.id.clone(),
+        field_index,
+        field_name: field_name.clone(),
+        expected,
+        ops,
+    };
+    let o = call::<p::FieldEditOutcome>("doc_edit_strings", A { request }).await;
+    field_outcome(session, &field_name, o).await
+}
+
+/// B2: "Choose image…" -- a native dialog run by Rust in the document's
+/// folder. Returns the RELATIVE url, or `None` (canceled, or refused with a
+/// visible reason).
+pub async fn choose_texture() -> Option<String> {
+    let session = CORE.with_borrow(|c| c.session)?;
+    match call::<p::TextureChoice>("doc_choose_texture", Session { session }).await {
+        Ok(p::TextureChoice::Chosen { url }) => Some(url),
+        Ok(p::TextureChoice::Canceled) => None,
+        Ok(p::TextureChoice::Refused { message }) => {
+            let m = format!("No texture chosen: {message}");
+            ui().field_error.set(Some(m.clone()));
+            flash(&m);
+            None
+        }
+        Err(e) => {
+            flash(&format!("Choose image failed: {e}"));
+            None
+        }
+    }
+}
+
+/// B2: "Add texture" on an Appearance with no texture field: choose an image,
+/// then write `texture ImageTexture { url "<url>" }` (one undo step).
+pub async fn add_texture() -> bool {
+    let Some(url) = choose_texture().await else {
+        return false;
+    };
+    let Some((session, insp)) = field_target("texture").await else {
+        return false;
+    };
+    #[derive(serde::Serialize)]
+    struct A {
+        request: p::AddTextureRequest,
+    }
+    let confirm_shared = match shared_consent(session, &insp).await {
+        Some(false) => return false,
+        c => c.is_some(),
+    };
+    let request = p::AddTextureRequest {
+        confirm_shared,
+        session,
+        base_revision: insp.revision,
+        item: insp.id.clone(),
+        url,
+    };
+    let o = call::<p::FieldEditOutcome>("doc_add_texture", A { request }).await;
+    field_outcome(session, "texture", o).await
+}
+
 /// The session and the Inspector a field change is sent against, or `None`
 /// (with a visible reason) while the Inspector is not of the current text.
 async fn field_target(field_name: &str) -> Option<(u64, p::Inspection)> {

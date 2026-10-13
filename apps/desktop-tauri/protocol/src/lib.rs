@@ -357,6 +357,18 @@ pub struct EditableField {
     /// VISUAL-4A: an editable `MFVec2f` / `MFVec3f` / `MFRotation` list.
     #[serde(default)]
     pub list: Option<ListField>,
+    /// B2: an editable `MFString` list (decoded strings, in order).
+    #[serde(default)]
+    pub strings: Option<StringListField>,
+}
+
+/// B2: an editable MFString value as decoded strings.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StringListField {
+    /// "bracketed" | "bare"
+    pub form: String,
+    pub values: Vec<String>,
 }
 
 /// An editable list value, tuple by tuple, as exact source lexemes.
@@ -484,6 +496,57 @@ pub struct AddFieldRequest {
     /// B1: the user confirmed editing a shared PROTO definition.
     #[serde(default)]
     pub confirm_shared: bool,
+}
+
+/// B2: one MFString operation; indices are of the list as the previous
+/// operation left it. Values are decoded text: Rust encodes them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "op", rename_all = "camelCase")]
+pub enum StringOp {
+    Set { index: u32, value: String },
+    Insert { index: u32, value: String },
+    Delete { index: u32 },
+}
+
+/// B2: an MFString edit (`url`, `info`, ...). Applied as ONE transaction,
+/// so one undo step.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StringEditRequest {
+    pub session: SessionId,
+    pub base_revision: u64,
+    pub item: String,
+    pub field_index: u32,
+    pub field_name: String,
+    /// The decoded strings the UI showed.
+    pub expected: Vec<String>,
+    pub ops: Vec<StringOp>,
+    /// B1: the user confirmed editing a shared PROTO definition.
+    #[serde(default)]
+    pub confirm_shared: bool,
+}
+
+/// B2: write `texture ImageTexture { url "<url>" }` into an Appearance with
+/// no texture field. `url` comes from `doc_choose_texture`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AddTextureRequest {
+    pub session: SessionId,
+    pub base_revision: u64,
+    pub item: String,
+    pub url: String,
+    #[serde(default)]
+    pub confirm_shared: bool,
+}
+
+/// B2: the reply to `doc_choose_texture` (a native image dialog run by
+/// Rust). The url is relative to the document's folder, `/`-separated.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum TextureChoice {
+    Chosen { url: String },
+    Canceled,
+    Refused { message: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

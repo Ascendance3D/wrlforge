@@ -249,6 +249,9 @@ pub struct FieldDescriptor {
     /// VISUAL-4A: an editable `MFVec2f` / `MFVec3f` / `MFRotation` list
     /// (`crate::mf_edit`). `None` for every other type.
     pub list: Option<crate::mf_edit::ListValue>,
+    /// B2: an editable `MFString` list (`crate::string_edit`). `None` for
+    /// every other type.
+    pub strings: Option<crate::string_edit::StringList>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -653,6 +656,7 @@ fn describe(
     let spec = vrml97.and_then(|r| type_spec(r.field_type));
     let mut tokens = Vec::new();
     let mut list = None;
+    let mut strings = None;
     let reason = node_reason.or_else(|| {
         if duplicates.contains(&f.name.as_str()) {
             Some(reason::FIELD_DUPLICATED)
@@ -682,7 +686,14 @@ fn describe(
                     None
                 }
                 Some(Err(r)) => Some(r),
-                None => Some(reason::TYPE_UNSUPPORTED),
+                None => match crate::string_edit::describe_strings(node, index, src) {
+                    Some(Ok(l)) => {
+                        strings = Some(l);
+                        None
+                    }
+                    Some(Err(r)) => Some(r),
+                    None => Some(reason::TYPE_UNSUPPORTED),
+                },
             }
         }
     });
@@ -726,6 +737,7 @@ fn describe(
             from: range.start.offset as u64,
             to: range.end.offset as u64,
             list: if editable { list } else { None },
+            strings: if editable { strings } else { None },
         },
         tokens,
         spec,
