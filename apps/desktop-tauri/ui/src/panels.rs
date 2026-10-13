@@ -519,44 +519,20 @@ fn rows(rows: Vec<p::InspectorRow>, session: u64, rev: u64) -> impl IntoView {
     }
 }
 
-/// B1: the "Shared PROTO definition" indicator, with the one explicit
-/// consent per definition and document.
-fn shared_banner(s: p::SharedProto, session: u64) -> impl IntoView {
-    let u = ui();
+/// B1: the "Shared PROTO definition" indicator. Every change of a shared
+/// definition asks for confirmation (PR #146 review): there is no
+/// document-wide "allow" state.
+fn shared_banner(s: p::SharedProto, _session: u64) -> impl IntoView {
     let proto = s.proto.clone();
-    let allowed = {
-        let proto = proto.clone();
-        move || u.shared_ok.with(|v| v.iter().any(|(x, n)| *x == session && *n == proto))
-    };
     let instances = s.instances;
     let text = format!(
         "Shared PROTO definition: this node is part of PROTO {}. It is used by {} instance(s) in this document; a change here changes every one of them.",
         s.proto, instances
     );
-    let allow = {
-        let s = s.clone();
-        move |_: web_sys::MouseEvent| {
-            let s = s.clone();
-            spawn_local(async move {
-                ui::confirm_shared(session, s).await;
-            });
-        }
-    };
-    let allowed2 = allowed.clone();
     view! {
-        <div class="shared-proto" id="inspector-shared" role="note" data-proto=proto.clone()
-            data-allowed=move || allowed().to_string()>
+        <div class="shared-proto" id="inspector-shared" role="note" data-proto=proto.clone()>
             <p title=text><strong>"Shared definition"</strong>{format!(" · changes all {} instance{} of PROTO {}", instances, if instances == 1 { "" } else { "s" }, proto)}</p>
-            {move || if allowed2() {
-                view! { <p class="shared-ok" id="inspector-shared-ok" title="Editing the shared definition is allowed for this document.">"Editing allowed"</p> }.into_any()
-            } else {
-                view! {
-                    <button type="button" id="inspector-shared-allow" on:click=allow.clone()
-                        class="small" title="Allow edits to this PROTO definition (all instances) for this document">
-                        "Allow editing"
-                    </button>
-                }.into_any()
-            }}
+            <p class="shared-ok" id="inspector-shared-ask">"Each change asks for confirmation."</p>
         </div>
     }
 }

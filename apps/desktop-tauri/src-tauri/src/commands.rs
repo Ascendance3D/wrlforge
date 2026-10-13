@@ -29,11 +29,11 @@ pub fn startup_document(startup: State<'_, Startup>) -> Option<p::OpenOutcome> {
     startup.0.lock().ok().and_then(|mut s| s.take())
 }
 
-/// B1: the explicit confirmation before the FIRST edit of a shared PROTO
-/// definition in a document (the UI remembers the answer per definition).
+/// B1: the explicit confirmation before EVERY edit of a shared PROTO
+/// definition (PR #146 review: the UI remembers no earlier answer).
 #[tauri::command]
 pub async fn confirm_shared_edit(app: AppHandle, proto: String, instances: u32) -> bool {
-    if let Some(answer) = app.state::<SmokeState>().confirm_override() {
+    if let Some(answer) = app.state::<SmokeState>().shared_override() {
         return answer;
     }
     app.dialog()
@@ -54,24 +54,38 @@ pub async fn confirm_shared_edit(app: AppHandle, proto: String, instances: u32) 
 /// AppImage is its read-only mount (`/tmp/.mount_*`).
 fn dialog_dir(app: &AppHandle, session: Option<p::SessionId>) -> Option<std::path::PathBuf> {
     let appdir = std::env::var_os("APPDIR").map(std::path::PathBuf::from);
-    let usable = |d: &std::path::Path| {
-        d.is_dir() && !appdir.as_deref().is_some_and(|a| d.starts_with(a))
-    };
-    session
-        .and_then(|s| app.state::<Service>().folder(s))
-        .filter(|d| usable(d))
-        .or_else(|| app.path().home_dir().ok().filter(|d| usable(d)))
+    start_dir(
+        session.and_then(|s| app.state::<Service>().folder(s)),
+        app.path().home_dir().ok(),
+        appdir.as_deref(),
+    )
 }
 
+/// The pure rule of [`dialog_dir`]: the document folder when it is an
+/// existing directory outside the AppImage mount, else home under the same
+/// test, else none (the dialog's own default).
+fn start_dir(
+    doc_folder: Option<std::path::PathBuf>,
+    home: Option<std::path::PathBuf>,
+    appdir: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
+    let usable = |d: &std::path::Path| d.is_dir() && !appdir.is_some_and(|a| d.starts_with(a));
+    doc_folder
+        .filter(|d| usable(d))
+        .or_else(|| home.filter(|d| usable(d)))
+}
+
+/// `session`: the active document, if any. Its folder (resolved by Rust
+/// from the session, never a WebView path) is where the dialog starts.
 #[tauri::command]
-pub async fn open_document(app: AppHandle) -> p::OpenOutcome {
+pub async fn open_document(app: AppHandle, session: Option<p::SessionId>) -> p::OpenOutcome {
     // `--smoke-create` only: the launch argument's file stands in for the
     // dialog (Rust-chosen, never a WebView path).
     if let Some(path) = app.state::<SmokeState>().open_override() {
         return app.state::<Service>().open_path(&path);
     }
     let mut dialog = app.dialog().file();
-    if let Some(dir) = dialog_dir(&app, None) {
+    if let Some(dir) = dialog_dir(&app, session) {
         dialog = dialog.set_directory(dir);
     }
     let picked = dialog
@@ -530,6 +544,13 @@ pub fn smoke_open_fixture(
     }
 }
 
+/// `--smoke-move` only: queue answers for the next shared-PROTO
+/// confirmations; returns how many were asked so far.
+#[tauri::command]
+pub fn smoke_shared_consent(smoke: State<'_, SmokeState>, answers: Vec<bool>) -> Result<u32, String> {
+    smoke.shared_script(answers)
+}
+
 /// `--smoke-pick` only: a REAL X pointer click at client CSS px (`x`, `y`)
 /// of the main window (see `SmokeState::real_click` for the guards). Async:
 /// the main thread must stay free to receive the click.
@@ -864,3 +885,32 @@ pub fn confirm_close(window: tauri::Window, dirty: Vec<(p::SessionId, String)>) 
     gate.asking.store(false, Ordering::SeqCst);
 }
 
+#[cfg(test)]
+mod tests {
+    use super::start_dir;
+
+    /// PR #146 review: Open starts in the active document's folder; an
+    /// unsaved document (no folder), no document, a missing folder or a
+    /// folder inside the AppImage mount fall back to home.
+    #[test]
+    fn open_dialog_starts_in_the_document_folder_else_home() {
+        let base = std::env::temp_dir().join(format!("wrlforge-start-dir-{}", std::process::id()));
+        let (doc, home, mount) = (base.join("doc"), base.join("home"), base.join("mount"));
+        for d in [&doc, &home, &mount.join("usr")] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let m = Some(mount.as_path());
+        // Saved document: its folder.
+        assert_eq!(start_dir(Some(doc.clone()), Some(home.clone()), m), Some(doc.clone()));
+        // Unsaved document / no document: home.
+        assert_eq!(start_dir(None, Some(home.clone()), m), Some(home.clone()));
+        // A folder that no longer exists: home.
+        assert_eq!(start_dir(Some(base.join("gone")), Some(home.clone()), m), Some(home.clone()));
+        // A folder inside the AppImage mount: home.
+        assert_eq!(start_dir(Some(mount.join("usr")), Some(home.clone()), m), Some(home.clone()));
+        // No usable folder at all: the dialog's own default.
+        assert_eq!(start_dir(None, Some(mount.join("usr")), m), None);
+        assert_eq!(start_dir(None, None, None), None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}

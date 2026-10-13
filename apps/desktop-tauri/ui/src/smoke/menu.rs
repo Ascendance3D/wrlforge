@@ -524,6 +524,10 @@ async fn shortcuts(r: &mut R) -> Option<()> {
         runs() == n + 1 && s2.revision > rev && s2.view == s.view && s2.can_redo,
         format!("runs +{} rev {rev} -> {}", runs() - n, s2.revision),
     );
+    // PR #146 review: the unmodified viewport keys (F / Home = View All)
+    // never fire with Alt or AltGr held -- shortcut_blocked() drops those
+    // events before the viewport-key check.
+    viewport_keys(r).await?;
     // Inspector field: typing stays in the field; Ctrl+Z stays the field's own.
     type_edit("\n# menu edit 3").await?;
     let input: web_sys::HtmlInputElement = wait_ms(4000, || {
@@ -2000,6 +2004,124 @@ async fn quit(r: &mut R) -> Option<()> {
             && source_selection() == Some((a, b))
             && d4 == d1,
         format!("asked {asked3} -> {asked4} -> {asked5} runs +{} {}", runs() - n, st(&after)),
+    );
+    Some(())
+}
+
+/// Focus a control inside the 3D Viewport section (where F / Home apply):
+/// the first enabled, visible button of the viewport toolbar.
+fn focus_viewport() -> Option<()> {
+    for b in all("section.viewport button") {
+        let Ok(b) = b.dyn_into::<HtmlElement>() else { continue };
+        if b.has_attribute("disabled") || b.offset_width() == 0 {
+            continue;
+        }
+        let _ = b.focus();
+        let inside = web_sys::window()?
+            .document()?
+            .active_element()?
+            .closest("section.viewport")
+            .ok()
+            .flatten()
+            .is_some();
+        if inside {
+            return Some(());
+        }
+    }
+    None
+}
+
+/// View All runs (and shows its message) iff the run count rises by one
+/// and the newest message is View All's.
+fn view_all_ran(n: u64, m0: &str) -> bool {
+    let m = ui().message.get_untracked();
+    runs() == n + 1 && m != m0 && (m.starts_with("View All") || m.starts_with("View All is not available"))
+}
+
+async fn viewport_keys(r: &mut R) -> Option<()> {
+    // Alt+F (the File mnemonic), Alt+Home and Ctrl+Alt+F / Ctrl+Alt+Home
+    // with the viewport focused: no command runs from the viewport-key path.
+    if focus_viewport().is_none() {
+        r.step(
+            "PR #146 review: a control inside the 3D Viewport can take the keyboard focus",
+            false,
+            format!("buttons {} · active {:?}", all("section.viewport button").len(), active_id()),
+        );
+        return None;
+    }
+    ui().message.set(String::new());
+    let n = runs();
+    key("alt+Home").await?;
+    let after_home = (runs(), ui().message.get_untracked());
+    // Ctrl+Alt is how AltGr arrives on many Linux layouts.
+    focus_viewport()?;
+    key("ctrl+alt+f").await?;
+    key("ctrl+alt+Home").await?;
+    ipc::sleep(150).await;
+    let after_ctrl_alt = (runs(), ui().message.get_untracked());
+    focus_viewport()?;
+    key("alt+f").await?;
+    let file_open = list_open("file");
+    let after_alt_f = (runs(), ui().message.get_untracked());
+    key("Escape").await?;
+    ipc::sleep(150).await;
+    let closed = !any_open();
+    r.step(
+        "PR #146 review: real Alt+Home, Ctrl+Alt+F, Ctrl+Alt+Home and Alt+F with the 3D Viewport focused never run View All (Alt+F opens the File menu)",
+        after_home.0 == n
+            && after_ctrl_alt.0 == n
+            && after_alt_f.0 == n
+            && !after_alt_f.1.starts_with("View All")
+            && file_open
+            && closed,
+        format!("runs {n} · after Alt+Home {after_home:?} · Ctrl+Alt+F/Home {after_ctrl_alt:?} · Alt+F {after_alt_f:?} (File open {file_open}) · closed {closed}"),
+    );
+    // Plain F and plain Home with the viewport focused: View All, once each.
+    focus_viewport()?;
+    let (n, m0) = (runs(), String::from("-"));
+    ui().message.set(m0.clone());
+    key("f").await?;
+    let f = view_all_ran(n, &m0);
+    let f_msg = ui().message.get_untracked();
+    focus_viewport()?;
+    let n = runs();
+    ui().message.set(m0.clone());
+    key("Home").await?;
+    let home = view_all_ran(n, &m0);
+    let home_msg = ui().message.get_untracked();
+    r.step(
+        "Plain F and plain Home with the 3D Viewport focused each run View All exactly once",
+        f && home,
+        format!("F {f} {f_msg:?} · Home {home} {home_msg:?}"),
+    );
+    // The menu bar (keyboard focus via Alt) and a text field own F / Home.
+    key("alt").await?;
+    let in_bar = active_id().starts_with("menu-");
+    let n = runs();
+    ui().message.set(m0.clone());
+    key("Home").await?;
+    let bar_ok = runs() == n && !ui().message.get_untracked().starts_with("View All");
+    key("Escape").await?;
+    ipc::sleep(150).await;
+    key("Escape").await?;
+    ipc::sleep(150).await;
+    let input: web_sys::HtmlInputElement = wait_ms(4000, || {
+        el("#dock-panel-inspector input[type=text]").and_then(|e| e.dyn_into().ok())
+    })
+    .await?;
+    let _ = input.focus();
+    let v0 = input.value();
+    let n = runs();
+    key("End").await?;
+    key("f").await?;
+    let typed = input.value();
+    let field_ok = runs() == n && typed == format!("{v0}f");
+    input.set_value(&v0);
+    let _ = input.blur();
+    r.step(
+        "With the menu bar or an Inspector text field focused, Home / F never run View All (F types into the field)",
+        in_bar && bar_ok && field_ok,
+        format!("menu focus {in_bar} ok {bar_ok} · field {v0:?} -> {typed:?} ok {field_ok}"),
     );
     Some(())
 }

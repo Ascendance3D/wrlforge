@@ -21,7 +21,7 @@ use web_sys::HtmlElement;
 use wrlforge_desktop_protocol as p;
 use wrlforge_desktop_protocol::gizmo::{self as gz, Axis};
 
-use super::create::{all, el, previewed, text, tree_item, wait_ms};
+use super::create::{all, apply_field, el, previewed, text, tree_item, wait_ms};
 use super::pick::{calibrate, gesture, ready, viewport, REAL, REAL_CLICK_GAP_MS};
 use super::{choose, click, computed, snapshot, token, R};
 use crate::editor::{self, textarea, CORE};
@@ -1370,6 +1370,30 @@ async fn proto_body(tag: &str, r: &mut R) -> Option<()> {
     );
     still_camera().await?;
     let (a0, a1) = item_span(&t.item)?;
+    // PR #146 review: the commit asks EVERY time. A No first: the view is
+    // restored and the source, revision and history are unchanged.
+    let asked0 = shared_script(vec![false]).await?;
+    let ui0 = u.shared_asked.get_untracked();
+    let before0 = source().await?;
+    let (c0, f0) = GIZMO.with_borrow(|g| (g.commits, g.refused));
+    let at = press_and_move(Axis::X, 100.0, 6).await?;
+    real("up", at.0, at.1).await.ok()?;
+    wait_ms(5000, || (GIZMO.with_borrow(|g| g.refused) > f0).then_some(())).await;
+    editor::idle().await;
+    let after0 = source().await?;
+    let asked1 = shared_script(vec![]).await?;
+    let why = GIZMO.with_borrow(|g| g.last_refusal.clone());
+    r.step(
+        &format!("{tag}: a gizmo commit on the shared PROTO body asks for confirmation; answered No it changes nothing (source, revision, no commit)"),
+        asked1 == asked0 + 1
+            && u.shared_asked.get_untracked() == ui0 + 1
+            && after0 == before0
+            && GIZMO.with_borrow(|g| g.commits) == c0
+            && why.as_deref() == Some("shared-proto-definition-not-confirmed"),
+        format!("asked {asked0} -> {asked1} · rev {} -> {} · {why:?}", before0.revision, after0.revision),
+    );
+    still_camera().await?;
+    let t = gz_ready(10_000).await?;
     let before = source().await?;
     let commits = GIZMO.with_borrow(|g| g.commits);
     let at = press_and_move(Axis::X, 100.0, 6).await?;
@@ -1401,7 +1425,7 @@ async fn proto_body(tag: &str, r: &mut R) -> Option<()> {
             && inside
             && old == "0"
             && line.trim() == format!("translation {new} 0 0")
-            && u.shared_ok.with_untracked(|v| v.iter().any(|(_, n)| n == "Car")),
+            && shared_script(vec![]).await == Some(asked1 + 1),
         format!("rendered {rend:?} · @{from} in [{a0}, {a1}) · {old:?} → {new:?} · {line:?}"),
     );
     editor::history(true).await;
@@ -1414,6 +1438,118 @@ async fn proto_body(tag: &str, r: &mut R) -> Option<()> {
         &format!("{tag}: the shared-definition move is ONE undo step: Undo restores the body, Redo re-applies it"),
         undone && redone,
         format!("undo {undone} · redo {redone}"),
+    );
+    let _ = t;
+    shared_consent_edits(tag, r).await
+}
+
+/// Gizmo run only: queue answers for the next shared-PROTO confirmations;
+/// the number asked so far.
+async fn shared_script(answers: Vec<bool>) -> Option<u32> {
+    #[derive(serde::Serialize)]
+    struct A {
+        answers: Vec<bool>,
+    }
+    call::<u32>("smoke_shared_consent", A { answers }).await.ok()
+}
+
+/// PR #146 review: Inspector edits of a shared PROTO Material. Each edit
+/// asks (no remembered approval); a No changes nothing; after the
+/// definition changed (Undo) the next edit asks again; a request with a
+/// stale base revision is refused even with consent.
+async fn shared_consent_edits(tag: &str, r: &mut R) -> Option<()> {
+    let u = ui();
+    u.move_mode.set(false);
+    let shared_material = || {
+        u.inspection.with_untracked(|i| {
+            i.as_ref().is_some_and(|i| {
+                i.node.as_ref().is_some_and(|n| {
+                    n.shared.is_some() && n.fields.iter().any(|f| f.name == "diffuseColor" && f.editable)
+                })
+            })
+        })
+    };
+    let selected = tree_click("Material", shared_material).await;
+    wait_ms(4000, || (!all("tr[data-field=\"diffuseColor\"] input[type=\"text\"]").is_empty()).then_some(())).await;
+    let (mid, mrev, findex) = u.inspection.with_untracked(|i| {
+        let i = i.as_ref()?;
+        let n = i.node.as_ref()?;
+        let fi = n.fields.iter().position(|f| f.name == "diffuseColor")? as u32;
+        Some((i.id.clone(), i.revision, fi))
+    })?;
+    let vals = |v: &str| v.split(' ').map(str::to_string).collect::<Vec<_>>();
+    // Two edits in a row: two confirmations, two revisions.
+    let a0 = shared_script(vec![]).await?;
+    let s0 = source().await?;
+    let e1 = apply_field("diffuseColor", &vals("0.1 0.2 0.3")).await;
+    let e2 = apply_field("diffuseColor", &vals("0.4 0.5 0.6")).await;
+    let a1 = shared_script(vec![]).await?;
+    let s1 = source().await?;
+    let (_, old, new) = super::change(&s0.text, &s1.text);
+    r.step(
+        &format!("{tag}: two Inspector edits of the shared PROTO Material ask twice (no remembered approval) and apply as two revisions"),
+        selected && e1.is_some() && e2.is_some() && a1 == a0 + 2 && s1.revision == s0.revision + 2
+            && s1.text.contains("diffuseColor 0.4 0.5 0.6"),
+        format!("asked {a0} -> {a1} · rev {} -> {} · {old:?} -> {new:?}", s0.revision, s1.revision),
+    );
+    // No: nothing changes, the reason is shown.
+    shared_script(vec![false]).await?;
+    let e3 = apply_field("diffuseColor", &vals("0.7 0.7 0.7")).await;
+    editor::idle().await;
+    let a2 = shared_script(vec![]).await?;
+    let s2 = source().await?;
+    let err = u.field_error.get_untracked().unwrap_or_default();
+    r.step(
+        &format!("{tag}: a shared PROTO Material edit answered No changes nothing (source, revision) and says why"),
+        e3.is_none() && a2 == a1 + 1 && s2 == s1 && err.contains("not confirmed"),
+        format!("asked {a1} -> {a2} · rev {} -> {} · {err:?}", s1.revision, s2.revision),
+    );
+    // The definition changes (Undo); the next edit asks again.
+    editor::history(true).await;
+    editor::idle().await;
+    let s3 = source().await?;
+    tree_click("Material", shared_material).await;
+    wait_ms(4000, || (!all("tr[data-field=\"diffuseColor\"] input[type=\"text\"]").is_empty()).then_some(())).await;
+    let e4 = apply_field("diffuseColor", &vals("0.9 0.9 0.1")).await;
+    let a3 = shared_script(vec![]).await?;
+    let s4 = source().await?;
+    r.step(
+        &format!("{tag}: after the shared definition changed (Undo), the next edit asks again and applies"),
+        s3.text != s2.text && e4.is_some() && a3 == a2 + 1 && s4.revision > s3.revision
+            && s4.text.contains("diffuseColor 0.9 0.9 0.1"),
+        format!("asked {a2} -> {a3} · rev {} -> {}", s3.revision, s4.revision),
+    );
+    // A stale revision with consent: refused by Rust, nothing changes.
+    #[derive(serde::Serialize)]
+    struct A {
+        request: p::FieldEditRequest,
+    }
+    let request = p::FieldEditRequest {
+        confirm_shared: true,
+        session: CORE.with_borrow(|c| c.session)?,
+        base_revision: mrev,
+        item: mid,
+        field_index: findex,
+        field_name: "diffuseColor".into(),
+        components: vals("0.3 0.3 0.3")
+            .into_iter()
+            .map(|value| p::FieldInput::Text { value })
+            .collect(),
+    };
+    let o = call::<p::FieldEditOutcome>("doc_edit_field", A { request }).await;
+    let s5 = source().await?;
+    // Leave the document as the move left it (the run's on-disk check
+    // expects exactly the one translation token): Undo the two applied
+    // Material edits that remain on the history.
+    editor::history(true).await;
+    editor::idle().await;
+    editor::history(true).await;
+    editor::idle().await;
+    let restored = text() == s0.text;
+    r.step(
+        &format!("{tag}: a shared PROTO edit with consent but a stale base revision is refused; the source is unchanged (then Undo restores the pre-edit text)"),
+        matches!(o, Ok(p::FieldEditOutcome::Refused { .. })) && s5 == s4 && restored,
+        format!("{:?} · rev {} -> {} · restored {restored}", o.map(|o| format!("{o:?}").chars().take(120).collect::<String>()), s4.revision, s5.revision),
     );
     Some(())
 }

@@ -333,6 +333,12 @@ pub fn twins_fixture() -> String {
     )
 }
 
+/// Gizmo run: scripted answers for the shared-PROTO confirmation, and how
+/// many confirmations were asked.
+static SHARED_SCRIPT: Mutex<std::collections::VecDeque<bool>> =
+    Mutex::new(std::collections::VecDeque::new());
+static SHARED_ASKED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 #[derive(Default)]
 pub struct SmokeState(
     Mutex<Option<Plan>>,
@@ -718,6 +724,28 @@ impl SmokeState {
 
     /// Smoke only: the discard-confirmation answer. An unplanned question
     /// is answered Cancel (never discards).
+    /// The shared-PROTO confirmation (`confirm_shared_edit`). In the gizmo
+    /// run it is counted and answered from the script (`smoke_shared_consent`),
+    /// else Yes, so a test can prove the UI asks before EVERY shared edit
+    /// and that a No changes nothing. Other runs: `confirm_override`.
+    pub fn shared_override(&self) -> Option<bool> {
+        if self.3.lock().ok()?.is_some() {
+            SHARED_ASKED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            return Some(SHARED_SCRIPT.lock().ok()?.pop_front().unwrap_or(true));
+        }
+        self.confirm_override()
+    }
+
+    /// Gizmo run only: queue `answers` for the next shared-PROTO
+    /// confirmations; returns how many were asked so far.
+    pub fn shared_script(&self, answers: Vec<bool>) -> Result<u32, String> {
+        if self.3.lock().map_err(|e| e.to_string())?.is_none() {
+            return Err("no gizmo smoke run is armed".into());
+        }
+        SHARED_SCRIPT.lock().map_err(|e| e.to_string())?.extend(answers);
+        Ok(SHARED_ASKED.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
     pub fn confirm_override(&self) -> Option<bool> {
         if crate::smoke_recovery::armed() {
             return crate::smoke_recovery::confirm_override();
@@ -1017,6 +1045,12 @@ impl SmokeState {
                     "2",
                     "9",
                     "z",
+                    // PR #146 review: viewport keys (View All) with and
+                    // without Alt / Ctrl+Alt (AltGr on Linux layouts).
+                    "f",
+                    "alt+Home",
+                    "ctrl+alt+f",
+                    "ctrl+alt+Home",
                 ];
                 if !KEYS.contains(&name) {
                     return Err(format!("key {name:?} is not in the smoke key set"));

@@ -10,7 +10,7 @@ use leptos::task::spawn_local;
 use wrlforge_desktop_protocol as p;
 
 use crate::editor::{self, CORE};
-use crate::ipc::{self, call, NoArgs, Session};
+use crate::ipc::{self, call, Session};
 
 #[derive(Clone, Copy)]
 pub struct Ui {
@@ -59,9 +59,9 @@ pub struct Ui {
     pub gizmo_message: RwSignal<Option<(String, String)>>,
     /// B2: why the selected node has no viewport outline, if it has none.
     pub highlight_message: RwSignal<Option<String>>,
-    /// B1: the shared PROTO definitions the user agreed to edit, per
-    /// document session: (session, PROTO name). Asked once per definition.
-    pub shared_ok: RwSignal<Vec<(u64, String)>>,
+    /// B1 (PR #146 review): shared-PROTO confirmations asked so far. Every
+    /// shared-definition mutation asks again; nothing is remembered.
+    pub shared_asked: RwSignal<u64>,
     /// D4: Create places new objects at the origin (else in view).
     pub place_origin: RwSignal<bool>,
     /// NATIVE-RENDER-1: the hidden native viewport's state (default off).
@@ -244,7 +244,7 @@ pub fn ui() -> Ui {
             scale_mode: RwSignal::new(false),
             gizmo_message: RwSignal::new(None),
             highlight_message: RwSignal::new(None),
-            shared_ok: RwSignal::new(Vec::new()),
+            shared_asked: RwSignal::new(0),
             place_origin: RwSignal::new(false),
             native: RwSignal::new(p::NativeState::default()),
         })
@@ -492,23 +492,20 @@ pub fn apply_inspection(seq: u64, sel: &Selected, o: p::InspectOutcome) -> bool 
 
 /// B1: whether an edit of `insp` may go to Rust as a shared-definition
 /// edit. `None`: the node is not in a PROTO body (no consent needed).
-/// `Some(true)`: the user agreed (now, in the native confirmation, or
-/// earlier for this definition and document). `Some(false)`: declined --
-/// nothing is sent. Rust refuses a shared edit without consent anyway.
+/// `Some(true)`: the user agreed in the native confirmation for THIS edit.
+/// `Some(false)`: declined -- nothing is sent. Rust refuses a shared edit
+/// without consent, and any request whose base revision is stale.
 async fn shared_consent(session: u64, insp: &p::Inspection) -> Option<bool> {
     let shared = insp.node.as_ref()?.shared.clone()?;
     Some(confirm_shared(session, shared).await)
 }
 
-/// The one consent path (Inspector edits and the banner button).
-pub async fn confirm_shared(session: u64, shared: p::SharedProto) -> bool {
+/// The one consent path (Inspector fields, colors, lists, structure edits
+/// and gizmo commits). It asks EVERY time: an earlier answer, a session
+/// or a PROTO name never stands in for consent to a new mutation.
+pub async fn confirm_shared(_session: u64, shared: p::SharedProto) -> bool {
     let u = ui();
-    let known = u
-        .shared_ok
-        .with_untracked(|v| v.iter().any(|(s, n)| *s == session && *n == shared.proto));
-    if known {
-        return true;
-    }
+    u.shared_asked.update(|n| *n += 1);
     #[derive(serde::Serialize)]
     struct A {
         proto: String,
@@ -524,7 +521,6 @@ pub async fn confirm_shared(session: u64, shared: p::SharedProto) -> bool {
     .await
     .unwrap_or(false);
     if yes {
-        u.shared_ok.update(|v| v.push((session, shared.proto.clone())));
         u.field_error.set(None);
     } else {
         u.field_error.set(Some(format!(
@@ -860,7 +856,14 @@ pub async fn preview(force: bool) {
 pub fn open() {
     spawn_local(async {
         if confirm_discard().await {
-            match call::<p::OpenOutcome>("open_document", NoArgs {}).await {
+            #[derive(serde::Serialize)]
+            struct A {
+                session: Option<u64>,
+            }
+            // The active document's folder is where Open starts (Rust
+            // resolves it from the session).
+            let session = CORE.with_borrow(|c| c.session);
+            match call::<p::OpenOutcome>("open_document", A { session }).await {
                 Ok(o) => {
                     // B2-CAMERA: an opened file is framed once (no authored
                     // Viewpoint bound).

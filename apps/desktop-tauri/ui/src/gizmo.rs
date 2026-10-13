@@ -1254,9 +1254,9 @@ async fn commit(d: Drag) {
     let released = now();
     GIZMO.with_borrow_mut(|g| g.committing = true);
     let t = d.target.clone();
-    // B3: a PROTO body Transform is the shared definition. Ask before the
-    // first commit (the same consent the Inspector asks, remembered per
-    // document and PROTO); a refusal restores the view and changes nothing.
+    // B3: a PROTO body Transform is the shared definition. Ask before EVERY
+    // commit (the same consent the Inspector asks; nothing is remembered);
+    // a refusal restores the view and changes nothing.
     let confirm_shared = match t.shared.clone() {
         Some(sh) => {
             if !ui::confirm_shared(t.session, sh.clone()).await {

@@ -3002,6 +3002,73 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// PR #146 review: Rust keeps no consent. Every shared-definition
+    /// mutation needs `confirm_shared` in its OWN request: after an applied
+    /// consented edit, the next request without it is refused; after the
+    /// definition changed, still refused; a list edit is gated the same.
+    #[test]
+    fn shared_proto_consent_is_per_request_never_remembered() {
+        let dir = tmp("pr146-consent");
+        let src = "#VRML V2.0 utf8\nPROTO Car [ ]\n{\n  Transform { children [ Shape {\n    appearance Appearance { material Material { diffuseColor 0.5 0.5 0.5 } }\n    geometry Extrusion { crossSection [ 1 0, 0 1, -1 0, 1 0 ] spine [ 0 0 0, 0 1 0 ] }\n  } ] }\n}\nCar { }\nCar { }\n";
+        let path = dir.join("car.wrl");
+        fs::write(&path, src).unwrap();
+        let svc = Service::new(clock);
+        let doc = opened(svc.open_path(&path));
+        let req = |rev: u64, item: &str, yes: bool, v: [&str; 3]| p::FieldEditRequest {
+            confirm_shared: yes,
+            session: doc.session,
+            base_revision: rev,
+            item: item.into(),
+            field_index: 0,
+            field_name: "diffuseColor".into(),
+            components: v.iter().map(|v| p::FieldInput::Text { value: v.to_string() }).collect(),
+        };
+        let material = |svc: &Service| {
+            let a = svc.analyze(doc.session).unwrap();
+            (a.items.iter().find(|i| i.label == "Material").unwrap().id.clone(), a.revision)
+        };
+        let refused = |o: p::FieldEditOutcome| {
+            matches!(&o, p::FieldEditOutcome::Refused { reason, .. } if reason == "shared-proto-definition-not-confirmed")
+        };
+        // 1. A consented edit applies.
+        let (m, rev) = material(&svc);
+        assert!(matches!(svc.edit_field(&req(rev, &m, true, ["0.1", "0.1", "0.1"])).unwrap(), p::FieldEditOutcome::Applied { .. }));
+        let after1 = svc.text(doc.session).unwrap();
+        // 2. The NEXT edit of the same definition without consent: refused.
+        let (m, rev) = material(&svc);
+        assert!(refused(svc.edit_field(&req(rev, &m, false, ["0.2", "0.2", "0.2"])).unwrap()));
+        assert_eq!(svc.text(doc.session).unwrap(), after1);
+        // 3. The definition changes (Undo); still refused without consent.
+        svc.history_with_item(doc.session, true, None).unwrap();
+        assert_eq!(svc.text(doc.session).unwrap(), src);
+        let (m, rev) = material(&svc);
+        assert!(refused(svc.edit_field(&req(rev, &m, false, ["0.3", "0.3", "0.3"])).unwrap()));
+        assert_eq!(svc.text(doc.session).unwrap(), src);
+        // 4. A stale base revision with consent: refused, unchanged.
+        let o = svc.edit_field(&req(rev + 7, &m, true, ["0.4", "0.4", "0.4"])).unwrap();
+        assert!(matches!(o, p::FieldEditOutcome::Refused { .. }), "{o:?}");
+        assert_eq!(svc.text(doc.session).unwrap(), src);
+        // 5. A list edit of the shared Extrusion is gated the same way.
+        let a = svc.analyze(doc.session).unwrap();
+        let ex = a.items.iter().find(|i| i.label == "Extrusion").unwrap().id.clone();
+        let ins = found(svc.inspect(doc.session, &ex, a.revision)).node.unwrap();
+        let (fi, f) = ins.fields.iter().enumerate().find(|(_, f)| f.name == "spine").unwrap();
+        let list = |yes: bool| p::ListEditRequest {
+            confirm_shared: yes,
+            session: doc.session,
+            base_revision: a.revision,
+            item: ex.clone(),
+            field_index: fi as u32,
+            field_name: f.name.clone(),
+            expected_count: 2,
+            ops: vec![p::ListOp::Delete { index: 1 }],
+        };
+        let o = svc.edit_list(&list(false)).unwrap();
+        assert!(refused(o.clone()), "{o:?}");
+        assert_eq!(svc.text(doc.session).unwrap(), src);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn inspector_field_edit_end_to_end_bom_crlf_cr_unicode_gzip() {
         let dir = tmp("field");
