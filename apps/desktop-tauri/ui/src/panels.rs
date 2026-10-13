@@ -301,6 +301,36 @@ fn shared_banner(s: p::SharedProto, session: u64) -> impl IntoView {
     }
 }
 
+/// `#rrggbb` for three SFColor components (clamped for display only).
+fn color_hex(c: &[p::FieldComponent]) -> String {
+    let byte = |t: &str| -> u8 {
+        let v: f64 = t.trim().parse().unwrap_or(0.0);
+        (v.clamp(0.0, 1.0) * 255.0).round() as u8
+    };
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        byte(&c[0].text),
+        byte(&c[1].text),
+        byte(&c[2].text)
+    )
+}
+
+fn parse_hex(v: &str) -> Option<[f64; 3]> {
+    let h = v.strip_prefix('#')?;
+    if h.len() != 6 {
+        return None;
+    }
+    let b = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok().map(|x| x as f64 / 255.0);
+    Some([b(0)?, b(2)?, b(4)?])
+}
+
+/// A short VRML float for a 0..1 channel (3 decimals, no trailing zeros).
+fn color_text(x: f64) -> String {
+    let t = format!("{:.3}", (x * 1000.0).round() / 1000.0);
+    let t = t.trim_end_matches('0').trim_end_matches('.');
+    if t.is_empty() { "0".into() } else { t.to_string() }
+}
+
 fn input_id(field: u32, component: usize) -> String {
     format!("fe-{field}-{component}")
 }
@@ -422,8 +452,32 @@ fn field_row(f: p::EditableField, session: u64, rev: u64) -> impl IntoView {
             })
             .collect_view();
         let (name, kind2) = (f.name.clone(), kind.clone());
+        // B2 (Spazz3D/Flux material editing): an SFColor gets a color
+        // swatch. Picking a color fills the three components and applies
+        // them as ONE edit; Rust still validates every value.
+        let swatch = (f.field_type.as_deref() == Some("SFColor") && arity == 3).then(|| {
+            let hex = color_hex(&f.components);
+            let (name, kind) = (f.name.clone(), kind.clone());
+            view! {
+                <input type="color" class="swatch" id=format!("fe-color-{idx}")
+                    title="Pick a color (applies as one edit, one undo step)"
+                    prop:value=hex
+                    disabled=move || ui().revision.get() != rev
+                    on:change=move |ev| {
+                        let v = event_target_value(&ev);
+                        let Some(rgb) = parse_hex(&v) else { return };
+                        for (c, x) in rgb.iter().enumerate() {
+                            if let Some(inp) = crate::element_by_id::<web_sys::HtmlInputElement>(&input_id(idx, c)) {
+                                inp.set_value(&color_text(*x));
+                            }
+                        }
+                        submit(idx, name.clone(), kind.clone(), 3);
+                    }/>
+            }
+        });
         view! {
             <div class="controls">
+                {swatch}
                 {controls}
                 <button class="small" id=format!("fe-apply-{idx}")
                     disabled=move || ui().revision.get() != rev
