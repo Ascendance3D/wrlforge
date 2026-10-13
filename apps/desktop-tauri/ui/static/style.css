@@ -89,7 +89,26 @@ option { background: var(--wf-surface-raised); color: var(--wf-text-primary); }
    syntax colors, follows its scroll by transform, and takes no input.
    Color, underline and nothing else may differ per token: no weight, style
    or ligature change, so glyph advances never move. */
-.source-wrap { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--wf-surface-editor); }
+.source-row { position: relative; flex: 1 1 auto; min-height: 0; display: flex; }
+.source-wrap { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; background: var(--wf-surface-editor); }
+/* B2: line numbers. Same metrics as the text (rows align); only lines near
+   the viewport exist, moved by transform with the textarea's scroll. */
+.source-gutter { flex: none; position: relative; overflow: hidden; background: var(--wf-surface-editor);
+  border-right: 1px solid var(--wf-border-subtle); user-select: none; -webkit-user-select: none; pointer-events: none; }
+/* Absolutely placed: the numbers never give the panel an intrinsic height. */
+.source-gutter { width: calc(2ch + 1.1rem); font-family: var(--wf-font-mono); font-size: 13px; }
+.source-gutter-nums { position: absolute; top: 0; left: 0; right: 0; padding-left: .4rem; padding-right: .5rem;
+  text-align: right; color: var(--wf-text-muted); will-change: transform; }
+.source-gutter-nums .cur { color: var(--wf-text-editor); }
+/* B2: Find / Replace / Go to Line bar. */
+.findbar { display: flex; flex-direction: column; gap: .2rem; padding: .25rem .5rem; background: var(--wf-surface-panel); border-bottom: 1px solid var(--wf-border-subtle); font-size: .85rem; }
+.findbar[hidden], .findbar-row[hidden] { display: none; }
+.findbar-row { display: flex; align-items: center; gap: .35rem; }
+.findbar-row input[type=text] { flex: 0 1 18rem; min-width: 6rem; font-family: var(--wf-font-mono); }
+.findbar-row label { display: inline-flex; align-items: center; gap: .15rem; color: var(--wf-text-secondary); }
+.findbar-row .spacer { flex: 1 1 auto; }
+.findbar-status { color: var(--wf-text-muted); min-height: 1em; }
+.findbar-status.error { color: var(--wf-error-fg); }
 .source-metrics { font-family: var(--wf-font-mono); font-size: 13px; line-height: 18px; tab-size: 4;
   white-space: pre; letter-spacing: normal; word-spacing: normal; font-variant-ligatures: none; font-kerning: none;
   font-weight: 400; font-style: normal; text-transform: none; padding: .5rem .7rem; margin: 0; border: 0; }

@@ -38,6 +38,13 @@ fn shortcuts_match_the_pre_registry_handler() {
         ("o", true, Some(FileOpen)),
         ("n", false, Some(FileNewWorld)),
         ("n", true, Some(FileNewWorld)),
+        // B2: Find / Replace / Go to Line.
+        ("f", false, Some(EditFind)),
+        ("h", false, Some(EditReplace)),
+        ("g", false, Some(EditGoToLine)),
+        ("f", true, None),
+        ("h", true, None),
+        ("g", true, None),
         ("w", false, None),
         ("a", false, None),
         ("c", false, None),
@@ -326,9 +333,6 @@ fn planned_commands_never_run_in_any_state() {
     assert_eq!(
         planned,
         [
-            "edit.find",
-            "edit.replace",
-            "edit.goToLine",
             "view.zoomIn",
             "view.zoomOut",
             "view.zoomReset",
@@ -438,6 +442,31 @@ fn quit_uses_the_window_close_gate_and_ctrl_q() {
     for id in MAC_APP_MENU {
         assert!(matches!(id, CommandId::HelpAbout | CommandId::AppQuit));
     }
+}
+
+/// B2: Find / Replace / Go to Line open a UI bar; the bar's replacements go
+/// through the editor's doc_edit path, never a registry backend command.
+#[test]
+fn find_replace_go_to_line_are_ui_commands_needing_a_document() {
+    use CommandId::*;
+    let none = CommandContext::default();
+    let doc = CommandContext {
+        has_document: true,
+        ..CommandContext::default()
+    };
+    for (id, k) in [(EditFind, "f"), (EditReplace, "h"), (EditGoToLine, "g")] {
+        let s = id.spec();
+        assert_eq!(s.menu, Menu::Edit);
+        assert_eq!(s.action, Action::UiOnly, "{}", s.key);
+        assert!(!s.mutates_document, "{}", s.key);
+        assert_eq!(s.shortcuts, &[Shortcut { key: k, shift: S }]);
+        assert_eq!(id.availability(none), Availability::Disabled(NO_DOCUMENT));
+        assert_eq!(id.refusal(none), Some(NO_DOCUMENT));
+        assert_eq!(id.availability(doc), Availability::Enabled);
+        assert_eq!(id.refusal(doc), None);
+    }
+    assert_eq!(EditFind.title(Platform::Linux), "Find text in the Source editor (Ctrl+F)");
+    assert_eq!(EditGoToLine.spec().shortcuts[0].label(Platform::MacOs), "⌘G");
 }
 
 #[test]

@@ -17,7 +17,7 @@ use wrlforge_desktop_protocol::gizmo::Tool;
 use wrlforge_desktop_protocol as p;
 
 use crate::ui::{self, ui};
-use crate::{about, clipboard, dock, editor, extrusion, gizmo, menu, panels, theme};
+use crate::{about, clipboard, dock, editor, extrusion, findbar, gizmo, menu, panels, theme};
 
 /// The current state, read reactively (button `disabled` follows it). The
 /// focus facts are those of the control that had the focus before a menu
@@ -196,11 +196,13 @@ pub fn run(id: CommandId) {
         CommandId::EditDuplicateNode => spawn_local(ui::structure_edit(
             p::StructureOp::Duplicate,
         )),
+        // B2: the Source panel's bar (UI only; replacements go through
+        // the editor's doc_edit path).
+        CommandId::EditFind => findbar::open(findbar::Mode::Find),
+        CommandId::EditReplace => findbar::open(findbar::Mode::Replace),
+        CommandId::EditGoToLine => findbar::open(findbar::Mode::GoTo),
         // Planned: refused above, never reached.
-        CommandId::EditFind
-        | CommandId::EditReplace
-        | CommandId::EditGoToLine
-        | CommandId::ViewZoomIn
+        CommandId::ViewZoomIn
         | CommandId::ViewZoomOut
         | CommandId::ViewZoomReset
         | CommandId::WorldMallValidate
@@ -223,6 +225,10 @@ const FIELD_SAFE: &[CommandId] = &[
     CommandId::FileSave,
     CommandId::FileSaveAs,
     CommandId::AppQuit,
+    // B2: they open the Source bar; the field's text is untouched.
+    CommandId::EditFind,
+    CommandId::EditReplace,
+    CommandId::EditGoToLine,
 ];
 
 /// UI-MENU-1: why a key press must not run an application shortcut.

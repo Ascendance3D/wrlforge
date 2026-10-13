@@ -237,6 +237,7 @@ pub async fn run(plan: &Plan, r: &mut R) -> Option<()> {
     about_dialog(r).await?;
     tools_and_view(r).await?;
     world_and_reserved(r).await?;
+    find_bar(r).await?;
     quit(r).await?;
     pick_check("after the menu run", [0.0, 0.0, 0.0], "Transform Crate", r).await?;
     r.step(
@@ -1739,13 +1740,14 @@ async fn world_and_reserved(r: &mut R) -> Option<()> {
         format!("{} items {groups:?} runs +{}", items.len(), runs() - n),
     );
     open_click("edit").await?;
+    // B2: Find / Replace / Go to Line are enabled with a document open.
     let reserved = [
         CommandId::EditFind,
         CommandId::EditReplace,
         CommandId::EditGoToLine,
     ]
     .iter()
-    .all(|c| attr(&dom_id(*c), "aria-disabled").as_deref() == Some("true"));
+    .all(|c| attr(&dom_id(*c), "aria-disabled").as_deref() == Some("false"));
     real("escape", 0.0, 0.0).await.ok()?;
     real("escape", 0.0, 0.0).await.ok()?;
     open_click("help").await?;
@@ -1762,9 +1764,128 @@ async fn world_and_reserved(r: &mut R) -> Option<()> {
     real("escape", 0.0, 0.0).await.ok()?;
     ipc::sleep(200).await;
     r.step(
-        "Edit reserves Find / Replace / Go to Line (disabled); Help → About opens the About dialog with the app identity",
+        "Edit enables Find / Replace / Go to Line; Help → About opens the About dialog with the app identity",
         reserved && help && about.is_some(),
         format!("{about:?}"),
+    );
+    Some(())
+}
+
+fn bar_hidden() -> bool {
+    crate::element_by_id::<HtmlElement>("findbar").is_some_and(|b| b.hidden())
+}
+
+fn status_text() -> String {
+    el("#find-status")
+        .and_then(|e| e.text_content())
+        .unwrap_or_default()
+}
+
+fn sel_now() -> (u32, u32) {
+    textarea()
+        .map(|t| {
+            (
+                t.selection_start().ok().flatten().unwrap_or(u32::MAX),
+                t.selection_end().ok().flatten().unwrap_or(u32::MAX),
+            )
+        })
+        .unwrap_or((u32::MAX, u32::MAX))
+}
+
+/// B2: Go to Line, Find and Replace All with real keys and clicks.
+async fn find_bar(r: &mut R) -> Option<()> {
+    type_edit("\n# fz1 fz1 FZ1 b2").await?;
+    let units = |t: &str| t.encode_utf16().collect::<Vec<u16>>();
+    // Go to Line: an out-of-range number is refused, then line 2 is reached.
+    let ta = textarea()?;
+    let _ = ta.focus();
+    ta.set_selection_range(0, 0).ok()?;
+    let rev0 = in_sync().await?.0;
+    key("ctrl+g").await?;
+    let opened = wait_ms(2000, || (active_id() == "goto-line").then_some(())).await;
+    for k in ["9", "9", "9", "9", "9", "9", "Return"] {
+        key(k).await?;
+    }
+    let refused = status_text();
+    let stayed = sel_now() == (0, 0) && !bar_hidden();
+    key("ctrl+a").await?;
+    key("2").await?;
+    key("Return").await?;
+    let line2 = crate::find::line_start(&units(&ta.value()), 2)?;
+    let gutter = el("#source-gutter")
+        .and_then(|g| g.text_content())
+        .unwrap_or_default();
+    r.step(
+        "Go to Line (Ctrl+G): out-of-range input is refused with a message; line 2 puts the caret at its start, closes the bar and focuses Source; the gutter numbers the lines",
+        opened.is_some()
+            && stayed
+            && refused.contains("out of range")
+            && sel_now() == (line2, line2)
+            && bar_hidden()
+            && active_id() == "source"
+            && gutter.starts_with("1\n2\n3"),
+        format!("refused {refused:?} sel {:?} line2 {line2} gutter {:?}", sel_now(), gutter.get(..12)),
+    );
+    // Find: the selection prefills the query; Enter moves to the next match.
+    let (a, b) = find("fz1")?;
+    select_source(a, b)?;
+    key("ctrl+f").await?;
+    let opened = wait_ms(2000, || (active_id() == "find-query").then_some(())).await;
+    let first = wait_ms(2000, || {
+        let t = status_text();
+        (t == "1 of 3").then_some(t)
+    })
+    .await;
+    key("Return").await?;
+    let second = sel_now();
+    let two = status_text();
+    let (rev1, synced) = in_sync().await?;
+    r.step(
+        "Find (Ctrl+F): the Source selection prefills the query, matching ignores case by default (1 of 3), Enter selects the next match and changes no text",
+        opened.is_some()
+            && first.is_some()
+            && second == (b + 1, b + 4)
+            && two == "2 of 3"
+            && rev1 == rev0
+            && synced,
+        format!("first {first:?} then {two:?} sel {second:?} rev {rev0}->{rev1}"),
+    );
+    // Replace All: ONE doc_edit (one revision, one undo step).
+    key("Escape").await?;
+    key("ctrl+h").await?;
+    wait_ms(2000, || (active_id() == "find-query").then_some(())).await?;
+    let rep = crate::element_by_id::<web_sys::HtmlInputElement>("find-replacement")?;
+    let _ = rep.focus();
+    key("z").await?;
+    key("z").await?;
+    real_click_id("find-replace-all").await?;
+    let replaced = wait_ms(3000, || {
+        CORE.with_borrow(|c| c.revision == rev1 + 1 && !c.busy).then_some(())
+    })
+    .await;
+    settle().await;
+    let (rev2, synced2) = in_sync().await?;
+    let v = ta.value();
+    let all = !v.to_lowercase().contains("fz1") && v.contains("# zz zz zz b2");
+    // Escape from the focused bar button closes the bar.
+    key("Escape").await?;
+    let _ = wait_ms(2000, || bar_hidden().then_some(())).await;
+    let closed = bar_hidden() && active_id() == "source";
+    real_click_id("btn-undo").await?;
+    settle().await;
+    let (rev3, synced3) = in_sync().await?;
+    let undone = ta.value().contains("# fz1 fz1 FZ1 b2");
+    r.step(
+        "Replace All (Ctrl+H): every match replaced by ONE acknowledged doc_edit (one revision), the widget equals the Rust view, and ONE Undo restores all of them; Escape closes the bar",
+        replaced.is_some()
+            && rev2 == rev1 + 1
+            && synced2
+            && all
+            && rev3 == rev2 + 1
+            && synced3
+            && undone
+            && closed,
+        format!("rev {rev1}->{rev2}->{rev3} all {all} undone {undone} status {:?}", status_text()),
     );
     Some(())
 }
