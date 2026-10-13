@@ -228,6 +228,65 @@ async fn untouched() -> Option<Untouched> {
     })
 }
 
+impl Untouched {
+    /// B3: everything but the caret. A PROVEN pick now reveals the picked
+    /// node in the Source (a selection, never an edit), so the caret moves
+    /// to exactly that node's span; everything else stays untouched.
+    fn same_doc(&self, o: &Untouched) -> bool {
+        Untouched {
+            caret: o.caret,
+            ..*self
+        } == *o
+    }
+}
+
+/// The view span of Scene Tree item `id` in the held analysis.
+fn item_span(id: &str) -> Option<(u32, u32)> {
+    ui().analysis.with_untracked(|a| {
+        a.as_ref()?
+            .items
+            .iter()
+            .find(|i| i.id == id)
+            .map(|i| (i.view_from as u32, i.view_to as u32))
+    })
+}
+
+/// B3: after a PROVEN pick of `id`, the Source shows that node: its span is
+/// selected, its first line is inside the scrolled view, the status bar's
+/// Ln is that line, and the keyboard focus is NOT in the Source.
+fn source_reveals(id: &str) -> (bool, String) {
+    let Some(ta) = textarea() else {
+        return (false, "no textarea".into());
+    };
+    let span = item_span(id);
+    let caret = (
+        ta.selection_start().ok().flatten().unwrap_or(u32::MAX),
+        ta.selection_end().ok().flatten().unwrap_or(u32::MAX),
+    );
+    let from = span.map_or(0, |s| s.0) as usize;
+    let line = 1 + ta
+        .value()
+        .encode_utf16()
+        .take(from)
+        .filter(|u| *u == b'\n' as u16)
+        .count() as u32;
+    let y = (line - 1) as i32 * 18;
+    let (top, h) = (ta.scroll_top(), ta.client_height());
+    let shown = h <= 0 || (y >= top && y < top + h);
+    let ln = ui().cursor.get_untracked().0;
+    let focused_source = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.active_element())
+        .is_some_and(|e| e.id() == "source");
+    let ok = span == Some(caret) && shown && ln == line && !focused_source;
+    (
+        ok,
+        format!(
+            "span {span:?} caret {caret:?} · line {line} (status Ln {ln}) scroll {top}+{h} y {y} · source focused {focused_source}"
+        ),
+    )
+}
+
 fn item_id(label: &str) -> Option<String> {
     ui().analysis.with_untracked(|a| {
         a.as_ref()?
@@ -325,7 +384,8 @@ async fn select_object(
             && li.is_some()
             && insp.is_some()
             && tr_inputs.len() == 3
-            && after == before,
+            && after.same_doc(&before)
+            && Some(after.caret) == item_span(&want),
         format!(
             "{} {} · tree {} · inspector {} · translation {:?} · unchanged {} · {:.1} ms",
             out.status,
@@ -333,7 +393,7 @@ async fn select_object(
             li.is_some(),
             insp.is_some(),
             tr_inputs,
-            after == before,
+            after.same_doc(&before),
             PICK.with_borrow(|p| p.last_total_ms)
         ),
     );
@@ -460,6 +520,34 @@ async fn workflow(
     for i in [0usize, 1, 2, 3, 3, 0, 2, 1] {
         let (_, name, x, y) = OBJECTS[i];
         select_object(name, x, y, s, r, &tag).await?;
+    }
+    // B3: the last pick is revealed in the Source without taking the focus;
+    // "Show in Source" brings the Source tab forward and selects the same
+    // span. Neither is an edit: revision, history and text are unchanged.
+    {
+        let id = selected_id().unwrap_or_default();
+        let (shown, detail) = source_reveals(&id);
+        let before = untouched().await?;
+        let clicked = click("inspector-show-source").is_some();
+        let on = wait_ms(2000, || {
+            let ta = textarea()?;
+            let focused = web_sys::window()?.document()?.active_element()?.id() == "source";
+            let caret = (ta.selection_start().ok()??, ta.selection_end().ok()??);
+            (crate::dock::dock().layout.with_untracked(|l| l.is_on_screen(p::layout::PanelId::Source))
+                && focused
+                && Some(caret) == item_span(&id))
+            .then_some(())
+        })
+        .await;
+        let after = untouched().await?;
+        r.step(
+            &format!("{tag} the picked node is revealed in Source (span selected, line in view, Ln follows, focus kept); Show in Source brings the Source tab forward; no edit"),
+            shown && clicked && on.is_some() && after == before,
+            format!("{detail} · show-in-source {} · unchanged {}", on.is_some(), after == before),
+        );
+        // Back to the preset's front tab, so later steps see the same layout.
+        crate::dock::focus(p::layout::PanelId::Diagnostics);
+        ipc::sleep(100).await;
     }
     checkpoint(c, &format!("{theme}-selected")).await;
 
@@ -714,9 +802,17 @@ async fn matrix(c: &p::PickSmoke, s: &mut Stats, r: &mut R) -> Option<()> {
             let span = out.logical.as_ref().map(|l| [l.from, l.to]);
             let is_wrong = out.is_proven() && (ck.status != "PROVEN" || span != ck.logical);
             let after = untouched().await?;
+            // B3: a PROVEN pick reveals its node in the Source (the caret
+            // moves to that node's span); anything else leaves all untouched.
+            let doc_ok = if out.is_proven() {
+                after.same_doc(&before)
+                    && out.item.as_deref().and_then(item_span) == Some(after.caret)
+            } else {
+                after == before
+            };
             let good = !is_wrong
                 && out.status == ck.status
-                && after == before
+                && doc_ok
                 && (out.is_proven() || selected_id() == keep)
                 && (!out.is_proven() || selected_id() == out.item);
             if is_wrong {

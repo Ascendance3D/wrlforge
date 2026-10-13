@@ -50,9 +50,10 @@ pub fn SceneTree() -> impl IntoView {
                     let key = Some((rev, it.id.clone()));
                     let key2 = key.clone();
                     let (from, to) = (it.view_from, it.view_to);
-                    let pad = format!("padding-left: {}rem", 0.4 + (it.depth.saturating_sub(1)) as f32 * 0.9);
+                    // B3: a smaller step per level keeps deep names on screen.
+                    let pad = format!("padding-left: {}rem", 0.35 + (it.depth.saturating_sub(1)) as f32 * 0.7);
                     let class = format!("tree-item kind-{}{}", it.kind.to_lowercase(), ref_class(&it.refs, it.typed.as_ref()));
-                    let title = typed_title(ref_title(&it.refs, &a.items), it.typed.as_ref());
+                    let title = item_title(it, typed_title(ref_title(&it.refs, &a.items), it.typed.as_ref()));
                     // Offsets of THIS render's revision; tree_select refuses
                     // them unless that is still the document's revision.
                     let id2 = id.clone();
@@ -71,8 +72,8 @@ pub fn SceneTree() -> impl IntoView {
                                     act2();
                                 }
                             }>
-                            <span class="kind">{it.kind.clone()}</span>
-                            <span class="label">{it.label.clone()}</span>
+                            <span class="kind" aria-hidden="true">{kind_glyph(&it.kind)}</span>
+                            {label_view(it)}
                         </li>
                     }
                 }).collect_view()}))}
@@ -80,6 +81,162 @@ pub fn SceneTree() -> impl IntoView {
             {move || (u.doc.with(|d| d.is_none())).then(|| view! { <p class="empty">"Start a New World or open a file to see its scene."</p> })}
         </aside>
     }
+}
+
+/// B3: the kind column is one compact glyph; the label already names the
+/// kind (`PROTO …`, `USE …`, `ROUTE …`, the node type), and the full kind is
+/// in the item's hover text.
+fn kind_glyph(kind: &str) -> &'static str {
+    match kind {
+        "Node" => "•",
+        "Use" => "↪",
+        "Proto" => "◆",
+        "ExternProto" => "◇",
+        "Route" => "→",
+        _ => "·",
+    }
+}
+
+/// B3: the label, with a DEF name set apart from the node type. The text
+/// content is exactly `label` (`Type DEFNAME`), so nothing that reads it
+/// changes.
+fn label_view(it: &p::SceneItem) -> impl IntoView {
+    let def = (it.kind == "Node" && it.detail.as_deref() == Some("DEF"))
+        .then(|| it.label.split_once(' '))
+        .flatten();
+    match def {
+        Some((ty, name)) => view! {
+            <span class="label"><span class="ty">{ty.to_string()}</span>" "<span class="def">{name.to_string()}</span></span>
+        }
+        .into_any(),
+        None => view! { <span class="label">{it.label.clone()}</span> }.into_any(),
+    }
+}
+
+/// B3: hover text always starts with the full label and kind, so a name
+/// cut off by a narrow panel is still readable.
+fn item_title(it: &p::SceneItem, rest: String) -> String {
+    let head = match it.detail.as_deref() {
+        Some("DEF") => format!("{} · {} (DEF)", it.label, it.kind),
+        _ => format!("{} · {}", it.label, it.kind),
+    };
+    if rest.is_empty() {
+        head
+    } else {
+        format!("{head}\n{rest}")
+    }
+}
+
+/// B3: bring the Source panel to the front and select (reveal) the node's
+/// span there. A selection only: no edit, no revision, no undo step. Refused
+/// when the span is not of the text the editor shows.
+fn show_in_source(session: u64, rev: u64, (from, to): (u64, u64)) {
+    if ui::stale_reason(session, rev).is_some() {
+        ui::flash("The Inspector is updating; Show in Source did nothing.");
+        return;
+    }
+    crate::dock::show(p::layout::PanelId::Source);
+    spawn_local(async move {
+        // After the tab is shown (laid out) and focused.
+        crate::ipc::sleep(30).await;
+        if ui::stale_reason(session, rev).is_none() {
+            crate::editor::select_quiet(from as u32, to as u32);
+        }
+    });
+}
+
+/// B3: the outermost Scene Tree items (nodes and USEs) inside the view span
+/// [`from`, `to`] in the analysis of exactly (`session`, `rev`), as (id,
+/// label). Empty when the tree holds another revision.
+fn mf_children(session: u64, rev: u64, from: u64, to: u64) -> Vec<(String, String)> {
+    ui().analysis.with_untracked(|a| {
+        let Some(a) = a.as_ref().filter(|a| a.session == session && a.revision == rev) else {
+            return Vec::new();
+        };
+        let inside: Vec<&p::SceneItem> = a
+            .items
+            .iter()
+            .filter(|i| {
+                (i.kind == "Node" || i.kind == "Use") && i.view_from >= from && i.view_to <= to
+            })
+            .collect();
+        let Some(d) = inside.iter().map(|i| i.depth).min() else {
+            return Vec::new();
+        };
+        inside
+            .into_iter()
+            .filter(|i| i.depth == d)
+            .map(|i| (i.id.clone(), i.label.clone()))
+            .collect()
+    })
+}
+
+/// B3: a one-line summary of an SFNode value: `[DEF name] Type`, `USE name`
+/// or `NULL`. Display only; the value is never rewritten.
+pub(crate) fn node_summary(excerpt: &str) -> String {
+    let mut t = excerpt.split_whitespace();
+    match (t.next(), t.next(), t.next()) {
+        (Some("DEF"), Some(name), Some(ty)) => {
+            format!("{} {name}", ty.trim_end_matches('{'))
+        }
+        (Some("USE"), Some(name), _) => format!("USE {name}"),
+        (Some(ty), _, _) => ty.trim_end_matches('{').to_string(),
+        _ => String::new(),
+    }
+}
+
+/// B3: the first line of a value, shortened to 60 characters.
+pub(crate) fn first_line(excerpt: &str) -> String {
+    let line = excerpt.trim().lines().next().unwrap_or("");
+    if line.chars().count() > 60 {
+        format!("{}…", line.chars().take(60).collect::<String>())
+    } else {
+        line.to_string()
+    }
+}
+
+/// B3: plain words for a read-only reason id (the id stays in the tooltip).
+pub(crate) fn reason_words(id: &str) -> String {
+    match id {
+        "field-type-not-editable-in-wd2b" => "edit in Source".into(),
+        "field-is-is-bound" => "bound to the PROTO interface (IS)".into(),
+        "field-value-missing" => "no value".into(),
+        "field-value-shape-does-not-match-type" | "field-value-token-invalid" => {
+            "value not understood; edit in Source".into()
+        }
+        "field-not-in-schema" | "field-is-x3d-only" | "field-is-not-a-stored-field" => {
+            "not a VRML97 stored field".into()
+        }
+        "field-authored-more-than-once" => "written more than once".into(),
+        "node-type-is-a-proto-name" | "node-type-not-standard-vrml97" => {
+            "PROTO instance field; edit in Source".into()
+        }
+        "document-has-syntax-errors" | "document-parse-incomplete" => {
+            "fix the syntax errors first".into()
+        }
+        other => other.replace('-', " "),
+    }
+}
+
+/// B3: the ancestors of item `idx` in a depth-first item list, outermost
+/// first: each is the nearest earlier item one level shallower.
+pub(crate) fn ancestors(depths: &[u32], idx: usize) -> Vec<usize> {
+    let mut out = Vec::new();
+    let Some(&d0) = depths.get(idx) else {
+        return out;
+    };
+    let mut want = d0;
+    for j in (0..idx).rev() {
+        if want <= 1 {
+            break;
+        }
+        if depths[j] < want {
+            out.push(j);
+            want = depths[j];
+        }
+    }
+    out.reverse();
+    out
 }
 
 /// The weakest reference class on an item, typed answer included: "" when
@@ -224,9 +381,9 @@ pub fn Inspector() -> impl IntoView {
             {move || match u.inspection.get() {
                 None => view! { <p class="empty">"Select a Scene Tree item."</p> }.into_any(),
                 Some(i) => {
-                    let title = i.title.clone();
                     let rev = i.revision;
                     let session = crate::editor::CORE.with_borrow(|c| c.session).unwrap_or(0);
+                    let head = inspector_head(&i, session);
                     let body = match i.node {
                         Some(n) => node_fields(n, session, rev).into_any(),
                         None => rows(i.rows, session, rev).into_any(),
@@ -238,13 +395,108 @@ pub fn Inspector() -> impl IntoView {
                                     {format!("Updating… these fields are of revision {rev}.")}
                                 </p>
                             })}
-                            <h3 id="inspector-title">{title}</h3>
+                            {head}
                             {body}
                         </div>
                     }.into_any()
                 }
             }}
         </section>
+    }
+}
+
+/// B3: what is selected, where it is, and how to get back up. The path is
+/// the Scene Tree's own ancestry of this item in the SAME revision; a crumb
+/// selects through `pick_select` (the Open-node path), so a stale tree
+/// refuses instead of selecting a different node. Display and navigation
+/// only: nothing here edits.
+fn inspector_head(i: &p::Inspection, session: u64) -> impl IntoView {
+    let u = ui();
+    let (id, rev) = (i.id.clone(), i.revision);
+    let node_type = i.node.as_ref().and_then(|n| n.node_type.clone());
+    let shared = i.node.as_ref().and_then(|n| n.shared.clone());
+    let title = i.title.clone();
+    // (DEF name, ancestors as (id, label)), from the analysis of `rev`.
+    let found = move || {
+        u.analysis.with(|a| {
+            let a = a
+                .as_ref()
+                .filter(|a| a.revision == rev && a.session == session)?;
+            let idx = a.items.iter().position(|it| it.id == id)?;
+            let it = &a.items[idx];
+            let def = (it.kind == "Node" && it.detail.as_deref() == Some("DEF"))
+                .then(|| it.label.split_once(' ').map(|(_, d)| d.to_string()))
+                .flatten();
+            let depths: Vec<u32> = a.items.iter().map(|x| x.depth).collect();
+            let path: Vec<(String, String)> = ancestors(&depths, idx)
+                .into_iter()
+                .map(|j| (a.items[j].id.clone(), a.items[j].label.clone()))
+                .collect();
+            Some((def, path, it.label.clone(), (it.view_from, it.view_to)))
+        })
+    };
+    let found2 = found.clone();
+    let go = move |target: String| {
+        spawn_local(async move {
+            if let Err(e) = ui::pick_select(session, rev, target).await {
+                ui::flash(&format!("Cannot open the node: {e}."));
+            }
+        });
+    };
+    let go2 = go.clone();
+    let kind = node_type.clone().unwrap_or(title);
+    let context = shared.map(|s| {
+        let n = s.instances;
+        format!(
+            "inside PROTO {} (shared, {} instance{})",
+            s.proto,
+            n,
+            if n == 1 { "" } else { "s" }
+        )
+    });
+    view! {
+        <div class="inspector-head" id="inspector-head">
+            {move || found().map(|(_, path, label, span)| {
+                let parent = path.last().cloned();
+                let none = parent.is_none();
+                let up_title = parent.as_ref().map(|(_, l)| format!("Select the parent node: {l}")).unwrap_or_else(|| "This node is at the top level".into());
+                let go = go.clone();
+                let go2 = go2.clone();
+                view! {
+                    <nav class="crumbs" id="inspector-path" aria-label="Node path">
+                        <button type="button" class="small secondary crumb-up" id="inspector-up"
+                            disabled=move || none || ui().revision.get() != rev
+                            title=up_title
+                            on:click={let parent = parent.clone(); move |_| if let Some((p, _)) = parent.clone() { go(p) }}>
+                            "↑ Parent"
+                        </button>
+                        <button type="button" class="small secondary" id="inspector-show-source"
+                            title="Show this node in the Source panel (selects its text; no edit)"
+                            disabled=move || ui().revision.get() != rev
+                            on:click=move |_| show_in_source(session, rev, span)>
+                            "Show in Source"
+                        </button>
+                        {path.into_iter().map(|(pid, l)| {
+                            let go = go2.clone();
+                            view! {
+                                <button type="button" class="crumb" data-item=pid.clone() title=format!("Select {l}")
+                                    disabled=move || ui().revision.get() != rev
+                                    on:click=move |_| go(pid.clone())>{l.clone()}</button>
+                                <span class="crumb-sep" aria-hidden="true">"›"</span>
+                            }
+                        }).collect_view()}
+                        <span class="visually-hidden" aria-current="true">{label}</span>
+                    </nav>
+                }
+            })}
+            <h3 id="inspector-title">
+                <span class="ty">{kind}</span>
+                {move || found2().and_then(|(def, _, _, _)| def).map(|d| view! {
+                    " "<span class="def" title="DEF name">{d}</span>
+                })}
+            </h3>
+            {context.map(|c| view! { <p class="inspector-context" id="inspector-context">{c}</p> })}
+        </div>
     }
 }
 
@@ -294,14 +546,14 @@ fn shared_banner(s: p::SharedProto, session: u64) -> impl IntoView {
     view! {
         <div class="shared-proto" id="inspector-shared" role="note" data-proto=proto.clone()
             data-allowed=move || allowed().to_string()>
-            <p><strong>"Shared PROTO definition"</strong>" · "{text}</p>
+            <p title=text><strong>"Shared definition"</strong>{format!(" · changes all {} instance{} of PROTO {}", instances, if instances == 1 { "" } else { "s" }, proto)}</p>
             {move || if allowed2() {
-                view! { <p class="shared-ok" id="inspector-shared-ok">"Editing the shared definition is allowed for this document."</p> }.into_any()
+                view! { <p class="shared-ok" id="inspector-shared-ok" title="Editing the shared definition is allowed for this document.">"Editing allowed"</p> }.into_any()
             } else {
                 view! {
                     <button type="button" id="inspector-shared-allow" on:click=allow.clone()
-                        title="Allow edits to this PROTO definition (all instances) for this document">
-                        "Edit shared definition"
+                        class="small" title="Allow edits to this PROTO definition (all instances) for this document">
+                        "Allow editing"
                     </button>
                 }.into_any()
             }}
@@ -660,11 +912,60 @@ fn field_row(f: p::EditableField, node_type: &str, session: u64, rev: u64) -> im
                     }>{label}</button>
             }
         });
+        // B3: an MFNode value gets one "Open <Type> ›" per child node. The
+        // children are the Scene Tree items of THIS revision lying inside
+        // the field's value span, outermost only; each opens through the
+        // same `pick_select` path as an SFNode's button (exact item id).
+        let kids = if f.field_type.as_deref() == Some("MFNode") {
+            mf_children(session, rev, f.view_from, f.view_to)
+        } else {
+            Vec::new()
+        };
+        let kid_buttons = (!kids.is_empty()).then(|| {
+            view! {
+                <span class="mf-open">
+                {kids.into_iter().map(|(id, label)| {
+                    view! {
+                        <button class="small node-open" data-item=id.clone()
+                            on:click=move |_| {
+                                let id = id.clone();
+                                spawn_local(async move {
+                                    if let Err(e) = ui::pick_select(session, rev, id).await {
+                                        ui::flash(&format!("Cannot open the node: {e}."));
+                                    }
+                                });
+                            }>{format!("Open {label} ›")}</button>
+                    }
+                }).collect_view()}
+                </span>
+            }
+        });
+        // B3: one line per field. An SFNode value shows its node type (and
+        // DEF name); any long or multi-line value shows its first line, with
+        // the full text one click away. The reason id is shown in words; the
+        // id itself stays in the hover text.
+        let excerpt = f.value_excerpt.clone();
+        let summary = if f.node_item.is_some() || f.field_type.as_deref() == Some("SFNode") {
+            node_summary(&excerpt)
+        } else {
+            first_line(&excerpt)
+        };
+        let full = (summary != excerpt.trim()).then(|| {
+            view! {
+                <details class="value-full">
+                    <summary title="Show the full value as written in the source">"Show source"</summary>
+                    <code>{excerpt.clone()}</code>
+                </details>
+            }
+        });
+        let reason_title = format!("Why this field is read-only here ({})", f.reason);
         view! {
-            <div>
+            <div class="ro-value">
                 {open}
-                <code>{f.value_excerpt.clone()}</code>
-                <span class="reason" title="Why this field is read-only">{f.reason.clone()}</span>
+                {kid_buttons}
+                <code class="value-summary" title=excerpt.clone()>{summary}</code>
+                <span class="reason" data-reason=f.reason.clone() title=reason_title>{reason_words(&f.reason)}</span>
+                {full}
             </div>
         }
         .into_any()
@@ -978,6 +1279,29 @@ pub fn reveal_tree_item(id: &str) {
     if top < st || top + h > st + vh {
         ul.set_scroll_top((top - vh / 3).max(0));
     }
+    // B3: a deep item's name is on screen too (the tree scrolls sideways).
+    let left = li.offset_left() - ul.offset_left();
+    let pad = li
+        .query_selector(".label")
+        .ok()
+        .flatten()
+        .and_then(|l| l.dyn_into::<web_sys::HtmlElement>().ok())
+        .map_or(left, |l| l.offset_left() - ul.offset_left());
+    let (sl, vw) = (ul.scroll_left(), ul.client_width());
+    if pad < sl || pad > sl + vw / 2 {
+        ul.set_scroll_left((pad - 24).max(0));
+    }
+}
+
+/// B3: reveal now, and again once the tree has rendered this revision's
+/// items (a viewport pick may have just brought the tree up to date).
+pub fn reveal_tree_item_soon(id: &str) {
+    reveal_tree_item(id);
+    let id = id.to_string();
+    spawn_local(async move {
+        crate::ipc::sleep(60).await;
+        reveal_tree_item(&id);
+    });
 }
 
 /// UI-MENU-1: the Select tool toggle (toolbar button, Tools menu). Moved
@@ -1014,5 +1338,50 @@ pub fn toggle_gizmo(tool: wrlforge_desktop_protocol::gizmo::Tool) {
         crate::gizmo::start();
     } else {
         u.gizmo_message.set(None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ancestors, kind_glyph};
+
+    #[test]
+    fn ancestors_walk_up_a_depth_first_list() {
+        // PROTO P { Group { Transform { Shape { Appearance { Material } } } } }, then a sibling.
+        let d = [1, 2, 3, 4, 5, 6, 4, 1];
+        assert_eq!(ancestors(&d, 5), vec![0, 1, 2, 3, 4]);
+        assert_eq!(ancestors(&d, 6), vec![0, 1, 2]);
+        assert!(ancestors(&d, 0).is_empty());
+        assert!(ancestors(&d, 7).is_empty());
+        assert!(ancestors(&d, 99).is_empty());
+    }
+
+    #[test]
+    fn sfnode_values_summarize_to_one_line() {
+        use super::{first_line, node_summary, reason_words};
+        let x = "IndexedFaceSet {creaseAngle 3\n ccw FALSE coord Coordinate { point IS point } }";
+        assert_eq!(node_summary(x), "IndexedFaceSet");
+        assert_eq!(node_summary("DEF Mat Material { }"), "Material Mat");
+        assert_eq!(node_summary("Appearance{ material NULL }"), "Appearance");
+        assert_eq!(node_summary("USE Wheel"), "USE Wheel");
+        assert_eq!(node_summary("NULL"), "NULL");
+        assert_eq!(first_line("a b\nc"), "a b");
+        assert_eq!(reason_words("field-type-not-editable-in-wd2b"), "edit in Source");
+    }
+
+    #[test]
+    fn kind_glyph_is_one_character_for_every_kind() {
+        let kinds = [
+            "Node",
+            "Use",
+            "Proto",
+            "ExternProto",
+            "Route",
+            "Document",
+            "?",
+        ];
+        for k in kinds {
+            assert_eq!(kind_glyph(k).chars().count(), 1, "{k}");
+        }
     }
 }

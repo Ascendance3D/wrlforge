@@ -169,7 +169,8 @@ pub fn adopt_selection(sel: Selected) {
 }
 
 /// Select the Scene Tree item a PROVEN viewport pick named, in exactly the
-/// revision Rust resolved it against. The source caret does NOT move. The
+/// revision Rust resolved it against. The node's source span is selected
+/// (revealed) without taking the keyboard focus. The
 /// Scene Tree must show that revision (it is brought up to date first) and
 /// must hold the item; otherwise nothing changes. Returns the item label.
 pub async fn pick_select(session: u64, revision: u64, id: String) -> Result<String, String> {
@@ -190,12 +191,12 @@ pub async fn pick_select(session: u64, revision: u64, id: String) -> Result<Stri
             return Err("the Scene Tree is updating".into());
         }
     }
-    let label = u.analysis.with_untracked(|a| {
+    let found = u.analysis.with_untracked(|a| {
         a.as_ref()
             .and_then(|a| a.items.iter().find(|i| i.id == id))
-            .map(|i| i.label.clone())
+            .map(|i| (i.label.clone(), i.view_from, i.view_to))
     });
-    let Some(label) = label else {
+    let Some((label, from, to)) = found else {
         return Err("the object is not in the Scene Tree".into());
     };
     adopt_selection(Selected {
@@ -203,7 +204,13 @@ pub async fn pick_select(session: u64, revision: u64, id: String) -> Result<Stri
         revision,
         id: id.clone(),
     });
-    crate::panels::reveal_tree_item(&id);
+    crate::panels::reveal_tree_item_soon(&id);
+    // B3: reveal the node in the Source as well: its span is selected and
+    // scrolled into view and Ln/Col follow it. A selection only -- no edit,
+    // no revision, no undo step -- and the keyboard focus stays where it is
+    // (the viewport keeps it after a pick). The span is of `revision`, which
+    // `stale_reason` just proved is the text the editor shows.
+    editor::select_quiet(from as u32, to as u32);
     Ok(label)
 }
 

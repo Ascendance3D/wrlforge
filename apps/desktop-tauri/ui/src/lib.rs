@@ -196,10 +196,6 @@ fn App() -> impl IntoView {
                 <span class="spacer"></span>
                 <theme::ThemePicker/>
                 <span class="sep"></span>
-                <span class="profile" title="Profiles are not yet migrated to Rust">
-                    "Profile: Generic VRML97 · Mall / World profiles not migrated"
-                </span>
-                <span class="sep"></span>
                 <CommandButton command=CommandId::HelpAbout dom_id="btn-about" secondary=true text="About"/>
             </header>
             {move || u.conflict.get().map(|reason| view! {
@@ -227,9 +223,13 @@ fn App() -> impl IntoView {
                 <span>{move || { let (l, c, s) = u.cursor.get();
                     if s > 0 { format!("Ln {l}, Col {c} ({s} sel)") } else { format!("Ln {l}, Col {c}") } }}</span>
                 <span>{move || format!("rev {}", u.revision.get())}</span>
-                <span class="msg">{move || u.message.get()}</span>
+                <span class="msg" title=move || u.message.get()>{move || u.message.get()}</span>
                 <span class="spacer"></span>
-                <span class="muted">"Rust core · Tauri 2 · no Electron"</span>
+                // B3: moved from the toolbar, where it was cut off at 1366 px.
+                <span class="profile" id="profile" title="The Mall Item and World Project profiles are not yet migrated to Rust.">
+                    "Profile: Generic VRML97"
+                </span>
+                <span class="muted credit">"Rust core · Tauri 2 · no Electron"</span>
             </footer>
         </div>
     }

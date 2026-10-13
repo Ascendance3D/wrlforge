@@ -619,17 +619,17 @@ impl Layout {
             PresetId::Modeling => split(
                 Row,
                 vec![
-                    (tabs(&[SceneTree]), 0.16),
-                    (tabs(&[Viewport]), 0.60),
+                    (tabs(&[SceneTree]), 0.20),
+                    (tabs(&[Viewport]), 0.54),
                     (
                         split(
                             Column,
                             vec![
-                                (tabs(&[Inspector]), 0.55),
-                                (tabs(&[Diagnostics, Source]), 0.45),
+                                (tabs(&[Inspector]), 0.62),
+                                (tabs(&[Diagnostics, Source]), 0.38),
                             ],
                         ),
-                        0.24,
+                        0.26,
                     ),
                 ],
             ),
@@ -660,10 +660,10 @@ impl Layout {
             (PresetId::Source, SceneTree) => vec![Home::RootLeft(0.18)],
             (PresetId::Source, Diagnostics) => vec![at(Source, Zone::Bottom, 0.24)],
             (PresetId::Source, Inspector) => vec![at(Viewport, Zone::Bottom, 0.44)],
-            (PresetId::Modeling, SceneTree) => vec![Home::RootLeft(0.16)],
+            (PresetId::Modeling, SceneTree) => vec![Home::RootLeft(0.20)],
             (PresetId::Modeling, Inspector) => vec![
-                at(Diagnostics, Zone::Top, 0.55),
-                at(Source, Zone::Top, 0.55),
+                at(Diagnostics, Zone::Top, 0.62),
+                at(Source, Zone::Top, 0.62),
             ],
             (PresetId::Modeling, Diagnostics) => vec![Home::At(
                 DropTarget {

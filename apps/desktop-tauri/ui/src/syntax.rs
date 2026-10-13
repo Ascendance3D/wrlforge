@@ -101,6 +101,11 @@ struct Hl {
     caret_line: u32,
     /// B2: what the gutter shows: (first, last, total lines, caret line).
     gutter: (u32, u32, u32, u32),
+    /// B3: the 1-based lines a selection covers ((0, 0) for none); the
+    /// gutter marks them, so a span selected while the Source does not have
+    /// the focus (a viewport pick) is still visible.
+    mark: (u32, u32),
+    gutter_mark: (u32, u32),
 }
 
 thread_local! {
@@ -368,28 +373,43 @@ fn paint_gutter(h: &mut Hl) {
     let last = (bottom + GUTTER_MARGIN).min(total).max(first);
     let caret = h.caret_line;
     let key = (first, last, total, caret);
-    if key != h.gutter {
+    let mark = h.mark;
+    if key != h.gutter || mark != h.gutter_mark {
         let width_changed = crate::find::digits(total) != crate::find::digits(h.gutter.2);
         h.gutter = key;
+        h.gutter_mark = mark;
         g.set_text_content(None);
         if let Some(d) = doc() {
             let text = |a: u32, z: u32| d.create_text_node(&crate::find::gutter_text(a, z));
-            if (first..=last).contains(&caret) {
-                if caret > first {
-                    let _ = g.append_child(&text(first, caret - 1));
+            let marked = |n: u32| mark.0 > 0 && (mark.0..=mark.1).contains(&n);
+            let special = |n: u32| n == caret || marked(n);
+            // The same text as before (numbers joined by newlines); the caret
+            // line and the marked lines are spans.
+            let mut n = first;
+            while n <= last {
+                if n > first {
                     let _ = g.append_child(&d.create_text_node("\n"));
                 }
-                if let Ok(cur) = d.create_element("span") {
-                    cur.set_class_name("cur");
-                    cur.set_text_content(Some(&caret.to_string()));
-                    let _ = g.append_child(&cur);
+                if special(n) {
+                    if let Ok(el) = d.create_element("span") {
+                        let class = match (n == caret, marked(n)) {
+                            (true, true) => "cur mark",
+                            (true, false) => "cur",
+                            _ => "mark",
+                        };
+                        el.set_class_name(class);
+                        el.set_text_content(Some(&n.to_string()));
+                        let _ = g.append_child(&el);
+                    }
+                    n += 1;
+                } else {
+                    let mut z = n;
+                    while z < last && !special(z + 1) {
+                        z += 1;
+                    }
+                    let _ = g.append_child(&text(n, z));
+                    n = z + 1;
                 }
-                if caret < last {
-                    let _ = g.append_child(&d.create_text_node("\n"));
-                    let _ = g.append_child(&text(caret + 1, last));
-                }
-            } else {
-                let _ = g.append_child(&text(first, last));
             }
         }
         // The column (the gutter's parent) takes the width of the widest
@@ -413,6 +433,16 @@ pub fn set_caret_line(line: u32) {
     HL.with_borrow_mut(|h| {
         if h.caret_line != line {
             h.caret_line = line;
+            paint_gutter(h);
+        }
+    });
+}
+
+/// B3: mark the lines a selection covers in the gutter ((0, 0) clears).
+pub fn set_mark_lines(first: u32, last: u32) {
+    HL.with_borrow_mut(|h| {
+        if h.mark != (first, last) {
+            h.mark = (first, last);
             paint_gutter(h);
         }
     });
