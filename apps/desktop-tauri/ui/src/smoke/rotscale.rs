@@ -652,7 +652,7 @@ async fn new_world(r: &mut R) -> Option<()> {
 }
 
 /// Open a Rust-written fixture by index and wait for its preview.
-async fn open_fixture(i: usize, tag: &str, r: &mut R) -> Option<()> {
+async fn open_fixture(i: usize, roots: usize, tag: &str, r: &mut R) -> Option<()> {
     let u = ui();
     #[derive(serde::Serialize)]
     struct A {
@@ -663,7 +663,7 @@ async fn open_fixture(i: usize, tag: &str, r: &mut R) -> Option<()> {
         .ok()?;
     crate::ui::apply_open(o, "Opened").await;
     let rev = CORE.with_borrow(|c| c.revision);
-    let shown = previewed(rev, 5, 20_000).await;
+    let shown = previewed(rev, roots, 20_000).await;
     r.step(
         &format!("{tag}: opened and previewed"),
         shown.is_some(),
@@ -684,7 +684,15 @@ async fn fixtures(c: &p::RotScaleSmoke, r: &mut R) -> Option<()> {
         u.move_mode.set(false);
         u.scale_mode.set(false);
         u.rotate_mode.set(false);
-        open_fixture(i, &tag, r).await?;
+        let proto = label.starts_with("shared PROTO");
+        open_fixture(i, if proto { 2 } else { 5 }, &tag, r).await?;
+        if proto {
+            proto_fixture(label, &tag, r).await?;
+            click("btn-save")?;
+            wait_ms(5000, || (!u.dirty.get_untracked()).then_some(())).await?;
+            r.step(&format!("{tag}: saved"), !u.dirty.get_untracked(), "");
+            continue;
+        }
         // An existing translated, rotated and centered object.
         tool_on(Tool::Rotate)?;
         let ok = tree_select_for("Transform Turn", || {
@@ -759,6 +767,196 @@ async fn fixtures(c: &p::RotScaleSmoke, r: &mut R) -> Option<()> {
         r.step(&format!("{tag}: saved"), !u.dirty.get_untracked(), "");
     }
     Some(())
+}
+
+thread_local! {
+    /// B3 (LV2): commits that changed the source OUTSIDE the shared body
+    /// Transform's rotation / scale lines (must stay 0).
+    static WRONG: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// The PROTO fixtures' changeable lines (the body Transform's rotation and
+/// scale, 0-based; `src-tauri/src/smoke.rs` PROTO_BODY_LINES).
+const BODY_LINES: [usize; 2] = [7, 8];
+
+/// Count a commit whose change is outside the body lines.
+fn wrong_check(before: &str, after: &str) {
+    let (a, b): (Vec<_>, Vec<_>) = (before.split('\n').collect(), after.split('\n').collect());
+    let outside = a.len() != b.len()
+        || a.iter()
+            .zip(&b)
+            .enumerate()
+            .any(|(i, (x, y))| x != y && !BODY_LINES.contains(&i));
+    if outside {
+        WRONG.set(WRONG.get() + 1);
+    }
+}
+
+/// The node item of the instance whose text starts at the `k`-th match of
+/// `needle` (UTF-16 offsets; the instance is `Wheel { ... }` up to `}`).
+fn instance_item(src: &str, needle: &str, last: bool) -> Option<String> {
+    let b = if last { src.rfind(needle)? } else { src.find(needle)? };
+    let e = b + src[b..].find('}')? + 1;
+    let u = |x: usize| src[..x].encode_utf16().count();
+    Some(format!("node-{}-{}", u(b), u(e)))
+}
+
+fn wrap_angle(a: f64) -> f64 {
+    let t = std::f64::consts::TAU;
+    let mut d = a % t;
+    if d > std::f64::consts::PI {
+        d -= t;
+    } else if d <= -std::f64::consts::PI {
+        d += t;
+    }
+    d
+}
+
+/// B3 (LV2): Rotate and Scale on the Transform `Spin` in the body of the
+/// shared PROTO `Wheel` (two instances), with REAL pointer input: a Scene
+/// Tree selection is refused (which instance is not proven); a real click
+/// binds the clicked instance (for the nested fixture: under Transform >
+/// Group > Transform, its parent frame composed from source); the other
+/// instance carries the secondary outline; a ring drag and a handle drag
+/// each change ONE line of the shared body after the consent; the handles
+/// CONTINUE on the same instance after each commit and across the tool
+/// switch, without a new click; two Undos restore the exact bytes.
+async fn proto_fixture(label: &str, tag: &str, r: &mut R) -> Option<()> {
+    let nested = label.contains("nested");
+    let original = text();
+    tool_on(Tool::Rotate)?;
+    let refused = tree_select_for("Transform Spin", || {
+        GIZMO.with_borrow(|g| g.last_unproven.as_deref() == Some("proto-instance-not-picked"))
+    })
+    .await;
+    ipc::sleep(200).await;
+    r.step(
+        &format!("{tag}: a Scene Tree selection of the shared body Transform (two instances on screen) is refused with a visible reason"),
+        refused && svg_attr("data-state").as_deref() != Some("ready") && gizmo_msg().contains("PROTO Wheel"),
+        gizmo_msg(),
+    );
+    // The clicked instance: top-level at the origin, or the nested one at
+    // T(0 -2 0) R(z 0.4) S(1.5) T(1.5 0 0) -- its world origin, computed
+    // here independently of the app.
+    let world = if nested {
+        let (sn, cs) = 0.4f64.sin_cos();
+        [2.25 * cs, -2.0 + 2.25 * sn, 0.0]
+    } else {
+        [0.0, 0.0, 0.0]
+    };
+    real_select(tag, "Spin", world, r).await?;
+    tool_on(Tool::Rotate)?;
+    let want_inst = if nested {
+        instance_item(&original, "Wheel { tint", true)
+    } else {
+        instance_item(&original, "Wheel { }", false)
+    };
+    let t0 = tool_ready(Tool::Rotate, 10_000).await;
+    // A still camera, then the rings of a frame drawn with it.
+    still_camera().await?;
+    ipc::sleep(200).await;
+    let at_px = ipc::gizmo_camera().and_then(|c| gz::project(&c, world));
+    let ring_px = GIZMO.with_borrow(|g| g.rings.as_ref().map(|r| r.origin));
+    r.step(
+        &format!("{tag}: the real click binds the rings to THAT instance's copy of the shared body Transform ({}), drawn at its world pivot", if nested { "parent frame composed from three ancestors" } else { "world frame" }),
+        t0.as_ref().is_some_and(|t| {
+            t.shared.as_ref().is_some_and(|s| s.proto == "Wheel" && s.instances == 2)
+                && t.instance.as_ref().map(|i| i.item.clone()) == want_inst
+                && t.parent.is_some() == nested
+                && t.pivot == [0.0, 0.0, 0.0]
+        }) && matches!((at_px, ring_px), (Some(a), Some(b)) if (a.0 - b.0).hypot(a.1 - b.1) < 1.5),
+        format!(
+            "{:?} · want {want_inst:?} · px {at_px:?} vs {ring_px:?} · {}",
+            t0.as_ref().map(|t| (t.instance.clone(), t.parent, t.pivot)),
+            gizmo_msg()
+        ),
+    );
+    let others = wait_ms(5000, || {
+        crate::highlight::HIGHLIGHT.with_borrow(|h| (h.others.len() == 1 && h.shared_drawn == 1).then_some(()))
+    })
+    .await;
+    r.step(
+        &format!("{tag}: the OTHER instance of the shared definition carries the secondary (dashed) outline"),
+        others.is_some(),
+        format!("{:?}", crate::highlight::HIGHLIGHT.with_borrow(|h| (h.others.len(), h.others_unproven, h.shared_drawn))),
+    );
+    capture(&format!("lv2-proto-rotscale-{}-bound", if nested { "nested" } else { "two" })).await;
+    let t0 = t0?;
+    // Rotate about Z (the parent axis; the instance's parent frame turns
+    // about Z too, so it is the world Z ring).
+    let continued0 = GIZMO.with_borrow(|g| g.continued);
+    let before = text();
+    let after1 = rotate_drag(tag, Axis::Z, 6, r).await?;
+    wrong_check(&before, &after1);
+    let lines = changed_lines(&before, &after1);
+    let t1 = GIZMO.with_borrow(|g| g.target.clone());
+    let want1 = if nested {
+        instance_item(&after1, "Wheel { tint", true)
+    } else {
+        instance_item(&after1, "Wheel { }", false)
+    };
+    r.step(
+        &format!("{tag}: the ring release (consent: shared definition) changed ONLY the body's rotation angle token; the rings came back on the SAME instance without a new click"),
+        lines.as_ref().is_some_and(|l| l.len() == 1 && l[0].starts_with("rotation 0 0 1 ") && l[0] != "rotation 0 0 1 0.25")
+            && t1.as_ref().is_some_and(|t| t.instance.as_ref().map(|i| i.item.clone()) == want1 && t.parent.is_some() == nested)
+            && GIZMO.with_borrow(|g| g.continued) > continued0
+            && ui().shared_ok.with_untracked(|v| v.iter().any(|(_, n)| n == "Wheel")),
+        format!("{lines:?} · {:?} · want {want1:?} · continued {continued0} → {}", t1.as_ref().map(|t| t.instance.clone()), GIZMO.with_borrow(|g| g.continued)),
+    );
+    // Switch to Scale: the carried instance binds again (no click).
+    let continued1 = GIZMO.with_borrow(|g| g.continued);
+    tool_on(Tool::Scale)?;
+    let ts = tool_ready(Tool::Scale, 10_000).await;
+    r.step(
+        &format!("{tag}: switching to Scale binds the SAME instance again (carried, no click)"),
+        ts.as_ref().is_some_and(|t| t.instance.as_ref().map(|i| i.item.clone()) == want1)
+            && GIZMO.with_borrow(|g| g.continued) > continued1,
+        format!("{:?} · {}", ts.map(|t| t.instance), gizmo_msg()),
+    );
+    let after2 = scale_drag(tag, Some(Axis::Y), r).await?;
+    wrong_check(&after1, &after2);
+    let lines = changed_lines(&after1, &after2);
+    let rot_ok = t1
+        .as_ref()
+        .is_some_and(|t| wrap_angle(t.rotation[3] - t0.rotation[3]).abs() > 0.1);
+    r.step(
+        &format!("{tag}: the scale release changed ONLY the body's scale line (y component); every other byte of the file is unchanged"),
+        lines.as_ref().is_some_and(|l| l.len() == 1 && l[0].starts_with("scale 1 ") && l[0].ends_with(" 1") && l[0] != "scale 1 1 1")
+            && rot_ok,
+        format!("{lines:?}"),
+    );
+    capture(&format!("lv2-proto-rotscale-{}-after", if nested { "nested" } else { "two" })).await;
+    crate::editor::history(true).await;
+    crate::editor::idle().await;
+    crate::editor::history(true).await;
+    crate::editor::idle().await;
+    let undone = text() == original;
+    crate::editor::history(false).await;
+    crate::editor::idle().await;
+    crate::editor::history(false).await;
+    crate::editor::idle().await;
+    let redone = text() == after2;
+    r.step(
+        &format!("{tag}: each shared-definition commit is ONE undo step: two Undos restore the exact original bytes, two Redos re-apply both"),
+        undone && redone,
+        format!("undo {undone} · redo {redone}"),
+    );
+    r.step(
+        &format!("{tag}: WRONG_SOURCE_SELECTIONS = 0 (no commit changed anything outside the shared body Transform's rotation / scale lines)"),
+        WRONG.get() == 0,
+        format!("{} wrong", WRONG.get()),
+    );
+    Some(())
+}
+
+/// A whole-screen capture as evidence (harness Xvfb); failures are ignored.
+async fn capture(id: &str) {
+    #[derive(serde::Serialize)]
+    struct A<'a> {
+        id: &'a str,
+    }
+    ipc::sleep(500).await;
+    let _ = call::<String>("smoke_window_capture", A { id }).await;
 }
 
 pub(super) async fn run(c: &p::RotScaleSmoke, r: &mut R) -> Option<()> {

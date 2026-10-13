@@ -241,8 +241,9 @@ test('the C0 research spike is not a production input', () => {
 // ---- contract surface (QA #1 / #2 blocking findings) ---------------------------
 // The seven WD2-D contract methods plus the VISUAL-3A1 binding amendment
 // (snapshotSpan, nodeAt, spansOf) and the B3 PROTO body binding
-// (snapshotBodySpan, bodyNodeAt, chainOf); nothing else.
-const CONTRACT_METHODS = ['abort', 'activate', 'bodyNodeAt', 'chainOf', 'compatibility', 'dispose', 'nodeAt', 'parseWithProvenance', 'pick', 'retire', 'snapshotBodySpan', 'snapshotSpan', 'spansOf'];
+// (snapshotBodySpan, bodyNodeAt, chainOf, and the LV2 bodyInstances);
+// nothing else.
+const CONTRACT_METHODS = ['abort', 'activate', 'bodyInstances', 'bodyNodeAt', 'chainOf', 'compatibility', 'dispose', 'nodeAt', 'parseWithProvenance', 'pick', 'retire', 'snapshotBodySpan', 'snapshotSpan', 'spansOf'];
 
 function freshAdapterModule() {
   const abs = path.join(ROOT, ADAPTER);

@@ -34,6 +34,8 @@ pub fn startup_document(startup: State<'_, Startup>) -> Option<p::OpenOutcome> {
 #[tauri::command]
 pub async fn confirm_shared_edit(app: AppHandle, proto: String, instances: u32) -> bool {
     if let Some(answer) = app.state::<SmokeState>().confirm_override() {
+        // Smoke runs only: what the dialog would have said, for the check.
+        crate::smoke::note_consent(&proto, instances);
         return answer;
     }
     app.dialog()

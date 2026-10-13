@@ -148,3 +148,77 @@ test('X_ITE copying a named body node twice per instance (the same copy returned
   // The fake copies DEF CarXForm first, then meets it again in the tree.
   assert.equal(adapter.bodyNodeAt(generation, xf.start, xf.end), copyOf(instances(scene)[0]));
 });
+
+// ---- B3 (LV2): continuation by instance span, nested instances ------------
+
+test('LV2: an instance span hint binds THAT instance\'s copy, without a pick and over a newer pick; a wrong hint binds nothing', async () => {
+  const page = freshPage();
+  const browser = createFakeBrowser(page.X3D);
+  const text = `#VRML V2.0 utf8\n${DECL}Car { }\nCar { }\n`;
+  const { adapter, scene, generation } = await shown(page, browser, text);
+  const xf = spanOf(text, XF);
+  const [a, b] = instances(scene);
+  const ia = spanOf(text, 'Car { }\nCar');
+  ia.end = ia.start + 'Car { }'.length;
+  const ib = { start: text.lastIndexOf('Car { }'), end: text.lastIndexOf('Car { }') + 'Car { }'.length };
+  // No pick: the hint alone decides.
+  assert.equal(adapter.bodyNodeAt(generation, xf.start, xf.end, null, ib), copyOf(b));
+  assert.equal(adapter.bodyNodeAt(generation, xf.start, xf.end, null, ia), copyOf(a));
+  const s = adapter.snapshotBodySpan(generation, xf.start, xf.end, ib);
+  assert.equal(s.outcome, 'found');
+  plain(s, page.X3D);
+  const n1 = s.graph[s.shape];
+  const g = s.graph[n1.parents[0]];
+  const inst = s.graph[g.parents.find((p) => p.startsWith('BODY:')).slice(5)];
+  assert.deepEqual(inst.occurrences.map((o) => [o.start, o.end]), [[ib.start, ib.end]]);
+  // A newer pick of A never redirects a hint for B.
+  browser.aim(shapeOf(a));
+  assert.equal(adapter.pick(50, 50).outcome, 'hit');
+  assert.equal(adapter.bodyNodeAt(generation, xf.start, xf.end, null, ib), copyOf(b));
+  // `keep` must agree with the hint.
+  assert.equal(adapter.bodyNodeAt(generation, xf.start, xf.end, copyOf(b), ib), copyOf(b));
+  assert.equal(adapter.bodyNodeAt(generation, xf.start, xf.end, copyOf(a), ib), null);
+  // A hint that names no instance (off by one, the declaration, junk): nothing.
+  for (const bad of [{ start: ib.start, end: ib.end + 1 }, { start: xf.start, end: xf.end }, { start: -1, end: 3 }, {}, 'x']) {
+    assert.equal(adapter.bodyNodeAt(generation, xf.start, xf.end, null, bad), null, JSON.stringify(bad));
+    const r = adapter.snapshotBodySpan(generation, xf.start, xf.end, bad);
+    assert.deepEqual([r.outcome, r.reason], ['unsupported', 'proto-instance-not-proven']);
+  }
+});
+
+test('LV2: an instance nested in a Transform: listed, bound by its hint, its chain climbs through the Transform to the scene', async () => {
+  const page = freshPage();
+  const browser = createFakeBrowser(page.X3D);
+  const NEST = 'Transform { translation 0 -3 0 children [ Car { } ] }';
+  const text = `#VRML V2.0 utf8\n${DECL}Car { }\n${NEST}\n`;
+  const { adapter, scene, generation } = await shown(page, browser, text);
+  const xf = spanOf(text, XF);
+  const top = { start: text.indexOf('Car { }\n'), end: text.indexOf('Car { }\n') + 7 };
+  const ns = spanOf(text, NEST);
+  const inner = { start: text.lastIndexOf('Car { }'), end: text.lastIndexOf('Car { }') + 7 };
+  // Both instances are listed, in copy order, each by its own occurrence.
+  const listed = adapter.bodyInstances(generation, xf.start, xf.end);
+  assert.deepEqual(listed.instances.map((i) => [i.start, i.end]), [[top.start, top.end], [inner.start, inner.end]]);
+  assert.equal(listed.unproven, 0);
+  plain(listed, page.X3D);
+  // Not a body statement: nothing listed.
+  assert.deepEqual(adapter.bodyInstances(generation, ns.start, ns.end).instances, []);
+  assert.deepEqual(adapter.bodyInstances(Object.freeze({}), xf.start, xf.end).instances, []);
+  const outerT = scene.rootNodes.find((n) => n.type === 'Transform');
+  const nested = outerT.children[0].node;
+  const want = copyOf(nested);
+  assert.equal(adapter.bodyNodeAt(generation, xf.start, xf.end, null, inner), want);
+  const s = adapter.snapshotBodySpan(generation, xf.start, xf.end, inner);
+  assert.equal(s.outcome, 'found');
+  const n1 = s.graph[s.shape];
+  const g = s.graph[n1.parents[0]];
+  const i = s.graph[g.parents.find((p) => p.startsWith('BODY:')).slice(5)];
+  assert.deepEqual(i.occurrences.map((o) => [o.start, o.end]), [[inner.start, inner.end]]);
+  const t = s.graph[i.parents[0]];
+  assert.equal(t.type, 'Transform');
+  assert.deepEqual(t.occurrences.map((o) => [o.start, o.end]), [[ns.start, ns.end]]);
+  assert.ok(t.parents.includes('SCENE'));
+  // The highlight's ancestors for the nested copy, span by span.
+  const gs = spanOf(text, GROUP);
+  assert.deepEqual(adapter.chainOf(generation, want, [gs.start, gs.end, inner.start, inner.end, ns.start, ns.end]), [nested.bodyRoots[0], nested, outerT]);
+});

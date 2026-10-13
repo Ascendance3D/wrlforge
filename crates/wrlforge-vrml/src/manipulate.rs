@@ -69,6 +69,22 @@ pub mod reason {
     /// the instance's own frame (nested under a transforming node, in a
     /// nested PROTO, or driven through `IS`).
     pub const BODY_FRAME: &str = "transform-not-at-proto-instance-frame";
+    /// B3 (LV2): the PROTO instance's parent frame cannot be composed from
+    /// source: an ancestor is a Billboard, another PROTO / EXTERNPROTO
+    /// instance or another non-transforming-group node ...
+    pub const ANCESTOR_UNKNOWN: &str = "proto-instance-parent-frame-unknown";
+    pub const ANCESTOR_BILLBOARD: &str = "proto-instance-under-billboard";
+    /// ... an ancestor is USEd elsewhere (several paths) ...
+    pub const ANCESTOR_SHARED: &str = "proto-instance-ancestor-used-elsewhere";
+    /// ... receives ROUTE events (animated) ...
+    pub const ANCESTOR_ROUTED: &str = "proto-instance-ancestor-animated";
+    /// ... or its frame fields cannot be read.
+    pub const ANCESTOR_UNREADABLE: &str = "proto-instance-ancestor-frame-unreadable";
+    /// The composed parent frame is singular.
+    pub const PARENT_SINGULAR: &str = "proto-instance-parent-frame-singular";
+    /// Rotate only: the composed parent frame is not a rotation times a
+    /// uniform scale (uneven scale, skewing scaleOrientation, mirror).
+    pub const PARENT_SKEWED: &str = "proto-instance-parent-frame-skewed";
 }
 
 /// Which manipulation the target is asked for: each tool needs ITS field
@@ -394,6 +410,249 @@ fn body_frame_node(p: &ParseResult, from: u64, to: u64) -> Result<&Node, &'stati
     Err("it is not directly in the body of a top-level PROTO")
 }
 
+/// The numeric components of a field, all finite, or `None`.
+fn nums(f: &field_edit::FieldDescriptor) -> Option<Vec<f64>> {
+    f.components
+        .iter()
+        .map(|c| match c.value {
+            ComponentValue::Num(v) if v.is_finite() => Some(v),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The five frame fields of a Transform: authored values, or ISO defaults
+/// when absent.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Frame {
+    pub translation: [f64; 3],
+    pub center: [f64; 3],
+    pub rotation: [f64; 4],
+    pub scale: [f64; 3],
+    pub scale_orientation: [f64; 4],
+}
+
+/// The frame fields of `fields` (a Transform): authored ones must be
+/// readable (exactly one, editable, numeric); absent ones take their ISO
+/// defaults.
+fn frame_of(fields: &field_edit::NodeFields) -> Result<Frame, Refusal> {
+    let frame = |name: &str, default: &[f64]| -> Result<Vec<f64>, Refusal> {
+        let named: Vec<_> = fields.fields.iter().filter(|f| f.name == name).collect();
+        match named.as_slice() {
+            [] => Ok(default.to_vec()),
+            [f] if f.editable => nums(f)
+                .filter(|v| v.len() == default.len())
+                .ok_or_else(|| refuse(reason::FRAME_UNREADABLE, format!("{name} cannot be read."))),
+            _ => Err(refuse(
+                reason::FRAME_UNREADABLE,
+                format!("{name} cannot be read, so the object's frame is unknown."),
+            )),
+        }
+    };
+    let t = frame("translation", &[0.0, 0.0, 0.0])?;
+    let c = frame("center", &[0.0, 0.0, 0.0])?;
+    let r = frame("rotation", &[0.0, 0.0, 1.0, 0.0])?;
+    let s = frame("scale", &[1.0, 1.0, 1.0])?;
+    let sr = frame("scaleOrientation", &[0.0, 0.0, 1.0, 0.0])?;
+    Ok(Frame {
+        translation: [t[0], t[1], t[2]],
+        center: [c[0], c[1], c[2]],
+        rotation: [r[0], r[1], r[2], r[3]],
+        scale: [s[0], s[1], s[2]],
+        scale_orientation: [sr[0], sr[1], sr[2], sr[3]],
+    })
+}
+
+/// A 4x4 affine matrix, column-major (`m[c * 4 + r]`, the order
+/// `protocol::gizmo::mat_mul` uses).
+pub type Mat4 = [f64; 16];
+
+pub const IDENTITY4: Mat4 = [
+    1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+];
+
+fn mul4(a: &Mat4, b: &Mat4) -> Mat4 {
+    let mut o = [0.0; 16];
+    for c in 0..4 {
+        for r in 0..4 {
+            o[c * 4 + r] = (0..4).map(|k| a[k * 4 + r] * b[c * 4 + k]).sum();
+        }
+    }
+    o
+}
+
+/// The matrix of a Transform frame (ISO/IEC 14772-1 6.52):
+/// `T · C · R · SR · S · SR⁻¹ · C⁻¹`. `None` for a zero rotation axis.
+pub fn frame_matrix(f: &Frame) -> Option<Mat4> {
+    let r = rotation(
+        [f.rotation[0], f.rotation[1], f.rotation[2]],
+        f.rotation[3],
+    )?;
+    let sr = rotation(
+        [
+            f.scale_orientation[0],
+            f.scale_orientation[1],
+            f.scale_orientation[2],
+        ],
+        f.scale_orientation[3],
+    )?;
+    let srt = transpose(&sr);
+    // L = R · SR · S · SRᵀ, column by column.
+    let cols = [0, 1, 2].map(|c| {
+        let e = apply(&srt, [0, 1, 2].map(|i| if i == c { 1.0 } else { 0.0 }));
+        let s = [e[0] * f.scale[0], e[1] * f.scale[1], e[2] * f.scale[2]];
+        apply(&r, apply(&sr, s))
+    });
+    let lc = [0, 1, 2].map(|i| (0..3).map(|c| cols[c][i] * f.center[c]).sum::<f64>());
+    let mut m = IDENTITY4;
+    for c in 0..3 {
+        for i in 0..3 {
+            m[c * 4 + i] = cols[c][i];
+        }
+    }
+    for i in 0..3 {
+        m[12 + i] = f.translation[i] + f.center[i] - lc[i];
+    }
+    m.iter().all(|v| v.is_finite()).then_some(m)
+}
+
+fn det3(m: &Mat4) -> f64 {
+    let a = |r: usize, c: usize| m[c * 4 + r];
+    a(0, 0) * (a(1, 1) * a(2, 2) - a(1, 2) * a(2, 1)) - a(0, 1) * (a(1, 0) * a(2, 2) - a(1, 2) * a(2, 0))
+        + a(0, 2) * (a(1, 0) * a(2, 1) - a(1, 1) * a(2, 0))
+}
+
+/// Whether the linear part of `m` is a rotation times a uniform positive
+/// scale (angles and circles survive it unchanged).
+fn conformal(m: &Mat4) -> bool {
+    let col = |c: usize| [m[c * 4], m[c * 4 + 1], m[c * 4 + 2]];
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let cs = [col(0), col(1), col(2)];
+    let s2 = (dot(cs[0], cs[0]) + dot(cs[1], cs[1]) + dot(cs[2], cs[2])) / 3.0;
+    if !s2.is_finite() || s2 <= 1e-24 {
+        return false;
+    }
+    let tol = 1e-6 * s2;
+    (0..3).all(|i| {
+        (0..3).all(|j| {
+            let want = if i == j { s2 } else { 0.0 };
+            (dot(cs[i], cs[j]) - want).abs() <= tol
+        })
+    }) && det3(m) > 0.0
+}
+
+/// B3 (LV2): the parent frame of a PROTO INSTANCE, composed from its
+/// proven document ancestors (`ancestors`: exact node spans, the direct
+/// parent first, as the runtime chain proof returned them). Each must be a
+/// node of the document scene (not a PROTO body), and either a `Transform`
+/// whose frame fields are read from source, or a frame-neutral group
+/// (`Group`, `Anchor`, `Collision`). A DEF on an ancestor must be unique,
+/// never USEd (several paths) and never a ROUTE destination (animated). A
+/// Billboard, any other node type, or a PROTO / EXTERNPROTO instance is
+/// refused with the reason: its frame is not known from source. Rotate also
+/// needs a conformal frame (a ring must stay a circle): an uneven scale or
+/// a scaleOrientation that skews the frame, or a mirror, is refused.
+///
+/// The result is `A_outer · … · A_parent` (column-major): it maps the
+/// instance's coordinates (= the body Transform's parent coordinates) to
+/// world coordinates. Never a guess: every factor is a source value.
+pub fn instance_parent_frame(
+    src: &str,
+    ancestors: &[(u64, u64)],
+    tool: Tool,
+) -> Result<Mat4, Refusal> {
+    let p = parse(src);
+    let verb = tool.verb();
+    let mut m = IDENTITY4;
+    for &(from, to) in ancestors {
+        let fields = field_edit::inspect_node_fields(&p, src, from, to);
+        let Some(ty) = fields.node_type.clone() else {
+            return Err(refuse(
+                reason::ANCESTOR_UNREADABLE,
+                format!("The PROTO instance cannot be {verb} with the handles: one of the nodes it is inside cannot be read from source. Use the Inspector."),
+            ));
+        };
+        if fields.shared.is_some() {
+            return Err(refuse(
+                reason::ANCESTOR_UNKNOWN,
+                format!("The PROTO instance cannot be {verb} with the handles: it is inside another PROTO definition, whose frame is not known from source. Use the Inspector."),
+            ));
+        }
+        if let Some(def) = &fields.def {
+            let (defs, uses, routes) = name_uses(&p, def);
+            if defs != 1 || uses > 0 {
+                return Err(refuse(
+                    reason::ANCESTOR_SHARED,
+                    format!("The PROTO instance cannot be {verb} with the handles: it is inside {ty} {def}, which is USEd elsewhere (the instance is drawn on several paths, so which frame is meant is not proven). Use the Inspector."),
+                ));
+            }
+            if routes > 0 {
+                return Err(refuse(
+                    reason::ANCESTOR_ROUTED,
+                    format!("The PROTO instance cannot be {verb} with the handles: it is inside {ty} {def}, which receives ROUTE events (it may be animated, so its source frame is not its rendered frame). Use the Inspector."),
+                ));
+            }
+        }
+        let a = match ty.as_str() {
+            "Transform" => {
+                if !fields.editable {
+                    return Err(refuse(
+                        reason::ANCESTOR_UNREADABLE,
+                        format!("The PROTO instance cannot be {verb} with the handles: the frame of the Transform it is inside cannot be read from source. Use the Inspector."),
+                    ));
+                }
+                let f = frame_of(&fields).map_err(|_| {
+                    refuse(
+                        reason::ANCESTOR_UNREADABLE,
+                        format!("The PROTO instance cannot be {verb} with the handles: the frame of the Transform it is inside cannot be read from source. Use the Inspector."),
+                    )
+                })?;
+                frame_matrix(&f).ok_or_else(|| {
+                    refuse(
+                        reason::ANCESTOR_UNREADABLE,
+                        format!("The PROTO instance cannot be {verb} with the handles: a Transform it is inside has a zero rotation axis. Use the Inspector."),
+                    )
+                })?
+            }
+            t if is_frame_neutral(t) => IDENTITY4,
+            "Billboard" => {
+                return Err(refuse(
+                    reason::ANCESTOR_BILLBOARD,
+                    format!("The PROTO instance cannot be {verb} with the handles: it is inside a Billboard, which turns toward the viewer (its frame is not known from source). Use the Inspector."),
+                ))
+            }
+            t if !crate::node_schema::is_vrml97_node(t) => {
+                return Err(refuse(
+                    reason::ANCESTOR_UNKNOWN,
+                    format!("The PROTO instance cannot be {verb} with the handles: it is inside an instance of PROTO/EXTERNPROTO {t}, whose frame is not known from source. Use the Inspector."),
+                ))
+            }
+            t => {
+                return Err(refuse(
+                    reason::ANCESTOR_UNKNOWN,
+                    format!("The PROTO instance cannot be {verb} with the handles: it is inside a {t} node, whose frame the handles cannot follow. Use the Inspector."),
+                ))
+            }
+        };
+        m = mul4(&a, &m);
+    }
+    let d = det3(&m);
+    let size = (0..12).map(|i| m[i].abs()).fold(0.0, f64::max);
+    if !m.iter().all(|v| v.is_finite()) || !d.is_finite() || d.abs() <= 1e-12 * size.powi(3).max(1e-300) {
+        return Err(refuse(
+            reason::PARENT_SINGULAR,
+            format!("The PROTO instance cannot be {verb} with the handles: the frame it is inside is collapsed (a zero scale). Use the Inspector."),
+        ));
+    }
+    if tool == Tool::Rotate && !conformal(&m) {
+        return Err(refuse(
+            reason::PARENT_SKEWED,
+            "The PROTO instance cannot be rotated with the rings: the frame it is inside is scaled unevenly or mirrored (scale / scaleOrientation), so a rotation ring cannot be drawn faithfully there. Use the Inspector, or Move / Scale.",
+        ));
+    }
+    Ok(m)
+}
+
 /// Whether the gizmo may move the node at `[from, to)`, and where it is.
 pub fn translate_target(src: &str, from: u64, to: u64) -> Result<Target, Refusal> {
     manip_target(src, from, to, Tool::Move)
@@ -509,42 +768,16 @@ fn target_in(
             format!("{name} cannot be edited ({}).", tf.reason),
         ));
     }
-    let nums = |f: &field_edit::FieldDescriptor| -> Option<Vec<f64>> {
-        f.components
-            .iter()
-            .map(|c| match c.value {
-                ComponentValue::Num(v) if v.is_finite() => Some(v),
-                _ => None,
-            })
-            .collect()
-    };
     if nums(tf).is_none() {
         return Err(refuse(tool.read_only(), format!("{name} is not numeric.")));
     }
-    // The frame fields: authored ones must be readable; absent ones take
-    // their ISO defaults.
-    let frame = |name: &str, default: &[f64]| -> Result<Vec<f64>, Refusal> {
-        match named(name).as_slice() {
-            [] => Ok(default.to_vec()),
-            [f] if f.editable => nums(f)
-                .filter(|v| v.len() == default.len())
-                .ok_or_else(|| refuse(reason::FRAME_UNREADABLE, format!("{name} cannot be read."))),
-            _ => Err(refuse(
-                reason::FRAME_UNREADABLE,
-                format!("{name} cannot be read, so the object's frame is unknown."),
-            )),
-        }
-    };
-    let t = frame("translation", &[0.0, 0.0, 0.0])?;
-    let c = frame("center", &[0.0, 0.0, 0.0])?;
-    let r = frame("rotation", &[0.0, 0.0, 1.0, 0.0])?;
-    let s = frame("scale", &[1.0, 1.0, 1.0])?;
-    let sr = frame("scaleOrientation", &[0.0, 0.0, 1.0, 0.0])?;
-    let translation = [t[0], t[1], t[2]];
-    let center = [c[0], c[1], c[2]];
-    let rotation = [r[0], r[1], r[2], r[3]];
-    let scale = [s[0], s[1], s[2]];
-    let scale_orientation = [sr[0], sr[1], sr[2], sr[3]];
+    let Frame {
+        translation,
+        center,
+        rotation,
+        scale,
+        scale_orientation,
+    } = frame_of(&fields)?;
     let origin = origin_of(translation, center, rotation, scale, scale_orientation)
         .ok_or_else(|| refuse(reason::FRAME_UNREADABLE, "The rotation axis is zero."))?;
     if tool == Tool::Scale && scale.iter().any(|v| *v <= 0.0) {

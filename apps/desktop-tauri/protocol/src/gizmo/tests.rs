@@ -412,3 +412,75 @@ fn resizing_the_canvas_keeps_the_ring_angle() {
         assert!((got - th).abs() < 1e-6);
     }
 }
+
+// ---- B3 (LV2): handles in a PROTO instance's parent frame ------------------
+
+/// A conformal parent frame: rotate, scale 2, translate.
+fn parent() -> [f64; 16] {
+    let mut s = [0.0; 16];
+    s[0] = 2.0;
+    s[5] = 2.0;
+    s[10] = 2.0;
+    s[15] = 1.0;
+    mat_mul(
+        &translate([1.0, -3.0, 0.5]),
+        &mat_mul(&rot([0.3, 1.0, 0.2], 0.8), &s),
+    )
+}
+
+#[test]
+fn the_world_frame_is_the_unchanged_identity() {
+    let p = [0.4, -0.3, 0.2];
+    assert_eq!(frame_point(None, p), p);
+    assert_eq!(frame_dir(None, p), p);
+    for cam in [front(), oblique()] {
+        assert_eq!(ring_layout(&cam, p), ring_layout_in(&cam, p, None));
+    }
+    let m = parent();
+    assert!(close(frame_point(Some(&m), [0.0; 3])[1], -3.0, 1e-12));
+    let (u, l) = unit_len(frame_dir(Some(&m), [1.0, 0.0, 0.0])).unwrap();
+    assert!(close(l, 2.0, 1e-12) && close(dot(u, u), 1.0, 1e-12));
+}
+
+#[test]
+fn parent_frame_rings_measure_the_parent_angle() {
+    // A point at parent-frame angle th on the ring about the PARENT axis
+    // reads back as th: the committed Rot(axis, th) is the one drawn.
+    let m = parent();
+    let pivot_local = [0.2, 0.1, -0.4];
+    let pivot = frame_point(Some(&m), pivot_local);
+    let cam = oblique();
+    let lay = ring_layout_in(&cam, pivot, Some(&m)).unwrap();
+    let mut checked = 0;
+    for ring in &lay.rings {
+        if !ring.enabled {
+            continue;
+        }
+        for th in [-2.5, -0.7, 0.0, 0.9, 3.0] {
+            // The ring point in PARENT coordinates, radius in parent units.
+            let local = ring_point(pivot_local, ring.axis, lay.radius / 2.0, th);
+            let (x, y) = project(&cam, frame_point(Some(&m), local)).unwrap();
+            let got = ring_angle_in(&cam, pivot, Some(&m), ring.axis, lay.radius, x, y).unwrap();
+            assert!(angle_step(th, got).abs() < 1e-6, "{:?} {th} {got}", ring.axis);
+            checked += 1;
+        }
+    }
+    assert!(checked >= 10);
+}
+
+#[test]
+fn parent_frame_axis_drags_return_parent_units() {
+    // The Move handle runs along the image of the parent axis; the world
+    // parameter divided by the frame's stretch is the parent-unit change.
+    let m = parent();
+    let origin_local = [0.5, 0.25, -1.0];
+    let origin = frame_point(Some(&m), origin_local);
+    let cam = oblique();
+    for axis in Axis::ALL {
+        let (u, len) = unit_len(frame_dir(Some(&m), axis.unit())).unwrap();
+        let target_local = add_scaled(origin_local, axis.unit(), 0.75);
+        let (x, y) = project(&cam, frame_point(Some(&m), target_local)).unwrap();
+        let t = axis_param(&cam, origin, u, x, y).unwrap();
+        assert!(close(t / len, 0.75, 1e-6), "{axis:?} {}", t / len);
+    }
+}

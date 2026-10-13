@@ -1164,6 +1164,16 @@ pub fn Viewport() -> impl IntoView {
             <div class="viewport-stage" hidden=move || u.native.with(|s| s.native_shown())>
                 <x3d-canvas id="viewport" class:picking=move || u.pick_mode.get() || u.move_mode.get() || u.rotate_mode.get() || u.scale_mode.get() splashScreen="false" contextMenu="false" notifications="false"
                     timings="false" cache="false"></x3d-canvas>
+                // B3 (LV2): the OTHER instances of a selected shared PROTO
+                // body node -- an edit of the definition changes them too.
+                // Dashed and amber, so it never reads as the selection.
+                <svg id="shared-outline" class="shared-outline" data-state="hidden" data-count="0" aria-hidden="true">
+                    <path id="hl-shared-halo" class="hl-shared-halo"></path>
+                    <path id="hl-shared-line" class="hl-shared-line"></path>
+                </svg>
+                // ... and which PROTO / how many other instances (set by
+                // `highlight.rs` while the dashed outline is shown).
+                <div class="shared-outline-note" id="shared-outline-note" role="status" hidden></div>
                 // B2: the selection outline (view state only), under the
                 // gizmo. Drawn from the renderer's camera by `highlight.rs`;
                 // it never takes pointer input.

@@ -767,3 +767,127 @@ fn nested_transforms_are_refused_for_rotate_and_scale() {
         );
     }
 }
+
+/// Apply a column-major affine matrix to a point.
+fn xform(m: &Mat4, p: [f64; 3]) -> [f64; 3] {
+    [0, 1, 2].map(|r| m[r] * p[0] + m[4 + r] * p[1] + m[8 + r] * p[2] + m[12 + r])
+}
+
+fn close3(a: [f64; 3], b: [f64; 3]) -> bool {
+    (0..3).all(|i| (a[i] - b[i]).abs() <= 1e-9)
+}
+
+/// The span of the `k`-th node of `ty` that is NOT the PROTO instance
+/// itself, as the runtime chain proof would list it.
+fn span_of(src: &str, ty: &str, k: usize) -> (u64, u64) {
+    spans(src, ty)[k]
+}
+
+#[test]
+fn instance_parent_frame_composes_proven_source_transforms_outward() {
+    // P inside Group > Transform(T1) > Transform(T2): the parent frame is
+    // A(T_outer) · A(G) · A(T_inner), each from its source fields.
+    let src = format!(
+        "{H}PROTO P [] {{ Transform {{ translation 0 0 0 }} }}\n\
+         Transform {{ translation 1 2 3 rotation 0 0 1 1.5707963267948966 scale 2 2 2 children [\n\
+           Group {{ children [\n\
+             Transform {{ translation 0 -3 0 center 1 0 0 rotation 0 1 0 0.5 children [ P {{}} ] }}\n\
+           ] }}\n\
+         ] }}\n"
+    );
+    let ts = spans(&src, "Transform");
+    // [body, outer, inner] in walk order.
+    let (outer, inner) = (ts[1], ts[2]);
+    let group = span_of(&src, "Group", 0);
+    for tool in [Tool::Move, Tool::Rotate, Tool::Scale] {
+        let m = instance_parent_frame(&src, &[inner, group, outer], tool).unwrap();
+        // The inner frame maps its center (1 0 0) to T + C = (1 -3 0).
+        let c = xform(&m, [1.0, 0.0, 0.0]);
+        // Outer: rotate 90° about Z, scale 2, translate (1 2 3):
+        // (1, -3, 0) -> scale (2, -6, 0) -> rot (6, 2, 0) -> (7, 4, 3).
+        assert!(close3(c, [7.0, 4.0, 3.0]), "{c:?}");
+    }
+    // No ancestors: the world.
+    assert_eq!(instance_parent_frame(&src, &[], Tool::Move).unwrap(), IDENTITY4);
+    // The same matrix the frame formula gives for a single Transform.
+    let one = instance_parent_frame(&src, &[outer], Tool::Move).unwrap();
+    assert!(close3(xform(&one, [0.0, 0.0, 0.0]), [1.0, 2.0, 3.0]));
+    assert!(close3(xform(&one, [1.0, 0.0, 0.0]), [1.0, 4.0, 3.0]));
+}
+
+#[test]
+fn instance_parent_frame_refuses_what_source_cannot_prove() {
+    let cases: [(&str, &str, &str, Tool); 7] = [
+        (
+            "Billboard { children [ P {} ] }",
+            "Billboard",
+            reason::ANCESTOR_BILLBOARD,
+            Tool::Move,
+        ),
+        (
+            "DEF G Transform { translation 1 0 0 children [ P {} ] } Transform { children USE G }",
+            "Transform",
+            reason::ANCESTOR_SHARED,
+            Tool::Move,
+        ),
+        (
+            "DEF G Transform { translation 1 0 0 children [ P {} ] } DEF I PositionInterpolator {} ROUTE I.value_changed TO G.set_translation",
+            "Transform",
+            reason::ANCESTOR_ROUTED,
+            Tool::Move,
+        ),
+        (
+            "Q { kids [ P {} ] }",
+            "Q",
+            reason::ANCESTOR_UNKNOWN,
+            Tool::Move,
+        ),
+        (
+            "E { kids [ P {} ] }",
+            "E",
+            reason::ANCESTOR_UNKNOWN,
+            Tool::Scale,
+        ),
+        // An uneven scale under a rotation skews the frame: no faithful
+        // rotation ring (Move and Scale stay exact, checked below).
+        (
+            "Transform { rotation 0 0 1 0.7 scale 1 3 1 children [ P {} ] }",
+            "Transform",
+            reason::PARENT_SKEWED,
+            Tool::Rotate,
+        ),
+        (
+            "Transform { scale 0 1 1 children [ P {} ] }",
+            "Transform",
+            reason::PARENT_SINGULAR,
+            Tool::Move,
+        ),
+    ];
+    for (scene, ty, want, tool) in cases {
+        let src = format!(
+            "{H}PROTO P [] {{ Transform {{ translation 0 0 0 }} }}\nPROTO Q [ exposedField MFNode kids [] ] {{ Group {{ children IS kids }} }}\nEXTERNPROTO E [ exposedField MFNode kids ] \"e.wrl\"\n{scene}\n"
+        );
+        // The ancestor is the first node of `ty` outside the PROTO bodies.
+        let all = spans(&src, ty);
+        let at = if ty == "Transform" { all[1] } else { all[all.len() - 1] };
+        let got = instance_parent_frame(&src, &[at], tool).unwrap_err();
+        assert_eq!(got.reason, want, "{scene}");
+        assert!(got.message.contains("Inspector"), "{}", got.message);
+    }
+    // The skewed frame is still exact for Move and Scale.
+    let src = format!(
+        "{H}PROTO P [] {{ Transform {{ translation 0 0 0 }} }}\nTransform {{ rotation 0 0 1 0.7 scale 1 3 1 children [ P {{}} ] }}\n"
+    );
+    let at = spans(&src, "Transform")[1];
+    assert!(instance_parent_frame(&src, &[at], Tool::Move).is_ok());
+    assert!(instance_parent_frame(&src, &[at], Tool::Scale).is_ok());
+    // A mirror: no rotation ring either.
+    let src = format!(
+        "{H}PROTO P [] {{ Transform {{ translation 0 0 0 }} }}\nTransform {{ scale -1 1 1 children [ P {{}} ] }}\n"
+    );
+    let at = spans(&src, "Transform")[1];
+    assert_eq!(
+        instance_parent_frame(&src, &[at], Tool::Rotate).unwrap_err().reason,
+        reason::PARENT_SKEWED
+    );
+}

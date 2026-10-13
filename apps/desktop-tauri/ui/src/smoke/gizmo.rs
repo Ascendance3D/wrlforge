@@ -1404,18 +1404,219 @@ async fn proto_body(tag: &str, r: &mut R) -> Option<()> {
             && u.shared_ok.with_untracked(|v| v.iter().any(|(_, n)| n == "Car")),
         format!("rendered {rend:?} · @{from} in [{a0}, {a1}) · {old:?} → {new:?} · {line:?}"),
     );
+    // ---- B3 (LV2): continuation, the other instance, the nested instance --
+    // Without any new pick, the handles come back on the SAME instance:
+    // Rust carried it through the edit's exact changes.
+    let session = t.session;
+    let top_at = |src: &str| -> Option<String> {
+        let b = src.find("}\nCar { }")? + 2;
+        let u = |x: usize| src[..x].encode_utf16().count();
+        Some(format!("node-{}-{}", u(b), u(b + 7)))
+    };
+    let nested_at = |src: &str| -> Option<(u64, u64)> {
+        let b = src.rfind("Car { }")?;
+        let u = |x: usize| src[..x].encode_utf16().count() as u64;
+        Some((u(b), u(b + 7)))
+    };
+    let continued0 = GIZMO.with_borrow(|g| g.continued);
+    let t2 = gz_ready(10_000).await;
+    let x1: f64 = new.parse().unwrap_or(f64::NAN);
+    r.step(
+        &format!("{tag}: after the commit the handles come back WITHOUT a new click on the SAME instance (Rust carried it through the edit), at its new origin"),
+        t2.as_ref().is_some_and(|t2| {
+            t2.instance.as_ref().map(|i| i.item.clone()) == top_at(&after.text)
+                && t2.parent.is_none()
+                && (t2.origin[0] - x1).abs() < 1e-9
+        }) && GIZMO.with_borrow(|g| g.continued) > continued0
+            && crate::pick::instance_hint(session, after.revision).is_some(),
+        format!(
+            "{:?} · want {:?} · continued {continued0} → {} · {}",
+            t2.as_ref().map(|t| (t.instance.clone(), t.origin, t.parent.is_some())),
+            top_at(&after.text),
+            GIZMO.with_borrow(|g| g.continued),
+            crate::element_by_id::<HtmlElement>("gizmo-status")
+                .and_then(|e| e.text_content())
+                .unwrap_or_default()
+        ),
+    );
+    // The OTHER instance (the nested one) is marked as changing too.
+    let others = wait_ms(5000, || {
+        crate::highlight::HIGHLIGHT.with_borrow(|h| {
+            (h.others.len() == 1 && h.shared_drawn == 1).then(|| h.others[0].0.inst)
+        })
+    })
+    .await
+    .flatten();
+    let svg = crate::element_by_id::<web_sys::Element>("shared-outline");
+    let note = crate::element_by_id::<web_sys::Element>("shared-outline-note")
+        .and_then(|e| e.text_content())
+        .unwrap_or_default();
+    r.step(
+        &format!("{tag}: the other instance of PROTO Car gets the secondary (dashed) outline, proven as the NESTED instance; the selection outline stays on the picked one"),
+        others.is_some()
+            && others == nested_at(&after.text)
+            && svg.as_ref().and_then(|e| e.get_attribute("data-state")).as_deref() == Some("shown")
+            && svg.as_ref().and_then(|e| e.get_attribute("data-count")).as_deref() == Some("1")
+            && note.contains("PROTO Car") && note.contains("1 other instance")
+            && crate::highlight::HIGHLIGHT.with_borrow(|h| !h.path.is_empty() && h.target.as_ref().is_some_and(|p| p.inst.map(|(f, _)| f) != others.map(|(f, _)| f))),
+        format!("{others:?} · want {:?} · {note:?}", nested_at(&after.text)),
+    );
+    capture("lv2-proto-move-continued-secondary").await;
+    // A second drag on the continued binding: one more token, same body.
+    let t2 = t2?;
+    still_camera().await?;
+    let (b0, b1) = item_span(&t2.item)?;
+    let before2 = source().await?;
+    let commits = GIZMO.with_borrow(|g| g.commits);
+    let at = press_and_move(Axis::X, 60.0, 5).await?;
+    let rend2 = rendered();
+    real("up", at.0, at.1).await.ok()?;
+    wait_ms(5000, || (GIZMO.with_borrow(|g| g.commits) > commits).then_some(())).await;
+    editor::idle().await;
+    let after2 = source().await?;
+    let (from2, old2, new2) = super::change(&before2.text, &after2.text);
+    let inside2 = (b0..b1).contains(&from2);
+    if after2.text != before2.text && !inside2 {
+        WRONG.set(WRONG.get() + 1);
+    }
+    r.step(
+        &format!("{tag}: a second drag on the continued binding moves the same instance and changes ONE more token inside the PROTO body (one revision)"),
+        after2.revision == before2.revision + 1
+            && inside2
+            && old2 == new
+            && rend2.is_some_and(|v| v[0] > x1 + 0.1)
+            && t2.instance.as_ref().map(|i| i.item.clone()) == top_at(&before2.text),
+        format!("rendered {rend2:?} · @{from2} in [{b0}, {b1}) · {old2:?} → {new2:?}"),
+    );
+    editor::history(true).await;
+    editor::idle().await;
     editor::history(true).await;
     editor::idle().await;
     let undone = text() == before.text;
     editor::history(false).await;
     editor::idle().await;
-    let redone = text() == after.text;
+    editor::history(false).await;
+    editor::idle().await;
+    let redone = text() == after2.text;
     r.step(
-        &format!("{tag}: the shared-definition move is ONE undo step: Undo restores the body, Redo re-applies it"),
+        &format!("{tag}: each shared-definition move is ONE undo step: two Undos restore the exact original bytes, two Redos re-apply both"),
         undone && redone,
         format!("undo {undone} · redo {redone}"),
     );
+    // The NESTED instance (inside Transform { translation 0 -3 0 }): a real
+    // click binds ITS copy; the handles follow its parent frame, composed by
+    // Rust from that Transform's source.
+    let x2: f64 = new2.parse().unwrap_or(f64::NAN);
+    let out = real_select_at([x2, -3.0, 0.0]).await;
+    let picked = out.as_ref().filter(|o| o.is_proven()).and_then(|o| o.item.clone());
+    click("btn-move")?;
+    let t3 = gz_ready(10_000).await;
+    let want_inst = nested_at(&after2.text).map(|(f, t)| format!("node-{f}-{t}"));
+    r.step(
+        &format!("{tag}: a real click on the NESTED instance binds THAT copy: its parent frame (translation 0 -3 0) is composed from source, the handles are drawn at its world origin"),
+        picked.is_some()
+            && t3.as_ref().is_some_and(|t| {
+                Some(&t.item) == picked.as_ref()
+                    && t.instance.as_ref().map(|i| i.item.clone()) == want_inst
+                    && t.parent.is_some_and(|m| m[12] == 0.0 && m[13] == -3.0 && m[14] == 0.0)
+                    && (t.origin_w()[0] - x2).abs() < 1e-9
+                    && t.origin_w()[1] == -3.0
+            }),
+        format!(
+            "{:?} · {:?} · want {want_inst:?} · {}",
+            out.map(|o| (o.status, o.item, o.reason)),
+            t3.as_ref().map(|t| (t.instance.clone(), t.parent, t.origin_w())),
+            crate::element_by_id::<HtmlElement>("gizmo-status")
+                .and_then(|e| e.text_content())
+                .unwrap_or_default()
+        ),
+    );
+    let t3 = t3?;
+    still_camera().await?;
+    let (c0, c1) = item_span(&t3.item)?;
+    let before3 = source().await?;
+    let commits = GIZMO.with_borrow(|g| g.commits);
+    let at = press_and_move(Axis::X, 80.0, 6).await?;
+    let mid3 = source().await?;
+    let rend3 = rendered();
+    capture("lv2-proto-move-nested-drag").await;
+    real("up", at.0, at.1).await.ok()?;
+    wait_ms(5000, || (GIZMO.with_borrow(|g| g.commits) > commits).then_some(())).await;
+    editor::idle().await;
+    let after3 = source().await?;
+    let (from3, old3, new3) = super::change(&before3.text, &after3.text);
+    let inside3 = (c0..c1).contains(&from3);
+    if after3.text != before3.text && !inside3 {
+        WRONG.set(WRONG.get() + 1);
+    }
+    let t4 = gz_ready(10_000).await;
+    r.step(
+        &format!("{tag}: dragging the nested instance's X handle previews on it alone and the release changes ONE token of the shared body; the handles continue on the nested instance"),
+        mid3 == before3
+            && rend3.is_some_and(|v| v[0] > x2 + 0.1)
+            && after3.revision == before3.revision + 1
+            && inside3
+            && old3 == new2
+            && t4.as_ref().is_some_and(|t| {
+                t.instance.as_ref().map(|i| i.item.clone())
+                    == nested_at(&after3.text).map(|(f, t)| format!("node-{f}-{t}"))
+                    && t.parent.is_some()
+            }),
+        format!("rendered {rend3:?} · @{from3} in [{c0}, {c1}) · {old3:?} → {new3:?} · {:?}", t4.map(|t| t.instance)),
+    );
+    let others = wait_ms(5000, || {
+        crate::highlight::HIGHLIGHT.with_borrow(|h| {
+            (h.others.len() == 1 && h.shared_drawn == 1).then(|| h.others[0].0.inst)
+        })
+    })
+    .await
+    .flatten();
+    let top_span = top_at(&after3.text).and_then(|i| item_span(&i));
+    r.step(
+        &format!("{tag}: with the nested instance selected, the TOP-LEVEL instance carries the secondary outline"),
+        others.is_some() && others == top_span,
+        format!("{others:?} · want {top_span:?}"),
+    );
+    capture("lv2-proto-move-nested-secondary").await;
+    editor::history(true).await;
+    editor::idle().await;
+    let undone = text() == after2.text;
+    editor::history(false).await;
+    editor::idle().await;
+    let redone = text() == after3.text;
+    r.step(
+        &format!("{tag}: the nested-instance move is ONE undo step (exact bytes back, Redo re-applies)"),
+        undone && redone,
+        format!("undo {undone} · redo {redone}"),
+    );
+    // Both real clicks selected exactly the body Transform (the item the
+    // Scene Tree names CarXForm), and no commit touched anything else.
+    let body_item = |src: &str| -> Option<String> {
+        let b = src.find("DEF CarXForm")?;
+        let e = b + src[b..].find("\n      }")? + "\n      }".len();
+        let u = |x: usize| src[..x].encode_utf16().count();
+        Some(format!("node-{}-{}", u(b), u(e)))
+    };
+    let wrong_picks = u32::from(picked.as_ref() != body_item(&after2.text).as_ref())
+        + u32::from(item.as_ref() != body_item(&before.text).as_ref());
+    r.step(
+        &format!("{tag}: WRONG_SOURCE_SELECTIONS = 0 (both instance clicks selected exactly the shared body Transform; every commit stayed inside it)"),
+        wrong_picks == 0 && WRONG.get() == 0,
+        format!("2 picks, {} wrong", wrong_picks + WRONG.get()),
+    );
     Some(())
+}
+
+/// A whole-screen capture as evidence (`--smoke-move` harness Xvfb only);
+/// a failure is not a test failure.
+async fn capture(id: &str) {
+    #[derive(serde::Serialize)]
+    struct A<'a> {
+        id: &'a str,
+    }
+    // Let the compositor present the current frame first.
+    ipc::sleep(500).await;
+    let _ = call::<String>("smoke_window_capture", A { id }).await;
 }
 
 /// `node-<from>-<to>` → (from, to).
