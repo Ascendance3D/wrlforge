@@ -288,7 +288,15 @@ pub fn on_window_keydown(ev: web_sys::KeyboardEvent) {
     } else {
         active_element()
     };
-    let field = clipboard::focus_kind(target) == FocusKind::TextField;
+    let kind = clipboard::focus_kind(target);
+    let field = kind == FocusKind::TextField;
+    // B2: node structure commands never fire from a text control: Ctrl+D
+    // while typing in Source must not duplicate the selected node.
+    if kind != FocusKind::Other
+        && matches!(id, CommandId::EditDuplicateNode | CommandId::EditDeleteNode)
+    {
+        return;
+    }
     if field && !FIELD_SAFE.contains(&id) {
         return;
     }
