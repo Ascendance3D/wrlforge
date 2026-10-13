@@ -284,8 +284,11 @@ async fn apply(session: u64, out: p::PickOutcome) -> p::PickOutcome {
             "Nothing selectable under the pointer.".into(),
         )));
     } else {
-        u.pick_message
-            .set(Some(("refused".into(), out.message.clone())));
+        // The exact reason id is shown too: a refusal is never generic.
+        u.pick_message.set(Some((
+            "refused".into(),
+            format!("{} [{}: {}]", out.message, out.status, out.reason),
+        )));
     }
     out
 }

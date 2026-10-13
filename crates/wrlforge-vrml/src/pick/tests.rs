@@ -757,3 +757,214 @@ fn binding_joins_through_the_bom_projection_exactly() {
     // Without the projection the span is not the node.
     assert!(bind(&d.s, &hit, 0, (a, b)).is_err());
 }
+
+// ---- B1: PROTO instance bodies -----------------------------------------------
+
+/// `PROTO Car [] { Transform { children [ Shape {..} ] } }` + instances.
+fn car_doc(instances: usize) -> Doc {
+    let mut d = Doc::new();
+    d.put("PROTO Car [ ] {\n  ");
+    d.open("bt", "Transform { translation 0 1 0 children [ ");
+    d.leaf("bs", "Shape { geometry Box { size 2 1 4 } }");
+    d.close(" ] }");
+    d.put("\n}\n");
+    for i in 0..instances {
+        d.leaf(["i0", "i1", "i2"][i], "Car { }");
+        d.put("\n");
+    }
+    d
+}
+
+/// The adapter's shape for a hit in instance `inst`: body Shape -> body
+/// Transform -> BODY:instance -> scene.
+fn car_graph(d: &Doc, inst: &str) -> G {
+    let mut g = G::default();
+    g.node_in("n1", "Shape", Ctx::ProtoBody, &[d.span("bs")], &["n2"])
+        .node_in(
+            "n2",
+            "Transform",
+            Ctx::ProtoBody,
+            &[d.span("bt")],
+            &["BODY:n3"],
+        )
+        .node("n3", "Car", &[d.span(inst)], &["SCENE"]);
+    g
+}
+
+#[test]
+fn proto_body_hit_resolves_to_the_declaration_node() {
+    let d = car_doc(1);
+    let p = proven(run(&d.s, &car_graph(&d, "i0").hit("n1"), 0));
+    assert_eq!((p.shape.from, p.shape.to), d.span("bs"));
+    assert_eq!(p.shape.node_type, "Shape");
+    // A Box under its own Transform is the simple object, as at top level.
+    assert_eq!(p.role, Role::SimpleObject);
+    assert_eq!((p.logical.from, p.logical.to), d.span("bt"));
+    assert_eq!(
+        slice16(&d.s, p.shape.from, p.shape.to),
+        "Shape { geometry Box { size 2 1 4 } }"
+    );
+}
+
+#[test]
+fn every_instance_of_a_shared_proto_selects_the_same_definition_node() {
+    let d = car_doc(3);
+    let mut items = Vec::new();
+    for inst in ["i0", "i1", "i2"] {
+        let p = proven(run(&d.s, &car_graph(&d, inst).hit("n1"), 0));
+        assert_eq!((p.shape.from, p.shape.to), d.span("bs"), "{inst}");
+        items.push(p.item);
+    }
+    assert!(items.windows(2).all(|w| w[0] == w[1]));
+}
+
+#[test]
+fn proto_body_refusals_wrong_source_selections_zero() {
+    let d = car_doc(1);
+    // No body link to an instance.
+    let mut g = car_graph(&d, "i0");
+    g.node_in(
+        "n2",
+        "Transform",
+        Ctx::ProtoBody,
+        &[d.span("bt")],
+        &["SCENE"],
+    );
+    refused(
+        run(&d.s, &g.hit("n1"), 0),
+        Status::Unsupported,
+        reason::PROTO_INSTANCE,
+    );
+    // The instance's type is not the PROTO whose body holds the node.
+    let mut g = car_graph(&d, "i0");
+    g.node("n3", "Truck", &[d.span("i0")], &["SCENE"]);
+    refused(
+        run(&d.s, &g.hit("n1"), 0),
+        Status::Unsupported,
+        reason::JOIN_TYPE,
+    );
+    // A body chain that skips a level disagrees with containment.
+    let mut g = G::default();
+    g.node_in("n1", "Shape", Ctx::ProtoBody, &[d.span("bs")], &["BODY:n3"])
+        .node("n3", "Car", &[d.span("i0")], &["SCENE"]);
+    refused(
+        run(&d.s, &g.hit("n1"), 0),
+        Status::Unsupported,
+        reason::CHAIN_DISAGREES,
+    );
+    // A body node that is also reachable through a second parent.
+    let mut g = car_graph(&d, "i0");
+    g.node_in(
+        "n2",
+        "Transform",
+        Ctx::ProtoBody,
+        &[d.span("bt")],
+        &["BODY:n3", "BODY:n4"],
+    )
+    .node("n4", "Car", &[d.span("i0")], &["SCENE"]);
+    refused(
+        run(&d.s, &g.hit("n1"), 0),
+        Status::RefusedAmbiguous,
+        reason::SEVERAL_PARENTS,
+    );
+    // Untraced copy (adapter gave no declaration span).
+    let mut g = car_graph(&d, "i0");
+    g.node_in("n1", "Shape", Ctx::ProtoBody, &[], &["n2"]);
+    refused(
+        run(&d.s, &g.hit("n1"), 0),
+        Status::Unsupported,
+        reason::PROTO_INSTANCE,
+    );
+    // A body node shared by USE inside the body: two occurrences.
+    let mut g = car_graph(&d, "i0");
+    g.node_in(
+        "n1",
+        "Shape",
+        Ctx::ProtoBody,
+        &[d.span("bs"), d.span("bs")],
+        &["n2"],
+    );
+    refused(
+        run(&d.s, &g.hit("n1"), 0),
+        Status::RefusedAmbiguous,
+        reason::SEVERAL_OCCURRENCES,
+    );
+    // A stale span (off by one) never joins.
+    let mut g = car_graph(&d, "i0");
+    let (a, b) = d.span("bs");
+    g.node_in("n1", "Shape", Ctx::ProtoBody, &[(a + 1, b)], &["n2"]);
+    assert_eq!(run(&d.s, &g.hit("n1"), 0).status(), Status::Unsupported);
+}
+
+#[test]
+fn a_proto_name_declared_twice_or_nested_never_proves() {
+    // Same name twice: which body the instance uses is not proven.
+    let mut d = Doc::new();
+    d.put("PROTO Car [ ] { Group { } }\n");
+    d.put("PROTO Car [ ] {\n  ");
+    d.open("bt", "Transform { translation 0 1 0 children [ ");
+    d.leaf("bs", "Shape { geometry Box { size 2 1 4 } }");
+    d.close(" ] }");
+    d.put("\n}\n");
+    d.leaf("i0", "Car { }");
+    d.put("\n");
+    refused(
+        run(&d.s, &car_graph(&d, "i0").hit("n1"), 0),
+        Status::Unsupported,
+        reason::CHAIN_DISAGREES,
+    );
+    // A PROTO declared inside another PROTO's body is not top level.
+    let mut d = Doc::new();
+    d.put("PROTO Outer [ ] { PROTO Car [ ] {\n  ");
+    d.open("bt", "Transform { translation 0 1 0 children [ ");
+    d.leaf("bs", "Shape { geometry Box { size 2 1 4 } }");
+    d.close(" ] }");
+    d.put("\n} ");
+    d.leaf("i0", "Car { }");
+    d.put(" }\nOuter { }\n");
+    refused(
+        run(&d.s, &car_graph(&d, "i0").hit("n1"), 0),
+        Status::Unsupported,
+        reason::CHAIN_DISAGREES,
+    );
+}
+
+/// The graph X_ITE 16.5.0 really produced for a click on the Chevy model
+/// (`PROTO chevy57zz_ObjectProto { Group { ... DEF ..._ObjXForm Transform
+/// { children [ Shape ... ] } } }` + one instance), with its world
+/// infrastructure parents, replayed against an authored copy of that shape.
+#[test]
+fn chevy_shape_graph_from_xite_resolves_to_the_body_shape() {
+    let mut d = Doc::new();
+    d.put("PROTO chevy57zz_ObjectProto [\n\t field SFVec3f bboxCenter 0 0 0\n]\n{ # PROTO body \n\t");
+    d.open("g", "Group {\n\t\tbboxCenter IS bboxCenter\n\t\tchildren  [ \n\t\t\t");
+    d.open("t", "DEF chevy57zz_ObjXForm  Transform  {  children [ \n\t\t\t\t# Polygons\n\t\t\t\t");
+    d.leaf("s0", "Shape { geometry Box { } }");
+    d.put("\n\t\t\t\t,\n\t\t\t\t");
+    d.leaf("s1", "Shape { geometry Sphere { } }");
+    d.close("\n\t\t\t] }");
+    d.close("\n\t\t]\n\t}");
+    d.put("\n} # End PROTO body \n ");
+    d.leaf("i", "chevy57zz_ObjectProto { }");
+    d.put(" # Default instance\n");
+    for s in ["s0", "s1"] {
+        let mut g = G::default();
+        g.node_in("n1", "Shape", Ctx::ProtoBody, &[d.span(s)], &["n2"])
+            .node_in("n2", "Transform", Ctx::ProtoBody, &[d.span("t")], &["n3"])
+            .node_in("n3", "Group", Ctx::ProtoBody, &[d.span("g")], &["BODY:n4"])
+            .node("n4", "chevy57zz_ObjectProto", &[d.span("i")], &["n5", "n6", "SCENE"])
+            .node_in("n5", "Group", Ctx::WorldInfrastructure, &[], &[])
+            .node_in("n6", "Layer", Ctx::WorldInfrastructure, &[], &[]);
+        let p = proven(run(&d.s, &g.hit("n1"), 0));
+        assert_eq!((p.shape.from, p.shape.to), d.span(s));
+        assert_eq!((p.role, p.logical.clone()), (Role::Shape, p.shape.clone()));
+        // Without the body root's span (the X_ITE rootNodeStatement gap):
+        // refused, never joined to something else.
+        let mut g2 = G::default();
+        g2.node_in("n1", "Shape", Ctx::ProtoBody, &[d.span(s)], &["n2"])
+            .node_in("n2", "Transform", Ctx::ProtoBody, &[d.span("t")], &["n3"])
+            .node_in("n3", "Group", Ctx::ProtoBody, &[], &["BODY:n4"])
+            .node("n4", "chevy57zz_ObjectProto", &[d.span("i")], &["SCENE"]);
+        refused(run(&d.s, &g2.hit("n1"), 0), Status::Unsupported, reason::PROTO_INSTANCE);
+    }
+}

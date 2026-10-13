@@ -82,7 +82,10 @@ pub fn CreateMenu() -> impl IntoView {
             <button id="btn-create" aria-haspopup="menu"
                 aria-expanded=move || if open.get() { "true" } else { "false" }
                 aria-controls="create-list"
-                title=move || if has_doc() {
+                // D2: no tooltip while the list is open (it covered "Box").
+                title=move || if open.get() {
+                    ""
+                } else if has_doc() {
                     "Create a VRML97 primitive object in the world (Rust inserts the source)"
                 } else {
                     "Open a file or start a New World first"
@@ -113,6 +116,13 @@ pub fn CreateMenu() -> impl IntoView {
                             {prim.label()}
                         </button>
                     }).collect_view()}
+                    // D4: the explicit origin placement.
+                    <label class="create-origin" title="Place new objects at 0 0 0 instead of in front of the camera">
+                        <input type="checkbox" id="create-place-origin"
+                            prop:checked=move || u.place_origin.get()
+                            on:change=move |ev| u.place_origin.set(event_target_checked(&ev))/>
+                        " Place at origin"
+                    </label>
                 </div>
             })}
         </div>

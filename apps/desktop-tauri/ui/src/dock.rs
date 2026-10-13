@@ -240,12 +240,14 @@ pub async fn load() {
             Err(e) => {
                 apply(Layout::default_layout(), false);
                 d.notice.set(Some(format!(
-                    "The saved layout is invalid ({e}); using the Source layout."
+                    "The saved layout is invalid ({e}); using the {} layout.",
+                    lay::PresetId::DEFAULT.label()
                 )));
             }
         },
         Err(e) => d.notice.set(Some(format!(
-            "The saved layout could not be read ({e}); using the Source layout."
+            "The saved layout could not be read ({e}); using the {} layout.",
+            lay::PresetId::DEFAULT.label()
         ))),
     }
 }

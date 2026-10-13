@@ -144,7 +144,7 @@ pub enum PresetId {
 impl PresetId {
     pub const ALL: [PresetId; 2] = [PresetId::Modeling, PresetId::Source];
     /// `preset.source`, the 1.4.5 layout.
-    pub const DEFAULT: PresetId = PresetId::Source;
+    pub const DEFAULT: PresetId = PresetId::Modeling;
 
     pub fn key(self) -> &'static str {
         match self {
@@ -619,8 +619,8 @@ impl Layout {
             PresetId::Modeling => split(
                 Row,
                 vec![
-                    (tabs(&[SceneTree]), 0.17),
-                    (tabs(&[Viewport]), 0.55),
+                    (tabs(&[SceneTree]), 0.16),
+                    (tabs(&[Viewport]), 0.60),
                     (
                         split(
                             Column,
@@ -629,7 +629,7 @@ impl Layout {
                                 (tabs(&[Diagnostics, Source]), 0.45),
                             ],
                         ),
-                        0.28,
+                        0.24,
                     ),
                 ],
             ),
@@ -660,7 +660,7 @@ impl Layout {
             (PresetId::Source, SceneTree) => vec![Home::RootLeft(0.18)],
             (PresetId::Source, Diagnostics) => vec![at(Source, Zone::Bottom, 0.24)],
             (PresetId::Source, Inspector) => vec![at(Viewport, Zone::Bottom, 0.44)],
-            (PresetId::Modeling, SceneTree) => vec![Home::RootLeft(0.17)],
+            (PresetId::Modeling, SceneTree) => vec![Home::RootLeft(0.16)],
             (PresetId::Modeling, Inspector) => vec![
                 at(Diagnostics, Zone::Top, 0.55),
                 at(Source, Zone::Top, 0.55),

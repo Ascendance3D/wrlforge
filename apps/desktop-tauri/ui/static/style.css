@@ -162,6 +162,9 @@ x3d-canvas#viewport { flex: 1 1 auto; width: 100%; min-height: 6rem; display: bl
 .fields .reason { margin-left: .4rem; color: var(--wf-warning-fg); font-size: .74rem; }
 .field-error { margin: .4rem .6rem; padding: .3rem .5rem; background: var(--wf-error-bg); border: 1px solid var(--wf-error-border); color: var(--wf-error-fg); border-radius: 3px; font-size: .85rem; }
 .readonly-note { margin: .3rem .6rem; color: var(--wf-warning-fg); font-size: .85rem; }
+.shared-proto { margin: .3rem .6rem; padding: .4rem .6rem; border: 1px solid var(--wf-warning-fg); border-radius: 4px; font-size: .85rem; }
+.shared-proto p { margin: 0 0 .3rem; }
+.shared-proto .shared-ok { color: var(--wf-warning-fg); margin: 0; }
 
 /* Scrollbars: the standard property (Chromium / WebView2) and the WebKit
    pseudo-elements (WebKitGTK, WKWebView). */

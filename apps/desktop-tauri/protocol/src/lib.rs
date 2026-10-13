@@ -333,6 +333,10 @@ pub struct FieldComponent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct EditableField {
+    /// B1 usability: an SFNode field whose value is one authored node: that
+    /// node's exact Scene Tree item id (the Inspector opens it).
+    #[serde(default)]
+    pub node_item: Option<String>,
     /// Index into the node's body statements; sent back with an edit.
     pub index: u32,
     pub name: String,
@@ -377,6 +381,20 @@ pub struct NodeFields {
     /// VISUAL-4A: the Extrusion view (authored values and defaults).
     #[serde(default)]
     pub extrusion: Option<ExtrusionInfo>,
+    /// B1: the node is part of a PROTO body, so an edit changes the shared
+    /// definition (every instance). Edits need `confirm_shared`.
+    #[serde(default)]
+    pub shared: Option<SharedProto>,
+}
+
+/// B1: the shared PROTO definition a node belongs to.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedProto {
+    pub proto: String,
+    /// Node statements of that type in the document.
+    pub instances: u32,
+    pub name_ambiguous: bool,
 }
 
 /// One Extrusion field: authored or default, never written automatically.
@@ -437,6 +455,9 @@ pub struct ListEditRequest {
     /// The number of tuples the UI showed.
     pub expected_count: u32,
     pub ops: Vec<ListOp>,
+    /// B1: the user confirmed editing a shared PROTO definition.
+    #[serde(default)]
+    pub confirm_shared: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -460,6 +481,9 @@ pub struct AddFieldRequest {
     pub item: String,
     pub field_name: String,
     pub value: AddFieldValue,
+    /// B1: the user confirmed editing a shared PROTO definition.
+    #[serde(default)]
+    pub confirm_shared: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -480,6 +504,9 @@ pub struct FieldEditRequest {
     pub field_index: u32,
     pub field_name: String,
     pub components: Vec<FieldInput>,
+    /// B1: the user confirmed editing a shared PROTO definition.
+    #[serde(default)]
+    pub confirm_shared: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -543,6 +570,9 @@ pub struct CreateRequest {
     pub session: SessionId,
     pub base_revision: u64,
     pub primitive: Primitive,
+    /// D4: where the new object goes (world coordinates); `None` = origin.
+    #[serde(default)]
+    pub at: Option<[f64; 3]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

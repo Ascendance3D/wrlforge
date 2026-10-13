@@ -74,18 +74,26 @@ pub fn start() {
         if let Ok(Some(plan)) =
             ipc::call::<Option<p::SmokePlan>>("smoke_plan", ipc::NoArgs {}).await
         {
+            // D4: the GUI suites were written for origin placement.
+            ui::ui().place_origin.set(true);
             smoke::run(plan).await;
         } else if let Ok(Some(plan)) =
             ipc::call::<Option<smoke::RecoveryPlan>>("smoke_recovery_plan", ipc::NoArgs {}).await
         {
+            // D4: the GUI suites were written for origin placement.
+            ui::ui().place_origin.set(true);
             smoke::run_recovery(plan).await;
         } else if let Ok(Some(plan)) =
             ipc::call::<Option<smoke::DockPlan>>("smoke_dock_plan", ipc::NoArgs {}).await
         {
+            // D4: the GUI suites were written for origin placement.
+            ui::ui().place_origin.set(true);
             smoke::run_dock(plan).await;
         } else if let Ok(Some(plan)) =
             ipc::call::<Option<smoke::MenuPlan>>("smoke_menu_plan", ipc::NoArgs {}).await
         {
+            // D4: the GUI suites were written for origin placement.
+            ui::ui().place_origin.set(true);
             smoke::run_menu(plan).await;
         }
     });

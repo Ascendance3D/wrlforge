@@ -410,7 +410,7 @@ pub(super) async fn run(c: &p::CreateSmoke, r: &mut R) -> Option<()> {
     let stale = call::<p::CreateOutcome>(
         "doc_create",
         A {
-            request: p::CreateRequest {
+            request: p::CreateRequest { at: None,
                 session: a.session,
                 base_revision: cur.saturating_sub(1),
                 primitive: p::Primitive::Cone,

@@ -42,6 +42,7 @@ fn req(src: &str, field: &str, ops: Vec<Op>) -> Request {
     let span = node_span(src, "Extrusion", 0);
     let count = list_of(src, field).tuples.len();
     Request {
+        confirm_shared: false,
         node_from: span.0,
         node_to: span.1,
         field_index: field_index(src, span, field),
@@ -392,6 +393,7 @@ fn identity_and_document_gates_refuse() {
     );
     let span = node_span(&src, "Extrusion", 0);
     let r = Request {
+        confirm_shared: false,
         node_from: span.0,
         node_to: span.1,
         field_index: 0,
@@ -402,15 +404,22 @@ fn identity_and_document_gates_refuse() {
     assert!(matches!(
         plan_list_edit(&src, &r),
         Plan::Refused {
-            reason: fr::NODE_IN_PROTO_SCOPE,
+            reason: fr::SHARED_DEFINITION_UNCONFIRMED,
             ..
         }
     ));
+    // B1: with consent, the shared definition's list is edited.
+    let r = Request {
+        confirm_shared: true,
+        ..r
+    };
+    assert!(matches!(plan_list_edit(&src, &r), Plan::Ready { .. }));
     // IS-bound.
     let src =
         format!("{H}PROTO P [ field MFVec3f s [] ] {{ Extrusion {{ spine IS s }} }}\nP {{}}\n");
     let span = node_span(&src, "Extrusion", 0);
     let r = Request {
+        confirm_shared: false,
         node_from: span.0,
         node_to: span.1,
         field_index: 0,
@@ -423,6 +432,7 @@ fn identity_and_document_gates_refuse() {
     let src = format!("{H}Extrusion {{ spine [ 0 0 0, 0 1 0 ] spine [ 0 0 0, 0 2 0 ] }}\n");
     let span = node_span(&src, "Extrusion", 0);
     let r = Request {
+        confirm_shared: false,
         node_from: span.0,
         node_to: span.1,
         field_index: 0,
@@ -461,6 +471,7 @@ fn add_field_authors_one_absent_field_on_request() {
         plan_add_field(
             &src,
             &AddRequest {
+                confirm_shared: false,
                 node_from: span.0,
                 node_to: span.1,
                 field_name: name.into(),
@@ -538,6 +549,7 @@ fn add_field_authors_one_absent_field_on_request() {
     match plan_add_field(
         &src,
         &AddRequest {
+            confirm_shared: false,
             node_from: span.0,
             node_to: span.1,
             field_name: "ccw".into(),
@@ -576,6 +588,7 @@ fn single_tuple_fields_are_added_only_on_request() {
     let src = "#VRML V2.0 utf8\nDEF A Transform {\n  translation 1 2 3\n  children [ ]\n}\n";
     let (f, t) = (16u64, src.encode_utf16().count() as u64 - 1);
     let req = |name: &str, v: &[&str]| AddRequest {
+        confirm_shared: false,
         node_from: f,
         node_to: t,
         field_name: name.into(),

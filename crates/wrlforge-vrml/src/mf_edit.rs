@@ -306,6 +306,8 @@ pub struct Request {
     /// The number of tuples the caller saw; any other count is refused.
     pub expected_count: usize,
     pub ops: Vec<Op>,
+    /// B1: the user confirmed editing a shared PROTO definition.
+    pub confirm_shared: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -676,7 +678,7 @@ fn locate<'a>(
     to: u64,
     want: Option<(&str, Option<&str>)>,
 ) -> Result<(&'a Node, &'a Field, ListSpec, Option<Bounds>), &'static str> {
-    let node = node_gate(p, req.node_from, to)?;
+    let node = node_gate(p, req.node_from, to, req.confirm_shared)?;
     if let Some((ty, def)) = want {
         if node.node_type != ty || node.def.as_deref() != def {
             return Err(fr::ROUND_TRIP_FAILED);
@@ -816,7 +818,7 @@ pub fn plan_list_edit(src: &str, req: &Request) -> Plan {
             "The node could not be proven after the edit.",
         );
     };
-    if again.in_proto_scope || again.node.node_type != ty || again.node.def != def {
+    if again.other_proto_scope() || again.node.node_type != ty || again.node.def != def {
         return refused(fr::ROUND_TRIP_FAILED, "The node changed identity.");
     }
     let lexemes: Vec<Vec<String>> = model
@@ -863,6 +865,8 @@ pub struct AddRequest {
     pub node_to: u64,
     pub field_name: String,
     pub value: AddValue,
+    /// B1: the user confirmed editing a shared PROTO definition.
+    pub confirm_shared: bool,
 }
 
 /// Plan the insertion of `field_name value` as the LAST statement of the
@@ -872,7 +876,7 @@ pub struct AddRequest {
 /// what the user chose; nothing else is written.
 pub fn plan_add_field(src: &str, req: &AddRequest) -> Plan {
     let p = parse(src);
-    let node = match node_gate(&p, req.node_from, req.node_to) {
+    let node = match node_gate(&p, req.node_from, req.node_to, req.confirm_shared) {
         Ok(n) => n,
         Err(r) => return refused(r, reason_text(r)),
     };
@@ -1012,7 +1016,7 @@ pub fn plan_add_field(src: &str, req: &AddRequest) -> Plan {
         && match found.as_slice() {
             [again] => {
                 let n = again.node;
-                !again.in_proto_scope
+                !again.other_proto_scope()
                     && n.node_type == node.node_type
                     && n.def == node.def
                     && n.fields.len() == node.fields.len() + 1

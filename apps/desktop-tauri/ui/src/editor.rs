@@ -280,6 +280,12 @@ pub async fn history(undo: bool) {
     match call::<p::HistoryOutcome>(cmd, A { session, item }).await {
         Ok(p::HistoryOutcome::Applied { state, view, item }) => {
             adopt_change(&state, view);
+            // D5: the status line names the revision now shown.
+            ui::flash(&format!(
+                "{} (revision {}).",
+                if undo { "Undone" } else { "Redone" },
+                state.revision
+            ));
             if let Some(sel) = carry_selection(sel, item, state.revision) {
                 ui::inspect(sel).await;
             }

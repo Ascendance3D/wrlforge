@@ -302,6 +302,7 @@ fn anim_cycle_interval_edit_changes_one_token_and_undo_restores() {
 
         let out = svc
             .edit_field(&p::FieldEditRequest {
+                confirm_shared: false,
                 session: doc.session,
                 base_revision: a.revision,
                 item: ts.id.clone(),
@@ -366,6 +367,7 @@ fn shared_material_edit_changes_only_definition_token_and_keeps_use() {
 
     let out = svc
         .edit_field(&p::FieldEditRequest {
+            confirm_shared: false,
             session: doc.session,
             base_revision: a.revision,
             item: mat.id.clone(),

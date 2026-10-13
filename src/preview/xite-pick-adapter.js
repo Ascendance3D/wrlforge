@@ -213,6 +213,67 @@
       };
     }
 
+    // B1 -- PROTO instance provenance. X_ITE builds every PROTO instance body
+    // by copying the declaration body's nodes (X3DNode.prototype.copy). While
+    // -- and only while -- one provenance parse owns the parser hook, `copy`
+    // is wrapped so every copy records the ONE node it was copied from. A
+    // runtime node of an instance body is then joined to the exact span of
+    // its declaration statement. Optional: when the hook cannot be installed,
+    // is displaced, or one copy result is claimed by two originals, PROTO
+    // bodies simply have no provenance (every such pick refuses).
+    function installCopyHook(token) {
+      try {
+        const NodeProto = X3D.X3DNode && X3D.X3DNode.prototype;
+        if (!NodeProto || !Object.prototype.hasOwnProperty.call(NodeProto, 'copy')
+          || typeof NodeProto.copy !== 'function') return;
+        const BaseNode = X3D.X3DBaseNode;
+        const capture = token.capture;
+        const original = NodeProto.copy;
+        capture.copies = new WeakMap();
+        capture.copyConflict = new WeakSet();
+        const wrapper = function wrlforgeCopy() {
+          const copy = original.apply(this, arguments); // exceptions propagate unchanged
+          try {
+            if (!capture.closed && copy && copy !== this && copy instanceof BaseNode) {
+              const prev = capture.copies.get(copy);
+              if (prev && prev !== this) capture.copyConflict.add(copy);
+              else capture.copies.set(copy, this);
+            }
+          } catch (e) {
+            capture.copies = null; // recording never breaks the copy
+          }
+          return copy;
+        };
+        // The FIRST statement of a PROTO body is parsed by
+        // rootNodeStatement, not nodeStatement: record it the same way, so
+        // the body's root node has its exact span too.
+        const VP = X3D.VRMLParser.prototype;
+        let root = null;
+        if (Object.prototype.hasOwnProperty.call(VP, 'rootNodeStatement')
+          && typeof VP.rootNodeStatement === 'function' && VP.rootNodeStatement.length === 0) {
+          root = { original: VP.rootNodeStatement, wrapper: makeWrapper(VP.rootNodeStatement, capture) };
+          VP.rootNodeStatement = root.wrapper;
+        }
+        NodeProto.copy = wrapper;
+        token.copyHook = { NodeProto, original, wrapper, root };
+      } catch (e) {
+        token.capture.copies = null;
+      }
+    }
+
+    function removeCopyHook(token) {
+      const h = token.copyHook;
+      if (!h) return;
+      token.copyHook = null;
+      if (h.NodeProto.copy === h.wrapper) h.NodeProto.copy = h.original;
+      else token.capture.copies = null; // displaced: prove nothing
+      if (h.root) {
+        const VP = X3D.VRMLParser.prototype;
+        if (VP.rootNodeStatement === h.root.wrapper) VP.rootNodeStatement = h.root.original;
+        else token.capture.copies = null;
+      }
+    }
+
     // The `finally` of one provenance parse. Writes to the prototype only to
     // remove ITS OWN wrapper; a displaced wrapper is left in place.
     function settle(token) {
@@ -225,6 +286,7 @@
         token.state = 'lost';
         structuralDisable('parser-hook-displaced', true);
       }
+      removeCopyHook(token);
       token.capture.closed = true;
       coordinator.release(token);
     }
@@ -241,6 +303,7 @@
           token.state = 'lost';
           structuralDisable('parser-hook-displaced', true);
         }
+        removeCopyHook(token);
         token.capture.closed = true;
       } else if (token.state === 'waiting') {
         token.state = 'aborted';
@@ -281,6 +344,7 @@
         token.wrapper = makeWrapper(original, capture);
         proto.nodeStatement = token.wrapper;
         token.state = 'owning';
+        installCopyHook(token);
       } catch (e) {
         if (token.state === 'owning') abortToken(token);
         else { token.state = 'lost'; coordinator.release(token); }
@@ -318,13 +382,31 @@
         const spans = isProbe ? token.capture.records
           .filter((rec) => rec.scene === scene && rec.ctx === scene && !rec.inProto)
           .map((rec) => ({ type: typeOf(rec.node), start: rec.start, end: rec.end })) : null;
+        // B1: declaration-body statements of a PROTO declared directly in
+        // this scene, keyed by the declaration node. Nested PROTOs: none.
+        const protoOcc = new WeakMap();
+        if (token.capture.copies) {
+          for (const rec of token.capture.records) {
+            if (rec.scene !== scene || !rec.inProto || !rec.ctx) continue;
+            let outer = null;
+            try { outer = fn(rec.ctx, 'getOuterNode') ? rec.ctx.getOuterNode() : null; } catch (e) { outer = null; }
+            if (!outer || !fn(outer, 'getBody') || outer.getBody() !== rec.ctx) continue;
+            if (!fn(outer, 'getExecutionContext') || outer.getExecutionContext() !== scene) continue;
+            if (!fn(outer, 'getProtoDeclaration') || outer.getProtoDeclaration() !== outer) continue;
+            let list = protoOcc.get(rec.node);
+            if (!list) { list = []; protoOcc.set(rec.node, list); }
+            list.push(Object.freeze({ start: rec.start, end: rec.end }));
+          }
+        }
+        const copyOf = token.capture.copies;
+        const copyConflict = token.capture.copyConflict;
         token.capture.records.length = 0;
         const generation = Object.freeze({
           sessionId: meta.sessionId == null ? null : meta.sessionId,
           overlayGeneration: meta.generationId == null ? null : meta.generationId,
           text,
         });
-        gens.set(generation, { scene, occ, bySpan, kept, spans });
+        gens.set(generation, { scene, occ, bySpan, kept, spans, protoOcc, copyOf, copyConflict });
         if (!isProbe) pending = generation;
         return { scene, generation };
       } catch (e) {
@@ -422,6 +504,7 @@
       };
       const runtimeParents = (node) => {
         const nodes = new Set();
+        const bodies = new Set();
         const ctxs = [];
         const seen = new Set();
         const stack = [...node.getParents()];
@@ -429,11 +512,32 @@
           const p = stack.pop();
           if (!p || seen.has(p)) continue;
           seen.add(p);
-          if (p instanceof X3D.X3DExecutionContext) { ctxs.push(p === g.scene ? 'SCENE' : 'OTHER_CONTEXT'); continue; }
+          if (p instanceof X3D.X3DExecutionContext) {
+            if (p === g.scene) { ctxs.push('SCENE'); continue; }
+            // B1: the body of a PROTO instance names its instance node.
+            let outer = null;
+            try { outer = fn(p, 'getOuterNode') ? p.getOuterNode() : null; } catch (e) { outer = null; }
+            if (outer instanceof X3D.X3DBaseNode && fn(outer, 'getBody') && outer.getBody() === p
+              && !(fn(outer, 'getProtoDeclaration') && outer.getProtoDeclaration() === outer)) {
+              bodies.add(outer);
+              continue;
+            }
+            ctxs.push('OTHER_CONTEXT');
+            continue;
+          }
           if (p instanceof X3D.X3DBaseNode) { nodes.add(p); continue; }
           if (fn(p, 'getParents')) for (const q of p.getParents()) stack.push(q);
         }
-        return { nodes: [...nodes], ctxs };
+        return { nodes: [...nodes], bodies: [...bodies], ctxs };
+      };
+      // A PROTO instance body node's occurrences are those of the ONE
+      // declaration node it was copied from (B1); none when unproven.
+      const occurrencesOf = (n) => {
+        const own = g.occ.get(n);
+        if (own) return own;
+        if (!g.copyOf || !g.protoOcc || g.copyConflict.has(n)) return [];
+        const from = g.copyOf.get(n);
+        return (from && g.protoOcc.get(from)) || [];
       };
       const graph = {};
       const queue = [root];
@@ -443,14 +547,15 @@
           const l = label(n);
           if (graph[l]) continue;
           const isInfra = infra.has(n);
-          const { nodes, ctxs } = isInfra ? { nodes: [], ctxs: [] } : runtimeParents(n);
+          const { nodes, bodies, ctxs } = isInfra ? { nodes: [], bodies: [], ctxs: [] } : runtimeParents(n);
           graph[l] = Object.freeze({
             type: typeOf(n),
             ctxKind: isInfra ? 'world-infrastructure' : ctxKind(n),
-            occurrences: Object.freeze((g.occ.get(n) || []).slice()),
-            parents: Object.freeze([...nodes.map(label), ...ctxs]),
+            occurrences: Object.freeze(occurrencesOf(n).slice()),
+            parents: Object.freeze([...nodes.map(label), ...bodies.map((b) => `BODY:${label(b)}`), ...ctxs]),
           });
           for (const p of nodes) queue.push(p);
+          for (const b of bodies) queue.push(b);
         }
       } catch (e) {
         return { graph: null };

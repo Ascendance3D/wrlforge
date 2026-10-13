@@ -390,6 +390,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::startup_document,
+            commands::confirm_shared_edit,
             commands::open_document,
             commands::new_document,
             commands::doc_create,

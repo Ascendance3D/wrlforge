@@ -54,6 +54,11 @@ pub struct Ui {
     pub scale_mode: RwSignal<bool>,
     /// The Move tool's status line: (`ok` | `none` | `refused`, text).
     pub gizmo_message: RwSignal<Option<(String, String)>>,
+    /// B1: the shared PROTO definitions the user agreed to edit, per
+    /// document session: (session, PROTO name). Asked once per definition.
+    pub shared_ok: RwSignal<Vec<(u64, String)>>,
+    /// D4: Create places new objects at the origin (else in view).
+    pub place_origin: RwSignal<bool>,
     /// NATIVE-RENDER-1: the hidden native viewport's state (default off).
     pub native: RwSignal<p::NativeState>,
 }
@@ -223,9 +228,54 @@ pub fn ui() -> Ui {
             rotate_mode: RwSignal::new(false),
             scale_mode: RwSignal::new(false),
             gizmo_message: RwSignal::new(None),
+            shared_ok: RwSignal::new(Vec::new()),
+            place_origin: RwSignal::new(false),
             native: RwSignal::new(p::NativeState::default()),
         })
     })
+}
+
+/// D4: where Create puts a new object. In front of the camera, at the
+/// point of its view axis nearest the world origin (at least 4 units out),
+/// shifted sideways by 2.5 units per object created from the same view so
+/// objects do not land inside each other. `None` (the origin) when the user
+/// chose "Place at origin" or the camera cannot be read -- never a guess.
+fn placement() -> Option<[f64; 3]> {
+    let u = ui();
+    if u.place_origin.get_untracked() {
+        return None;
+    }
+    let cam = crate::ipc::gizmo_camera()?;
+    let m = cam.view;
+    // Column-major world->eye: R[r][c] = m[c*4+r], t = m[12..15].
+    let r = |row: usize, col: usize| m[col * 4 + row];
+    let t = [m[12], m[13], m[14]];
+    let pos: Vec<f64> = (0..3)
+        .map(|c| -(0..3).map(|row| r(row, c) * t[row]).sum::<f64>())
+        .collect();
+    let fwd = [-r(2, 0), -r(2, 1), -r(2, 2)];
+    let right = [r(0, 0), r(0, 1), r(0, 2)];
+    if pos.iter().chain(&fwd).chain(&right).any(|v| !v.is_finite()) {
+        return None;
+    }
+    let along = -(pos[0] * fwd[0] + pos[1] * fwd[1] + pos[2] * fwd[2]);
+    let d = if along > 4.0 { along } else { 4.0 };
+    let key = (0..3).map(|i| (pos[i] * 1000.0).round() as i64).collect::<Vec<_>>();
+    let k = PLACED.with_borrow_mut(|p| {
+        if p.0 != key {
+            *p = (key, 0);
+        } else {
+            p.1 += 1;
+        }
+        p.1
+    });
+    let side = 2.5 * k as f64;
+    Some([0, 1, 2].map(|i| pos[i] + fwd[i] * d + right[i] * side))
+}
+
+thread_local! {
+    /// D4: (camera position key, objects created from it so far).
+    static PLACED: std::cell::RefCell<(Vec<i64>, u32)> = const { std::cell::RefCell::new((Vec::new(), 0)) };
 }
 
 pub fn flash(m: &str) {
@@ -424,6 +474,51 @@ pub fn apply_inspection(seq: u64, sel: &Selected, o: p::InspectOutcome) -> bool 
     true
 }
 
+/// B1: whether an edit of `insp` may go to Rust as a shared-definition
+/// edit. `None`: the node is not in a PROTO body (no consent needed).
+/// `Some(true)`: the user agreed (now, in the native confirmation, or
+/// earlier for this definition and document). `Some(false)`: declined --
+/// nothing is sent. Rust refuses a shared edit without consent anyway.
+async fn shared_consent(session: u64, insp: &p::Inspection) -> Option<bool> {
+    let shared = insp.node.as_ref()?.shared.clone()?;
+    Some(confirm_shared(session, shared).await)
+}
+
+/// The one consent path (Inspector edits and the banner button).
+pub async fn confirm_shared(session: u64, shared: p::SharedProto) -> bool {
+    let u = ui();
+    let known = u
+        .shared_ok
+        .with_untracked(|v| v.iter().any(|(s, n)| *s == session && *n == shared.proto));
+    if known {
+        return true;
+    }
+    #[derive(serde::Serialize)]
+    struct A {
+        proto: String,
+        instances: u32,
+    }
+    let yes = call::<bool>(
+        "confirm_shared_edit",
+        A {
+            proto: shared.proto.clone(),
+            instances: shared.instances,
+        },
+    )
+    .await
+    .unwrap_or(false);
+    if yes {
+        u.shared_ok.update(|v| v.push((session, shared.proto.clone())));
+        u.field_error.set(None);
+    } else {
+        u.field_error.set(Some(format!(
+            "Not changed: editing the shared definition PROTO {} was not confirmed.",
+            shared.proto
+        )));
+    }
+    yes
+}
+
 /// Send one Inspector field edit to Rust. The request names the node by the
 /// item id of the revision the Inspector was built from; Rust refuses it if
 /// the document moved on. The UI adopts nothing until Rust applies it.
@@ -435,7 +530,12 @@ pub async fn edit_field(field_index: u32, field_name: String, components: Vec<p:
     struct A {
         request: p::FieldEditRequest,
     }
+    let confirm_shared = match shared_consent(session, &insp).await {
+        Some(false) => return Default::default(),
+        c => c.is_some(),
+    };
     let request = p::FieldEditRequest {
+        confirm_shared,
         session,
         base_revision: insp.revision,
         item: insp.id.clone(),
@@ -463,7 +563,12 @@ pub async fn edit_list(
     struct A {
         request: p::ListEditRequest,
     }
+    let confirm_shared = match shared_consent(session, &insp).await {
+        Some(false) => return Default::default(),
+        c => c.is_some(),
+    };
     let request = p::ListEditRequest {
+        confirm_shared,
         session,
         base_revision: insp.revision,
         item: insp.id.clone(),
@@ -485,7 +590,12 @@ pub async fn add_field(field_name: String, value: p::AddFieldValue) -> bool {
     struct A {
         request: p::AddFieldRequest,
     }
+    let confirm_shared = match shared_consent(session, &insp).await {
+        Some(false) => return Default::default(),
+        c => c.is_some(),
+    };
     let request = p::AddFieldRequest {
+        confirm_shared,
         session,
         base_revision: insp.revision,
         item: insp.id.clone(),
@@ -733,6 +843,7 @@ pub async fn create(prim: p::Primitive) {
         session,
         base_revision: revision,
         primitive: prim,
+        at: placement(),
     };
     match call::<p::CreateOutcome>("doc_create", A { request }).await {
         Ok(p::CreateOutcome::Applied {

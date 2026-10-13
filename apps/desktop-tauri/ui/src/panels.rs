@@ -259,6 +259,48 @@ fn rows(rows: Vec<p::InspectorRow>, session: u64, rev: u64) -> impl IntoView {
     }
 }
 
+/// B1: the "Shared PROTO definition" indicator, with the one explicit
+/// consent per definition and document.
+fn shared_banner(s: p::SharedProto, session: u64) -> impl IntoView {
+    let u = ui();
+    let proto = s.proto.clone();
+    let allowed = {
+        let proto = proto.clone();
+        move || u.shared_ok.with(|v| v.iter().any(|(x, n)| *x == session && *n == proto))
+    };
+    let instances = s.instances;
+    let text = format!(
+        "Shared PROTO definition: this node is part of PROTO {}. It is used by {} instance(s) in this document; a change here changes every one of them.",
+        s.proto, instances
+    );
+    let allow = {
+        let s = s.clone();
+        move |_: web_sys::MouseEvent| {
+            let s = s.clone();
+            spawn_local(async move {
+                ui::confirm_shared(session, s).await;
+            });
+        }
+    };
+    let allowed2 = allowed.clone();
+    view! {
+        <div class="shared-proto" id="inspector-shared" role="note" data-proto=proto.clone()
+            data-allowed=move || allowed().to_string()>
+            <p><strong>"Shared PROTO definition"</strong>" · "{text}</p>
+            {move || if allowed2() {
+                view! { <p class="shared-ok" id="inspector-shared-ok">"Editing the shared definition is allowed for this document."</p> }.into_any()
+            } else {
+                view! {
+                    <button type="button" id="inspector-shared-allow" on:click=allow.clone()
+                        title="Allow edits to this PROTO definition (all instances) for this document">
+                        "Edit shared definition"
+                    </button>
+                }.into_any()
+            }}
+        </div>
+    }
+}
+
 fn input_id(field: u32, component: usize) -> String {
     format!("fe-{field}-{component}")
 }
@@ -295,6 +337,7 @@ fn node_fields(n: p::NodeFields, session: u64, rev: u64) -> impl IntoView {
             </p>
         }
     });
+    let shared = n.shared.clone().map(|s| shared_banner(s, session));
     // VISUAL-4A: an Extrusion gets its own sections (authored values and
     // VRML97 defaults); the generic table lists only its other fields.
     let extrusion = n
@@ -311,6 +354,7 @@ fn node_fields(n: p::NodeFields, session: u64, rev: u64) -> impl IntoView {
         view! { <p class="empty">"No explicitly authored fields (defaults are not listed)."</p> }
     });
     view! {
+        {shared}
         {banner}
         {extrusion}
         {empty}
@@ -388,8 +432,24 @@ fn field_row(f: p::EditableField, session: u64, rev: u64) -> impl IntoView {
         }
         .into_any()
     } else {
+        let open = f.node_item.clone().map(|id| {
+            let label = format!("Open {} ›", f.name);
+            view! {
+                <button class="small node-open" data-item=id.clone()
+                    title="Select this node in the Scene Tree and show its fields"
+                    on:click=move |_| {
+                        let id = id.clone();
+                        spawn_local(async move {
+                            if let Err(e) = ui::pick_select(session, rev, id).await {
+                                ui::flash(&format!("Cannot open the node: {e}."));
+                            }
+                        });
+                    }>{label}</button>
+            }
+        });
         view! {
             <div>
+                {open}
                 <code>{f.value_excerpt.clone()}</code>
                 <span class="reason" title="Why this field is read-only">{f.reason.clone()}</span>
             </div>

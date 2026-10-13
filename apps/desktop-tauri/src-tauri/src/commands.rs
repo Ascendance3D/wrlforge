@@ -29,6 +29,40 @@ pub fn startup_document(startup: State<'_, Startup>) -> Option<p::OpenOutcome> {
     startup.0.lock().ok().and_then(|mut s| s.take())
 }
 
+/// B1: the explicit confirmation before the FIRST edit of a shared PROTO
+/// definition in a document (the UI remembers the answer per definition).
+#[tauri::command]
+pub async fn confirm_shared_edit(app: AppHandle, proto: String, instances: u32) -> bool {
+    if let Some(answer) = app.state::<SmokeState>().confirm_override() {
+        return answer;
+    }
+    app.dialog()
+        .message(format!(
+            "This node is part of PROTO {proto}, a shared definition used by {instances} instance(s) in this document.\n\nChanging it changes every instance. Edit the shared definition?"
+        ))
+        .title("Edit shared PROTO definition")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Edit shared definition".into(),
+            "Cancel".into(),
+        ))
+        .blocking_show()
+}
+
+/// D1: where a file dialog starts. The document's own folder, else the
+/// user's home -- never the process working directory, which for the
+/// AppImage is its read-only mount (`/tmp/.mount_*`).
+fn dialog_dir(app: &AppHandle, session: Option<p::SessionId>) -> Option<std::path::PathBuf> {
+    let appdir = std::env::var_os("APPDIR").map(std::path::PathBuf::from);
+    let usable = |d: &std::path::Path| {
+        d.is_dir() && !appdir.as_deref().is_some_and(|a| d.starts_with(a))
+    };
+    session
+        .and_then(|s| app.state::<Service>().folder(s))
+        .filter(|d| usable(d))
+        .or_else(|| app.path().home_dir().ok().filter(|d| usable(d)))
+}
+
 #[tauri::command]
 pub async fn open_document(app: AppHandle) -> p::OpenOutcome {
     // `--smoke-create` only: the launch argument's file stands in for the
@@ -36,9 +70,11 @@ pub async fn open_document(app: AppHandle) -> p::OpenOutcome {
     if let Some(path) = app.state::<SmokeState>().open_override() {
         return app.state::<Service>().open_path(&path);
     }
-    let picked = app
-        .dialog()
-        .file()
+    let mut dialog = app.dialog().file();
+    if let Some(dir) = dialog_dir(&app, None) {
+        dialog = dialog.set_directory(dir);
+    }
+    let picked = dialog
         .set_title("Open VRML97 world or item")
         .add_filter("VRML97 (.wrl, .wrz, gzip)", FILTER_EXT)
         .blocking_pick_file();
@@ -166,9 +202,11 @@ pub async fn doc_save_as(app: AppHandle, session: p::SessionId) -> p::SaveOutcom
             None => p::SaveOutcome::Canceled,
         };
     }
-    let picked = app
-        .dialog()
-        .file()
+    let mut dialog = app.dialog().file();
+    if let Some(dir) = dialog_dir(&app, Some(session)) {
+        dialog = dialog.set_directory(dir);
+    }
+    let picked = dialog
         .set_title("Save VRML97 file as")
         .set_file_name(suggested)
         .add_filter("VRML97 (.wrl, .wrz, gzip)", FILTER_EXT)

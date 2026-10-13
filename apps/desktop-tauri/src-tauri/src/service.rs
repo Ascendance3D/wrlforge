@@ -254,6 +254,11 @@ fn node_fields(
     extrusion: Option<extrusion::Info>,
 ) -> p::NodeFields {
     p::NodeFields {
+        shared: n.shared.as_ref().map(|s| p::SharedProto {
+            proto: s.proto.clone(),
+            instances: s.instances as u32,
+            name_ambiguous: s.name_ambiguous,
+        }),
         extrusion: extrusion.map(extrusion_info),
         editable: n.editable,
         reason: n.reason.into(),
@@ -262,6 +267,10 @@ fn node_fields(
             .fields
             .into_iter()
             .map(|f| p::EditableField {
+                // The value span of an SFNode field is its node statement;
+                // the UI only selects it if the Scene Tree holds that id.
+                node_item: (f.field_type == Some("SFNode") && !f.is_binding)
+                    .then(|| format!("node-{}-{}", f.from, f.to)),
                 index: f.index as u32,
                 name: f.name,
                 field_type: f.field_type.map(Into::into),
@@ -477,6 +486,13 @@ impl Service {
     pub fn close(&self, id: p::SessionId) -> Result<(), String> {
         self.sessions.lock().map_err(err)?.remove(&id);
         Ok(())
+    }
+
+    /// D1: the folder of the session's file, if it has one on disk.
+    pub fn folder(&self, id: p::SessionId) -> Option<std::path::PathBuf> {
+        self.with(id, |s| s.path.as_deref().and_then(Path::parent).map(Path::to_path_buf))
+            .ok()
+            .flatten()
     }
 
     pub fn snapshot(&self, id: p::SessionId) -> Result<p::DocumentInfo, String> {
@@ -858,6 +874,7 @@ impl Service {
                 return refused(field_edit::reason::NOT_A_NODE, None);
             };
             let req = field_edit::Request {
+                confirm_shared: r.confirm_shared,
                 node_from,
                 node_to,
                 field_index: r.field_index as usize,
@@ -947,7 +964,7 @@ impl Service {
                 p::Primitive::Cone => create::Primitive::Cone,
                 p::Primitive::Extrusion => create::Primitive::Extrusion,
             };
-            match create::plan_create(s.doc.text(), prim) {
+            match create::plan_create_at(s.doc.text(), prim, r.at) {
                 create::Plan::Refused { reason, message } => p::CreateOutcome::Refused {
                     reason: reason.into(),
                     message,
@@ -999,6 +1016,7 @@ impl Service {
                 return refused_field(field_edit::reason::NOT_A_NODE, None, None);
             };
             let req = mf_edit::Request {
+                confirm_shared: r.confirm_shared,
                 node_from,
                 node_to,
                 field_index: r.field_index as usize,
@@ -1038,6 +1056,7 @@ impl Service {
                 return refused_field(field_edit::reason::NOT_A_NODE, None, None);
             };
             let req = mf_edit::AddRequest {
+                confirm_shared: r.confirm_shared,
                 node_from,
                 node_to,
                 field_name: r.field_name.clone(),
@@ -2300,6 +2319,7 @@ mod tests {
         values: &[&str],
     ) -> p::FieldEditOutcome {
         svc.edit_field(&p::FieldEditRequest {
+            confirm_shared: false,
             session: id,
             base_revision: rev,
             item: item.into(),
@@ -2313,6 +2333,75 @@ mod tests {
                 .collect(),
         })
         .unwrap()
+    }
+
+    /// B1: a node in a PROTO body (the Chevy shape: gzip, `IS`-bound
+    /// coordinates, two instances) is the shared definition. Without consent
+    /// nothing changes; with it, exactly the edited tokens change, and Undo,
+    /// Redo, Save and reopen are exact.
+    #[test]
+    fn b1_shared_proto_definition_edit_needs_consent_and_round_trips() {
+        let dir = tmp("b1-proto");
+        let src = "#VRML V2.0 utf8\nPROTO Car [ exposedField MFVec3f point [ 0 0 0, 1 0 0, 0 1 0 ] ]\n{ # PROTO body\n\tGroup { children [\n\t\tDEF Body Transform { children [\n\t\t\tShape {\n\t\t\t\tgeometry IndexedFaceSet { coord Coordinate { point IS point } coordIndex [ 0, 1, 2, -1 ] }\n\t\t\t\tappearance Appearance { material Material { diffuseColor 0.5490 0.3176 0.1765 } }\n\t\t\t}\n\t\t] }\n\t] }\n} # End PROTO body\nCar { }\nTransform { translation 3 0 0 children Car { } }\n";
+        let path = dir.join("car.wrl");
+        fs::write(&path, files::encode(src, Format::Gzip).unwrap()).unwrap();
+        let svc = Service::new(clock);
+        let doc = opened(svc.open_path(&path));
+        let a = svc.analyze(doc.session).unwrap();
+        let mat = a.items.iter().find(|i| i.label == "Material").unwrap();
+        let nf = found(svc.inspect(doc.session, &mat.id, a.revision)).node.unwrap();
+        assert!(nf.editable, "{}", nf.reason);
+        let shared = nf.shared.clone().expect("shared definition");
+        assert_eq!((shared.proto.as_str(), shared.instances), ("Car", 2));
+        // The IS-bound Coordinate is not editable from the body.
+        let coord = a.items.iter().find(|i| i.label == "Coordinate").unwrap();
+        let cf = found(svc.inspect(doc.session, &coord.id, a.revision)).node.unwrap();
+        assert!(cf.fields.iter().all(|f| !f.editable));
+        // No consent: refused, nothing changes.
+        let out = field_edit(&svc, doc.session, 0, &mat.id, (0, "diffuseColor"), &["0.1", "0.2", "0.9"]);
+        assert!(matches!(
+            &out,
+            p::FieldEditOutcome::Refused { reason, .. } if reason == "shared-proto-definition-not-confirmed"
+        ), "{out:?}");
+        assert_eq!(svc.text(doc.session).unwrap(), src);
+        // Consent: exactly the three tokens change.
+        let req = |rev: u64, item: &str| p::FieldEditRequest {
+            confirm_shared: true,
+            session: doc.session,
+            base_revision: rev,
+            item: item.into(),
+            field_index: 0,
+            field_name: "diffuseColor".into(),
+            components: ["0.1", "0.2", "0.9"]
+                .iter()
+                .map(|v| p::FieldInput::Text { value: v.to_string() })
+                .collect(),
+        };
+        let p::FieldEditOutcome::Applied { item, .. } = svc.edit_field(&req(0, &mat.id)).unwrap() else {
+            panic!("not applied")
+        };
+        let want = src.replace("diffuseColor 0.5490 0.3176 0.1765", "diffuseColor 0.1 0.2 0.9");
+        assert_eq!(svc.text(doc.session).unwrap(), want);
+        // A stale revision is refused even with consent.
+        assert!(matches!(
+            svc.edit_field(&req(0, &mat.id)).unwrap(),
+            p::FieldEditOutcome::Refused { .. }
+        ));
+        // Undo / Redo exact.
+        svc.history_with_item(doc.session, true, Some(&item)).unwrap();
+        assert_eq!(svc.text(doc.session).unwrap(), src);
+        svc.history_with_item(doc.session, false, Some(&mat.id)).unwrap();
+        assert_eq!(svc.text(doc.session).unwrap(), want);
+        // Save (gzip kept) and reopen.
+        assert!(matches!(svc.save(doc.session), p::SaveOutcome::Saved { .. }));
+        let bytes = fs::read(&path).unwrap();
+        assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
+        let again = opened(Service::new(clock).open_path(&path));
+        let svc2 = Service::new(clock);
+        let d2 = opened(svc2.open_path(&path));
+        assert_eq!(svc2.text(d2.session).unwrap(), want);
+        let _ = again;
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -2428,7 +2517,7 @@ mod tests {
     }
 
     fn create(svc: &Service, id: u64, rev: u64, prim: p::Primitive) -> p::CreateOutcome {
-        svc.create(&p::CreateRequest {
+        svc.create(&p::CreateRequest { at: None,
             session: id,
             base_revision: rev,
             primitive: prim,
@@ -2616,6 +2705,7 @@ mod tests {
         ops: Vec<p::ListOp>,
     ) -> p::FieldEditOutcome {
         svc.edit_list(&p::ListEditRequest {
+            confirm_shared: false,
             session: id,
             base_revision: rev,
             item: item.into(),
@@ -2735,6 +2825,7 @@ mod tests {
             let before = svc.text(id).unwrap();
             let (_, item) = applied(
                 svc.add_field(&p::AddFieldRequest {
+            confirm_shared: false,
                     session: id,
                     base_revision: rev,
                     item: item.clone(),
@@ -2774,6 +2865,7 @@ mod tests {
             let (rev, _, _) = extrusion(&svc, id);
             let (_, item) = applied(
                 svc.add_field(&p::AddFieldRequest {
+            confirm_shared: false,
                     session: id,
                     base_revision: rev,
                     item: item.clone(),
@@ -3497,6 +3589,7 @@ mod tests {
         // The explicit authoring workflow: write rotation, then rotate.
         let (st, it) = applied(
             svc.add_field(&p::AddFieldRequest {
+            confirm_shared: false,
                 session: id,
                 base_revision: 0,
                 item: item("A"),
@@ -4115,7 +4208,7 @@ mod recovery_tests {
             // A new world, never saved, with a created object.
             let nw = opened(svc.new_world());
             let o = svc
-                .create(&p::CreateRequest {
+                .create(&p::CreateRequest { at: None,
                     session: nw.session,
                     base_revision: nw.revision,
                     primitive: p::Primitive::Box,
@@ -4206,7 +4299,7 @@ mod recovery_tests {
         let id = nw.session;
         assert_eq!(svc.recovery_pass(), 0, "an unchanged new world is clean");
         let (state, item) = match svc
-            .create(&p::CreateRequest { session: id, base_revision: 0, primitive: p::Primitive::Box })
+            .create(&p::CreateRequest { at: None, session: id, base_revision: 0, primitive: p::Primitive::Box })
             .unwrap()
         {
             p::CreateOutcome::Applied { state, item, .. } => (state, item),

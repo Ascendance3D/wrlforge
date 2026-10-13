@@ -134,6 +134,9 @@ pub enum Parent {
     Scene,
     /// Some other execution context.
     OtherContext,
+    /// B1: the node is a root node of the BODY of this PROTO instance
+    /// (adapter label `BODY:<label>`).
+    Body(String),
 }
 
 impl Parent {
@@ -141,7 +144,10 @@ impl Parent {
         match s {
             "SCENE" => Parent::Scene,
             "OTHER_CONTEXT" => Parent::OtherContext,
-            other => Parent::Node(other.to_string()),
+            other => match other.strip_prefix("BODY:") {
+                Some(l) => Parent::Body(l.to_string()),
+                None => Parent::Node(other.to_string()),
+            },
         }
     }
 }
@@ -245,7 +251,10 @@ fn join_found(n: usize) -> String {
 enum Encl {
     Doc,
     Node(*const Node),
-    Proto,
+    /// A PROTO body (or interface default) of this declaration.
+    Proto(*const crate::ast::Proto),
+    /// An interface default value (never a body).
+    Interface,
 }
 
 impl Encl {
@@ -257,12 +266,18 @@ impl Encl {
 struct Index<'a> {
     by_span: HashMap<(u64, u64), Vec<&'a Node>>,
     enclosing: HashMap<*const Node, Encl>,
+    /// B1: every PROTO declaration and what encloses it.
+    protos: Vec<(&'a crate::ast::Proto, Encl)>,
+    /// B1: every PROTO and EXTERNPROTO name, once per declaration.
+    type_names: Vec<&'a str>,
 }
 
 fn index(doc: &Document) -> Index<'_> {
     let mut ix = Index {
         by_span: HashMap::new(),
         enclosing: HashMap::new(),
+        protos: Vec::new(),
+        type_names: Vec::new(),
     };
     for s in &doc.statements {
         visit(s, Encl::Doc, &mut ix);
@@ -285,7 +300,7 @@ fn visit<'a>(ast: &'a Ast, encl: Encl, ix: &mut Index<'a>) {
             }
             for i in &n.interfaces {
                 if let Some(d) = &i.default {
-                    visit(d, me, ix);
+                    visit(d, Encl::Interface, ix);
                 }
             }
         }
@@ -296,19 +311,22 @@ fn visit<'a>(ast: &'a Ast, encl: Encl, ix: &mut Index<'a>) {
         }
         Ast::Array { items, .. } => items.iter().for_each(|i| visit(i, encl, ix)),
         Ast::Proto(p) => {
-            let me = Encl::Proto;
+            ix.protos.push((p, encl));
+            ix.type_names.extend(p.name.as_deref());
             for i in &p.interfaces {
                 if let Some(d) = &i.default {
-                    visit(d, me, ix);
+                    visit(d, Encl::Interface, ix);
                 }
             }
+            let me = Encl::Proto(p as *const crate::ast::Proto);
             for b in &p.body {
                 visit(b, me, ix);
             }
         }
         Ast::ExternProto(e) => {
+            ix.type_names.extend(e.name.as_deref());
             if let Some(u) = &e.url {
-                visit(u, encl, ix);
+                visit(u, Encl::Interface, ix);
             }
         }
         _ => {}
@@ -392,11 +410,12 @@ fn prove_chain<'a>(
     parse: &'a ParseResult,
     preview_offset: u64,
 ) -> Result<Vec<&'a Node>, Resolution> {
-    // 4/5. Execution context of the hit Shape.
+    // 4/5. Execution context of the hit Shape. B1: a PROTO instance body is
+    // provable when every body link joins its DECLARATION statement and the
+    // body hangs off one document instance of exactly that PROTO.
     match hit.ctx {
-        Ctx::Document => {}
+        Ctx::Document | Ctx::ProtoBody => {}
         Ctx::ExternalScene => return Err(refuse(Status::RefusedExternal, reason::OTHER_DOCUMENT)),
-        Ctx::ProtoBody => return Err(refuse(Status::Unsupported, reason::PROTO_INSTANCE)),
         _ => return Err(refuse(Status::Unsupported, reason::DETACHED)),
     }
     // 6. A damaged or capped document proves nothing.
@@ -415,23 +434,32 @@ fn prove_chain<'a>(
     struct Link<'g> {
         occ: (u64, u64),
         type_name: Option<&'g str>,
+        /// The link is a node of a PROTO instance body.
+        body: bool,
     }
     let mut chain: Vec<Link> = Vec::new();
     let mut label: &str = &hit.shape;
+    let mut in_body = hit.ctx == Ctx::ProtoBody;
     let mut reached_scene = false;
     for _ in 0..256 {
         let Some(g) = hit.graph.get(label) else {
             return Err(refuse(Status::Unsupported, reason::CHAIN_UNBOUNDED));
         };
-        match g.ctx {
-            Ctx::Document => {}
-            Ctx::ProtoBody => return Err(refuse(Status::Unsupported, reason::PROTO_INSTANCE)),
-            Ctx::ExternalScene => {
+        match (g.ctx, in_body) {
+            (Ctx::Document, false) | (Ctx::ProtoBody, true) => {}
+            // A PROTO body not reached through one body link (nested
+            // instances, bodies of bodies): not proven here.
+            (Ctx::ProtoBody, false) => {
+                return Err(refuse(Status::Unsupported, reason::PROTO_INSTANCE))
+            }
+            (Ctx::ExternalScene, _) => {
                 return Err(refuse(Status::RefusedExternal, reason::OTHER_DOCUMENT))
             }
             _ => return Err(refuse(Status::Unsupported, reason::PARENT_OUTSIDE_DOCUMENT)),
         }
         match g.occurrences.len() {
+            // A body node the adapter could not trace to its declaration.
+            0 if in_body => return Err(refuse(Status::Unsupported, reason::PROTO_INSTANCE)),
             0 => return Err(refuse(Status::Unsupported, reason::NO_PROVENANCE)),
             1 => {}
             _ => {
@@ -441,11 +469,16 @@ fn prove_chain<'a>(
                 ))
             }
         }
-        let mut doc_parents: Vec<&str> = Vec::new();
+        let mut same_ctx_parents: Vec<&str> = Vec::new();
+        let mut bodies: Vec<&str> = Vec::new();
         let mut at_scene = 0usize;
         for p in &g.parents {
             match p {
-                Parent::Scene => at_scene += 1,
+                Parent::Scene if !in_body => at_scene += 1,
+                Parent::Body(l) if in_body => bodies.push(l),
+                Parent::Scene | Parent::Body(_) => {
+                    return Err(refuse(Status::Unsupported, reason::PROTO_INSTANCE))
+                }
                 Parent::OtherContext => {
                     return Err(refuse(Status::Unsupported, reason::PARENT_OUTSIDE_DOCUMENT))
                 }
@@ -455,10 +488,10 @@ fn prove_chain<'a>(
                     };
                     match pg.ctx {
                         Ctx::WorldInfrastructure => continue,
+                        c if c == g.ctx => same_ctx_parents.push(pl),
                         Ctx::ProtoBody => {
                             return Err(refuse(Status::Unsupported, reason::PROTO_INSTANCE))
                         }
-                        Ctx::Document => doc_parents.push(pl),
                         _ => {
                             return Err(refuse(
                                 Status::Unsupported,
@@ -469,7 +502,7 @@ fn prove_chain<'a>(
                 }
             }
         }
-        match doc_parents.len() + at_scene {
+        match same_ctx_parents.len() + bodies.len() + at_scene {
             0 => return Err(refuse(Status::Unsupported, reason::DETACHED)),
             1 => {}
             _ => return Err(refuse(Status::RefusedAmbiguous, reason::SEVERAL_PARENTS)),
@@ -477,12 +510,18 @@ fn prove_chain<'a>(
         chain.push(Link {
             occ: g.occurrences[0],
             type_name: g.type_name.as_deref(),
+            body: in_body,
         });
         if at_scene == 1 {
             reached_scene = true;
             break;
         }
-        label = doc_parents[0];
+        if let Some(b) = bodies.first() {
+            label = b;
+            in_body = false;
+        } else {
+            label = same_ctx_parents[0];
+        }
     }
     if !reached_scene {
         return Err(refuse(Status::Unsupported, reason::CHAIN_UNBOUNDED));
@@ -511,14 +550,37 @@ fn prove_chain<'a>(
         }
         ast.push(found[0]);
     }
-    // 9. Runtime chain == AST containment chain, by identity.
+    // 9. Runtime chain == AST containment chain, by identity. B1: the last
+    // body link must be a statement of the BODY of the one top-level PROTO
+    // whose name is the instance's type, declared exactly once.
     for (i, n) in ast.iter().enumerate() {
         let Some(&encl) = ix.enclosing.get(&(*n as *const Node)) else {
             return Err(refuse(Status::Unsupported, reason::CHAIN_DISAGREES));
         };
-        let agrees = match ast.get(i + 1) {
-            Some(parent) => encl.is_node(parent),
-            None => matches!(encl, Encl::Doc),
+        let agrees = match (
+            ast.get(i + 1),
+            chain[i].body,
+            chain.get(i + 1).map(|l| l.body),
+        ) {
+            (Some(parent), _, Some(next_body)) if chain[i].body == next_body => {
+                encl.is_node(parent)
+            }
+            (Some(instance), true, Some(false)) => match encl {
+                Encl::Proto(pp) => ix.protos.iter().any(|(p, pe)| {
+                    std::ptr::eq(*p, pp)
+                        && matches!(pe, Encl::Doc)
+                        && p.name.as_deref() == Some(instance.node_type.as_str())
+                        && ix
+                            .type_names
+                            .iter()
+                            .filter(|t| **t == instance.node_type)
+                            .count()
+                            == 1
+                }),
+                _ => false,
+            },
+            (None, false, None) => matches!(encl, Encl::Doc),
+            _ => false,
         };
         if !agrees {
             return Err(refuse(Status::Unsupported, reason::CHAIN_DISAGREES));

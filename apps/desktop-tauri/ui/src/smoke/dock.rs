@@ -1379,11 +1379,11 @@ async fn damaged_phase(r: &mut R) -> Option<()> {
         .document_element()?
         .get_attribute("data-theme");
     r.step(
-        "damaged layout: startup succeeds with the Source preset and a clear notice",
+        "damaged layout: startup succeeds with the default preset and a clear notice",
         layout() == Layout::default_layout()
             && notice
                 .as_deref()
-                .is_some_and(|n| n.contains("invalid") && n.contains("Source layout")),
+                .is_some_and(|n| n.contains("invalid") && n.contains(&format!("{} layout", p::layout::PresetId::DEFAULT.label()))),
         format!("{notice:?}"),
     );
     r.step(

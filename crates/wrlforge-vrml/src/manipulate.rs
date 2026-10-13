@@ -319,6 +319,13 @@ fn target_in(
             format!("This object cannot be {verb}: its source cannot be edited safely."),
         ));
     }
+    // B1 opened the Inspector to PROTO bodies; the gizmos are not there yet.
+    if fields.shared.is_some() {
+        return Err(refuse(
+            field_edit::reason::NODE_IN_PROTO_SCOPE,
+            format!("This object is part of a shared PROTO definition and cannot be {verb} with the gizmo yet. Use the Inspector."),
+        ));
+    }
     if fields.node_type.as_deref() != Some("Transform") {
         return Err(refuse(
             reason::NOT_TRANSFORM,
@@ -536,6 +543,7 @@ pub fn plan_translate(
         return (Plan::Unchanged, None);
     }
     let req = Request {
+        confirm_shared: false,
         node_from: from,
         node_to: to,
         field_index: target.field_index,
@@ -653,6 +661,7 @@ fn ready_plan(
         return (Plan::Unchanged, None);
     }
     let req = Request {
+        confirm_shared: false,
         node_from: target.node_from,
         node_to: target.node_to,
         field_index: target.field_index,

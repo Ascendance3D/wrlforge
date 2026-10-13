@@ -74,6 +74,11 @@ pub mod reason {
     pub const NODE_NOT_FOUND: &str = "node-not-found-at-span";
     pub const NODE_AMBIGUOUS: &str = "node-identity-ambiguous";
     pub const NODE_IN_PROTO_SCOPE: &str = "node-inside-proto-scope";
+    /// B1: the node is in the body of a PROTO whose name is declared more
+    /// than once, so which definition the scene uses is not proven.
+    pub const PROTO_NAME_AMBIGUOUS: &str = "proto-name-declared-more-than-once";
+    /// B1: an edit to a shared PROTO definition without the user's consent.
+    pub const SHARED_DEFINITION_UNCONFIRMED: &str = "shared-proto-definition-not-confirmed";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -253,6 +258,9 @@ pub struct NodeFields {
     pub node_type: Option<String>,
     pub def: Option<String>,
     pub fields: Vec<FieldDescriptor>,
+    /// B1: the node is part of a PROTO body; edits change the shared
+    /// definition and need the user's consent.
+    pub shared: Option<SharedDefinition>,
 }
 
 /// One user-supplied component: a boolean for SFBool, text otherwise (a
@@ -271,6 +279,8 @@ pub struct Request {
     pub field_index: usize,
     pub field_name: String,
     pub components: Vec<Input>,
+    /// B1: the user confirmed editing a shared PROTO definition.
+    pub confirm_shared: bool,
 }
 
 /// One UTF-16 source span replacement.
@@ -327,70 +337,148 @@ pub fn has_blocking_syntax_error(p: &ParseResult) -> bool {
 
 pub(crate) struct Found<'a> {
     pub(crate) node: &'a Node,
+    /// Inside any PROTO / EXTERNPROTO / interface scope.
     pub(crate) in_proto_scope: bool,
+    /// B1: the node is part of the BODY of `PROTO <name>` (the innermost
+    /// one), not an interface default and not an EXTERNPROTO. Editing it
+    /// edits the shared definition, i.e. every instance.
+    pub(crate) shared_proto: Option<&'a str>,
 }
 
-fn walk<'a>(ast: &'a Ast, in_proto: bool, f: &mut dyn FnMut(&'a Ast, bool)) {
-    f(ast, in_proto);
+impl Found<'_> {
+    /// In a proto scope that is NOT a plain PROTO body: never editable.
+    pub(crate) fn other_proto_scope(&self) -> bool {
+        self.in_proto_scope && self.shared_proto.is_none()
+    }
+}
+
+/// Where a statement sits: the document, a PROTO body (by name), or any
+/// other proto scope (interface defaults, EXTERNPROTO, node interfaces).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scope<'a> {
+    Doc,
+    Body(&'a str),
+    Other,
+}
+
+impl Scope<'_> {
+    fn in_proto(self) -> bool {
+        self != Scope::Doc
+    }
+}
+
+fn walk<'a>(ast: &'a Ast, scope: Scope<'a>, f: &mut dyn FnMut(&'a Ast, Scope<'a>)) {
+    f(ast, scope);
     match ast {
         Ast::Node(n) => {
             for i in &n.interfaces {
                 if let Some(d) = &i.default {
-                    walk(d, true, f);
+                    walk(d, Scope::Other, f);
                 }
             }
             for x in &n.fields {
-                walk(x, in_proto, f);
+                walk(x, scope, f);
             }
         }
         Ast::Field(fl) => {
             if let Some(v) = &fl.value {
-                walk(v, in_proto, f);
+                walk(v, scope, f);
             }
         }
-        Ast::Array { items, .. } => items.iter().for_each(|i| walk(i, in_proto, f)),
+        Ast::Array { items, .. } => items.iter().for_each(|i| walk(i, scope, f)),
         Ast::Proto(p) => {
             for i in &p.interfaces {
                 if let Some(d) = &i.default {
-                    walk(d, true, f);
+                    walk(d, Scope::Other, f);
                 }
             }
-            p.body.iter().for_each(|b| walk(b, true, f));
+            // A body inside an interface scope stays there; an unnamed
+            // (damaged) PROTO proves no definition.
+            let body = match (scope, p.name.as_deref()) {
+                (Scope::Other, _) | (_, None) => Scope::Other,
+                (_, Some(name)) => Scope::Body(name),
+            };
+            p.body.iter().for_each(|b| walk(b, body, f));
         }
         Ast::ExternProto(e) => {
             for i in &e.interfaces {
                 if let Some(d) = &i.default {
-                    walk(d, true, f);
+                    walk(d, Scope::Other, f);
                 }
             }
             if let Some(u) = &e.url {
-                walk(u, true, f);
+                walk(u, Scope::Other, f);
             }
         }
         _ => {}
     }
 }
 
-pub(crate) fn walk_doc<'a>(p: &'a ParseResult, f: &mut dyn FnMut(&'a Ast, bool)) {
+fn walk_scoped<'a>(p: &'a ParseResult, f: &mut dyn FnMut(&'a Ast, Scope<'a>)) {
     for s in &p.tree.statements {
-        walk(s, false, f);
+        walk(s, Scope::Doc, f);
     }
+}
+
+pub(crate) fn walk_doc<'a>(p: &'a ParseResult, f: &mut dyn FnMut(&'a Ast, bool)) {
+    walk_scoped(p, &mut |a, s| f(a, s.in_proto()));
 }
 
 /// Every node whose span is exactly `[from, to)` -- the identity proof.
 pub(crate) fn nodes_at(p: &ParseResult, from: u64, to: u64) -> Vec<Found<'_>> {
     let mut out = Vec::new();
-    walk_doc(p, &mut |a, in_proto| {
+    walk_scoped(p, &mut |a, scope| {
         if let Ast::Node(n) = a {
             if n.range.start.offset as u64 == from && n.range.end.offset as u64 == to {
                 out.push(Found {
                     node: n,
-                    in_proto_scope: in_proto,
+                    in_proto_scope: scope.in_proto(),
+                    shared_proto: match scope {
+                        Scope::Body(name) => Some(name),
+                        _ => None,
+                    },
                 });
             }
         }
     });
     out
+}
+
+/// B1: the shared PROTO definition the node at `[from, to)` belongs to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedDefinition {
+    /// The innermost enclosing `PROTO` name.
+    pub proto: String,
+    /// Node statements in the whole text whose type is that name (instances
+    /// in the scene and in other PROTO bodies alike).
+    pub instances: usize,
+    /// More than one PROTO/EXTERNPROTO declares that name: which one an
+    /// instance uses is not proven, so the count above is not either.
+    pub name_ambiguous: bool,
+}
+
+/// `Some` exactly when the node at `[from, to)` is unique and sits in a PROTO
+/// body: an edit to it changes the definition every instance shares.
+pub fn shared_definition(p: &ParseResult, from: u64, to: u64) -> Option<SharedDefinition> {
+    let found = nodes_at(p, from, to);
+    let [one] = found.as_slice() else {
+        return None;
+    };
+    let name = one.shared_proto?;
+    let mut instances = 0;
+    walk_scoped(p, &mut |a, _| {
+        if let Ast::Node(n) = a {
+            if n.node_type == name {
+                instances += 1;
+            }
+        }
+    });
+    let declared = proto_names(p).iter().filter(|n| **n == name).count();
+    Some(SharedDefinition {
+        proto: name.to_string(),
+        instances,
+        name_ambiguous: declared != 1,
+    })
 }
 
 pub(crate) fn proto_names(p: &ParseResult) -> Vec<&str> {
@@ -404,7 +492,14 @@ pub(crate) fn proto_names(p: &ParseResult) -> Vec<&str> {
 }
 
 /// Locate the node and apply the node-level gate. `Err` is a reason id.
-pub(crate) fn node_gate(p: &ParseResult, from: u64, to: u64) -> Result<&Node, &'static str> {
+/// `confirm_shared`: the user agreed to edit a shared PROTO definition. A
+/// PROTO body node without it is refused (`SHARED_DEFINITION_UNCONFIRMED`).
+pub(crate) fn node_gate(
+    p: &ParseResult,
+    from: u64,
+    to: u64,
+    confirm_shared: bool,
+) -> Result<&Node, &'static str> {
     let found = nodes_at(p, from, to);
     let f = match found.len() {
         0 => return Err(reason::NODE_NOT_FOUND),
@@ -427,8 +522,22 @@ pub(crate) fn node_gate(p: &ParseResult, from: u64, to: u64) -> Result<&Node, &'
     if proto_names(p).contains(&n.node_type.as_str()) {
         return Err(reason::PROTO_INSTANCE);
     }
-    if f.in_proto_scope {
+    // B1: a PROTO body node is editable (as the shared definition; the
+    // caller requires consent). Interface defaults and EXTERNPROTO are not.
+    if f.other_proto_scope() {
         return Err(reason::NODE_IN_PROTO_SCOPE);
+    }
+    if f.shared_proto.is_some()
+        && proto_names(p)
+            .iter()
+            .filter(|n| Some(**n) == f.shared_proto)
+            .count()
+            != 1
+    {
+        return Err(reason::PROTO_NAME_AMBIGUOUS);
+    }
+    if f.shared_proto.is_some() && !confirm_shared {
+        return Err(reason::SHARED_DEFINITION_UNCONFIRMED);
     }
     Ok(n)
 }
@@ -653,10 +762,12 @@ pub fn inspect_node_fields(p: &ParseResult, src: &str, from: u64, to: u64) -> No
                 node_type: None,
                 def: None,
                 fields: Vec::new(),
+                shared: None,
             }
         }
     };
-    let node_reason = node_gate(p, from, to).err();
+    // Consent is asked when an edit is committed, not to show the fields.
+    let node_reason = node_gate(p, from, to, true).err();
     let dups = duplicate_names(node);
     let fields = (0..node.fields.len())
         .filter_map(|i| describe(node, i, node_reason, &dups, src).map(|d| d.descriptor))
@@ -667,6 +778,7 @@ pub fn inspect_node_fields(p: &ParseResult, src: &str, from: u64, to: u64) -> No
         node_type: Some(node.node_type.clone()),
         def: node.def.clone(),
         fields,
+        shared: shared_definition(p, from, to),
     }
 }
 
@@ -902,7 +1014,7 @@ fn round_trip(
         return false;
     };
     let n = again.node;
-    if n.node_type != node.node_type || n.def != node.def || again.in_proto_scope {
+    if n.node_type != node.node_type || n.def != node.def || again.other_proto_scope() {
         return false;
     }
     let Some(Ast::Field(f)) = n.fields.get(req.field_index) else {
@@ -924,7 +1036,7 @@ fn round_trip(
 /// Never panics for ordinary invalid input.
 pub fn plan_field_edit(src: &str, req: &Request) -> Plan {
     let p = parse(src);
-    let node = match node_gate(&p, req.node_from, req.node_to) {
+    let node = match node_gate(&p, req.node_from, req.node_to, req.confirm_shared) {
         Ok(n) => n,
         Err(r) => return refuse(r),
     };
