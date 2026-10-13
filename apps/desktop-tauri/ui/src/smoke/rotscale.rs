@@ -124,7 +124,16 @@ fn ring_path(axis: Axis) -> Option<(Vec<(f64, f64)>, usize)> {
     }
     let pts: Vec<(f64, f64)> = ring.points.iter().map(|p| p.unwrap()).collect();
     let o = rl.origin;
-    let k = (0..pts.len() - 1).max_by(|a, b| {
+    // Never press where another ring passes too (ring crossings are
+    // ambiguous: the ring drawn on top takes the press).
+    let others: Vec<&[Option<(f64, f64)>]> = rl
+        .rings
+        .iter()
+        .filter(|r| r.axis != axis)
+        .map(|r| r.points.as_slice())
+        .collect();
+    let clear = |p: (f64, f64)| others.iter().all(|o| gz::polyline_distance(p, o) > 16.0);
+    let k = (0..pts.len() - 1).filter(|i| clear(pts[*i])).max_by(|a, b| {
         let da = (pts[*a].0 - o.0).hypot(pts[*a].1 - o.1);
         let db = (pts[*b].0 - o.0).hypot(pts[*b].1 - o.1);
         da.total_cmp(&db)

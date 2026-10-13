@@ -403,6 +403,32 @@ async fn keyboard(r: &mut R) -> Option<()> {
         alt == "menu-file" && alt_back == "source" && alt_v && active_id() == "source",
         format!("{alt} {alt_back} {alt_v} {}", active_id()),
     );
+    // LV2-C: a toolbar button reached with a REAL Tab shows its app-drawn
+    // tip (as hover does); moving focus on hides it.
+    let tip = || {
+        crate::element_by_id::<HtmlElement>(crate::tooltip::TIP_ID)
+            .filter(|t| !t.hidden())
+            .and_then(|t| t.text_content())
+    };
+    crate::element_by_id::<HtmlElement>("btn-new")?.focus().ok()?;
+    key("Tab").await?;
+    let focused = active_id();
+    let want = crate::element_by_id::<HtmlElement>(&focused)
+        .and_then(|e| e.get_attribute("data-tip"))
+        .unwrap_or_default();
+    let shown = wait_ms(2000, || tip()).await;
+    key("Tab").await?;
+    let moved = active_id();
+    let after = tip();
+    crate::element_by_id::<HtmlElement>("source")?.focus().ok()?;
+    r.step(
+        "keyboard: Tab to a toolbar button shows its tooltip; Tab on moves or hides it",
+        !want.is_empty()
+            && shown.as_deref() == Some(want.as_str())
+            && moved != focused
+            && after.as_deref() != Some(want.as_str()),
+        format!("{focused} {shown:?} → {moved} {after:?}"),
+    );
     Some(())
 }
 

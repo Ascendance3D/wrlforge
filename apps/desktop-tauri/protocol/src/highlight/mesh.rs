@@ -62,8 +62,14 @@ struct ShapeMesh {
     matrix: [f64; 16],
     points: Vec<V3>,
     tris: Vec<[u32; 3]>,
+    /// The edges classified in the shape's own coordinates (exact for any
+    /// rendered frame that preserves angles; see [`classify`]).
     edges: Vec<(u32, u32, EdgeKind)>,
+    /// Triangle edges: (low, high) -> [(triangle, runs low -> high)].
+    adj: Vec<Adjacent>,
 }
+
+type Adjacent = ((u32, u32), Vec<(u32, bool)>);
 
 /// The welded, classified edges of every reported shape.
 #[derive(Debug, Clone, PartialEq)]
@@ -135,11 +141,20 @@ pub fn build_mesh(shapes: &[ShapeReport]) -> Result<Mesh, &'static str> {
     if total > MAX_VERTICES {
         return Err(refusal::TOO_DETAILED);
     }
-    let crease_cos = CREASE_DEGREES.to_radians().cos();
     let mut out = Vec::with_capacity(shapes.len());
     for s in shapes {
         let v = s.v.as_deref().ok_or(refusal::GEOMETRY_INVALID)?;
         if v.len() != 3 * s.n as usize || !finite(v) || !finite(&s.m) {
+            return Err(refusal::GEOMETRY_INVALID);
+        }
+        // Whole primitives only: a stray line or triangle vertex is a
+        // malformed report, never a partial outline.
+        let per = match s.k {
+            1 => 2,
+            2 | 3 => 3,
+            _ => 1,
+        };
+        if s.n as usize % per != 0 {
             return Err(refusal::GEOMETRY_INVALID);
         }
         // Weld by exact position (-0 and 0 are one point).
@@ -157,6 +172,7 @@ pub fn build_mesh(shapes: &[ShapeReport]) -> Result<Mesh, &'static str> {
             .collect();
         let mut tris = Vec::new();
         let mut edges = Vec::new();
+        let mut adj = Vec::new();
         match s.k {
             0 => {}
             1 => {
@@ -185,37 +201,10 @@ pub fn build_mesh(shapes: &[ShapeReport]) -> Result<Mesh, &'static str> {
                             .push((ti, a < b));
                     }
                 }
-                let mut keys: Vec<_> = by_edge.keys().copied().collect();
-                keys.sort_unstable();
-                for k in keys {
-                    let f = &by_edge[&k];
-                    let kind = match f.as_slice() {
-                        [(a, da), (b, db)] => {
-                            let same = da == db;
-                            let crease = match (
-                                unit_normal(&points, tris[*a as usize]),
-                                unit_normal(&points, tris[*b as usize]),
-                            ) {
-                                (Some(na), Some(nb)) => {
-                                    let d = na[0] * nb[0] + na[1] * nb[1] + na[2] * nb[2];
-                                    // Consistent winding: the normals agree
-                                    // on a flat surface; same direction: one
-                                    // of them is flipped.
-                                    let d = if same { -d } else { d };
-                                    d < crease_cos
-                                }
-                                _ => false,
-                            };
-                            if crease {
-                                EdgeKind::Always
-                            } else {
-                                EdgeKind::Smooth { a: *a, b: *b, same }
-                            }
-                        }
-                        _ => EdgeKind::Always,
-                    };
-                    edges.push((k.0, k.1, kind));
-                }
+                let mut keys: Vec<_> = by_edge.into_iter().collect();
+                keys.sort_unstable_by_key(|(k, _)| *k);
+                adj = keys;
+                edges = classify(&points, &tris, &adj, None);
             }
             _ => return Err(refusal::GEOMETRY_INVALID),
         }
@@ -224,6 +213,7 @@ pub fn build_mesh(shapes: &[ShapeReport]) -> Result<Mesh, &'static str> {
             points,
             tris,
             edges,
+            adj,
         });
     }
     let mesh = Mesh {
@@ -234,6 +224,72 @@ pub fn build_mesh(shapes: &[ShapeReport]) -> Result<Mesh, &'static str> {
         return Err(refusal::NO_EDGES);
     }
     Ok(mesh)
+}
+
+/// Classify triangle edges: boundary / non-manifold / crease (always
+/// drawn) or smooth (drawn on the silhouette). The crease angle is measured
+/// in the RENDERED frame `m` when given (its linear part; non-uniform scale
+/// or shear changes face angles), else in the shape's own coordinates.
+fn classify(
+    points: &[V3],
+    tris: &[[u32; 3]],
+    adj: &[Adjacent],
+    m: Option<&[f64; 16]>,
+) -> Vec<(u32, u32, EdgeKind)> {
+    let crease_cos = CREASE_DEGREES.to_radians().cos();
+    let lin = |p: V3| match m {
+        Some(m) => [
+            m[0] * p[0] + m[4] * p[1] + m[8] * p[2],
+            m[1] * p[0] + m[5] * p[1] + m[9] * p[2],
+            m[2] * p[0] + m[6] * p[1] + m[10] * p[2],
+        ],
+        None => p,
+    };
+    let normal = |t: [u32; 3]| {
+        let q = t.map(|i| lin(points[i as usize]));
+        unit_normal(&q, [0, 1, 2])
+    };
+    adj.iter()
+        .map(|(k, f)| {
+            let kind = match f.as_slice() {
+                [(a, da), (b, db)] => {
+                    let same = da == db;
+                    let crease = match (normal(tris[*a as usize]), normal(tris[*b as usize])) {
+                        (Some(na), Some(nb)) => {
+                            let d = na[0] * nb[0] + na[1] * nb[1] + na[2] * nb[2];
+                            // Consistent winding: the normals agree on a
+                            // flat surface; same direction: one of them is
+                            // flipped.
+                            let d = if same { -d } else { d };
+                            d < crease_cos
+                        }
+                        _ => false,
+                    };
+                    if crease {
+                        EdgeKind::Always
+                    } else {
+                        EdgeKind::Smooth { a: *a, b: *b, same }
+                    }
+                }
+                _ => EdgeKind::Always,
+            };
+            (k.0, k.1, kind)
+        })
+        .collect()
+}
+
+/// Does the linear part of `m` preserve angles (rotation, reflection and
+/// one uniform scale)? Then the shape-space classification is exact.
+fn conformal(m: &[f64; 16]) -> bool {
+    let c = [0, 4, 8].map(|o| [m[o], m[o + 1], m[o + 2]]);
+    let d = |a: V3, b: V3| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let l = [d(c[0], c[0]), d(c[1], c[1]), d(c[2], c[2])];
+    let tol = 1e-9 * l.iter().fold(0.0_f64, |a, b| a.max(*b));
+    (l[0] - l[1]).abs() <= tol
+        && (l[0] - l[2]).abs() <= tol
+        && d(c[0], c[1]).abs() <= tol
+        && d(c[0], c[2]).abs() <= tol
+        && d(c[1], c[2]).abs() <= tol
 }
 
 /// One shape projected for one frame: client px and `1 / w` (the inverse
@@ -257,7 +313,8 @@ fn project(cam: &Camera, parent: &[f64; 16], mesh: &Mesh) -> Result<Vec<Projecte
     let mut out = Vec::with_capacity(mesh.shapes.len());
     let mut count = 0;
     for s in &mesh.shapes {
-        let m = gz::mat_mul(&vp, &gz::mat_mul(parent, &s.matrix));
+        let rendered = gz::mat_mul(parent, &s.matrix);
+        let m = gz::mat_mul(&vp, &rendered);
         if !finite(&m) {
             return Err(refusal::NOT_FINITE);
         }
@@ -286,8 +343,17 @@ fn project(cam: &Camera, parent: &[f64; 16], mesh: &Mesh) -> Result<Vec<Projecte
                 ((b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)).signum()
             })
             .collect();
+        // Non-uniform scale or shear in the rendered frame: the crease
+        // angles are measured again in that frame (this frame only).
+        let reclassified;
+        let edges = if !s.adj.is_empty() && !conformal(&rendered) {
+            reclassified = classify(&s.points, &s.tris, &s.adj, Some(&rendered));
+            &reclassified
+        } else {
+            &s.edges
+        };
         let mut drawn = Vec::new();
-        for (a, b, kind) in &s.edges {
+        for (a, b, kind) in edges {
             let draw = match kind {
                 EdgeKind::Always => true,
                 EdgeKind::Smooth { a: fa, b: fb, same } => {

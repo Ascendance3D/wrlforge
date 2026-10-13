@@ -39,7 +39,7 @@ tests:app_shell|5|0
 tests:flux_regression|6|0
 tests:scope_regression|3|0
 tests:typed_regression|3|0
-unittests:wrlforge_desktop_protocol|124|0
+unittests:wrlforge_desktop_protocol|126|0
 unittests:wrlforge_render|0|0
 unittests:wrlforge_scene|25|0
 unittests:wrlforge_ui|25|0
@@ -57,7 +57,7 @@ doc:wrlforge_text|0|0
 doc:wrlforge_vrml|0|0
 doc:wrlforge_wasm|0|0'
 # GUI: "<suite>:<report>|steps"; every step ok and the report pass=true.
-inv_gui='menu:report|92
+inv_gui='menu:report|93
 dock:main|65
 dock:restore|7
 dock:damaged|7

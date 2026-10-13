@@ -6,7 +6,8 @@
 //! changed. Controls therefore carry their hover text in `data-tip`, and
 //! this one tooltip element shows it: after a short hover delay, and hidden
 //! on pointer leave, on any pointer press (a click, a menu opening), on any
-//! key, on wheel / scroll, on window blur and after a timeout.
+//! key, on wheel / scroll, on window blur and after a timeout. A control
+//! reached with the keyboard shows its tip the same way while it has focus.
 //!
 //! Accessibility: the text stays in the accessibility tree. An element with
 //! no accessible name of its own (no `aria-label`, no text) gets the tip as
@@ -234,6 +235,22 @@ pub fn install() {
         }),
         true,
     );
+    // Keyboard users: a control reached by the keyboard (`:focus-visible`)
+    // shows its tip like a hovered one; leaving it hides the tip.
+    on(
+        "focusin",
+        Box::new(|ev| {
+            let keyboard = ev
+                .target()
+                .and_then(|t| t.dyn_into::<Element>().ok())
+                .is_some_and(|e| e.matches(":focus-visible").unwrap_or(false));
+            if keyboard {
+                hover(tipped(&ev));
+            }
+        }),
+        true,
+    );
+    on("focusout", Box::new(|_| hide()), true);
     for name in ["pointerdown", "keydown", "wheel", "scroll", "dragstart"] {
         on(name, Box::new(|_| hide()), true);
     }

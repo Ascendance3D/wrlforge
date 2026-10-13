@@ -618,3 +618,35 @@ fn too_much_geometry_skips_the_hidden_edge_test_and_says_so() {
     assert!(mesh::MAX_OCCLUDERS >= 50_000 && mesh::MAX_SAMPLES >= 200_000);
 }
 
+
+#[test]
+fn a_stray_primitive_vertex_refuses_the_mesh() {
+    // 7 line vertices / 8 triangle vertices: never a partial outline.
+    assert_eq!(build_mesh(&[report(1, vec![0.0; 21], ident())]), Err(refusal::GEOMETRY_INVALID));
+    let mut c = cube();
+    c.extend([0.0; 6]);
+    assert_eq!(build_mesh(&[report(3, c, ident())]), Err(refusal::GEOMETRY_INVALID));
+}
+
+#[test]
+fn a_non_uniform_rendered_scale_reclassifies_creases() {
+    // The 20° fold is smooth in its own coordinates; stretched 3x in Y it
+    // renders at ~47.5°, a crease, so its ridge is drawn even from above.
+    let mut stretch = ident();
+    stretch[5] = 3.0;
+    for same in [false, true] {
+        let flat = build_mesh(&[report(3, fold(same), ident())]).unwrap();
+        let tall = build_mesh(&[report(3, fold(same), stretch)]).unwrap();
+        let above = cam_from([0.0, 9.0, 5.0]);
+        assert_eq!(mesh_edges(&above, &ident(), &flat).unwrap().len(), 4, "same={same}");
+        assert_eq!(mesh_edges(&above, &ident(), &tall).unwrap().len(), 5, "same={same}");
+        // The same stretch from an ancestor frame counts too.
+        assert_eq!(mesh_edges(&above, &stretch, &flat).unwrap().len(), 5, "same={same}");
+        // A uniform scale changes no angle.
+        let mut twice = ident();
+        twice[0] = 2.0;
+        twice[5] = 2.0;
+        twice[10] = 2.0;
+        assert_eq!(mesh_edges(&above, &twice, &flat).unwrap().len(), 4, "same={same}");
+    }
+}
