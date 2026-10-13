@@ -41,7 +41,7 @@ extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = gizmoCamera, catch)]
     fn gizmo_camera_js() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = gizmoLocate, catch)]
-    fn gizmo_locate_js(seq: f64, from: f64, to: f64) -> Result<JsValue, JsValue>;
+    fn gizmo_locate_js(seq: f64, from: f64, to: f64, body: bool) -> Result<JsValue, JsValue>;
     #[allow(clippy::too_many_arguments)]
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = gizmoBind, catch)]
     fn gizmo_bind_js(
@@ -53,6 +53,7 @@ extern "C" {
         x: f64,
         y: f64,
         z: f64,
+        body: bool,
     ) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = gizmoSetField, catch)]
     fn gizmo_set_field_js(name: &str, values: Vec<f64>) -> Result<JsValue, JsValue>;
@@ -73,6 +74,7 @@ extern "C" {
         from: f64,
         to: f64,
         spans: Vec<f64>,
+        body: bool,
     ) -> Result<JsValue, JsValue>;
     // VISUAL-3A1 camera carry.
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = cameraCapture, catch)]
@@ -114,9 +116,10 @@ pub fn gizmo_camera() -> Option<wrlforge_desktop_protocol::gizmo::Camera> {
 
 /// VISUAL-3A1: the plain-data runtime chain of the ONE runtime node preview
 /// generation `seq` recorded for the preview span `[from, to)`, for Rust to
-/// prove (`doc_translate_prove`).
-pub fn gizmo_locate(seq: u64, from: u64, to: u64) -> Result<p::PickSnapshot, String> {
-    let raw = gizmo_locate_js(seq as f64, from as f64, to as f64)
+/// prove (`doc_translate_prove`). B3: `body` -- a PROTO body statement,
+/// located as the PICKED instance's copy of it.
+pub fn gizmo_locate(seq: u64, from: u64, to: u64, body: bool) -> Result<p::PickSnapshot, String> {
+    let raw = gizmo_locate_js(seq as f64, from as f64, to as f64, body)
         .map_err(js_err)?
         .as_string()
         .ok_or("non-string span snapshot")?;
@@ -129,7 +132,7 @@ pub fn gizmo_locate(seq: u64, from: u64, to: u64) -> Result<p::PickSnapshot, Str
 pub fn gizmo_bind(
     seq: u64,
     span: (u64, u64),
-    index: u32,
+    index: Option<u32>,
     name: &str,
     t: [f64; 3],
 ) -> Result<(), String> {
@@ -142,11 +145,13 @@ pub fn gizmo_bind(
         seq as f64,
         span.0 as f64,
         span.1 as f64,
-        index as f64,
+        // B3: -1 is a PROTO body node (the picked instance's copy).
+        index.map_or(-1.0, |i| i as f64),
         name,
         t[0],
         t[1],
         t[2],
+        index.is_none(),
     )
     .map_err(js_err)?
     .as_string()
@@ -209,6 +214,7 @@ pub fn highlight_bounds(
     seq: u64,
     span: (u64, u64),
     ancestors: &[(u64, u64)],
+    body: bool,
 ) -> Result<p::highlight::Bounds, String> {
     #[derive(serde::Deserialize)]
     struct R {
@@ -223,7 +229,7 @@ pub fn highlight_bounds(
         .iter()
         .flat_map(|(f, t)| [*f as f64, *t as f64])
         .collect();
-    let raw = highlight_bounds_js(seq as f64, span.0 as f64, span.1 as f64, spans)
+    let raw = highlight_bounds_js(seq as f64, span.0 as f64, span.1 as f64, spans, body)
         .map_err(js_err)?
         .as_string()
         .ok_or("non-string bounds")?;

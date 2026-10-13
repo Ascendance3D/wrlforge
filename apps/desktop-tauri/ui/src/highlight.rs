@@ -14,7 +14,11 @@
 //! that node's runtime chain link by link (`doc_highlight_prove`,
 //! `pick::resolve_node`). Only then are its bounds read, through `nodeAt` on
 //! the same span, with each proven ancestor's frame through `nodeAt` on the
-//! ancestor's span. Anything unprovable -- a PROTO body node, a shared
+//! ancestor's span. B3: a PROTO body node has one runtime copy per instance;
+//! the outline is drawn on the PICKED instance's copy (`snapshotBodySpan` /
+//! `bodyNodeAt`), its ancestors followed up the runtime chain of that copy
+//! and checked span by span against Rust's proof. Anything unprovable --
+//! several instances and no pick on one, a shared
 //! DEF/USE node, a node under a Billboard, a stale preview -- shows NO
 //! outline and a short status note.
 //!
@@ -49,8 +53,11 @@ pub struct Proven {
     pub seq: u64,
     pub span: (u64, u64),
     pub node_type: String,
-    /// The direct parent first: preview span and source type.
-    pub ancestors: Vec<((u64, u64), String)>,
+    /// The direct parent first: preview span, source type, and whether it is
+    /// the PROTO instance the chain was proven through (B3).
+    pub ancestors: Vec<((u64, u64), String, bool)>,
+    /// B3: a PROTO body node (located as the picked instance's copy).
+    pub body: bool,
 }
 
 #[derive(Default)]
@@ -96,6 +103,9 @@ fn explain(reason: &str) -> &'static str {
     match reason {
         "runtime-node-for-span-not-unique" | "proto-instance" => {
             "the preview draws this node more than once or inside a PROTO definition"
+        }
+        "proto-instance-not-picked" => {
+            "its PROTO has several instances on screen; click the instance in the viewport to outline it"
         }
         "runtime-node-referenced-by-several-source-occurrences"
         | "runtime-node-has-several-live-parents" => "it is drawn by a shared (DEF/USE) node",
@@ -160,13 +170,14 @@ fn request(key: Key) {
         if !current() {
             return;
         }
-        let span = match t {
+        let (span, body) = match t {
             Ok(p::HighlightTargetOutcome::Ready {
                 revision: r,
                 item: i,
                 preview_from,
                 preview_to,
-            }) if r == revision && i == item => (preview_from, preview_to),
+                body,
+            }) if r == revision && i == item => ((preview_from, preview_to), body),
             Ok(p::HighlightTargetOutcome::Refused { reason, .. }) => return refused(&reason),
             Ok(_) => return,
             Err(e) => return refused(&e),
@@ -174,7 +185,7 @@ fn request(key: Key) {
         let Some(gen) = crate::pick::active().filter(|g| g.seq == gen_seq) else {
             return;
         };
-        let snapshot = match ipc::gizmo_locate(gen_seq, span.0, span.1) {
+        let snapshot = match ipc::gizmo_locate(gen_seq, span.0, span.1, body) {
             Ok(s) => s,
             Err(e) => return refused(&e),
         };
@@ -212,8 +223,9 @@ fn request(key: Key) {
                     node_type,
                     ancestors: ancestors
                         .into_iter()
-                        .map(|a| ((a.preview_from, a.preview_to), a.node_type))
+                        .map(|a| ((a.preview_from, a.preview_to), a.node_type, a.proto_instance))
                         .collect(),
+                    body,
                 };
                 HIGHLIGHT.with_borrow_mut(|h| {
                     h.proofs += 1;
@@ -244,14 +256,18 @@ fn bounds_of(t: &Proven) -> Result<hl::Bounds, String> {
     if let Some(b) = fresh {
         return b;
     }
-    let spans: Vec<(u64, u64)> = t.ancestors.iter().map(|(s, _)| *s).collect();
-    let b = ipc::highlight_bounds(t.seq, t.span, &spans).and_then(|b| {
+    let spans: Vec<(u64, u64)> = t.ancestors.iter().map(|(s, _, _)| *s).collect();
+    let b = ipc::highlight_bounds(t.seq, t.span, &spans, t.body).and_then(|mut b| {
         let agrees = b.ancestors.len() == t.ancestors.len()
             && b.ancestors
                 .iter()
                 .zip(&t.ancestors)
-                .all(|(r, (_, ty))| r.node_type == *ty);
+                .all(|(r, (_, ty, _))| r.node_type == *ty);
         if agrees {
+            // The instance flag comes from Rust's proof, never the renderer.
+            for (r, (_, _, inst)) in b.ancestors.iter_mut().zip(&t.ancestors) {
+                r.proto_instance = *inst;
+            }
             Ok(b)
         } else {
             Err(hl::refusal::ANCESTOR_DISAGREES.to_string())
@@ -343,6 +359,12 @@ fn schedule() {
             let _ = w.request_animation_frame(cb.as_ref().unchecked_ref());
         }
     });
+}
+
+/// B3: a viewport pick landed (maybe on the same item, another instance):
+/// prove the outline again on the next frame.
+pub fn repicked() {
+    HIGHLIGHT.with_borrow_mut(|h| h.key = None);
 }
 
 /// Turn the frame loop on (a selection exists). Idempotent.

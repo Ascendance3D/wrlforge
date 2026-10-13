@@ -76,6 +76,12 @@ pub struct RenderedAncestor {
     pub node_type: String,
     #[serde(default)]
     pub frame: Option<Frame>,
+    /// B3: this ancestor is the PROTO instance whose BODY the inner chain
+    /// was proven through (set from Rust's proof, never by the renderer).
+    /// An instance renders as its body root node, which is the next inner
+    /// ancestor already: it adds no frame of its own.
+    #[serde(default)]
+    pub proto_instance: bool,
 }
 
 /// The renderer's report for one highlighted node.
@@ -202,6 +208,9 @@ pub fn world_corners(bounds: &Bounds) -> Result<[V3; 8], &'static str> {
     }
     let mut m = *b;
     for a in &bounds.ancestors {
+        if a.proto_instance {
+            continue;
+        }
         match (ancestor_kind(&a.node_type), &a.frame) {
             (Some(AncestorKind::Identity), _) => {}
             (Some(AncestorKind::Transform), Some(f)) => {

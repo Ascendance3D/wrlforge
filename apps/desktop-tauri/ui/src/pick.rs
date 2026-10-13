@@ -260,10 +260,16 @@ async fn apply(session: u64, out: p::PickOutcome) -> p::PickOutcome {
     if out.is_proven() {
         let item = out.item.clone().unwrap_or_default();
         match ui::pick_select(session, out.revision, item).await {
-            Ok(label) => u.pick_message.set(Some((
-                "ok".into(),
-                format!("Selected {label} from the viewport."),
-            ))),
+            Ok(label) => {
+                // B3: a PROTO body node binds the PICKED instance, so a new
+                // pick of the same item may mean another instance.
+                crate::highlight::repicked();
+                crate::gizmo::repicked();
+                u.pick_message.set(Some((
+                    "ok".into(),
+                    format!("Selected {label} from the viewport."),
+                )))
+            }
             Err(why) => {
                 u.pick_message.set(Some((
                     "refused".into(),

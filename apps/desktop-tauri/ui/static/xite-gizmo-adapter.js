@@ -136,9 +136,10 @@
       }
     }
 
-    // Bind the PROVEN runtime node `node` (from the pick adapter's nodeAt)
-    // of `scene`. `index` / `name` / `expected` are assertions only (root
-    // position, DEF name or '', source translation). `verify()` must stay
+    // Bind the PROVEN runtime node `node` (from the pick adapter's nodeAt,
+    // or bodyNodeAt for a PROTO body node: index -1, name '') of `scene`.
+    // `index` / `name` / `expected` are assertions only (root position, DEF
+    // name or '', source translation). `verify()` must stay
     // true for the binding to be used.
     function bind(scene, node, index, name, expected, verify) {
       unbind();
@@ -155,12 +156,16 @@
       try { type = sf.getNodeTypeName(); } catch (e) { type = null; }
       if (type !== 'Transform') return { ok: false, reason: 'preview-node-not-a-transform' };
       // Assertion: the proven node sits at the root position Rust computed.
-      var atIndex = null;
-      try {
-        var roots = scene.rootNodes;
-        if (roots && Number.isInteger(index) && index >= 0 && index < roots.length) atIndex = roots[index];
-      } catch (e) { atIndex = null; }
-      if (!atIndex || !sameNode(atIndex, sf)) return { ok: false, reason: 'preview-root-order-disagrees' };
+      // B3: index -1 is a PROTO body node -- the picked instance's copy,
+      // which is no root node; Rust proved its chain through the instance.
+      if (index !== -1) {
+        var atIndex = null;
+        try {
+          var roots = scene.rootNodes;
+          if (roots && Number.isInteger(index) && index >= 0 && index < roots.length) atIndex = roots[index];
+        } catch (e) { atIndex = null; }
+        if (!atIndex || !sameNode(atIndex, sf)) return { ok: false, reason: 'preview-root-order-disagrees' };
+      }
       if (name) {
         var named = null;
         try { named = scene.getNamedNode(String(name)); } catch (e) { named = null; }

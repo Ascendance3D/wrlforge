@@ -75,7 +75,7 @@ fn the_visual1_box_is_a_target_at_its_translation() {
     let (f, t) = box_span(&src);
     let tg = translate_target(&src, f, t).unwrap();
     assert_eq!(tg.def.as_deref(), Some("Box_1"));
-    assert_eq!(tg.root_index, 0);
+    assert_eq!(tg.root_index, Some(0));
     assert_eq!(tg.translation, [0.0, 0.0, 0.0]);
     assert_eq!(tg.origin, [0.0, 0.0, 0.0]);
     assert_eq!(tg.lexemes, ["0", "0", "0"].map(String::from));
@@ -178,7 +178,7 @@ fn line_endings_bom_comments_and_unicode_are_preserved() {
             let (f, t) = box_span(&src);
             let tg = translate_target(&src, f, t).unwrap();
             assert_eq!(tg.def.as_deref(), Some("Box_ü"));
-            assert_eq!(tg.root_index, 1, "after WorldInfo");
+            assert_eq!(tg.root_index, Some(1), "after WorldInfo");
             let (plan, _) = plan_translate(&src, f, t, Axis::Z, -0.75, 2);
             let (out, old, new) = applied(&src, &plan);
             assert_eq!((old.as_str(), new.as_str()), ("0", "-0.75"));
@@ -262,8 +262,8 @@ fn root_index_counts_top_level_node_statements_only() {
     let a = translate_target(&src, ts[0].0, ts[0].1).unwrap();
     let b = translate_target(&src, ts[1].0, ts[1].1).unwrap();
     // G, USE G, P {}, S, T -> T is index 4; the undefined one is 5.
-    assert_eq!((a.root_index, a.def.as_deref()), (4, Some("T")));
-    assert_eq!((b.root_index, b.def), (5, None));
+    assert_eq!((a.root_index, a.def.as_deref()), (Some(4), Some("T")));
+    assert_eq!((b.root_index, b.def), (Some(5), None));
     assert_eq!(b.translation, [1.0, 2.0, 3.0]);
     let (plan, _) = plan_translate(&src, ts[1].0, ts[1].1, Axis::Y, -1.5, 2);
     let (out, old, new) = applied(&src, &plan);
@@ -271,12 +271,153 @@ fn root_index_counts_top_level_node_statements_only() {
     assert!(out.contains("Transform { translation 1 -1.5 3 }"));
 }
 
+/// B3: a PROTO body Transform at the instance's frame is a target of every
+/// tool; a commit needs consent (the field-edit node gate), changes exactly
+/// the tool's tokens in the BODY text, and the result re-parses to it.
+const CHEVY_LIKE: &str = "PROTO Car [ field SFVec3f bboxSize 1 1 1 ] {\n\tGroup {\n\t\tbboxSize IS bboxSize\n\t\tchildren [\n\t\t\tDEF CarXForm Transform { translation 0 0 0 rotation 0 1 0 0 scale 1 1 1 children [ Shape { geometry Box {} } ] }\n\t\t]\n\t}\n}\nCar {}\nTransform { translation 5 0 0 children Car {} }\n";
+
 #[test]
-fn proto_bodies_are_refused() {
-    let src = format!("{H}PROTO P [] {{ DEF A Transform {{ translation 0 0 0 }} }}\n");
+fn proto_body_transforms_are_targets_with_consent() {
+    let src = format!("{H}{CHEVY_LIKE}");
     let (f, t) = spans(&src, "Transform")[0];
-    let r = translate_target(&src, f, t).unwrap_err();
-    assert_eq!(r.reason, field_edit::reason::NODE_IN_PROTO_SCOPE);
+    for tool in [Tool::Move, Tool::Rotate, Tool::Scale] {
+        let tg = manip_target(&src, f, t, tool).unwrap();
+        assert_eq!(tg.root_index, None, "a body node is no root node");
+        let sh = tg.shared.as_ref().expect("shared definition");
+        assert_eq!(
+            (sh.proto.as_str(), sh.instances, sh.name_ambiguous),
+            ("Car", 2, false)
+        );
+        assert_eq!(tg.def.as_deref(), Some("CarXForm"));
+    }
+    // No consent: refused exactly as an Inspector edit, nothing planned.
+    for plan in [
+        plan_translate(&src, f, t, Axis::X, 1.5, 4).0,
+        plan_rotate(&src, f, t, Axis::Y, 0.5).0,
+        plan_scale(&src, f, t, None, 2.0).0,
+    ] {
+        assert!(
+            matches!(
+                plan,
+                Plan::Refused {
+                    reason: field_edit::reason::SHARED_DEFINITION_UNCONFIRMED,
+                    ..
+                }
+            ),
+            "{plan:?}"
+        );
+    }
+    // With consent: one token of the body changes; the rest is byte-exact.
+    let (plan, text) = plan_translate_with(&src, f, t, Axis::X, 1.5, 4, true);
+    assert_eq!(text.as_deref(), Some("1.5"));
+    let (out, old, new) = applied(&src, &plan);
+    assert_eq!((old.as_str(), new.as_str()), ("0", "1.5"));
+    assert!(out.contains("DEF CarXForm Transform { translation 1.5 0 0 rotation"));
+    let (f2, t2) = spans(&out, "Transform")[0];
+    let after = manip_target(&out, f2, t2, Tool::Move).unwrap();
+    assert_eq!(after.translation, [1.5, 0.0, 0.0]);
+    assert!(after.shared.is_some());
+
+    let (plan, _) = plan_rotate_with(&src, f, t, Axis::Y, 0.5, true);
+    let out = applied_any(&src, &plan);
+    assert!(out.contains("rotation 0 1 0 0.5 scale"), "{out}");
+    let (plan, _) = plan_scale_with(&src, f, t, Some(Axis::Z), 2.0, true);
+    let (out, old, new) = applied(&src, &plan);
+    assert_eq!((old.as_str(), new.as_str()), ("1", "2"));
+    assert!(out.contains("scale 1 1 2 children"), "{out}");
+}
+
+#[test]
+fn proto_body_transforms_outside_the_instance_frame_are_refused() {
+    let cases: [(&str, usize, &str); 8] = [
+        // Under a transforming node of the body.
+        (
+            "PROTO P [] { Transform { translation 1 0 0 children [ Transform { translation 0 0 0 } ] } } P {}",
+            1,
+            reason::BODY_FRAME,
+        ),
+        // A Collision proxy is not rendered.
+        (
+            "PROTO P [] { Collision { proxy Transform { translation 0 0 0 } } } P {}",
+            0,
+            reason::BODY_FRAME,
+        ),
+        // A nested PROTO's body.
+        (
+            "PROTO P [] { PROTO Q [] { Transform { translation 0 0 0 } } Q {} } P {}",
+            0,
+            reason::BODY_FRAME,
+        ),
+        // The frame driven through the interface.
+        (
+            "PROTO P [ eventIn SFRotation spin ] { Transform { translation 0 0 0 set_rotation IS spin } } P {}",
+            0,
+            reason::BODY_FRAME,
+        ),
+        // The field itself bound with IS: each instance has its own value.
+        (
+            "PROTO P [ field SFVec3f at 0 0 0 ] { Transform { translation IS at } } P {}",
+            0,
+            reason::BODY_FRAME,
+        ),
+        // An enclosing group USEd again in the body.
+        (
+            "PROTO P [] { Group { children [ DEF G Group { children [ Transform { translation 0 0 0 } ] } Transform { translation 2 0 0 children USE G } ] } } P {}",
+            0,
+            reason::BODY_FRAME,
+        ),
+        // The Transform itself instanced, or animated, inside the body.
+        (
+            "PROTO P [] { Group { children [ DEF A Transform { translation 0 0 0 } USE A ] } } P {}",
+            0,
+            reason::INSTANCED,
+        ),
+        (
+            "PROTO P [] { Group { children [ DEF A Transform { translation 0 0 0 } DEF I PositionInterpolator {} ] } ROUTE I.value_changed TO A.set_translation } P {}",
+            0,
+            reason::ROUTED,
+        ),
+    ];
+    for (body, k, want) in cases {
+        let src = format!("{H}{body}\n");
+        let (f, t) = spans(&src, "Transform")[k];
+        let got = translate_target(&src, f, t).unwrap_err();
+        assert_eq!(got.reason, want, "{body}");
+        let (plan, _) = plan_translate_with(&src, f, t, Axis::X, 3.0, 2, true);
+        assert!(matches!(plan, Plan::Refused { .. }), "{body}");
+    }
+}
+
+#[test]
+fn ambiguous_or_other_proto_scopes_are_refused_even_with_consent() {
+    // Two declarations of the name: which one an instance uses is unproven.
+    let src = format!(
+        "{H}PROTO P [] {{ Transform {{ translation 0 0 0 }} }}\nPROTO P [] {{ Group {{}} }}\nP {{}}\n"
+    );
+    let (f, t) = spans(&src, "Transform")[0];
+    assert_eq!(
+        translate_target(&src, f, t).unwrap_err().reason,
+        field_edit::reason::PROTO_NAME_AMBIGUOUS
+    );
+    let (plan, _) = plan_translate_with(&src, f, t, Axis::X, 1.0, 2, true);
+    assert!(matches!(plan, Plan::Refused { .. }));
+    // An interface default and an EXTERNPROTO-free interface scope: never.
+    let src = format!(
+        "{H}PROTO P [ field SFNode n Transform {{ translation 0 0 0 }} ] {{ Group {{}} }}\nP {{}}\n"
+    );
+    let (f, t) = spans(&src, "Transform")[0];
+    assert_eq!(
+        translate_target(&src, f, t).unwrap_err().reason,
+        field_edit::reason::NODE_IN_PROTO_SCOPE
+    );
+    let (plan, _) = plan_translate_with(&src, f, t, Axis::X, 1.0, 2, true);
+    assert!(matches!(
+        plan,
+        Plan::Refused {
+            reason: field_edit::reason::NODE_IN_PROTO_SCOPE,
+            ..
+        }
+    ));
 }
 
 #[test]

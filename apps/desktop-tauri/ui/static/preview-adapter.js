@@ -449,12 +449,15 @@
     // VISUAL-3A1: the plain-data runtime chain of the ONE runtime node the
     // generation `seq` recorded for the preview span [from, to), for Rust to
     // prove. JSON (a pick-style snapshot, outcome `found` or a refusal).
-    gizmoLocate: function (seq, from, to) {
+    // B3: `body` -- the span is a PROTO body statement; the runtime node is
+    // the PICKED instance's copy of it (snapshotBodySpan).
+    gizmoLocate: function (seq, from, to, body) {
       var c = canvas();
       var a = c && c.browser ? adapterFor(c.browser) : null;
       var s;
       if (!a) s = { outcome: 'disabled', reason: 'adapter-unavailable' };
       else if (!pick.active || pick.active.seq !== seq || !pick.generation) s = { outcome: 'stale', reason: 'preview-scene-replaced' };
+      else if (body === true) s = a.snapshotBodySpan(pick.generation, Number(from), Number(to));
       else s = a.snapshotSpan(pick.generation, Number(from), Number(to));
       return JSON.stringify({
         outcome: s.outcome, reason: s.reason || null, shape: s.shape || null, ctxKind: s.ctxKind || null,
@@ -465,7 +468,9 @@
     // just proved. `index` / `name` / (x, y, z) are assertions only. The
     // binding re-proves (same generation, same span, same object) before
     // every temporary translation. JSON {ok, reason}.
-    gizmoBind: function (seq, from, to, index, name, x, y, z) {
+    // B3: `body` -- bind the PICKED instance's copy (bodyNodeAt); the root
+    // index and DEF name assertions do not apply (index -1, name '').
+    gizmoBind: function (seq, from, to, index, name, x, y, z, body) {
       var c = canvas();
       if (c && c.browser) adapterFor(c.browser);
       if (!pick.gizmo || !pick.adapter) return JSON.stringify({ ok: false, reason: 'adapter-unavailable' });
@@ -474,10 +479,11 @@
         return JSON.stringify({ ok: false, reason: 'preview-scene-replaced' });
       }
       var adapter = pick.adapter, gen = pick.generation, f = Number(from), t = Number(to);
-      var node = adapter.nodeAt(gen, f, t);
+      var isBody = body === true;
+      var node = isBody ? adapter.bodyNodeAt(gen, f, t) : adapter.nodeAt(gen, f, t);
       var verify = function () {
         return !!pick.active && pick.active.seq === seq && pick.generation === gen && pick.adapter === adapter
-          && !!node && adapter.nodeAt(gen, f, t) === node;
+          && !!node && (isBody ? adapter.bodyNodeAt(gen, f, t, node) : adapter.nodeAt(gen, f, t)) === node;
       };
       return JSON.stringify(pick.gizmo.bind(pick.scene, node, Number(index), String(name || ''), [Number(x), Number(y), Number(z)], verify));
     },
@@ -487,22 +493,28 @@
     // (`spans`: flat [from, to, ...], the direct parent first, as Rust
     // returned them). Every node comes from nodeAt (exactly one runtime node
     // per span), never a search. JSON {ok, box, ancestors} or {ok, reason}.
-    highlightBounds: function (seq, from, to, spans) {
+    // B3: `body` -- a PROTO body node: the PICKED instance's copy
+    // (bodyNodeAt), its ancestors followed up THAT copy's runtime chain and
+    // checked span by span (chainOf).
+    highlightBounds: function (seq, from, to, spans, body) {
       var c = canvas();
       if (c && c.browser) adapterFor(c.browser);
       var out = function (o) { return JSON.stringify(o); };
       if (!pick.gizmo || !pick.adapter) return out({ ok: false, reason: 'adapter-unavailable' });
       if (!pick.active || pick.active.seq !== seq || !pick.generation) return out({ ok: false, reason: 'preview-scene-replaced' });
       var gen = pick.generation, a = pick.adapter;
-      var node = a.nodeAt(gen, Number(from), Number(to));
-      if (!node) return out({ ok: false, reason: 'runtime-node-for-span-not-unique' });
+      var isBody = body === true;
+      var node = isBody ? a.bodyNodeAt(gen, Number(from), Number(to)) : a.nodeAt(gen, Number(from), Number(to));
+      if (!node) return out({ ok: false, reason: isBody ? 'proto-instance-not-picked' : 'runtime-node-for-span-not-unique' });
       var b = pick.gizmo.bounds(node);
       if (!b.ok) return out(b);
-      var list = Array.prototype.slice.call(spans || []);
+      var list = Array.prototype.slice.call(spans || []).map(Number);
       if (list.length % 2) return out({ ok: false, reason: 'runtime-node-not-proven' });
+      var chain = isBody ? a.chainOf(gen, node, list) : null;
+      if (isBody && !chain) return out({ ok: false, reason: 'runtime-ancestor-not-proven' });
       var ancestors = [];
       for (var i = 0; i < list.length; i += 2) {
-        var an = a.nodeAt(gen, Number(list[i]), Number(list[i + 1]));
+        var an = isBody ? chain[i / 2] : a.nodeAt(gen, Number(list[i]), Number(list[i + 1]));
         var info = an ? pick.gizmo.ancestor(an) : null;
         if (!info) return out({ ok: false, reason: 'runtime-ancestor-not-proven' });
         ancestors.push(info);

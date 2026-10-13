@@ -86,14 +86,17 @@ fn transform_ancestors_compose_innermost_first() {
     let inner = RenderedAncestor {
         node_type: "Transform".into(),
         frame: Some(frame([0.0; 3], [0.0, 0.0, 1.0, 0.0], [2.0, 2.0, 2.0])),
+        proto_instance: false,
     };
     let group = RenderedAncestor {
         node_type: "Group".into(),
         frame: None,
+        proto_instance: false,
     };
     let outer = RenderedAncestor {
         node_type: "Transform".into(),
         frame: Some(frame([10.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [1.0; 3])),
+        proto_instance: false,
     };
     let c = world_corners(&unit_box(vec![inner, group, outer])).unwrap();
     assert!(close(c[0], [8.0, -2.0, -2.0]));
@@ -135,6 +138,7 @@ fn unknown_or_unproven_ancestors_refuse() {
         let a = RenderedAncestor {
             node_type: t.into(),
             frame: None,
+            proto_instance: false,
         };
         assert_eq!(
             world_corners(&unit_box(vec![a])),
@@ -145,14 +149,25 @@ fn unknown_or_unproven_ancestors_refuse() {
     let no_frame = RenderedAncestor {
         node_type: "Transform".into(),
         frame: None,
+        proto_instance: false,
     };
     assert_eq!(
         world_corners(&unit_box(vec![no_frame])),
         Err(refusal::ANCESTOR_DISAGREES)
     );
+    // B3: a proven PROTO instance link adds no frame; the same type
+    // without Rust's proof still refuses.
+    let inst = RenderedAncestor {
+        node_type: "MyProto".into(),
+        frame: None,
+        proto_instance: true,
+    };
+    let c = world_corners(&unit_box(vec![inst])).unwrap();
+    assert!(close(c[0], [-1.0, -1.0, -1.0]) && close(c[7], [1.0, 1.0, 1.0]));
     let bad = RenderedAncestor {
         node_type: "Transform".into(),
         frame: Some(frame([f64::NAN, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [1.0; 3])),
+        proto_instance: false,
     };
     assert_eq!(
         world_corners(&unit_box(vec![bad])),

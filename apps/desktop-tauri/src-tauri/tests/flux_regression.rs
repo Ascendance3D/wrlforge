@@ -429,6 +429,7 @@ fn cube_translate_changes_one_token_keeps_quads_and_undo_restores() {
 
     let out = svc
         .translate(&p::TranslateRequest {
+            confirm_shared: false,
             session: doc.session,
             base_revision: a.revision,
             item: tr.id.clone(),
