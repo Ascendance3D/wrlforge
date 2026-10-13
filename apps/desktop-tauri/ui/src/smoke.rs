@@ -97,7 +97,12 @@ pub async fn run(plan: p::SmokePlan) {
         (Some(c), _, _) => create::run(c, &mut r).await,
         (None, Some(pk), _) => pick::run(pk, &mut r).await,
         (None, None, Some(g)) => gizmo::run(g, &mut r).await,
-        (None, None, None) => run_steps(&plan, &mut r).await,
+        (None, None, None) => {
+            // The per-file, Inspector and theme checks exercise the Source
+            // panel: run them in the Source preset (default is Modeling).
+            crate::dock::set_preset(p::layout::PresetId::Source);
+            run_steps(&plan, &mut r).await
+        }
     };
     if done.is_none() {
         r.step(
