@@ -710,6 +710,13 @@ fn viewport_keys_fit_only_unmodified_and_never_shadow_a_shortcut() {
     assert_eq!(from_viewport_key("g", false), None);
     assert_eq!(viewport_key_label(ViewFitAll), "F / Home");
     assert_eq!(viewport_key_label(ViewTop), "");
+    // Stage 2: Escape in the viewport clears the selection (view state).
+    assert_eq!(from_viewport_key("Escape", false), Some(EditClearSelection));
+    assert_eq!(from_viewport_key("Escape", true), None);
+    assert_eq!(viewport_key_label(EditClearSelection), "Escape");
+    let s = EditClearSelection.spec();
+    assert_eq!((s.menu, s.requires, s.action, s.mutates_document), (Menu::Edit, Requires::NodeSelected, Action::UiOnly, false));
+    assert!(s.shortcuts.is_empty());
     assert_eq!(
         ViewFitAll.title(Platform::Linux),
         format!("{} (F / Home in the viewport)", ViewFitAll.spec().hint)

@@ -866,6 +866,7 @@ async fn matrix(c: &p::PickSmoke, s: &mut Stats, r: &mut R) -> Option<()> {
         );
         if layered {
             stale_status(fx, r).await?;
+            escape(fx, r).await?;
         }
         if fx.id == "L1-coat-over-paint" {
             duplicate_offset(c, fx, s, r).await?;
@@ -948,6 +949,96 @@ async fn stale_status(fx: &p::PickFixture, r: &mut R) -> Option<()> {
         done.iter().any(|d| d.starts_with("tree:")),
         done.join(" "),
     );
+    Some(())
+}
+
+/// Stage 2: a REAL Escape key with the 3D Viewport focused clears the
+/// scene selection through the selection authority: no outline, no
+/// Inspector fields, no Scene Tree highlight, no hit cycle, no pick status,
+/// and the document is untouched. The next click starts at the FRONT layer
+/// again and proves exactly the oracle's node (WRONG_SOURCE_SELECTIONS).
+/// Escape in the Source editor or in a dialog keeps the selection.
+async fn escape(fx: &p::PickFixture, r: &mut R) -> Option<()> {
+    let ck = fx.clicks.iter().find(|k| !k.then.is_empty())?;
+    let (x, y) = project(ck.world, fx.camera)?;
+    let el = |q: &str| -> Option<HtmlElement> {
+        doc_el()?.query_selector(q).ok()??.dyn_into::<HtmlElement>().ok()
+    };
+    let active = || {
+        doc_el()
+            .and_then(|d| d.active_element())
+            .map(|e| format!("{}#{}", e.tag_name().to_lowercase(), e.id()))
+            .unwrap_or_default()
+    };
+    let span = |o: &Option<p::PickOutcome>| {
+        o.as_ref().and_then(|o| o.logical.as_ref().map(|l| [l.from, l.to]))
+    };
+    // (1) Cycle to the Shape behind, then Escape in the viewport.
+    let _ = gesture(x, y).await;
+    let _ = gesture(x, y).await;
+    let cycled = PICK.with_borrow(|p| p.cycle.is_some()) && selected_id().is_some();
+    let focus = active();
+    let before = untouched().await?;
+    // A real X key press (xdotool) into our focused window.
+    super::gizmo::real("escape", x, y).await.ok()?;
+    let gone = wait_ms(3000, || ui().selected.get_untracked().is_none().then_some(())).await;
+    ipc::sleep(300).await;
+    let after = untouched().await?;
+    let outline = crate::highlight::HIGHLIGHT.with_borrow(|h| h.path.clone());
+    let tree_sel = all(".tree-item.selected").len();
+    let inspector_empty = el("section.inspector p.empty").is_some();
+    let status = pick_text();
+    let quiet = status.trim_matches(|c: char| c.is_whitespace() || c == '\u{a0}').is_empty();
+    let state = PICK.with_borrow(|p| (p.cycle.is_none(), p.last.is_none()));
+    r.step(
+        &format!("{}: real Escape in the viewport clears the selection: no outline, Inspector and Scene Tree empty, no hit cycle or pick status, the source untouched", fx.id),
+        cycled
+            && gone.is_some()
+            && outline.is_empty()
+            && tree_sel == 0
+            && inspector_empty
+            && quiet
+            && state == (true, true)
+            && before == after,
+        format!(
+            "cycled {cycled} · focus {focus} · cleared {} · outline {} · tree {tree_sel} · inspector-empty {inspector_empty} · status {status:?} · cycle/last none {state:?} · doc same {}",
+            gone.is_some(),
+            outline.len(),
+            before == after
+        ),
+    );
+    // (2) The next click is the FRONT layer again, proven exactly.
+    let out = gesture(x, y).await;
+    let front = ck.status == "PROVEN" && span(&out) == ck.logical && out.as_ref().is_some_and(|o| o.is_proven());
+    let wrong = usize::from(out.as_ref().is_some_and(|o| o.is_proven()) && !front);
+    r.step(
+        &format!("{}: WRONG_SOURCE_SELECTIONS after Escape: the next click selects the front Shape", fx.id),
+        front && wrong == 0,
+        format!("wrong {wrong} · span {:?} want {:?}", span(&out), ck.logical),
+    );
+    // (3) Escape in the Source editor keeps the scene selection.
+    let sel = ui().selected.get_untracked();
+    crate::command::run(p::command::CommandId::ViewFocusSource);
+    let in_source = wait_ms(2000, || (active() == "textarea#source").then_some(())).await.is_some();
+    super::gizmo::real("escape", x, y).await.ok()?;
+    ipc::sleep(300).await;
+    let kept_source = in_source && sel.is_some() && ui().selected.get_untracked() == sel;
+    // (4) Escape in a dialog (About) closes the dialog only.
+    click("btn-about")?;
+    let open = wait_ms(2000, || el("#about-dialog").filter(|d| !d.hidden()).map(|_| ())).await;
+    super::gizmo::real("escape", x, y).await.ok()?;
+    let closed = wait_ms(2000, || el("#about-dialog").is_none_or(|d| d.hidden()).then_some(())).await;
+    ipc::sleep(200).await;
+    let kept_dialog = ui().selected.get_untracked() == sel;
+    r.step(
+        &format!("{}: Escape in the Source editor or in a dialog keeps the scene selection (the dialog closes)", fx.id),
+        kept_source && open.is_some() && closed.is_some() && kept_dialog,
+        format!("focus {} · source {kept_source} · dialog open {} closed {} kept {kept_dialog}", active(), open.is_some(), closed.is_some()),
+    );
+    // Back to the viewport; the front Shape (step 2) is still selected
+    // (Duplicate next). Another click here would cycle to the one behind.
+    crate::command::run(p::command::CommandId::ViewFocusViewport);
+    ipc::sleep(300).await;
     Some(())
 }
 

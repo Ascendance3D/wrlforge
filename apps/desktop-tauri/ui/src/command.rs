@@ -175,6 +175,9 @@ pub fn run(id: CommandId) {
         // B2-CAMERA: the renderer's camera only (no source, dirty or undo).
         CommandId::ViewFitAll => crate::camera::fit(),
         CommandId::ViewFrameSelection => crate::camera::frame_selection(),
+        CommandId::EditClearSelection => {
+            crate::ui::clear_selection();
+        }
         CommandId::ViewFront
         | CommandId::ViewBack
         | CommandId::ViewLeft

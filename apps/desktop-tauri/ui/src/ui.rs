@@ -170,6 +170,25 @@ pub fn adopt_selection(sel: Selected) {
     spawn_local(inspect(sel));
 }
 
+/// The same authority clears it (Edit → Clear Selection, Escape in the 3D
+/// Viewport). View state only: the source text, the editor's own text
+/// selection, the revision and the history are untouched. The outline, the
+/// handles, the Inspector, the Scene Tree highlight, the pick cycle and the
+/// pick status all follow from `selected`. Returns whether anything was
+/// selected.
+pub fn clear_selection() -> bool {
+    let u = ui();
+    if u.selected.get_untracked().is_none() {
+        return false;
+    }
+    crate::gizmo::cancel("the selection was cleared");
+    crate::pick::forget_selection();
+    u.field_error.set(None);
+    u.inspection.set(None);
+    u.selected.set(None);
+    true
+}
+
 /// Select the Scene Tree item a PROVEN viewport pick named, in exactly the
 /// revision Rust resolved it against. The node's source span is selected
 /// (revealed) without taking the keyboard focus. The

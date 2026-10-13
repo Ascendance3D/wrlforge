@@ -2129,8 +2129,12 @@ async fn viewport_keys(r: &mut R) -> Option<()> {
     let bar_ok = runs() == n && !ui().message.get_untracked().starts_with("View All");
     key("Escape").await?;
     ipc::sleep(150).await;
-    key("Escape").await?;
-    ipc::sleep(150).await;
+    // A second Escape only while the menu bar still has it: in the 3D
+    // Viewport Escape clears the scene selection (Stage 2).
+    if crate::menu::bar_has_focus() || crate::menu::is_open() {
+        key("Escape").await?;
+        ipc::sleep(150).await;
+    }
     let input: web_sys::HtmlInputElement = wait_ms(4000, || {
         el("#dock-panel-inspector input[type=text]").and_then(|e| e.dyn_into().ok())
     })

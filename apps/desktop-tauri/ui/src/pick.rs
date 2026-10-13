@@ -209,6 +209,16 @@ pub fn instance_hint(session: u64, revision: u64) -> Option<InstanceHint> {
         .filter(|h| h.session == session && h.revision == revision)
 }
 
+/// The selection was cleared: no hit cycle, no proven pick and no instance
+/// hint outlive it (the next click starts at the front layer).
+pub fn forget_selection() {
+    PICK.with_borrow_mut(|p| {
+        p.cycle = None;
+        p.last = None;
+    });
+    set_instance_hint(None);
+}
+
 /// Retire the generation on screen in both the UI and the adapter.
 pub fn retire(reason: &str) {
     // A drag belongs to the generation on screen: it ends with it.

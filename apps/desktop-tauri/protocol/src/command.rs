@@ -96,6 +96,7 @@ pub enum CommandId {
     EditGoToLine,
     EditDeleteNode,
     EditDuplicateNode,
+    EditClearSelection,
     ViewThemeTokyoNight,
     ViewThemeTokyoNightStorm,
     ViewThemeTokyoNightLight,
@@ -676,6 +677,20 @@ pub const COMMANDS: &[CommandSpec] = &[
         native_keys: &[],
         check: Check::None,
     },
+    // Stage 2: the scene selection is view state; clearing it never edits.
+    CommandSpec {
+        id: CommandId::EditClearSelection,
+        key: "edit.clearSelection",
+        label: "Clear Selection",
+        menu: Menu::Edit,
+        shortcuts: &[],
+        requires: Requires::NodeSelected,
+        action: Action::UiOnly,
+        mutates_document: false,
+        hint: "Clear the scene selection: no outline, no handles (Esc in the 3D Viewport; the source is not changed)",
+        native_keys: &[],
+        check: Check::None,
+    },
     theme_cmd(CommandId::ViewThemeTokyoNight, "view.theme.tokyoNight", "Tokyo Night", "tokyo-night"),
     theme_cmd(CommandId::ViewThemeTokyoNightStorm, "view.theme.tokyoNightStorm", "Tokyo Night Storm", "tokyo-night-storm"),
     theme_cmd(CommandId::ViewThemeTokyoNightLight, "view.theme.tokyoNightLight", "Tokyo Night Light", "tokyo-night-light"),
@@ -843,8 +858,11 @@ const fn camera_cmd(
 /// B2-CAMERA: unmodified keys that run a command only while the 3D Viewport
 /// (its tab or its canvas) has the focus. The one window shortcut handler
 /// reads this table after the primary-modifier one.
-pub const VIEWPORT_KEYS: &[(&str, CommandId)] =
-    &[("f", CommandId::ViewFitAll), ("home", CommandId::ViewFitAll)];
+pub const VIEWPORT_KEYS: &[(&str, CommandId)] = &[
+    ("f", CommandId::ViewFitAll),
+    ("home", CommandId::ViewFitAll),
+    ("escape", CommandId::EditClearSelection),
+];
 
 /// The viewport command for an unmodified key press, if any.
 pub fn from_viewport_key(key: &str, modified: bool) -> Option<CommandId> {
@@ -961,7 +979,7 @@ pub const ALLOWED_BACKEND: &[&str] = &[
 ];
 
 impl CommandId {
-    pub const ALL: [CommandId; 65] = [
+    pub const ALL: [CommandId; 66] = [
         CommandId::FileNewWorld,
         CommandId::FileOpen,
         CommandId::FileSave,
@@ -992,6 +1010,7 @@ impl CommandId {
         CommandId::EditGoToLine,
         CommandId::EditDeleteNode,
         CommandId::EditDuplicateNode,
+        CommandId::EditClearSelection,
         CommandId::ViewThemeTokyoNight,
         CommandId::ViewThemeTokyoNightStorm,
         CommandId::ViewThemeTokyoNightLight,
@@ -1295,6 +1314,7 @@ pub const MENUS: &[MenuDef] = {
                 Sep,
                 C(EditDeleteNode),
                 C(EditDuplicateNode),
+                C(EditClearSelection),
             ],
         },
         MenuDef {

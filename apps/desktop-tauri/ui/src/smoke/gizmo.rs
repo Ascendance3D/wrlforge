@@ -717,6 +717,7 @@ async fn main_theme(c: &p::GizmoSmoke, perf: &mut Perf, r: &mut R) -> Option<()>
     let bg = background().await?;
     let origin = layout()?.origin;
     let cancels = GIZMO.with_borrow(|g| g.cancels);
+    let sel0 = ui().selected.get_untracked();
     let at = press_and_move(Axis::X, 120.0, 6).await?;
     let moved = rendered();
     real("escape", at.0, at.1).await.ok()?;
@@ -731,9 +732,10 @@ async fn main_theme(c: &p::GizmoSmoke, perf: &mut Perf, r: &mut R) -> Option<()>
     let after = source().await?;
     r.step(
         &format!(
-            "{tag}: Escape cancels the drag: the rendered object returns, release commits nothing"
+            "{tag}: Escape cancels the drag: the rendered object returns, release commits nothing, the selection is kept"
         ),
         canceled.is_some()
+            && ui().selected.get_untracked() == sel0
             && moved.is_some_and(|m| m[0] > t2[0] + 0.3)
             && back.is_some_and(|p| differs(p, bg))
             && after == before
@@ -1231,6 +1233,7 @@ async fn fixtures(c: &p::GizmoSmoke, perf: &mut Perf, r: &mut R) -> Option<()> {
         );
         if label.starts_with("shared PROTO") {
             proto_body(&tag, r).await?;
+            escape_dismisses(&tag, "a shared PROTO instance's node", r).await?;
             click("btn-save")?;
             wait_ms(5000, || (!u.dirty.get_untracked()).then_some(())).await?;
             r.step(&format!("{tag}: saved"), !u.dirty.get_untracked(), "");
@@ -1253,6 +1256,7 @@ async fn fixtures(c: &p::GizmoSmoke, perf: &mut Perf, r: &mut R) -> Option<()> {
         }
         select_then_move(&tag, name, [0.0; 3], r).await?;
         drag_commit(&tag, name, Axis::X, 120.0, perf, r).await?;
+        escape_dismisses(&tag, "a top-level Transform", r).await?;
         if i == 0 {
             // A nested Transform is refused with a reason; no handles. The
             // tree item must be from the current analysis (tree_select
@@ -1291,11 +1295,49 @@ async fn fixtures(c: &p::GizmoSmoke, perf: &mut Perf, r: &mut R) -> Option<()> {
                 refused.is_some() && state.as_deref() != Some("ready") && msg.contains("top-level"),
                 format!("{state:?} · {msg}"),
             );
+            escape_dismisses(&tag, "a nested Transform", r).await?;
         }
         click("btn-save")?;
         wait_ms(5000, || (!u.dirty.get_untracked()).then_some(())).await?;
         r.step(&format!("{tag}: saved"), !u.dirty.get_untracked(), "");
     }
+    Some(())
+}
+
+/// Stage 2: with something selected and the Move tool on, a REAL Escape
+/// (no drag) in the 3D Viewport clears the selection: the handles, their
+/// status and the outline go; the source, revision and history do not change.
+async fn escape_dismisses(tag: &str, what: &str, r: &mut R) -> Option<()> {
+    let had = ui().selected.get_untracked().is_some();
+    let before = source().await?;
+    // The viewport owns the key: its X_ITE canvas has the focus.
+    if let Some(c) = crate::element_by_id::<web_sys::Element>("viewport")
+        .and_then(|v| v.query_selector("canvas").ok().flatten())
+        .and_then(|c| c.dyn_into::<HtmlElement>().ok())
+    {
+        let _ = c.focus();
+    }
+    let focus = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.active_element())
+        .map(|e| e.tag_name().to_lowercase())
+        .unwrap_or_default();
+    let at = layout().map(|l| l.origin).unwrap_or((0.0, 0.0));
+    real("escape", at.0, at.1).await.ok()?;
+    let gone = wait_ms(3000, || ui().selected.get_untracked().is_none().then_some(())).await;
+    ipc::sleep(300).await;
+    let after = source().await?;
+    let target = GIZMO.with_borrow(|g| g.target.is_some());
+    let state = crate::element_by_id::<web_sys::Element>("gizmo").and_then(|e| e.get_attribute("data-state"));
+    let status = crate::element_by_id::<HtmlElement>("gizmo-status")
+        .and_then(|e| e.text_content())
+        .unwrap_or_default();
+    let outline = crate::highlight::HIGHLIGHT.with_borrow(|h| h.path.is_empty());
+    r.step(
+        &format!("{tag}: a real Escape in the viewport clears the selection of {what}: no handles, no target status (only the idle hint), no outline; the source is unchanged"),
+        had && gone.is_some() && !target && state.as_deref() != Some("ready") && (status.trim().is_empty() || status.starts_with("Select an object")) && outline && after == before,
+        format!("focus {focus} · cleared {} · target {target} · state {state:?} · status {status:?} · outline-empty {outline}", gone.is_some()),
+    );
     Some(())
 }
 

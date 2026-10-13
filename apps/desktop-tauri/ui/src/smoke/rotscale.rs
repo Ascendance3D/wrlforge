@@ -381,6 +381,7 @@ async fn escape_cancels(tag: &str, tool: Tool, r: &mut R) -> Option<()> {
             press_and_move(g, d.0 * 40.0, d.1 * 40.0, 5).await?
         }
     };
+    let sel0 = ui().selected.get_untracked();
     let moved = crate::gizmo::rendered_frame();
     real("escape", at.0, at.1).await.ok()?;
     let canceled = wait_ms(2000, || {
@@ -397,8 +398,9 @@ async fn escape_cancels(tag: &str, tool: Tool, r: &mut R) -> Option<()> {
             && (0..3).all(|i| (f.scale[i] - t0.scale[i]).abs() <= 1e-5 * t0.scale[i].abs().max(1.0))
     };
     r.step(
-        &format!("{tag}: Escape cancels a {} drag: the rendered frame returns, the release commits nothing", tool.label()),
+        &format!("{tag}: Escape cancels a {} drag: the rendered frame returns, the release commits nothing, the selection is kept", tool.label()),
         canceled.is_some()
+            && ui().selected.get_untracked() == sel0
             && moved.as_ref().is_some_and(|f| !same(f))
             && back.as_ref().is_some_and(same)
             && after == before
