@@ -136,6 +136,16 @@ fn current_key() -> Option<Key> {
     ))
 }
 
+/// P0-B: the selected node's largest rendered extent in its parent's
+/// coordinates, read from the outline's PROVEN target for exactly the
+/// current selection (session, item, revision, preview generation). `None`
+/// when no outline is proven for it (Duplicate then uses the fixed step).
+pub fn selection_extent() -> Option<f64> {
+    let key = current_key()?;
+    let t = HIGHLIGHT.with_borrow(|h| (h.key.as_ref() == Some(&key)).then(|| h.target.clone()))??;
+    bounds_of(&t).ok().as_ref().and_then(hl::parent_extent)
+}
+
 /// Locate and prove the selected node; on success the frame loop draws it.
 fn request(key: Key) {
     let seq = HIGHLIGHT.with_borrow_mut(|h| {

@@ -1127,13 +1127,19 @@ impl Service {
                 );
             };
             let plan = match r.op {
-                p::StructureOp::Delete => {
-                    structure_edit::plan_delete(s.doc.text(), from, to, r.confirm_shared)
-                }
-                p::StructureOp::Duplicate => {
-                    structure_edit::plan_duplicate(s.doc.text(), from, to, r.confirm_shared)
-                }
+                p::StructureOp::Delete => (
+                    structure_edit::plan_delete(s.doc.text(), from, to, r.confirm_shared),
+                    None,
+                ),
+                p::StructureOp::Duplicate => structure_edit::plan_duplicate_offset(
+                    s.doc.text(),
+                    from,
+                    to,
+                    r.confirm_shared,
+                    structure_edit::duplicate_step(r.extent),
+                ),
             };
+            let (plan, placement) = plan;
             match plan {
                 structure_edit::Plan::Refused { reason, message } => refused(reason, message),
                 structure_edit::Plan::Ready {
@@ -1156,6 +1162,7 @@ impl Service {
                             view: s.doc.view(),
                             item: node.map(|(f, t)| format!("node-{f}-{t}")),
                             renamed,
+                            placement: placement.map(|p| p.describe()),
                         },
                         Err(e) => {
                             refused(field_edit::reason::TRANSACTION_REJECTED, e.to_string())
@@ -2719,18 +2726,22 @@ mod tests {
             item,
             op,
             confirm_shared: false,
+            extent: None,
         };
-        // Duplicate: the copy is selected, its DEF renamed.
+        // Duplicate: the copy is selected, its DEF renamed, and (P0-B) it
+        // is placed beside the original: a Shape is wrapped in a Transform
+        // moved by the fixed step (no rendered extent was measured).
         let o = svc
             .structure_edit(&req(0, span(text, "DEF A Shape {}"), p::StructureOp::Duplicate))
             .unwrap();
         let p::StructureEditOutcome::Applied { state, item, renamed, .. } = o else {
             panic!("{o:?}")
         };
-        let dup = text.replacen("DEF A Shape {}\r\n", "DEF A Shape {}\r\n    DEF A_2 Shape {}\r\n", 1);
+        let copy = "Transform { translation 2.5 0 0 children [ DEF A_2 Shape {} ] }";
+        let dup = text.replacen("DEF A Shape {}\r\n", &format!("DEF A Shape {{}}\r\n    {copy}\r\n"), 1);
         assert_eq!(svc.text(id).unwrap(), dup);
         assert_eq!((state.revision, state.can_undo), (1, true));
-        assert_eq!(item, Some(span(&dup, "DEF A_2 Shape {}")));
+        assert_eq!(item, Some(span(&dup, copy)));
         assert_eq!(renamed, vec![("A".to_string(), "A_2".to_string())]);
         // A stale revision is refused and changes nothing.
         let stale = svc
@@ -2767,6 +2778,7 @@ mod tests {
             item: span(proto, "Shape {}"),
             op: p::StructureOp::Delete,
             confirm_shared: false,
+            extent: None,
         };
         let o = svc.structure_edit(&r).unwrap();
         assert!(matches!(o, p::StructureEditOutcome::Refused { ref reason, .. }
@@ -2777,6 +2789,49 @@ mod tests {
             svc.text(id).unwrap(),
             "#VRML V2.0 utf8\nPROTO P [] { Group { children [ ] } }\nP {}\n"
         );
+    }
+
+    /// P0-B: Duplicate moves the COPY beside the original by about the
+    /// measured size, selects it, and is one undo step back to the exact
+    /// bytes (CRLF, number spelling, outside USE untouched).
+    #[test]
+    fn duplicate_places_the_copy_beside_the_original() {
+        let svc = Service::new(clock);
+        let text = "#VRML V2.0 utf8\r\nDEF Car Transform {\r\n  translation 1.50 0 -2\r\n  children [ Shape { geometry Box { size 2 1 4 } } ]\r\n}\r\nTransform { children [ USE Car ] }\r\n";
+        let id = svc.open_text_for_test(text);
+        let b = text.find("DEF Car").unwrap();
+        let e = text.find("}\r\nTransform").unwrap() + 1;
+        let item = format!("node-{b}-{e}");
+        let o = svc
+            .structure_edit(&p::StructureEditRequest {
+                session: id,
+                base_revision: 0,
+                item,
+                op: p::StructureOp::Duplicate,
+                confirm_shared: false,
+                // A 4-unit object: 1.2 x 4 = 4.8, rounded up to 5.
+                extent: Some(4.0),
+            })
+            .unwrap();
+        let p::StructureEditOutcome::Applied { state, item, renamed, placement, .. } = o else {
+            panic!("{o:?}")
+        };
+        let copy = "DEF Car_2 Transform {\r\n  translation 6.5 0 -2\r\n  children [ Shape { geometry Box { size 2 1 4 } } ]\r\n}";
+        let want = text.replacen("}\r\nTransform", &format!("}}\r\n{copy}\r\nTransform"), 1);
+        assert_eq!(svc.text(id).unwrap(), want);
+        assert_eq!(renamed, vec![("Car".to_string(), "Car_2".to_string())]);
+        assert_eq!(placement.as_deref(), Some("the copy's translation X is now 6.5"));
+        let f = want.find(copy).unwrap();
+        assert_eq!(item, Some(format!("node-{f}-{}", f + copy.len())));
+        assert_eq!((state.revision, state.can_undo), (1, true));
+        // The original and the outside USE are byte-identical.
+        assert!(want.starts_with(&text[..e]));
+        assert!(want.ends_with("Transform { children [ USE Car ] }\r\n"));
+        // One undo step restores the exact bytes; redo re-applies them.
+        assert!(matches!(svc.undo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), text);
+        assert!(matches!(svc.redo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), want);
     }
 
     #[test]

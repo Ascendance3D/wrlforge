@@ -600,16 +600,24 @@ impl SmokeState {
         Ok(())
     }
 
-    /// `--smoke-extrusion` only (inside the harness Xvfb): a whole-screen
-    /// capture as evidence, `<dir>/captures/<id>.png`.
+    /// `--smoke-extrusion` and `--smoke-pick` only (inside the harness
+    /// Xvfb): a whole-screen capture as evidence, `<dir>/captures/<id>.png`.
     pub fn window_capture(&self, id: &str) -> Result<String, String> {
-        let g = self.5.lock().map_err(|e| e.to_string())?;
-        let a = g.as_ref().ok_or("no extrusion smoke run is armed")?;
+        let dir = match self.5.lock().map_err(|e| e.to_string())?.as_ref() {
+            Some(a) => a.dir.clone(),
+            None => self
+                .2
+                .lock()
+                .map_err(|e| e.to_string())?
+                .as_ref()
+                .and_then(|a| a.save_path.parent().map(Path::to_path_buf))
+                .ok_or("no extrusion or pick smoke run is armed")?,
+        };
         real_pointer_env()?;
         if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
             return Err("bad capture id".into());
         }
-        let d = a.dir.join("captures");
+        let d = dir.join("captures");
         std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
         let out = d.join(format!("{id}.png"));
         let st = std::process::Command::new("timeout")

@@ -675,6 +675,12 @@ pub struct StructureEditRequest {
     /// The user confirmed editing a shared PROTO definition.
     #[serde(default)]
     pub confirm_shared: bool,
+    /// P0-B Duplicate: the selected node's largest rendered extent in its
+    /// parent's coordinates, as the preview measured it (VIEW data, never
+    /// identity). Rust derives the copy's offset from it
+    /// (`structure_edit::duplicate_step`); `None` uses the fixed step.
+    #[serde(default)]
+    pub extent: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -691,6 +697,10 @@ pub enum StructureEditOutcome {
         /// Duplicate: `[old, new]` DEF names renamed in the copy.
         #[serde(default)]
         renamed: Vec<(String, String)>,
+        /// P0-B Duplicate: how the copy was placed beside the original
+        /// (one sentence for the status line).
+        #[serde(default)]
+        placement: Option<String>,
     },
     /// Refused; the buffer and revision are unchanged.
     Refused { reason: String, message: String },
@@ -1331,6 +1341,19 @@ pub struct PickClick {
     pub logical: Option<[u64; 2]>,
     #[serde(default)]
     pub oracle_status: Option<String>,
+    /// P0-A: the expected answers of clicking AGAIN at the same point, in
+    /// order (each selects the next Shape behind; the last wraps around).
+    #[serde(default)]
+    pub then: Vec<PickThen>,
+}
+
+/// P0-A: one repeated click's expected answer.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PickThen {
+    pub status: String,
+    #[serde(default)]
+    pub logical: Option<[u64; 2]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

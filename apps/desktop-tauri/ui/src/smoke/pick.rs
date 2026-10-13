@@ -785,59 +785,77 @@ async fn matrix(c: &p::PickSmoke, s: &mut Stats, r: &mut R) -> Option<()> {
         .await;
         let loaded = ready(20_000).await;
         let (mut ok, mut wrong, mut skipped, mut detail) = (0u32, 0u32, 0u32, Vec::new());
+        let mut run = 0u32;
+        let layered = fx.clicks.iter().any(|c| !c.then.is_empty());
+        if layered {
+            capture(c, &format!("{}-loaded", slug(&fx.id))).await;
+        }
         for ck in &fx.clicks {
             if let Some(why) = &ck.skip {
                 skipped += 1;
                 detail.push(format!("{}:SKIP({why})", ck.id));
                 continue;
             }
-            let keep = selected_id();
-            let before = untouched().await?;
             let (x, y) = project(ck.world, fx.camera)?;
-            let Some(out) = gesture(x, y).await else {
-                detail.push(format!("{}:no-result", ck.id));
-                continue;
-            };
-            s.record(&out);
-            let span = out.logical.as_ref().map(|l| [l.from, l.to]);
-            let is_wrong = out.is_proven() && (ck.status != "PROVEN" || span != ck.logical);
-            let after = untouched().await?;
-            // B3: a PROVEN pick reveals its node in the Source (the caret
-            // moves to that node's span); anything else leaves all untouched.
-            let doc_ok = if out.is_proven() {
-                after.same_doc(&before)
-                    && out.item.as_deref().and_then(item_span) == Some(after.caret)
-            } else {
-                after == before
-            };
-            let good = !is_wrong
-                && out.status == ck.status
-                && doc_ok
-                && (out.is_proven() || selected_id() == keep)
-                && (!out.is_proven() || selected_id() == out.item);
-            if is_wrong {
-                wrong += 1;
-            }
-            if good {
-                ok += 1;
-            } else {
-                s.mismatched += 1;
-            }
-            detail.push(format!(
-                "{}:{}{}{}",
-                ck.id,
-                out.status,
-                if good { "" } else { "≠" },
-                if good {
-                    String::new()
+            // P0-A: the first click, then every repeated click at the same
+            // point with ITS expected answer (the next Shape behind).
+            let expects = std::iter::once((ck.status.clone(), ck.logical))
+                .chain(ck.then.iter().map(|t| (t.status.clone(), t.logical)));
+            for (n, (status, logical)) in expects.enumerate() {
+                run += 1;
+                let id = if n == 0 { ck.id.clone() } else { format!("{}#{}", ck.id, n + 1) };
+                let keep = selected_id();
+                let before = untouched().await?;
+                let Some(out) = gesture(x, y).await else {
+                    detail.push(format!("{id}:no-result"));
+                    continue;
+                };
+                s.record(&out);
+                let span = out.logical.as_ref().map(|l| [l.from, l.to]);
+                let is_wrong = out.is_proven() && (status != "PROVEN" || span != logical);
+                let after = untouched().await?;
+                // B3: a PROVEN pick reveals its node in the Source (the caret
+                // moves to that node's span); anything else leaves all untouched.
+                let doc_ok = if out.is_proven() {
+                    after.same_doc(&before)
+                        && out.item.as_deref().and_then(item_span) == Some(after.caret)
                 } else {
-                    format!("{}({})", ck.status, out.reason)
+                    after == before
+                };
+                let good = !is_wrong
+                    && out.status == status
+                    && doc_ok
+                    && (out.is_proven() || selected_id() == keep)
+                    && (!out.is_proven() || selected_id() == out.item);
+                if is_wrong {
+                    wrong += 1;
                 }
-            ));
+                if good {
+                    ok += 1;
+                } else {
+                    s.mismatched += 1;
+                }
+                let layer = PICK.with_borrow(|p| {
+                    p.cycle.as_ref().map(|c| format!("[{}/{}]", c.layer + 1, c.layers))
+                });
+                detail.push(format!(
+                    "{id}:{}{}{}{}",
+                    out.status,
+                    if layered { layer.unwrap_or_default() } else { String::new() },
+                    if good { "" } else { "≠" },
+                    if good {
+                        String::new()
+                    } else {
+                        format!("{status}({}) span {span:?} want {logical:?}", out.reason)
+                    }
+                ));
+                if layered {
+                    capture(c, &format!("{}-click{}", slug(&fx.id), n + 1)).await;
+                }
+            }
         }
         s.wrong += wrong;
         s.skipped += skipped;
-        let run = fx.clicks.len() as u32 - skipped;
         r.step(
             &format!(
                 "matrix {}: {ok}/{run} clicks as the oracle expects, WRONG {wrong}",
@@ -846,7 +864,121 @@ async fn matrix(c: &p::PickSmoke, s: &mut Stats, r: &mut R) -> Option<()> {
             opened.is_some() && loaded.is_some() && ok == run && wrong == 0,
             detail.join(" "),
         );
+        if fx.id == "L1-coat-over-paint" {
+            duplicate_offset(c, fx, s, r).await?;
+        }
     }
+    Some(())
+}
+
+fn slug(id: &str) -> String {
+    id.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
+}
+
+/// Evidence only (the harness Xvfb): a whole-screen capture into the run's
+/// `captures/` folder. Never a step; a failure is noted in the log.
+async fn capture(c: &p::PickSmoke, id: &str) {
+    if !c.real_pointer {
+        return;
+    }
+    ipc::sleep(250).await;
+    #[derive(serde::Serialize)]
+    struct A<'a> {
+        id: &'a str,
+    }
+    if let Err(e) = call::<String>("smoke_window_capture", A { id }).await {
+        web_sys::console::warn_1(&format!("capture {id}: {e}").into());
+    }
+}
+
+/// P0-B in the real window: the coat (selected by the layer clicks) is
+/// duplicated with the production command (Edit > Duplicate / Ctrl+D). The
+/// copy must be inserted after the original as ONE undo step, be SELECTED,
+/// and render beside it: a click at the copy's offset position must pick
+/// exactly the copy. Undo restores the exact bytes.
+async fn duplicate_offset(
+    c: &p::PickSmoke,
+    fx: &p::PickFixture,
+    s: &mut Stats,
+    r: &mut R,
+) -> Option<()> {
+    let coat = fx.clicks.first()?.logical?;
+    let before_text = text();
+    let rev = CORE.with_borrow(|c| c.revision);
+    // The outline must be proven for the selection, so Duplicate measures
+    // the coat's rendered size (4 x 4 x 0.2: step 1.2 x 4 -> 5).
+    let proven = wait_ms(5000, || {
+        crate::highlight::selection_extent().filter(|e| (e - 4.0).abs() < 1e-3)
+    })
+    .await;
+    capture(c, "dup-before").await;
+    crate::command::run(p::command::CommandId::EditDuplicateNode);
+    let applied = wait_ms(5000, || {
+        CORE.with_borrow(|c| (c.revision == rev + 1 && !c.busy).then_some(()))
+    })
+    .await;
+    let after_text = text();
+    let to = coat[1] as usize;
+    let b16: Vec<u16> = before_text.encode_utf16().collect();
+    let a16: Vec<u16> = after_text.encode_utf16().collect();
+    let inserted = a16.len().saturating_sub(b16.len());
+    let pure_insert = a16.len() > b16.len()
+        && a16[..to] == b16[..to]
+        && a16[to + inserted..] == b16[to..];
+    let copy = String::from_utf16_lossy(&a16[to..to + inserted]);
+    let want = "\nTransform { translation 5 0 2 children [ ";
+    let sel = selected_id();
+    let sel_span = sel.as_deref().and_then(item_span);
+    let expect_span = (to as u32 + 1, (to + inserted) as u32);
+    let ok = proven.is_some()
+        && applied.is_some()
+        && pure_insert
+        && copy.starts_with(want)
+        && sel_span == Some(expect_span);
+    r.step(
+        "Duplicate (Ctrl+D): the copy is inserted after the original, moved by about its size (+X 5), and selected",
+        ok,
+        format!(
+            "extent {proven:?} · revision {rev} -> {} · pure insert {pure_insert} · copy {:?} · selected {sel:?} span {sel_span:?} want {expect_span:?}",
+            CORE.with_borrow(|c| c.revision),
+            copy.chars().take(70).collect::<String>()
+        ),
+    );
+    let _ = ready(20_000).await;
+    capture(c, "dup-after").await;
+    // The copy renders beside the original: a click at its offset place
+    // picks exactly the copy (a fresh point: no layer cycling).
+    let (x, y) = project([5.0, 0.0, 2.1], fx.camera)?;
+    let out = gesture(x, y).await;
+    if let Some(o) = &out {
+        s.record(o);
+    }
+    let span = out.as_ref().and_then(|o| o.logical.as_ref().map(|l| [l.from, l.to]));
+    let want_span = [expect_span.0 as u64, expect_span.1 as u64];
+    let picked = out.as_ref().is_some_and(|o| o.is_proven()) && span == Some(want_span);
+    if out.as_ref().is_some_and(|o| o.is_proven()) && !picked {
+        s.wrong += 1;
+    }
+    r.step(
+        "the copy is visibly offset: clicking its place in the viewport selects the copy",
+        picked,
+        format!("{:?} span {span:?} want {want_span:?}", out.as_ref().map(|o| &o.status)),
+    );
+    capture(c, "dup-copy-picked").await;
+    // One undo step restores the exact bytes.
+    crate::command::run(p::command::CommandId::EditUndo);
+    let undone = wait_ms(5000, || {
+        (text() == before_text && !CORE.with_borrow(|c| c.busy)).then_some(())
+    })
+    .await;
+    r.step(
+        "Undo after Duplicate restores the exact source bytes (one step)",
+        undone.is_some(),
+        format!("revision {}", CORE.with_borrow(|c| c.revision)),
+    );
+    let _ = ready(20_000).await;
     Some(())
 }
 

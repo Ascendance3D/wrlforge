@@ -232,6 +232,21 @@ pub fn world_corners(bounds: &Bounds) -> Result<[V3; 8], &'static str> {
     Ok(out)
 }
 
+/// P0-B: the largest edge of the axis-aligned box that encloses `bounds`'
+/// box in the node's PARENT coordinates (no ancestor applied) -- the size a
+/// duplicate is moved by. `None` for an empty or non-finite box.
+pub fn parent_extent(bounds: &Bounds) -> Option<f64> {
+    let b = &bounds.r#box;
+    if !finite(b) {
+        return None;
+    }
+    // The cube [-1, 1]^3 maps onto the box: column i is a half-axis.
+    let e = (0..3)
+        .map(|r| 2.0 * (b[r].abs() + b[4 + r].abs() + b[8 + r].abs()))
+        .fold(0.0_f64, f64::max);
+    (e.is_finite() && e > 0.0).then_some(e)
+}
+
 /// One projected box edge in client CSS px.
 pub type Edge = ((f64, f64), (f64, f64));
 
