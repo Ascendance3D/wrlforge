@@ -207,6 +207,57 @@ fn preview_offset(text: &str) -> u64 {
     u64::from(text.starts_with('\u{FEFF}'))
 }
 
+/// B3 (LV2): the PROTO instance `instance` (a node item of `old`) in `new`,
+/// after `changes` (the exact changes that turned `old` into `new`) edited
+/// the shared body node `body` (a span of `old`). Proven, never searched:
+/// the instance must be a document-scene instance of the body's PROTO in
+/// `old`, its span must map through the changes (`map_span`), its bytes
+/// must be unchanged, and `new` must hold an instance of the same PROTO at
+/// exactly the mapped span. `Err` is the reason.
+fn carry_instance(
+    old: &str,
+    new: &str,
+    body: (u64, u64),
+    instance: &str,
+    changes: &[SpanChange],
+) -> Result<p::InstanceRef, &'static str> {
+    let (f, t) = node_span(instance).ok_or("instance-not-a-node")?;
+    let po = wrlforge_vrml::parse(old);
+    let proto = field_edit::shared_definition(&po, body.0, body.1)
+        .ok_or("edited-node-not-in-a-proto-body")?
+        .proto;
+    let is_instance = |p: &wrlforge_vrml::ParseResult, src: &str, f: u64, t: u64| {
+        let n = field_edit::inspect_node_fields(p, src, f, t);
+        n.shared.is_none() && n.node_type.as_deref() == Some(proto.as_str())
+    };
+    if !is_instance(&po, old, f, t) {
+        return Err("instance-not-proven-in-old-revision");
+    }
+    let (nf, nt) = map_span(f, t, changes).ok_or("change-touches-instance")?;
+    let slice = |s: &str, a: u64, b: u64| -> Option<String> {
+        let a = wrlforge_text::offsets::utf16_to_byte(s, a as usize).ok()?;
+        let b = wrlforge_text::offsets::utf16_to_byte(s, b as usize).ok()?;
+        s.get(a..b).map(str::to_string)
+    };
+    match (slice(old, f, t), slice(new, nf, nt)) {
+        (Some(a), Some(b)) if a == b => {}
+        _ => return Err("instance-bytes-changed"),
+    }
+    let pn = wrlforge_vrml::parse(new);
+    if !is_instance(&pn, new, nf, nt) {
+        return Err("instance-not-proven-in-new-revision");
+    }
+    let off = preview_offset(new);
+    if nf < off {
+        return Err("instance-before-preview-start");
+    }
+    Ok(p::InstanceRef {
+        item: format!("node-{nf}-{nt}"),
+        preview_from: nf - off,
+        preview_to: nt - off,
+    })
+}
+
 pub fn node_span(item: &str) -> Option<(u64, u64)> {
     let rest = item.strip_prefix("node-")?;
     let (a, b) = rest.split_once('-')?;
@@ -1447,36 +1498,90 @@ impl Service {
                     p::TranslateProveOutcome::Proven {
                         revision: current,
                         item: r.item.clone(),
+                        instance: None,
+                        parent_frame: None,
                     }
                 }
                 // B3: a PROTO body Transform. The runtime node is ONE
                 // instance's copy; its proven chain must be the Transform,
-                // frame-neutral body groups only, then a TOP-LEVEL instance
-                // of exactly that PROTO -- so its parent frame is the world,
-                // like a top-level Transform's.
-                Ok(chain)
-                    if target.shared.as_ref().is_some_and(|sh| {
-                        chain.len() >= 2
-                            && chain[0].node_type == "Transform"
-                            && chain[chain.len() - 1].node_type == sh.proto
-                            && chain[1..chain.len() - 1]
-                                .iter()
-                                .all(|n| manipulate::is_frame_neutral(&n.node_type))
-                    }) =>
-                {
-                    p::TranslateProveOutcome::Proven {
-                        revision: current,
-                        item: r.item.clone(),
-                    }
+                // frame-neutral body groups only, then a document instance
+                // of exactly that PROTO. LV2: the instance may sit under
+                // further document nodes; its parent frame is composed from
+                // their SOURCE frames (`instance_parent_frame`), each link
+                // proven by this same chain -- never guessed.
+                Ok(chain) if target.shared.is_some() => {
+                    let sh = target.shared.as_ref().expect("checked");
+                    Self::prove_body_chain(&text, &parsed, r, current, sh, &chain)
                 }
-                Ok(_) if target.shared.is_some() => refused(
-                    manipulate::reason::BODY_FRAME,
-                    "This PROTO instance is inside another node, so the handles cannot follow its frame. Use the Inspector.",
-                ),
                 Ok(_) => refused(manipulate::reason::NOT_TOP_LEVEL, unprovable),
                 Err(res) => refused(res.reason(), unprovable),
             },
         )
+    }
+
+    /// B3 (LV2): the shared-body half of `translate_prove`. `chain` is the
+    /// proven runtime chain of ONE instance's copy (the Transform first).
+    fn prove_body_chain(
+        text: &str,
+        parsed: &wrlforge_vrml::ParseResult,
+        r: &p::TranslateProveRequest,
+        current: u64,
+        sh: &field_edit::SharedDefinition,
+        chain: &[&wrlforge_vrml::ast::Node],
+    ) -> p::TranslateProveOutcome {
+        let refused = |reason: &str, message: String| p::TranslateProveOutcome::Refused {
+            reason: reason.into(),
+            message,
+        };
+        let span = |n: &wrlforge_vrml::ast::Node| {
+            (n.range.start.offset as u64, n.range.end.offset as u64)
+        };
+        let in_body = |n: &wrlforge_vrml::ast::Node| {
+            let (f, t) = span(n);
+            field_edit::shared_definition(parsed, f, t).is_some()
+        };
+        // The first link outside the PROTO body is the instance.
+        let k = chain.iter().position(|n| !in_body(n));
+        let Some(k) = k.filter(|&k| {
+            k >= 1
+                && chain[0].node_type == "Transform"
+                && chain[1..k]
+                    .iter()
+                    .all(|n| manipulate::is_frame_neutral(&n.node_type))
+                && chain[k].node_type == sh.proto
+        }) else {
+            return refused(
+                manipulate::reason::BODY_FRAME,
+                format!("The preview cannot prove that this rendered copy is inside an instance of PROTO {}. Use the Inspector.", sh.proto),
+            );
+        };
+        let inst = span(chain[k]);
+        let inst_item = format!("node-{}-{}", inst.0, inst.1);
+        if let Some(want) = &r.instance {
+            if *want != inst_item {
+                return refused(
+                    "proto-instance-changed",
+                    format!("The rendered copy belongs to another instance of PROTO {} than the one the handles were on; nothing is bound.", sh.proto),
+                );
+            }
+        }
+        let ancestors: Vec<(u64, u64)> = chain[k + 1..].iter().map(|n| span(n)).collect();
+        match manipulate::instance_parent_frame(text, &ancestors, manip_tool(r.tool)) {
+            Ok(m) => {
+                let off = preview_offset(text);
+                p::TranslateProveOutcome::Proven {
+                    revision: current,
+                    item: r.item.clone(),
+                    instance: Some(p::InstanceRef {
+                        item: inst_item,
+                        preview_from: inst.0 - off,
+                        preview_to: inst.1 - off,
+                    }),
+                    parent_frame: (m != manipulate::IDENTITY4).then_some(m),
+                }
+            }
+            Err(e) => refused(e.reason, e.message),
+        }
     }
 
     /// B2 selection highlight: the exact preview span the preview must
@@ -1656,7 +1761,7 @@ impl Service {
                 r.decimals,
                 r.confirm_shared,
             );
-            Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text)
+            Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text, r.instance.as_deref())
         })
     }
 
@@ -1677,7 +1782,7 @@ impl Service {
                 r.delta,
                 r.confirm_shared,
             );
-            Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text)
+            Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text, r.instance.as_deref())
         })
     }
 
@@ -1696,7 +1801,7 @@ impl Service {
                 r.factor,
                 r.confirm_shared,
             );
-            Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text)
+            Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text, r.instance.as_deref())
         })
     }
 
@@ -1731,6 +1836,7 @@ impl Service {
         node_to: u64,
         plan: field_edit::Plan,
         text: Option<String>,
+        instance: Option<&str>,
     ) -> p::TranslateOutcome {
         let refused = |reason: &str, message: String| p::TranslateOutcome::Refused {
             reason: reason.into(),
@@ -1759,16 +1865,36 @@ impl Service {
                         insert: e.insert,
                     })
                     .collect();
+                let old = instance.map(|_| s.doc.text().to_string());
                 match s
                     .doc
                     .apply_source_transaction(base_revision, &edits, &new_text)
                 {
-                    Ok(a) => p::TranslateOutcome::Applied {
-                        state: Self::state(s, a),
-                        view: s.doc.view(),
-                        item,
-                        text: text.unwrap_or_default(),
-                    },
+                    Ok(a) => {
+                        // B3 (LV2): carry the gizmo's PROTO instance through
+                        // the EXACT changes just applied (Tier-1).
+                        let (instance, instance_lost) = match (instance, old) {
+                            (Some(i), Some(old)) => match carry_instance(
+                                &old,
+                                s.doc.text(),
+                                (node_from, node_to),
+                                i,
+                                s.doc.last_changes(),
+                            ) {
+                                Ok(r) => (Some(r), None),
+                                Err(why) => (None, Some(why.to_string())),
+                            },
+                            _ => (None, None),
+                        };
+                        p::TranslateOutcome::Applied {
+                            state: Self::state(s, a),
+                            view: s.doc.view(),
+                            item,
+                            text: text.unwrap_or_default(),
+                            instance,
+                            instance_lost,
+                        }
+                    }
                     Err(e) => refused(field_edit::reason::TRANSACTION_REJECTED, e.to_string()),
                 }
             }
@@ -4023,7 +4149,7 @@ mod tests {
         axis: p::gizmo::Axis,
         d: f64,
     ) -> p::TranslateOutcome {
-        svc.rotate(&p::RotateRequest {
+        svc.rotate(&p::RotateRequest { instance: None,
             confirm_shared: false,
             session: id,
             base_revision: rev,
@@ -4042,7 +4168,7 @@ mod tests {
         axis: Option<p::gizmo::Axis>,
         f: f64,
     ) -> p::TranslateOutcome {
-        svc.scale(&p::ScaleRequest {
+        svc.scale(&p::ScaleRequest { instance: None,
             confirm_shared: false,
             session: id,
             base_revision: rev,
@@ -4289,7 +4415,7 @@ mod tests {
         axis: p::gizmo::Axis,
         v: f64,
     ) -> p::TranslateOutcome {
-        svc.translate(&p::TranslateRequest {
+        svc.translate(&p::TranslateRequest { instance: None,
             confirm_shared: false,
             session: id,
             base_revision: rev,
@@ -4403,7 +4529,7 @@ mod tests {
         };
         let hash = p::preview_hash(&text);
         let prove = |snap: p::PickSnapshot| {
-            svc.translate_prove(&p::TranslateProveRequest {
+            svc.translate_prove(&p::TranslateProveRequest { instance: None,
                 session: id,
                 revision: rev0,
                 preview_hash: hash,
@@ -4414,11 +4540,23 @@ mod tests {
             })
             .unwrap()
         };
-        assert!(matches!(
-            prove(body_snap("SCENE", None)),
-            p::TranslateProveOutcome::Proven { .. }
-        ));
-        // The instance nested in a Transform: its frame is not the world.
+        match prove(body_snap("SCENE", None)) {
+            p::TranslateProveOutcome::Proven {
+                instance,
+                parent_frame,
+                ..
+            } => {
+                // The top-level instance: the world frame, the instance named.
+                assert_eq!(parent_frame, None);
+                assert_eq!(
+                    instance.map(|i| i.item),
+                    Some(format!("node-{}-{}", is.0, is.1))
+                );
+            }
+            o => panic!("{o:?}"),
+        }
+        // LV2: the instance nested in a Transform: proven through that
+        // Transform, whose SOURCE frame (translation 5 0 0) is the parent.
         let nested = text.rfind("Transform {").unwrap();
         let nested_end = text.rfind('}').unwrap() + 1;
         let ns = (u16at(nested), u16at(nested_end));
@@ -4430,9 +4568,37 @@ mod tests {
                 end: u16at(inner + inst.len()),
             }];
         }
-        match prove(snap) {
+        match prove(snap.clone()) {
+            p::TranslateProveOutcome::Proven {
+                instance,
+                parent_frame,
+                ..
+            } => {
+                let m = parent_frame.expect("a parent frame");
+                assert_eq!(&m[12..15], &[5.0, 0.0, 0.0]);
+                assert_eq!(
+                    instance.map(|i| (i.preview_from, i.preview_to)),
+                    Some((u16at(inner), u16at(inner + inst.len())))
+                );
+            }
+            o => panic!("{o:?}"),
+        }
+        // A continuation naming the OTHER instance is refused.
+        match svc
+            .translate_prove(&p::TranslateProveRequest {
+                instance: Some(format!("node-{}-{}", is.0, is.1)),
+                session: id,
+                revision: rev0,
+                preview_hash: hash,
+                generation: 1,
+                item: item.clone(),
+                snapshot: snap,
+                tool: p::gizmo::Tool::Move,
+            })
+            .unwrap()
+        {
             p::TranslateProveOutcome::Refused { reason, .. } => {
-                assert_eq!(reason, manipulate::reason::BODY_FRAME)
+                assert_eq!(reason, "proto-instance-changed")
             }
             o => panic!("{o:?}"),
         }
@@ -4486,7 +4652,7 @@ mod tests {
         assert_eq!(svc.text(id).unwrap(), text);
         // Consent: one token of the PROTO body, one undo step.
         let (st, it, written) = moved(
-            svc.translate(&p::TranslateRequest {
+            svc.translate(&p::TranslateRequest { instance: None,
                 session: id,
                 base_revision: rev0,
                 item: item.clone(),
@@ -4515,7 +4681,7 @@ mod tests {
             p::TranslateOutcome::Refused { .. }
         ));
         let r = svc
-            .rotate(&p::RotateRequest {
+            .rotate(&p::RotateRequest { instance: None,
                 session: id,
                 base_revision: rev,
                 item: it.clone(),
@@ -4527,7 +4693,7 @@ mod tests {
         let (st2, it2, _) = moved(r);
         assert!(svc.text(id).unwrap().contains("rotation 0 1 0 0.5 scale 1 1 1"));
         let r = svc
-            .scale(&p::ScaleRequest {
+            .scale(&p::ScaleRequest { instance: None,
                 session: id,
                 base_revision: st2.revision,
                 item: it2,
@@ -4539,6 +4705,97 @@ mod tests {
         moved(r);
         assert!(svc.text(id).unwrap().contains("scale 2 2 2 children"));
         let _ = st;
+    }
+
+    /// B3 (LV2): continuation. A commit naming the gizmo's PROTO instance
+    /// carries it into the new revision through the exact changes (Tier-1):
+    /// the same bytes, the same PROTO, at the mapped span (shifted by the
+    /// edit before it). A span that is not
+    /// an instance of that PROTO is reported lost, never re-targeted.
+    #[test]
+    fn a_shared_body_commit_carries_the_gizmo_instance_or_says_it_is_lost() {
+        use p::gizmo::Axis as A;
+        let dir = tmp("b3-proto-carry");
+        let path = dir.join("car.wrl");
+        let xf = "DEF CarXForm Transform { translation 0 0 0 rotation 0 1 0 0 scale 1 1 1 children [ DEF S Shape { geometry Box { } } USE S ] }";
+        let text = format!(
+            "#VRML V2.0 utf8\nPROTO Car [ ] {{\n\tGroup {{ children [ {xf} ] }}\n}}\nCar {{ }} # first\nTransform {{ translation 5 0 0 children Car {{ }} }}\n"
+        );
+        fs::write(&path, &text).unwrap();
+        let (o, svc) = svc_open(&path);
+        let doc = opened(o);
+        let id = doc.session;
+        let u16at = |t: &str, b: usize| t[..b].encode_utf16().count() as u64;
+        let xb = text.find(xf).unwrap();
+        let item = format!("node-{}-{}", u16at(&text, xb), u16at(&text, xb + xf.len()));
+        let ib = text.rfind("Car { }").unwrap();
+        let inst = format!("node-{}-{}", u16at(&text, ib), u16at(&text, ib + 7));
+        let commit = |rev: u64, item: &str, instance: Option<String>, value: f64| {
+            svc.translate(&p::TranslateRequest {
+                session: id,
+                base_revision: rev,
+                item: item.into(),
+                axis: A::X,
+                value,
+                decimals: 3,
+                confirm_shared: true,
+                instance,
+            })
+            .unwrap()
+        };
+        let (rev1, item1, carried, lost) = match commit(doc.revision, &item, Some(inst.clone()), 12.25) {
+            p::TranslateOutcome::Applied {
+                state,
+                item,
+                instance,
+                instance_lost,
+                ..
+            } => (state.revision, item, instance, instance_lost),
+            o => panic!("{o:?}"),
+        };
+        let after = svc.text(id).unwrap();
+        // "0" -> "12.25": the later instance shifts by 4 UTF-16 units.
+        let nb = after.rfind("Car { }").unwrap();
+        let want = format!("node-{}-{}", u16at(&after, nb), u16at(&after, nb + 7));
+        assert_eq!(lost, None);
+        let c = carried.expect("carried");
+        assert_eq!(c.item, want);
+        assert_ne!(c.item, inst);
+        assert_eq!((c.preview_from, c.preview_to), (u16at(&after, nb), u16at(&after, nb + 7)));
+        // The other instance is NOT what was carried.
+        let other = after.find("Car { } # first").unwrap();
+        assert_ne!(c.item, format!("node-{}-{}", u16at(&after, other), u16at(&after, other + 7)));
+        // Not an instance of the PROTO (the outer Transform): lost.
+        let tb = after.rfind("Transform {").unwrap();
+        let te = after.rfind('}').unwrap() + 1;
+        let outer = format!("node-{}-{}", u16at(&after, tb), u16at(&after, te));
+        match commit(rev1, &item1, Some(outer), 3.5) {
+            p::TranslateOutcome::Applied {
+                instance,
+                instance_lost,
+                ..
+            } => {
+                assert_eq!(instance, None);
+                assert_eq!(instance_lost.as_deref(), Some("instance-not-proven-in-old-revision"));
+            }
+            o => panic!("{o:?}"),
+        }
+        // No instance asked: none reported.
+        let rev2 = svc.text_at(id).unwrap().1;
+        let item2 = {
+            let t = svc.text(id).unwrap();
+            let b = t.find("DEF CarXForm").unwrap();
+            let e = b + t[b..].find(" USE S ] }").unwrap() + " USE S ] }".len();
+            format!("node-{}-{}", u16at(&t, b), u16at(&t, e))
+        };
+        match commit(rev2, &item2, None, 7.0) {
+            p::TranslateOutcome::Applied {
+                instance,
+                instance_lost,
+                ..
+            } => assert_eq!((instance, instance_lost), (None, None)),
+            o => panic!("{o:?}"),
+        }
     }
 
     /// VISUAL-3A1: twin anonymous Transforms with EQUAL translations and
@@ -4565,7 +4822,7 @@ mod tests {
         let preview = text.strip_prefix('\u{FEFF}').unwrap();
         let hash = p::preview_hash(preview);
         let prove = |rev: u64, hash: u64, (f, t): (u64, u64), snap: p::PickSnapshot| {
-            svc.translate_prove(&p::TranslateProveRequest {
+            svc.translate_prove(&p::TranslateProveRequest { instance: None,
                 session: id,
                 revision: rev,
                 preview_hash: hash,
@@ -5332,7 +5589,7 @@ mod recovery_tests {
         };
         check("create");
         let o = svc
-            .translate(&p::TranslateRequest {
+            .translate(&p::TranslateRequest { instance: None,
                 confirm_shared: false,
                 session: id,
                 base_revision: state.revision,
@@ -5350,7 +5607,7 @@ mod recovery_tests {
         for (what, o) in [
             (
                 "rotate",
-                svc.rotate(&p::RotateRequest { confirm_shared: false, session: id, base_revision: rev, item: item.clone(), axis: p::gizmo::Axis::Y, delta: 0.5 }),
+                svc.rotate(&p::RotateRequest { instance: None, confirm_shared: false, session: id, base_revision: rev, item: item.clone(), axis: p::gizmo::Axis::Y, delta: 0.5 }),
             ),
         ] {
             match o.unwrap() {

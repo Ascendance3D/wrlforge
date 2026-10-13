@@ -734,16 +734,70 @@
       return false;
     }
 
+    // B3 (LV2): the DOCUMENT instance a body copy belongs to, as
+    // { node, start, end } (its ONE provenance occurrence), or null. Climbs
+    // the copy's runtime parents to its body execution context; the context
+    // must be the body of exactly ONE instance node that is itself a
+    // document node with exactly one recorded occurrence. Never a search by
+    // value, name or position.
+    function instanceOf(g, copy) {
+      const outers = new Set();
+      const seen = new Set();
+      const stack = [copy];
+      while (stack.length && seen.size < 4096) {
+        const n = stack.pop();
+        if (!n || seen.has(n)) continue;
+        seen.add(n);
+        if (n instanceof X3D.X3DExecutionContext) {
+          if (n === g.scene) return null; // not inside an instance body
+          let outer = null;
+          try { outer = fn(n, 'getOuterNode') ? n.getOuterNode() : null; } catch (e) { outer = null; }
+          if (outer instanceof X3D.X3DBaseNode && fn(outer, 'getBody') && outer.getBody() === n
+            && !(fn(outer, 'getProtoDeclaration') && outer.getProtoDeclaration() === outer)) outers.add(outer);
+          else return null;
+          continue;
+        }
+        if (fn(n, 'getParents')) for (const q of n.getParents()) stack.push(q);
+      }
+      if (outers.size !== 1) return null;
+      const inst = [...outers][0];
+      const occ = g.occ.get(inst) || [];
+      if (occ.length !== 1) return null;
+      return { node: inst, start: occ[0].start, end: occ[0].end };
+    }
+
+    // The span hint `inst` ({ start, end } of a document instance), or null.
+    function hintOf(inst) {
+      if (!inst || typeof inst !== 'object') return null;
+      const start = Number(inst.start), end = Number(inst.end);
+      return Number.isInteger(start) && Number.isInteger(end) && start >= 0 && end > start ? { start, end } : null;
+    }
+
     // { node } or { node: null, reason }. `keep`: a node bound earlier; it
     // stays the answer while it is still one of the candidates (a later pick
-    // elsewhere never re-targets a binding).
-    function bodyNode(g, start, end, keep) {
+    // elsewhere never re-targets a binding). LV2 `inst`: the exact source
+    // span of the instance whose copy is meant (a continuation after a
+    // commit, carried by Rust through the edit): the ONE copy whose
+    // instance has exactly that occurrence, else nothing -- it replaces the
+    // pick, never falls back to it.
+    function bodyNode(g, start, end, keep, inst) {
       if (!g.protoBySpan || !g.copiesOf) return { node: null, reason: 'proto-provenance-unavailable' };
       if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start) return { node: null, reason: 'runtime-node-for-span-not-unique' };
       const decl = g.protoBySpan.get(`${start}:${end}`);
       if (!decl || decl.size !== 1) return { node: null, reason: 'runtime-node-for-span-not-unique' };
       const copies = g.copiesOf.get([...decl][0]) || [];
       if (copies.length === 0) return { node: null, reason: 'proto-instance-not-rendered' };
+      const hint = hintOf(inst);
+      if (inst != null && !hint) return { node: null, reason: 'proto-instance-not-proven' };
+      if (hint) {
+        const at = copies.filter((c) => {
+          const i = instanceOf(g, c);
+          return !!i && i.start === hint.start && i.end === hint.end;
+        });
+        if (at.length !== 1) return { node: null, reason: 'proto-instance-not-proven' };
+        if (keep) return at[0] === keep ? { node: keep } : { node: null, reason: 'runtime-node-not-proven' };
+        return { node: at[0] };
+      }
       if (keep) return copies.includes(keep) ? { node: keep } : { node: null, reason: 'runtime-node-not-proven' };
       if (copies.length === 1) return { node: copies[0] };
       const hit = g.lastHit;
@@ -754,12 +808,12 @@
 
     // PLAIN DATA for Rust to prove: the chosen instance node's runtime chain
     // (through BODY: to its instance, up to the scene), like snapshotSpan.
-    function snapshotBodySpan(generation, start, end) {
+    function snapshotBodySpan(generation, start, end, inst) {
       const c = compatibility();
       if (!c.ok) return snap('disabled', c.reason, null);
       const g = usable(generation);
       if (!g) return snap('stale', 'preview-scene-replaced', generation);
-      const { node, reason } = bodyNode(g, start, end);
+      const { node, reason } = bodyNode(g, start, end, null, inst == null ? null : inst);
       if (!node) return snap('unsupported', reason, generation);
       if (!fn(node, 'getParents') || !fn(node, 'getExecutionContext')) return snap('unsupported', 'runtime-parents-unavailable', generation);
       const r = snapshotGraph(g, node);
@@ -776,10 +830,31 @@
     // The chosen instance's runtime node -- TRUSTED JavaScript layer only.
     // `keep` (optional): re-prove an earlier answer (same generation, same
     // span, still a copy of that one declaration node).
-    function bodyNodeAt(generation, start, end, keep) {
+    function bodyNodeAt(generation, start, end, keep, inst) {
       const g = usable(generation);
       if (!g) return null;
-      return bodyNode(g, start, end, keep && typeof keep === 'object' ? keep : null).node || null;
+      return bodyNode(g, start, end, keep && typeof keep === 'object' ? keep : null, inst == null ? null : inst).node || null;
+    }
+
+    // B3 (LV2): the instances that render a copy of the body statement at
+    // [start, end): PLAIN DATA, one frozen { start, end } per copy whose
+    // document instance is proven (instanceOf), in copy order, plus how
+    // many copies could not be attributed. For the secondary outline of the
+    // OTHER instances an edit of the shared definition changes; each one is
+    // then bound and proven like the picked one (by its span hint).
+    function bodyInstances(generation, start, end) {
+      const g = usable(generation);
+      if (!g || !g.protoBySpan || !g.copiesOf) return Object.freeze({ instances: Object.freeze([]), unproven: 0 });
+      const decl = g.protoBySpan.get(`${start}:${end}`);
+      if (!decl || decl.size !== 1) return Object.freeze({ instances: Object.freeze([]), unproven: 0 });
+      const out = [];
+      let unproven = 0;
+      for (const c of g.copiesOf.get([...decl][0]) || []) {
+        const i = instanceOf(g, c);
+        if (i && !out.some((o) => o.start === i.start && o.end === i.end)) out.push(Object.freeze({ start: i.start, end: i.end }));
+        else if (!i) unproven += 1;
+      }
+      return Object.freeze({ instances: Object.freeze(out), unproven });
     }
 
     // The runtime ancestors of a bound body copy, checked against the spans
@@ -848,8 +923,9 @@
 
     // The WHOLE public surface (contract §Private X_ITE adapter, plus the
     // VISUAL-3A1 binding amendment: snapshotSpan, nodeAt, spansOf, and the
-    // B3 PROTO body binding: snapshotBodySpan, bodyNodeAt, chainOf).
-    return Object.freeze({ compatibility, parseWithProvenance, activate, retire, pick, abort, dispose, snapshotSpan, nodeAt, spansOf, snapshotBodySpan, bodyNodeAt, chainOf });
+    // B3 PROTO body binding: snapshotBodySpan, bodyNodeAt, chainOf, and the
+    // LV2 instance listing bodyInstances).
+    return Object.freeze({ compatibility, parseWithProvenance, activate, retire, pick, abort, dispose, snapshotSpan, nodeAt, spansOf, snapshotBodySpan, bodyNodeAt, chainOf, bodyInstances });
   }
 
   const pickAdapterApi = Object.freeze({ createXitePickAdapter });

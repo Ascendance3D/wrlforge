@@ -39,7 +39,7 @@ tests:app_shell|5|0
 tests:flux_regression|6|0
 tests:scope_regression|3|0
 tests:typed_regression|3|0
-unittests:wrlforge_desktop_protocol|96|0
+unittests:wrlforge_desktop_protocol|99|0
 unittests:wrlforge_render|0|0
 unittests:wrlforge_scene|25|0
 unittests:wrlforge_ui|21|0
@@ -50,7 +50,7 @@ doc:wrlforge_scene|0|0
 doc:wrlforge_ui|0|0'
 inv_crates='unittests:wrlforge_document|15|0
 unittests:wrlforge_text|25|0
-unittests:wrlforge_vrml|191|0
+unittests:wrlforge_vrml|193|0
 unittests:wrlforge_wasm|3|0
 doc:wrlforge_document|0|0
 doc:wrlforge_text|0|0
@@ -64,14 +64,14 @@ dock:damaged|7
 pick:report|133
 create:report|51
 extrusion:report|58
-move:report|169
-rotscale:report|72
+move:report|177
+rotscale:report|107
 recovery:restore|34
 recovery:later|15
 theme:report|82
 texture:report|46
 native:report|46'
-guards_want=151; node_want=60; route_want=2; fx_want=58
+guards_want=151; node_want=62; route_want=2; fx_want=58
 
 # ---- 0. the checkout -------------------------------------------------------
 head="$(git -C "$wt" rev-parse HEAD)"; dirty="$(git -C "$wt" status --porcelain | wc -l)"

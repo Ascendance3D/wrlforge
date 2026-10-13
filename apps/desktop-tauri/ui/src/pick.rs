@@ -68,6 +68,37 @@ pub fn active() -> Option<Gen> {
     PICK.with_borrow(|p| p.active)
 }
 
+/// B3 (LV2): the PROTO instance a shared-body gizmo commit was carried to
+/// (Rust mapped it through the edit's exact changes). In ITS revision only,
+/// the gizmo and the outline bind that instance's copy instead of asking
+/// for a new pick. A new viewport pick, another document or any other
+/// revision ends it; it never names a node by itself -- Rust re-proves the
+/// whole chain and refuses any other instance.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstanceHint {
+    pub session: u64,
+    pub revision: u64,
+    /// The instance's node item in `revision`.
+    pub item: String,
+    /// Its preview span.
+    pub span: (u64, u64),
+}
+
+thread_local! {
+    static INSTANCE_HINT: RefCell<Option<InstanceHint>> = const { RefCell::new(None) };
+}
+
+pub fn set_instance_hint(h: Option<InstanceHint>) {
+    INSTANCE_HINT.with_borrow_mut(|x| *x = h);
+}
+
+/// The hint for exactly (`session`, `revision`), if any.
+pub fn instance_hint(session: u64, revision: u64) -> Option<InstanceHint> {
+    INSTANCE_HINT
+        .with_borrow(|x| x.clone())
+        .filter(|h| h.session == session && h.revision == revision)
+}
+
 /// Retire the generation on screen in both the UI and the adapter.
 pub fn retire(reason: &str) {
     // A drag belongs to the generation on screen: it ends with it.
@@ -262,7 +293,9 @@ async fn apply(session: u64, out: p::PickOutcome) -> p::PickOutcome {
         match ui::pick_select(session, out.revision, item).await {
             Ok(label) => {
                 // B3: a PROTO body node binds the PICKED instance, so a new
-                // pick of the same item may mean another instance.
+                // pick of the same item may mean another instance. LV2: the
+                // pick replaces any carried instance.
+                set_instance_hint(None);
                 crate::highlight::repicked();
                 crate::gizmo::repicked();
                 u.pick_message.set(Some((

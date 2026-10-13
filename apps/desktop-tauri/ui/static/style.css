@@ -246,6 +246,17 @@ x3d-canvas.picking { cursor: crosshair; }
 .selection-outline[data-state="hidden"] { display: none; }
 .selection-outline path { fill: none; stroke-linejoin: round; stroke-linecap: round; }
 .selection-outline .hl-halo { stroke: var(--wf-gizmo-halo); stroke-width: 3.5; opacity: .5; }
+/* B3 (LV2): the OTHER instances a shared PROTO definition edit changes:
+   dashed amber, under the selection outline, never taking pointer input. */
+.shared-outline { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
+.shared-outline[data-state="hidden"] { display: none; }
+.shared-outline path { fill: none; stroke-linejoin: round; stroke-linecap: round; }
+.shared-outline .hl-shared-halo { stroke: var(--wf-gizmo-halo); stroke-width: 3; opacity: .45; }
+.shared-outline .hl-shared-line { stroke: var(--wf-gizmo-active); stroke-width: 1.4; stroke-dasharray: 6 4; }
+.shared-outline-note { position: absolute; left: .4rem; top: .4rem; max-width: calc(100% - .8rem); pointer-events: none;
+  font-size: .9rem; padding: .1rem .4rem; border-radius: 3px; border: 1px dashed var(--wf-gizmo-active);
+  color: var(--wf-warning-fg); background: var(--wf-warning-bg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shared-outline-note[hidden] { display: none; }
 .highlight-status { position: absolute; left: .4rem; bottom: .4rem; max-width: calc(100% - .8rem); pointer-events: none;
   font-size: .92rem; padding: .1rem .4rem; border-radius: 3px; color: var(--wf-warning-fg); background: var(--wf-warning-bg);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

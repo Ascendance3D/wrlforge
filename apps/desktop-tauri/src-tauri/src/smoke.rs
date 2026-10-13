@@ -192,6 +192,16 @@ struct RotScaleArm {
     fixtures: Vec<(PathBuf, Vec<u8>, String, Vec<usize>)>,
 }
 
+/// B3 (LV2), smoke runs only: every shared-definition consent the run was
+/// asked, as (PROTO name, instance count) -- the words the dialog states.
+static CONSENTS: Mutex<Vec<(String, u32)>> = Mutex::new(Vec::new());
+
+pub fn note_consent(proto: &str, instances: u32) {
+    if let Ok(mut v) = CONSENTS.lock() {
+        v.push((proto.to_string(), instances));
+    }
+}
+
 pub const ROTSCALE_FILE: &str = "visual4b-world.wrl";
 
 /// (file, label, text, changeable line indexes): a translated, rotated and
@@ -228,6 +238,18 @@ pub fn rotscale_fixtures() -> Vec<(&'static str, &'static str, String, Vec<usize
             vec![5, 6, 14],
         ),
         (
+            PROTO_TWO_FILE,
+            PROTO_TWO_LABEL,
+            proto_rotscale_fixture(PROTO_TWO_TAIL),
+            PROTO_BODY_LINES.to_vec(),
+        ),
+        (
+            PROTO_NESTED_FILE,
+            PROTO_NESTED_LABEL,
+            proto_rotscale_fixture(PROTO_NESTED_TAIL),
+            PROTO_BODY_LINES.to_vec(),
+        ),
+        (
             "fx-rs-crlf-bom.wrl",
             "BOM + CRLF + Unicode",
             doc("\u{feff}", "\r\n"),
@@ -235,6 +257,48 @@ pub fn rotscale_fixtures() -> Vec<(&'static str, &'static str, String, Vec<usize
         ),
         ("fx-rs-cr.wrl", "lone CR", doc("", "\r"), vec![5, 6]),
     ]
+}
+
+/// B3 (LV2): the shared-PROTO Rotate / Scale fixtures. Every label starts
+/// with "shared PROTO" (the UI run and `verify_rotscale` branch on it).
+pub const PROTO_TWO_FILE: &str = "fx-rs-proto-two.wrl";
+pub const PROTO_TWO_LABEL: &str = "shared PROTO: two instances + DEF/USE in the body";
+pub const PROTO_NESTED_FILE: &str = "fx-rs-proto-nested.wrl";
+pub const PROTO_NESTED_LABEL: &str = "shared PROTO: an instance under nested Transforms";
+/// The body Transform's rotation and scale lines (0-based).
+pub const PROTO_BODY_LINES: [usize; 2] = [7, 8];
+/// One top-level instance at the origin, one inside a Transform at y = -2.5.
+pub const PROTO_TWO_TAIL: &str = "Wheel { }\nTransform { translation 0 -2.5 0 children [ Wheel { tint 0.2 0.6 0.9 } ] }\n";
+/// One top-level instance, one under Transform (rotated, uniformly scaled)
+/// > Group > Transform: its parent frame is composed from all three.
+pub const PROTO_NESTED_TAIL: &str = "Wheel { }\nTransform {\n  translation 0 -2 0 rotation 0 0 1 0.4 scale 1.5 1.5 1.5\n  children [\n    Group { children [\n      Transform { translation 1.5 0 0 children [ Wheel { tint 0.2 0.6 0.9 } ] }\n    ] }\n  ]\n}\n";
+
+/// The shared `Wheel` PROTO: a body Transform `Spin` (explicit rotation and
+/// scale, one Shape) under a Group, beside a second body Transform whose
+/// Shape USEs Spin's Appearance (DEF/USE inside the body); then `tail` (the
+/// instances).
+pub fn proto_rotscale_fixture(tail: &str) -> String {
+    [
+        "#VRML V2.0 utf8",
+        "# LV2 shared PROTO ✓ — größe 😀",
+        "PROTO Wheel [ field SFColor tint 0.9 0.4 0.2 ] {",
+        "  Group {",
+        "    children [",
+        "      DEF Spin Transform {",
+        "        translation 0 0 0",
+        "        rotation 0 0 1 0.25",
+        "        scale 1 1 1",
+        "        children [ Shape { appearance DEF Paint Appearance { material Material { diffuseColor IS tint } } geometry Box { size 1.2 0.6 0.6 } } ]",
+        "      }",
+        "      Transform { translation 0 0.75 0 children [ Shape { appearance USE Paint geometry Sphere { radius 0.2 } } ] }",
+        "    ]",
+        "  }",
+        "}",
+    ]
+    .join("\n")
+        + "\n"
+        + tail
+        + "# fin ✓\n"
 }
 
 /// Whether `after` differs from `before` only on the lines `allowed`
@@ -606,16 +670,25 @@ impl SmokeState {
         Ok(())
     }
 
-    /// `--smoke-extrusion` only (inside the harness Xvfb): a whole-screen
-    /// capture as evidence, `<dir>/captures/<id>.png`.
+    /// `--smoke-extrusion`, `--smoke-move` and `--smoke-rotscale` only
+    /// (inside the harness Xvfb): a whole-screen capture as evidence,
+    /// `<dir>/captures/<id>.png` (B3 LV2: the move and rotscale runs too).
     pub fn window_capture(&self, id: &str) -> Result<String, String> {
-        let g = self.5.lock().map_err(|e| e.to_string())?;
-        let a = g.as_ref().ok_or("no extrusion smoke run is armed")?;
+        let dir = {
+            let ext = self.5.lock().map_err(|e| e.to_string())?;
+            let mv = self.3.lock().map_err(|e| e.to_string())?;
+            let rs = self.6.lock().map_err(|e| e.to_string())?;
+            ext.as_ref()
+                .map(|a| a.dir.clone())
+                .or_else(|| mv.as_ref().and_then(|a| a.save_path.parent().map(Path::to_path_buf)))
+                .or_else(|| rs.as_ref().and_then(|a| a.save_path.parent().map(Path::to_path_buf)))
+                .ok_or("no extrusion, move or rotscale smoke run is armed")?
+        };
         real_pointer_env()?;
         if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
             return Err("bad capture id".into());
         }
-        let d = a.dir.join("captures");
+        let d = dir.join("captures");
         std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
         let out = d.join(format!("{id}.png"));
         let st = std::process::Command::new("timeout")
@@ -1405,6 +1478,17 @@ fn verify_rotscale(arm: &RotScaleArm) -> Vec<p::SmokeStep> {
         };
         let b = backups_of(path);
         let backup_ok = b.len() == 1 && std::fs::read(&b[0]).ok().as_deref() == Some(&original[..]);
+        if label.starts_with("shared PROTO") {
+            // B3 (LV2): the body Transform's rotation and scale lines of the
+            // SHARED definition changed, nothing else (instances untouched).
+            steps.push(p::SmokeStep {
+                name: format!("rust: {label} fixture on disk changed only the PROTO body Transform's rotation / scale lines; one backup holds the original bytes"),
+                ok: only_lines_changed(&o, &d, eol, allowed) && backup_ok,
+                detail: format!("{} bytes, {} backup(s), changed: {:?}", disk.len(), b.len(),
+                    o.split(eol).zip(d.split(eol)).filter(|(x, y)| x != y).map(|(_, y)| y.to_string()).collect::<Vec<_>>()),
+            });
+            continue;
+        }
         let angle_only = d
             .split(eol)
             .nth(5)
@@ -1416,6 +1500,17 @@ fn verify_rotscale(arm: &RotScaleArm) -> Vec<p::SmokeStep> {
                 o.split(eol).zip(d.split(eol)).filter(|(x, y)| x != y).map(|(_, y)| y.to_string()).collect::<Vec<_>>()),
         });
     }
+    let consents = CONSENTS.lock().map(|v| v.clone()).unwrap_or_default();
+    let protos = arm
+        .fixtures
+        .iter()
+        .filter(|f| f.2.starts_with("shared PROTO"))
+        .count();
+    steps.push(p::SmokeStep {
+        name: "rust: every shared-PROTO commit (Rotate, Scale on each of the 2 fixtures) asked the shared-definition consent, naming PROTO Wheel and its 2 instances".into(),
+        ok: protos == 2 && consents.len() == 2 * protos && consents.iter().all(|(n, c)| n == "Wheel" && *c == 2),
+        detail: format!("{consents:?}"),
+    });
     steps
 }
 
@@ -1785,6 +1880,66 @@ mod tests {
     /// gizmo adapter receives the runtime node; root order is only read to
     /// REFUSE a disagreement, and the preview adapter takes the node from the
     /// pick adapter's span lookup of the generation on screen.
+    /// B3 (LV2): the shared-PROTO Rotate / Scale fixtures. `Spin` (in the
+    /// body of `Wheel`) is a Rotate and a Scale target with consent; its
+    /// rotation and scale are exactly the allowed lines; the nested
+    /// instance's parent frame composes from its three source ancestors to
+    /// the world point the GUI run clicks.
+    #[test]
+    fn proto_rotscale_fixtures_target_the_shared_body_and_compose_the_nested_frame() {
+        use wrlforge_vrml::manipulate::{self as m, Tool};
+        let fx: Vec<_> = rotscale_fixtures()
+            .into_iter()
+            .filter(|f| f.1.starts_with("shared PROTO"))
+            .collect();
+        assert_eq!(fx.len(), 2);
+        for (file, label, text, allowed) in fx {
+            let lines: Vec<&str> = text.split('\n').collect();
+            assert_eq!(
+                allowed.iter().map(|i| lines[*i].trim()).collect::<Vec<_>>(),
+                ["rotation 0 0 1 0.25", "scale 1 1 1"],
+                "{file}"
+            );
+            let u16 = |b: usize| text[..b].encode_utf16().count() as u64;
+            let b = text.find("DEF Spin").unwrap();
+            let e = b + text[b..].find("\n      }").unwrap() + "\n      }".len();
+            let (f, t) = (u16(b), u16(e));
+            for tool in [Tool::Rotate, Tool::Scale] {
+                let tg = m::manip_target(&text, f, t, tool).unwrap();
+                let sh = tg.shared.expect("shared");
+                assert_eq!((sh.proto.as_str(), sh.instances), ("Wheel", 2), "{label}");
+            }
+            assert!(matches!(
+                m::plan_rotate(&text, f, t, m::Axis::Z, 0.5).0,
+                wrlforge_vrml::field_edit::Plan::Refused { .. }
+            ));
+            let (plan, _) = m::plan_rotate_with(&text, f, t, m::Axis::Z, 0.5, true);
+            let wrlforge_vrml::field_edit::Plan::Ready { new_text, .. } = plan else {
+                panic!("{file}: {plan:?}")
+            };
+            assert!(only_lines_changed(&text, &new_text, "\n", &allowed), "{file}");
+            if file == PROTO_NESTED_FILE {
+                // Transform(0 -2 0, R z 0.4, S 1.5) > Group > Transform(1.5 0 0).
+                let span = |needle: &str, close: &str| {
+                    let b = text.find(needle).unwrap();
+                    let e = b + text[b..].find(close).unwrap() + close.len();
+                    (u16(b), u16(e))
+                };
+                let outer = span("Transform {\n  translation 0 -2 0", "\n}");
+                let group = span("Group { children [\n      Transform", "] }\n  ]");
+                let group = (group.0, group.1 - 4);
+                let inner = span("Transform { translation 1.5 0 0", "] }");
+                for tool in [Tool::Move, Tool::Rotate, Tool::Scale] {
+                    let mm = m::instance_parent_frame(&text, &[inner, group, outer], tool)
+                        .unwrap_or_else(|e| panic!("{tool:?} {e:?}"));
+                    let (sn, cs) = 0.4f64.sin_cos();
+                    assert!((mm[12] - 2.25 * cs).abs() < 1e-12, "{mm:?}");
+                    assert!((mm[13] - (-2.0 + 2.25 * sn)).abs() < 1e-12, "{mm:?}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn root_order_is_never_the_binding_identity() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui/static");
@@ -1800,11 +1955,12 @@ mod tests {
         assert!(!gizmo.contains("getNamedNode(String(name)); } catch (e) { named = null; }\n      if (!named) return { ok: true"));
         // B3: a PROTO body node binds the picked instance's copy
         // (bodyNodeAt), re-proved as the SAME node before every use.
+        // LV2: or the copy of the instance Rust carried through a commit.
         assert!(preview.contains(
-            "var node = isBody ? adapter.bodyNodeAt(gen, f, t) : adapter.nodeAt(gen, f, t);"
+            "var node = isBody ? adapter.bodyNodeAt(gen, f, t, null, hint) : adapter.nodeAt(gen, f, t);"
         ));
         assert!(preview.contains(
-            "(isBody ? adapter.bodyNodeAt(gen, f, t, node) : adapter.nodeAt(gen, f, t)) === node"
+            "(isBody ? adapter.bodyNodeAt(gen, f, t, node, hint) : adapter.nodeAt(gen, f, t)) === node"
         ));
         assert!(!preview.contains("rootNodes["));
     }

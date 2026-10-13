@@ -71,6 +71,12 @@
     window.WeakRef = HeldWeakRef;
   })();
 
+  // B3 (LV2): an instance span hint from (iFrom, iTo), or null (absent / -1).
+  function instHint(iFrom, iTo) {
+    var f = Number(iFrom), t = Number(iTo);
+    return Number.isInteger(f) && Number.isInteger(t) && f >= 0 && t > f ? { start: f, end: t } : null;
+  }
+
   function canvas() { return document.getElementById('viewport'); }
 
   // XITE-16-UPGRADE-2: the smoke-only console trace (consoleTraceStart).
@@ -450,14 +456,16 @@
     // generation `seq` recorded for the preview span [from, to), for Rust to
     // prove. JSON (a pick-style snapshot, outcome `found` or a refusal).
     // B3: `body` -- the span is a PROTO body statement; the runtime node is
-    // the PICKED instance's copy of it (snapshotBodySpan).
-    gizmoLocate: function (seq, from, to, body) {
+    // the PICKED instance's copy of it (snapshotBodySpan). LV2: `iFrom` /
+    // `iTo` (>= 0) -- the copy of the instance with exactly that source span
+    // instead (a continuation Rust carried through a commit); never the pick.
+    gizmoLocate: function (seq, from, to, body, iFrom, iTo) {
       var c = canvas();
       var a = c && c.browser ? adapterFor(c.browser) : null;
       var s;
       if (!a) s = { outcome: 'disabled', reason: 'adapter-unavailable' };
       else if (!pick.active || pick.active.seq !== seq || !pick.generation) s = { outcome: 'stale', reason: 'preview-scene-replaced' };
-      else if (body === true) s = a.snapshotBodySpan(pick.generation, Number(from), Number(to));
+      else if (body === true) s = a.snapshotBodySpan(pick.generation, Number(from), Number(to), instHint(iFrom, iTo));
       else s = a.snapshotSpan(pick.generation, Number(from), Number(to));
       return JSON.stringify({
         outcome: s.outcome, reason: s.reason || null, shape: s.shape || null, ctxKind: s.ctxKind || null,
@@ -470,7 +478,7 @@
     // every temporary translation. JSON {ok, reason}.
     // B3: `body` -- bind the PICKED instance's copy (bodyNodeAt); the root
     // index and DEF name assertions do not apply (index -1, name '').
-    gizmoBind: function (seq, from, to, index, name, x, y, z, body) {
+    gizmoBind: function (seq, from, to, index, name, x, y, z, body, iFrom, iTo) {
       var c = canvas();
       if (c && c.browser) adapterFor(c.browser);
       if (!pick.gizmo || !pick.adapter) return JSON.stringify({ ok: false, reason: 'adapter-unavailable' });
@@ -479,11 +487,11 @@
         return JSON.stringify({ ok: false, reason: 'preview-scene-replaced' });
       }
       var adapter = pick.adapter, gen = pick.generation, f = Number(from), t = Number(to);
-      var isBody = body === true;
-      var node = isBody ? adapter.bodyNodeAt(gen, f, t) : adapter.nodeAt(gen, f, t);
+      var isBody = body === true, hint = instHint(iFrom, iTo);
+      var node = isBody ? adapter.bodyNodeAt(gen, f, t, null, hint) : adapter.nodeAt(gen, f, t);
       var verify = function () {
         return !!pick.active && pick.active.seq === seq && pick.generation === gen && pick.adapter === adapter
-          && !!node && (isBody ? adapter.bodyNodeAt(gen, f, t, node) : adapter.nodeAt(gen, f, t)) === node;
+          && !!node && (isBody ? adapter.bodyNodeAt(gen, f, t, node, hint) : adapter.nodeAt(gen, f, t)) === node;
       };
       return JSON.stringify(pick.gizmo.bind(pick.scene, node, Number(index), String(name || ''), [Number(x), Number(y), Number(z)], verify));
     },
@@ -496,16 +504,17 @@
     // B3: `body` -- a PROTO body node: the PICKED instance's copy
     // (bodyNodeAt), its ancestors followed up THAT copy's runtime chain and
     // checked span by span (chainOf).
-    highlightBounds: function (seq, from, to, spans, body) {
+    // LV2: `iFrom` / `iTo` -- the instance hint, as for gizmoLocate.
+    highlightBounds: function (seq, from, to, spans, body, iFrom, iTo) {
       var c = canvas();
       if (c && c.browser) adapterFor(c.browser);
       var out = function (o) { return JSON.stringify(o); };
       if (!pick.gizmo || !pick.adapter) return out({ ok: false, reason: 'adapter-unavailable' });
       if (!pick.active || pick.active.seq !== seq || !pick.generation) return out({ ok: false, reason: 'preview-scene-replaced' });
       var gen = pick.generation, a = pick.adapter;
-      var isBody = body === true;
-      var node = isBody ? a.bodyNodeAt(gen, Number(from), Number(to)) : a.nodeAt(gen, Number(from), Number(to));
-      if (!node) return out({ ok: false, reason: isBody ? 'proto-instance-not-picked' : 'runtime-node-for-span-not-unique' });
+      var isBody = body === true, hint = instHint(iFrom, iTo);
+      var node = isBody ? a.bodyNodeAt(gen, Number(from), Number(to), null, hint) : a.nodeAt(gen, Number(from), Number(to));
+      if (!node) return out({ ok: false, reason: !isBody ? 'runtime-node-for-span-not-unique' : hint ? 'proto-instance-not-proven' : 'proto-instance-not-picked' });
       var b = pick.gizmo.bounds(node);
       if (!b.ok) return out(b);
       var list = Array.prototype.slice.call(spans || []).map(Number);
@@ -520,6 +529,17 @@
         ancestors.push(info);
       }
       return out({ ok: true, box: b.box, ancestors: ancestors });
+    },
+    // B3 (LV2): the document instances rendering a copy of the PROTO body
+    // statement [from, to) in generation `seq`, as JSON
+    // {instances: [[from, to], ...], unproven} (plain data; the secondary
+    // outline proves each one like the picked copy).
+    bodyInstances: function (seq, from, to) {
+      var c = canvas();
+      if (c && c.browser) adapterFor(c.browser);
+      if (!pick.adapter || !pick.active || pick.active.seq !== seq || !pick.generation) return JSON.stringify({ instances: [], unproven: 0 });
+      var r = pick.adapter.bodyInstances(pick.generation, Number(from), Number(to));
+      return JSON.stringify({ instances: r.instances.map(function (i) { return [i.start, i.end]; }), unproven: r.unproven });
     },
     gizmoSet: function (x, y, z) { return !!pick.gizmo && pick.gizmo.set(x, y, z); },
     // VISUAL-4B: name is translation / rotation / scale; values a number array.
