@@ -139,6 +139,7 @@ pub fn tree_select(session: u64, revision: u64, id: String, from: u64, to: u64) 
         flash("Scene Tree is updating (a newer analysis is being shown); selection not changed.");
         return false;
     }
+    crate::pick::non_pick_selection();
     if !select_from("Scene Tree", session, revision, from, to) {
         // Catch the tree up now instead of after the debounce.
         spawn_local(analyze());
@@ -187,6 +188,14 @@ pub fn clear_selection() -> bool {
     u.inspection.set(None);
     u.selected.set(None);
     true
+}
+
+/// Inspector navigation (breadcrumb, Parent, "Open" buttons): the same
+/// exact-item path as a pick, but not a pick -- the pick status and the hit
+/// cycle are reset first.
+pub async fn navigate_select(session: u64, revision: u64, id: String) -> Result<String, String> {
+    crate::pick::non_pick_selection();
+    pick_select(session, revision, id).await
 }
 
 /// Select the Scene Tree item a PROVEN viewport pick named, in exactly the

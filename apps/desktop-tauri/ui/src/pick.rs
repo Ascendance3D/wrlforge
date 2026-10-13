@@ -209,6 +209,16 @@ pub fn instance_hint(session: u64, revision: u64) -> Option<InstanceHint> {
         .filter(|h| h.session == session && h.revision == revision)
 }
 
+/// A selection made OUTSIDE the viewport (Scene Tree, breadcrumb, Parent,
+/// an Inspector "Open" button) -- even of the item already selected: the
+/// status line and the hit cycle belong to viewport picks only, so the next
+/// click there starts at the front layer again.
+pub fn non_pick_selection() {
+    MESSAGE_CONTEXT.with_borrow_mut(|c| *c = None);
+    PICK.with_borrow_mut(|p| p.cycle = None);
+    ui().pick_message.set(None);
+}
+
 /// The selection was cleared: no hit cycle, no proven pick and no instance
 /// hint outlive it (the next click starts at the front layer).
 pub fn forget_selection() {

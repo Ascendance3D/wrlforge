@@ -536,7 +536,7 @@ fn inspector_head(i: &p::Inspection, session: u64) -> impl IntoView {
     let found2 = found.clone();
     let go = move |target: String| {
         spawn_local(async move {
-            if let Err(e) = ui::pick_select(session, rev, target).await {
+            if let Err(e) = ui::navigate_select(session, rev, target).await {
                 ui::flash(&format!("Cannot open the node: {e}."));
             }
         });
@@ -991,7 +991,7 @@ fn field_row(f: p::EditableField, node_type: &str, session: u64, rev: u64) -> im
                     on:click=move |_| {
                         let id = id.clone();
                         spawn_local(async move {
-                            if let Err(e) = ui::pick_select(session, rev, id).await {
+                            if let Err(e) = ui::navigate_select(session, rev, id).await {
                                 ui::flash(&format!("Cannot open the node: {e}."));
                             }
                         });
@@ -1016,7 +1016,7 @@ fn field_row(f: p::EditableField, node_type: &str, session: u64, rev: u64) -> im
                             on:click=move |_| {
                                 let id = id.clone();
                                 spawn_local(async move {
-                                    if let Err(e) = ui::pick_select(session, rev, id).await {
+                                    if let Err(e) = ui::navigate_select(session, rev, id).await {
                                         ui::flash(&format!("Cannot open the node: {e}."));
                                     }
                                 });

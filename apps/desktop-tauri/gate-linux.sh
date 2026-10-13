@@ -61,7 +61,7 @@ inv_gui='menu:report|93
 dock:main|65
 dock:restore|7
 dock:damaged|7
-pick:report|153
+pick:report|155
 create:report|53
 extrusion:report|58
 move:report|206

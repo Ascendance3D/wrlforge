@@ -893,7 +893,7 @@ async fn stale_status(fx: &p::PickFixture, r: &mut R) -> Option<()> {
             && PICK.with_borrow(|p| p.cycle.is_none())
     };
     let mut done = Vec::new();
-    for action in ["tree", "crumb", "parent", "tool"] {
+    for action in ["tree", "same", "crumb", "parent", "tool"] {
         // Two clicks at one place: the second names the Shape behind.
         let _ = gesture(x, y).await;
         let _ = gesture(x, y).await;
@@ -914,6 +914,13 @@ async fn stale_status(fx: &p::PickFixture, r: &mut R) -> Option<()> {
                     .map(|li| li.click())
                     .is_some()
             }
+            // The item that is ALREADY selected (Copilot #147): still a
+            // non-pick selection, so the status and the cycle reset.
+            "same" => before
+                .as_ref()
+                .and_then(|id| el(&format!(".tree-item[data-id=\"{id}\"]")))
+                .map(|li| li.click())
+                .is_some(),
             "crumb" => usable("#inspector-path button.crumb").map(|b| b.click()).is_some(),
             "parent" => usable("#inspector-up").map(|b| b.click()).is_some(),
             _ => click("btn-move").is_some(),
@@ -923,7 +930,12 @@ async fn stale_status(fx: &p::PickFixture, r: &mut R) -> Option<()> {
             continue;
         }
         let changed = wait_ms(3000, || {
-            (action == "tool" || selected_id() != before).then_some(())
+            match action {
+                "tool" => true,
+                "same" => selected_id() == before,
+                _ => selected_id() != before,
+            }
+            .then_some(())
         })
         .await
         .is_some();
