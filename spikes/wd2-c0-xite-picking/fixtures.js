@@ -337,7 +337,10 @@ function build() {
 
   // P19 -- PROTO instance (runtime body is a copy; no source occurrence).
   d = new Doc().put(FRONT_VIEWPOINT);
-  d.put('PROTO MyBox [ ] { Shape { geometry Box { size 3 3 3 } } }\n');
+  d.put('PROTO MyBox [ ] { ');
+  // Label only (same text): the body statement, for hosts that prove it (B1).
+  d.leaf('body.shape', 'Shape { geometry Box { size 3 3 3 } }');
+  d.put(' }\n');
   d.leaf('inst', 'MyBox { }');
   d.put('\n');
   add('P19-proto-instance', 'PROTO instance', d, [

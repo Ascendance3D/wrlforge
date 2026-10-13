@@ -63,6 +63,10 @@ const GUI_NOTES = {
   // never loaded: the area is empty (NO_HIT). REFUSED_EXTERNAL is covered by
   // the Rust resolver tests.
   'P16-inline/inline': { status: 'NO_HIT', note: 'inline-child-not-served-in-tauri-preview' },
+  // B1: the Tauri resolver proves a PROTO instance body node to its exact
+  // DECLARATION statement (the shared definition). The WD2-C0 answer
+  // (UNSUPPORTED) is kept as oracleStatus; the truth is the body Shape.
+  'P19-proto-instance/inst': { status: 'PROVEN', logical: 'body.shape', note: 'b1-proto-body-proven-to-declaration' },
 };
 
 const fixtures = [];
@@ -87,7 +91,7 @@ function add(fx, variant) {
       skip: c.camera ? `camera-${c.camera}-not-bound-by-harness` : null,
       status: note ? note.status : e.status,
       note: note ? note.note : null,
-      logical: e.status === 'PROVEN' ? span(e.logical) : null,
+      logical: note && note.logical ? span(note.logical) : e.status === 'PROVEN' ? span(e.logical) : null,
       // The oracle's own answer, kept for the report.
       oracleStatus: e.status,
     };

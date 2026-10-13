@@ -205,6 +205,9 @@ fn st(d: &Option<DocState>) -> String {
 
 pub async fn run(plan: &Plan, r: &mut R) -> Option<()> {
     wait_ms(5000, || crate::element_by_id::<HtmlElement>("menubar")).await?;
+    // The focus-return checks below are about the Source panel: run them in
+    // the Source preset (the default is now Modeling, Source as a tab).
+    crate::dock::set_preset(p::layout::PresetId::Source);
     ipc::sleep(800).await;
     structure(r);
     if !r.step(
