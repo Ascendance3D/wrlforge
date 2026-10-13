@@ -26,7 +26,7 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// the complete Rust release on Linux, Windows and macOS.
 pub const APP_CHANNEL: &str = "Beta";
 
-/// `WRL Forge 1.4.5 (Beta)`: the one identity string for the toolbar, the
+/// `WRL Forge 1.4.51 (Beta)`: the one identity string for the toolbar, the
 /// window title, About and `--version`.
 pub fn app_display_name() -> String {
     format!("{APP_NAME} {APP_VERSION} ({APP_CHANNEL})")

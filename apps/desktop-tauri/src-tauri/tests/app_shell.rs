@@ -14,14 +14,14 @@ fn json(text: &str) -> serde_json::Value {
 #[test]
 fn one_version_everywhere() {
     let conf = json(TAURI_CONF);
-    assert_eq!(c::APP_VERSION, "1.4.5");
+    assert_eq!(c::APP_VERSION, "1.4.51");
     assert_eq!(
         env!("CARGO_PKG_VERSION"),
         c::APP_VERSION,
         "src-tauri vs protocol"
     );
     assert_eq!(conf["version"], c::APP_VERSION, "tauri.conf.json");
-    assert_eq!(c::app_display_name(), "WRL Forge 1.4.5 (Beta)");
+    assert_eq!(c::app_display_name(), "WRL Forge 1.4.51 (Beta)");
 }
 
 #[test]
