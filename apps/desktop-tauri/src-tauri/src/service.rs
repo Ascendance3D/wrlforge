@@ -1445,6 +1445,102 @@ impl Service {
         )
     }
 
+    /// B2 selection highlight: the exact preview span the preview must
+    /// locate `item` by. Read-only; any other revision is `Stale`.
+    pub fn highlight_target(
+        &self,
+        r: &p::HighlightTargetRequest,
+    ) -> Result<p::HighlightTargetOutcome, String> {
+        let (text, current) = self.text_at(r.session)?;
+        if r.revision != current {
+            return Ok(p::HighlightTargetOutcome::Stale { current });
+        }
+        let off = preview_offset(&text);
+        match node_span(&r.item) {
+            Some((from, to)) if from >= off => Ok(p::HighlightTargetOutcome::Ready {
+                revision: current,
+                item: r.item.clone(),
+                preview_from: from - off,
+                preview_to: to - off,
+            }),
+            _ => Ok(p::HighlightTargetOutcome::Refused {
+                reason: field_edit::reason::NOT_A_NODE.into(),
+                message: "Only a node instance can be outlined.".into(),
+            }),
+        }
+    }
+
+    /// B2 selection highlight: prove that the runtime node the preview
+    /// located for `item` IS that authored node (any depth), with the same
+    /// proof the gizmo binds through (`pick::resolve_node`: exact span join,
+    /// unique occurrences, runtime chain == source containment chain). The
+    /// proven ancestors are returned so the preview can compose the frame;
+    /// an ancestor whose frame effect is unknown (Billboard, a PROTO
+    /// instance, ...) refuses. Read-only.
+    pub fn highlight_prove(
+        &self,
+        r: &p::HighlightProveRequest,
+    ) -> Result<p::HighlightProveOutcome, String> {
+        use wrlforge_vrml::pick as pk;
+        let (text, current) = self.text_at(r.session)?;
+        let refused = |reason: &str, message: &str| p::HighlightProveOutcome::Refused {
+            reason: reason.into(),
+            message: message.into(),
+        };
+        let preview = text.strip_prefix('\u{FEFF}').unwrap_or(&text);
+        if r.revision != current || p::preview_hash(preview) != r.preview_hash {
+            return Ok(p::HighlightProveOutcome::Stale { current });
+        }
+        let Some((from, to)) = node_span(&r.item) else {
+            return Ok(refused(field_edit::reason::NOT_A_NODE, "Not an object."));
+        };
+        let unprovable = "The preview cannot prove which rendered object this is.";
+        let snap = &r.snapshot;
+        let (Some(shape), "found", 1..=MAX_PICK_GRAPH) = (
+            snap.shape.as_deref(),
+            snap.outcome.as_str(),
+            snap.graph.len(),
+        ) else {
+            let why = snap
+                .reason
+                .clone()
+                .unwrap_or_else(|| pk::reason::BIND_NOT_UNIQUE.to_string());
+            return Ok(refused(&why, unprovable));
+        };
+        let parsed = wrlforge_vrml::parse(&text);
+        let hit = hit_of(shape, snap);
+        let off = preview_offset(&text);
+        Ok(match pk::resolve_node(&hit, &parsed, off, from, to) {
+            Ok(chain) => {
+                let mut ancestors = Vec::with_capacity(chain.len().saturating_sub(1));
+                for n in chain.iter().skip(1) {
+                    if p::highlight::ancestor_kind(&n.node_type).is_none() {
+                        return Ok(refused(
+                            p::highlight::refusal::ANCESTOR,
+                            "It is inside a node whose placement the outline cannot follow.",
+                        ));
+                    }
+                    let (f, t) = (n.range.start.offset as u64, n.range.end.offset as u64);
+                    if f < off {
+                        return Ok(refused(pk::reason::SPAN_OUT_OF_RANGE, unprovable));
+                    }
+                    ancestors.push(p::HighlightAncestor {
+                        preview_from: f - off,
+                        preview_to: t - off,
+                        node_type: n.node_type.clone(),
+                    });
+                }
+                p::HighlightProveOutcome::Proven {
+                    revision: current,
+                    item: r.item.clone(),
+                    node_type: chain[0].node_type.clone(),
+                    ancestors,
+                }
+            }
+            Err(res) => refused(res.reason(), unprovable),
+        })
+    }
+
     /// VISUAL-3A1 camera carry: the preview span `[from, to)` of
     /// `from_revision`, mapped through the exact logged changes to the
     /// current revision, or `Lost`. Never a search. A change at offset 0 may
@@ -4360,6 +4456,149 @@ mod tests {
     fn svc_open(path: &Path) -> (p::OpenOutcome, Service) {
         let svc = Service::new(clock);
         (svc.open_path(path), svc)
+    }
+
+    /// B2 selection highlight: a nested Shape proves through its exact
+    /// runtime chain and reports its ancestors (direct parent first, preview
+    /// spans); the twin's node, a stale text, a Billboard ancestor and a
+    /// non-node item all refuse. Nothing is written.
+    #[test]
+    fn highlight_proves_nested_nodes_and_refuses_everything_else() {
+        let dir = tmp("b2-highlight");
+        let path = dir.join("nested.wrl");
+        let shape = "Shape { geometry Box { } }";
+        let t = format!("Transform {{ translation 1 0 0 children [ {shape} ] }}");
+        let bb = format!("Billboard {{ children [ {shape} ] }}");
+        let text = format!("\u{FEFF}#VRML V2.0 utf8\n{t}\n{t}\n{bb}\n");
+        fs::write(&path, &text).unwrap();
+        let (o, svc) = svc_open(&path);
+        let doc = opened(o);
+        let (id, rev) = (doc.session, doc.revision);
+        let u16at = |b: usize| text[..b].encode_utf16().count() as u64;
+        let span = |b: usize, len: usize| (u16at(b), u16at(b + len));
+        let t1 = text.find(&t).unwrap();
+        let t2 = text.rfind(&t).unwrap();
+        let (tr1, tr2) = (span(t1, t.len()), span(t2, t.len()));
+        let sh1 = span(t1 + t.find(shape).unwrap(), shape.len());
+        let sh2 = span(t2 + t.find(shape).unwrap(), shape.len());
+        let b0 = text.find(&bb).unwrap();
+        let bspan = span(b0, bb.len());
+        let shb = span(b0 + bb.find(shape).unwrap(), shape.len());
+        let hash = p::preview_hash(text.strip_prefix('\u{FEFF}').unwrap());
+        let pv = |(f, t): (u64, u64)| (f - 1, t - 1);
+        // A located Shape under a located parent under the scene.
+        let chain = |me: (u64, u64), parent: (u64, u64), parent_ty: &str| {
+            let mut s = located("Shape", pv(me), &["n2"]);
+            s.graph.insert(
+                "n2".into(),
+                p::PickGraphNode {
+                    type_name: Some(parent_ty.into()),
+                    ctx_kind: "document".into(),
+                    occurrences: vec![p::PickSpan {
+                        start: pv(parent).0,
+                        end: pv(parent).1,
+                    }],
+                    parents: vec!["SCENE".into()],
+                },
+            );
+            s
+        };
+        let prove = |rev: u64, hash: u64, item: &str, snap: p::PickSnapshot| {
+            svc.highlight_prove(&p::HighlightProveRequest {
+                session: id,
+                revision: rev,
+                preview_hash: hash,
+                generation: 1,
+                item: item.into(),
+                snapshot: snap,
+            })
+            .unwrap()
+        };
+        let item = |(f, t): (u64, u64)| format!("node-{f}-{t}");
+        // The target is the exact preview span (BOM projected).
+        match svc
+            .highlight_target(&p::HighlightTargetRequest {
+                session: id,
+                revision: rev,
+                item: item(sh1),
+            })
+            .unwrap()
+        {
+            p::HighlightTargetOutcome::Ready {
+                preview_from,
+                preview_to,
+                ..
+            } => assert_eq!((preview_from, preview_to), pv(sh1)),
+            o => panic!("{o:?}"),
+        }
+        assert!(matches!(
+            svc.highlight_target(&p::HighlightTargetRequest {
+                session: id,
+                revision: rev + 1,
+                item: item(sh1),
+            })
+            .unwrap(),
+            p::HighlightTargetOutcome::Stale { .. }
+        ));
+        assert!(matches!(
+            svc.highlight_target(&p::HighlightTargetRequest {
+                session: id,
+                revision: rev,
+                item: "use-1-2".into(),
+            })
+            .unwrap(),
+            p::HighlightTargetOutcome::Refused { .. }
+        ));
+        for (me, parent) in [(sh1, tr1), (sh2, tr2)] {
+            match prove(rev, hash, &item(me), chain(me, parent, "Transform")) {
+                p::HighlightProveOutcome::Proven {
+                    node_type,
+                    ancestors,
+                    ..
+                } => {
+                    assert_eq!(node_type, "Shape");
+                    assert_eq!(
+                        ancestors,
+                        vec![p::HighlightAncestor {
+                            preview_from: pv(parent).0,
+                            preview_to: pv(parent).1,
+                            node_type: "Transform".into(),
+                        }]
+                    );
+                }
+                o => panic!("{o:?}"),
+            }
+        }
+        // The twin's runtime node offered for this item never proves.
+        assert!(matches!(
+            prove(rev, hash, &item(sh1), chain(sh2, tr2, "Transform")),
+            p::HighlightProveOutcome::Refused { .. }
+        ));
+        // A top-level node proves with no ancestors.
+        assert!(matches!(
+            prove(rev, hash, &item(tr1), located("Transform", pv(tr1), &["SCENE"])),
+            p::HighlightProveOutcome::Proven { ancestors, .. } if ancestors.is_empty()
+        ));
+        // Stale text.
+        assert!(matches!(
+            prove(rev, hash ^ 1, &item(sh1), chain(sh1, tr1, "Transform")),
+            p::HighlightProveOutcome::Stale { .. }
+        ));
+        // A Billboard ancestor: proven chain, unknown frame -> refused.
+        assert!(matches!(
+            prove(rev, hash, &item(shb), chain(shb, bspan, "Billboard")),
+            p::HighlightProveOutcome::Refused { reason, .. } if reason == p::highlight::refusal::ANCESTOR
+        ));
+        // No unique runtime node for the span (e.g. a PROTO body node).
+        let mut none = chain(sh1, tr1, "Transform");
+        none.outcome = "unsupported".into();
+        none.reason = Some("runtime-node-for-span-not-unique".into());
+        assert!(matches!(
+            prove(rev, hash, &item(sh1), none),
+            p::HighlightProveOutcome::Refused { reason, .. } if reason == "runtime-node-for-span-not-unique"
+        ));
+        assert_eq!(svc.text_at(id).unwrap(), (text.clone(), rev), "read-only");
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     /// New World → Box → X, Y, Z drags (positive and negative) → each is ONE

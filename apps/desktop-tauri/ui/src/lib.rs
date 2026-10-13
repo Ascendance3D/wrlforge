@@ -13,6 +13,7 @@ mod dock;
 mod editor;
 mod extrusion;
 mod gizmo;
+mod highlight;
 mod ipc;
 mod menu;
 mod native;
@@ -50,6 +51,7 @@ pub fn start() {
     menu::install();
     pick::install();
     gizmo::install();
+    highlight::install();
     ui::start_external_watch();
     syntax::install();
     // The UI stays hidden (style.css) until `<html data-theme>` is set, so a

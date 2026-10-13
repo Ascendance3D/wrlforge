@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod command;
 pub mod gizmo;
+pub mod highlight;
 pub mod layout;
 pub mod syntax;
 pub mod theme;
@@ -780,6 +781,81 @@ pub enum TranslateProveOutcome {
         message: String,
     },
     /// The document is no longer the text the generation rendered.
+    Stale {
+        current: u64,
+    },
+}
+
+/// B2 selection highlight: where the preview should LOCATE `item` as it is
+/// in `revision` (any node instance; read-only).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HighlightTargetRequest {
+    pub session: SessionId,
+    pub revision: u64,
+    pub item: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum HighlightTargetOutcome {
+    /// The item's exact UTF-16 PREVIEW span. Locating it proves nothing:
+    /// `doc_highlight_prove` must prove the located runtime node.
+    Ready {
+        revision: u64,
+        item: String,
+        preview_from: u64,
+        preview_to: u64,
+    },
+    Refused {
+        reason: String,
+        message: String,
+    },
+    Stale {
+        current: u64,
+    },
+}
+
+/// B2: prove that the runtime node the preview located for `item` (a
+/// `snapshotSpan` snapshot of the generation that rendered exactly
+/// `revision` / `preview_hash`) IS that authored node, at any depth.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HighlightProveRequest {
+    pub session: SessionId,
+    pub revision: u64,
+    pub preview_hash: u64,
+    /// The UI's preview generation number (diagnostic).
+    pub generation: u64,
+    pub item: String,
+    pub snapshot: PickSnapshot,
+}
+
+/// One proven ancestor of a highlighted node: its exact UTF-16 PREVIEW span
+/// (the runtime chain agrees with it link by link) and its source type.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HighlightAncestor {
+    pub preview_from: u64,
+    pub preview_to: u64,
+    pub node_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum HighlightProveOutcome {
+    /// The runtime node is exactly the authored node; `ancestors` is its
+    /// proven containment chain, the direct parent first, up to a root node.
+    Proven {
+        revision: u64,
+        item: String,
+        node_type: String,
+        ancestors: Vec<HighlightAncestor>,
+    },
+    Refused {
+        reason: String,
+        message: String,
+    },
     Stale {
         current: u64,
     },

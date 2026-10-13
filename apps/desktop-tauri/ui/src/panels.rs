@@ -815,6 +815,19 @@ pub fn Viewport() -> impl IntoView {
             <div class="viewport-stage" hidden=move || u.native.with(|s| s.native_shown())>
                 <x3d-canvas id="viewport" class:picking=move || u.pick_mode.get() || u.move_mode.get() || u.rotate_mode.get() || u.scale_mode.get() splashScreen="false" contextMenu="false" notifications="false"
                     timings="false" cache="false"></x3d-canvas>
+                // B2: the selection outline (view state only), under the
+                // gizmo. Drawn from the renderer's camera by `highlight.rs`;
+                // it never takes pointer input.
+                <svg id="selection-outline" class="selection-outline" data-state="hidden" aria-hidden="true">
+                    <path id="hl-halo" class="hl-halo"></path>
+                    <path id="hl-line" class="hl-line"></path>
+                </svg>
+                // B2: why the selection has no outline. Floats over the
+                // canvas so it never changes the viewport's size.
+                <div class="highlight-status" id="highlight-status" role="status" aria-live="polite"
+                    hidden=move || u.highlight_message.with(|m| m.is_none())>
+                    {move || u.highlight_message.get().unwrap_or_default()}
+                </div>
                 // The gizmo overlay. Drawn from the renderer's camera by
                 // `gizmo.rs`; only the handles take pointer input.
                 <svg id="gizmo" class="gizmo" data-state="hidden" data-tool="move" role="group" aria-label="Manipulation handles">

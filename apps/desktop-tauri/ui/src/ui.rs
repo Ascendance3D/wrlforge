@@ -54,6 +54,8 @@ pub struct Ui {
     pub scale_mode: RwSignal<bool>,
     /// The Move tool's status line: (`ok` | `none` | `refused`, text).
     pub gizmo_message: RwSignal<Option<(String, String)>>,
+    /// B2: why the selected node has no viewport outline, if it has none.
+    pub highlight_message: RwSignal<Option<String>>,
     /// B1: the shared PROTO definitions the user agreed to edit, per
     /// document session: (session, PROTO name). Asked once per definition.
     pub shared_ok: RwSignal<Vec<(u64, String)>>,
@@ -158,6 +160,8 @@ pub fn adopt_selection(sel: Selected) {
         u.inspection.set(None);
     }
     u.selected.set(Some(sel.clone()));
+    // B2: the viewport outline follows the selection (view state only).
+    crate::highlight::start();
     spawn_local(inspect(sel));
 }
 
@@ -228,6 +232,7 @@ pub fn ui() -> Ui {
             rotate_mode: RwSignal::new(false),
             scale_mode: RwSignal::new(false),
             gizmo_message: RwSignal::new(None),
+            highlight_message: RwSignal::new(None),
             shared_ok: RwSignal::new(Vec::new()),
             place_origin: RwSignal::new(false),
             native: RwSignal::new(p::NativeState::default()),

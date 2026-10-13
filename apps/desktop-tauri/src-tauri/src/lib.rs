@@ -420,6 +420,8 @@ pub fn run() {
             commands::doc_pick,
             commands::doc_translate_target,
             commands::doc_translate_prove,
+            commands::doc_highlight_target,
+            commands::doc_highlight_prove,
             commands::doc_preview_carry,
             commands::doc_translate,
             commands::doc_rotate,

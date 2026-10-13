@@ -385,6 +385,24 @@ pub async fn doc_translate_prove(
     svc.translate_prove(&request)
 }
 
+/// B2 selection highlight: the preview span to locate an item by. Read-only.
+#[tauri::command]
+pub async fn doc_highlight_target(
+    svc: State<'_, Service>,
+    request: p::HighlightTargetRequest,
+) -> Result<p::HighlightTargetOutcome, String> {
+    svc.highlight_target(&request)
+}
+
+/// B2 selection highlight: prove the located runtime node. Read-only.
+#[tauri::command]
+pub async fn doc_highlight_prove(
+    svc: State<'_, Service>,
+    request: p::HighlightProveRequest,
+) -> Result<p::HighlightProveOutcome, String> {
+    svc.highlight_prove(&request)
+}
+
 /// VISUAL-3A1: carry a preview span (the bound Viewpoint) to the current
 /// revision through the exact logged changes. Read-only.
 #[tauri::command]
