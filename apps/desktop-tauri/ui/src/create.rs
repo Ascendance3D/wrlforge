@@ -82,11 +82,12 @@ pub fn CreateMenu() -> impl IntoView {
             <button id="btn-create" aria-haspopup="menu"
                 aria-expanded=move || if open.get() { "true" } else { "false" }
                 aria-controls="create-list"
-                // D2: no tooltip while the list is open (it covered "Box").
-                title=move || if open.get() {
+                // D2: no hover tooltip while Create is usable. WebKitGTK keeps
+                // a shown tooltip on screen after `title` changes, so one shown
+                // before the click covered "Box" in the opened list. The
+                // reason is kept while disabled (the list cannot open then).
+                title=move || if has_doc() {
                     ""
-                } else if has_doc() {
-                    "Create a VRML97 primitive object in the world (Rust inserts the source)"
                 } else {
                     "Open a file or start a New World first"
                 }
