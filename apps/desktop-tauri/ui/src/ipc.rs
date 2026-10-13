@@ -26,7 +26,7 @@ extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = capture, catch)]
     async fn preview_capture_js() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = pick, catch)]
-    fn preview_pick_js(client_x: f64, client_y: f64) -> Result<JsValue, JsValue>;
+    fn preview_pick_js(client_x: f64, client_y: f64, layer: u32) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = retire, catch)]
     fn preview_retire_js(reason: &str) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = pixel, catch)]
@@ -610,9 +610,10 @@ pub async fn preview_load(
     }
 }
 
-/// The adapter's plain-data snapshot of one click, as JSON.
-pub fn preview_pick(client_x: f64, client_y: f64) -> Result<String, String> {
-    preview_pick_js(client_x, client_y)
+/// The adapter's plain-data snapshot of one click, as JSON. `layer` (P0-A):
+/// which Shape under the pointer, 0 = the nearest, counting back to front.
+pub fn preview_pick(client_x: f64, client_y: f64, layer: u32) -> Result<String, String> {
+    preview_pick_js(client_x, client_y, layer)
         .map_err(js_err)?
         .as_string()
         .ok_or_else(|| "non-string pick snapshot".into())

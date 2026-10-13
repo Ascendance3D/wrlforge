@@ -1351,8 +1351,12 @@ pub fn Viewport() -> impl IntoView {
             </div>
             <div class="pick-status" id="pick-status" role="status" aria-live="polite"
                 data-kind=move || u.pick_message.with(|m| m.as_ref().map(|m| m.0.clone()).unwrap_or_default())
-                hidden=move || u.pick_message.with(|m| m.is_none())>
-                {move || u.pick_message.with(|m| m.as_ref().map(|m| m.1.clone()).unwrap_or_default())}
+                // P0-A: while Select is on, the line is always laid out (empty
+                // until the first pick), so the first pick message does not
+                // shrink the viewport and move the scene under the pointer --
+                // "click again at the same place" must mean the same ray.
+                hidden=move || u.pick_message.with(|m| m.is_none()) && !u.pick_mode.get()>
+                {move || u.pick_message.with(|m| m.as_ref().map(|m| m.1.clone()).unwrap_or_else(|| "\u{a0}".into()))}
             </div>
         </section>
     }

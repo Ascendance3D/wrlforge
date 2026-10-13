@@ -58,6 +58,49 @@ pub struct PickState {
     pub completed: u64,
     /// Client coordinates of the last click that requested a pick.
     pub last_click: Option<(f64, f64)>,
+    /// P0-A: the last applied pick, for "click again to reach the Shape
+    /// behind" (see [`next_layer`]).
+    pub cycle: Option<Cycle>,
+}
+
+/// P0-A hit cycling. The renderer reports only the NEAREST Shape under the
+/// pointer, so a nearly transparent coat hides the paint under it. Each
+/// viewport pick therefore also lists how many Shapes lie under the pointer
+/// (`layers`, front to back, peeled by the X_ITE adapter); clicking AGAIN at
+/// the same place selects the next one behind, wrapping to the front. Every
+/// layer is resolved by Rust (`doc_pick`) through exactly the same proven
+/// binding as a plain pick; a layer without one is reported as unavailable
+/// and selects nothing.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Cycle {
+    /// The preview generation the pick was made on.
+    pub seq: u64,
+    pub x: f64,
+    pub y: f64,
+    /// The layer that pick returned, and how many were found.
+    pub layer: u32,
+    pub layers: u32,
+    /// The selected Scene Tree item after that pick was applied.
+    pub selected: Option<String>,
+}
+
+/// Which layer a click at (`x`, `y`) asks for: the one behind the previous
+/// pick when this click REPEATS it -- same preview generation, within
+/// [`CLICK_SLOP`], and the selection still exactly what that pick left
+/// (anything selected since, any edit or reload, starts again at the front).
+/// Otherwise 0, the nearest Shape: a single click behaves as it always did.
+pub fn next_layer(prev: Option<&Cycle>, seq: u64, x: f64, y: f64, selected: Option<&str>) -> u32 {
+    match prev {
+        Some(c)
+            if c.seq == seq
+                && c.layers > 1
+                && (c.x - x).hypot(c.y - y) <= CLICK_SLOP
+                && c.selected.as_deref() == selected =>
+        {
+            (c.layer + 1) % c.layers
+        }
+        _ => 0,
+    }
 }
 
 thread_local! {
@@ -135,6 +178,11 @@ struct JsPick {
     active: Option<Gen>,
     #[serde(default)]
     ms: f64,
+    /// P0-A: the layer returned and how many Shapes are under the pointer.
+    #[serde(default)]
+    layer: u32,
+    #[serde(default)]
+    layers: u32,
 }
 
 const STALE_TEXT: &str = "The preview is out of date; select after it updates.";
@@ -169,7 +217,19 @@ pub async fn click(client_x: f64, client_y: f64) -> Option<p::PickOutcome> {
         p.seq += 1;
         p.seq
     });
-    let out = resolve(session, client_x, client_y).await;
+    let selected = || ui().selected.get_untracked().map(|s| s.id);
+    let gen_seq = active().map_or(0, |g| g.seq);
+    let want = PICK.with_borrow(|p| {
+        next_layer(
+            p.cycle.as_ref(),
+            gen_seq,
+            client_x,
+            client_y,
+            selected().as_deref(),
+        )
+    });
+    let mut layer = None;
+    let out = resolve(session, client_x, client_y, want, &mut layer).await;
     if PICK.with_borrow(|p| p.seq) != seq {
         PICK.with_borrow_mut(|p| {
             p.superseded += 1;
@@ -177,18 +237,35 @@ pub async fn click(client_x: f64, client_y: f64) -> Option<p::PickOutcome> {
         });
         return None;
     }
-    let out = apply(session, out).await;
+    let out = apply(session, out, layer).await;
+    let after = selected();
     PICK.with_borrow_mut(|p| {
         p.last_total_ms = now() - t0;
         p.last = Some(out.clone());
         p.completed += 1;
+        p.cycle = layer.map(|(layer, layers)| Cycle {
+            seq: gen_seq,
+            x: client_x,
+            y: client_y,
+            layer,
+            layers,
+            selected: after,
+        });
     });
     Some(out)
 }
 
-async fn resolve(session: u64, x: f64, y: f64) -> p::PickOutcome {
+/// Resolve one click. `layer` asks for that Shape under the pointer (P0-A);
+/// `got` receives the (layer, layers) the adapter reported for a hit.
+async fn resolve(
+    session: u64,
+    x: f64,
+    y: f64,
+    layer: u32,
+    got: &mut Option<(u32, u32)>,
+) -> p::PickOutcome {
     let current = CORE.with_borrow(|c| c.revision);
-    let raw = match ipc::preview_pick(x, y) {
+    let raw = match ipc::preview_pick(x, y, layer) {
         Ok(r) => r,
         Err(e) => {
             return local(
@@ -210,6 +287,9 @@ async fn resolve(session: u64, x: f64, y: f64) -> p::PickOutcome {
         );
     };
     PICK.with_borrow_mut(|p| p.last_snapshot_ms = js.ms);
+    if js.snapshot.outcome == "hit" && js.layers > 0 {
+        *got = Some((js.layer, js.layers));
+    }
     let active = active();
     let outcome = js.snapshot.outcome.as_str();
     // The hit must belong to the generation on screen NOW, of THIS session,
@@ -271,8 +351,20 @@ async fn resolve(session: u64, x: f64, y: f64) -> p::PickOutcome {
 /// Apply one reply. Late replies (the preview, the document or the session
 /// moved while it was in flight) are refused, never applied. A refusal never
 /// clears an existing selection.
-async fn apply(session: u64, out: p::PickOutcome) -> p::PickOutcome {
+async fn apply(session: u64, out: p::PickOutcome, layer: Option<(u32, u32)>) -> p::PickOutcome {
     let u = ui();
+    // P0-A: where this hit sits among the Shapes under the pointer.
+    let (nth, behind) = match layer {
+        Some((l, n)) if n > 1 => (
+            format!(" Shape {} of {n} under the pointer", l + 1),
+            if l + 1 < n {
+                " — click again to select the one behind it"
+            } else {
+                " — click again to return to the front"
+            },
+        ),
+        _ => (String::new(), ""),
+    };
     let moved = CORE.with_borrow(|c| c.session) != Some(session)
         || (out.generation != 0 && active().map(|a| a.seq) != Some(out.generation))
         || (out.is_proven() && ui::stale_reason(session, out.revision).is_some());
@@ -300,7 +392,11 @@ async fn apply(session: u64, out: p::PickOutcome) -> p::PickOutcome {
                 crate::gizmo::repicked();
                 u.pick_message.set(Some((
                     "ok".into(),
-                    format!("Selected {label} from the viewport."),
+                    if nth.is_empty() {
+                        format!("Selected {label} from the viewport.")
+                    } else {
+                        format!("Selected {label} ({}){behind}.", nth.trim_start())
+                    },
                 )))
             }
             Err(why) => {
@@ -323,10 +419,17 @@ async fn apply(session: u64, out: p::PickOutcome) -> p::PickOutcome {
             "Nothing selectable under the pointer.".into(),
         )));
     } else {
-        // The exact reason id is shown too: a refusal is never generic.
+        // The exact reason id is shown too: a refusal is never generic. A
+        // layer behind the front one is named, so the user knows which
+        // Shape is unavailable and that the next click moves on.
+        let what = if nth.is_empty() {
+            String::new()
+        } else {
+            format!("{} is unavailable{behind}: ", nth.trim_start())
+        };
         u.pick_message.set(Some((
             "refused".into(),
-            format!("{} [{}: {}]", out.message, out.status, out.reason),
+            format!("{what}{} [{}: {}]", out.message, out.status, out.reason),
         )));
     }
     out
@@ -388,4 +491,56 @@ pub fn install() {
     down.forget();
     up.forget();
     cancel.forget();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn prev(layer: u32, layers: u32, selected: Option<&str>) -> Cycle {
+        Cycle {
+            seq: 7,
+            x: 100.0,
+            y: 50.0,
+            layer,
+            layers,
+            selected: selected.map(String::from),
+        }
+    }
+
+    #[test]
+    fn a_first_click_is_the_nearest_shape() {
+        assert_eq!(next_layer(None, 7, 100.0, 50.0, None), 0);
+        // One Shape under the pointer: nothing to cycle.
+        let c = prev(0, 1, Some("node-1-2"));
+        assert_eq!(next_layer(Some(&c), 7, 100.0, 50.0, Some("node-1-2")), 0);
+    }
+
+    #[test]
+    fn clicking_again_in_place_steps_back_and_wraps() {
+        let c = prev(0, 3, Some("coat"));
+        assert_eq!(next_layer(Some(&c), 7, 101.0, 51.0, Some("coat")), 1);
+        let c = prev(1, 3, Some("paint"));
+        assert_eq!(next_layer(Some(&c), 7, 100.0, 50.0, Some("paint")), 2);
+        let c = prev(2, 3, Some("body"));
+        assert_eq!(next_layer(Some(&c), 7, 100.0, 50.0, Some("body")), 0);
+        // A refused layer left the selection unchanged (here: nothing).
+        let c = prev(1, 3, None);
+        assert_eq!(next_layer(Some(&c), 7, 100.0, 50.0, None), 2);
+    }
+
+    #[test]
+    fn anything_else_starts_again_at_the_front() {
+        let c = prev(0, 2, Some("coat"));
+        // Moved beyond the click slop.
+        assert_eq!(
+            next_layer(Some(&c), 7, 100.0 + CLICK_SLOP + 0.5, 50.0, Some("coat")),
+            0
+        );
+        // Another preview generation (edit, reload).
+        assert_eq!(next_layer(Some(&c), 8, 100.0, 50.0, Some("coat")), 0);
+        // The selection changed since (Scene Tree, Undo, ...).
+        assert_eq!(next_layer(Some(&c), 7, 100.0, 50.0, Some("wheel")), 0);
+        assert_eq!(next_layer(Some(&c), 7, 100.0, 50.0, None), 0);
+    }
 }

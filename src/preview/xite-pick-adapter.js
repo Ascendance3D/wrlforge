@@ -585,7 +585,10 @@
       return { graph: Object.freeze(graph), label, ctxKind };
     }
 
-    function pick(clientX, clientY) {
+    // `layer` (P0-A): which Shape under the pointer, 0 = the nearest (the
+    // plain pick), 1 = the one behind it, ... modulo the number found. The
+    // snapshot reports `layer` (the one returned) and `layers` (how many).
+    function pick(clientX, clientY, layer) {
       const c = compatibility();
       if (!c.ok) return snap('disabled', c.reason, null);
       if (!active) return snap('stale', retiredReason, null);
@@ -618,7 +621,10 @@
         return snap('disabled', 'hit-shape-changed', null);
       }
       if (!(hit.id > 0) || !hit.shapeNode) return snap('no-hit', 'no-geometry-under-pointer', generation);
-      const shape = hit.shapeNode;
+      const want = Number.isInteger(layer) && layer > 0 ? layer : 0;
+      const layers = hitLayers(x, y, hit);
+      const chosen = layers[want % layers.length];
+      const shape = chosen.shape;
       if (!fn(shape, 'getParents') || !fn(shape, 'getExecutionContext')) {
         structuralDisable('runtime-parents-unavailable', false);
         return snap('unsupported', 'runtime-parents-unavailable', generation);
@@ -638,9 +644,69 @@
       return snap('hit', null, generation, {
         shape: label(shape),
         ctxKind: ctxKind(shape),
-        sensors: Object.freeze([...hit.sensors.keys()].map(typeOf)),
+        sensors: Object.freeze(chosen.sensors.map(typeOf)),
         graph,
+        layer: want % layers.length,
+        layers: layers.length,
       });
+    }
+
+    // ---- P0-A hit layers (depth peeling) ---------------------------------------
+    // X_ITE 16.5.0's touch() is a GPU id pass: getWorld().traverse(POINTER)
+    // makes every pointing Shape call renderObject.addPointingShape(this) from
+    // Shape.prototype.traverse, the shapes are drawn into a 1x1 id/depth
+    // buffer and getHit() reports the ONE nearest id -- a transparent coat
+    // over opaque paint always wins. There is no hit list to read. To reach
+    // the shapes BEHIND it, the hit Shape is taken out of the pointer pass by
+    // shadowing its `traverse` with an OWN no-op, touch() is repeated, and the
+    // next-nearest Shape answers; and so on. All of it runs synchronously
+    // (touch() renders and reads its pixel without yielding), so no frame is
+    // drawn and no event is processed with a Shape missing, and every shadow
+    // is deleted in `finally` -- after which the frontmost hit is re-touched
+    // so X_ITE's hit state is exactly what a plain touch() leaves.
+    const MAX_LAYERS = 8;
+    const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+    function quietTraverse() {}
+    function hideFromPointer(shape) {
+      if (!shape || typeof shape !== 'object' || hasOwn(shape, 'traverse') || !fn(shape, 'traverse')) return false;
+      try {
+        Object.defineProperty(shape, 'traverse', { value: quietTraverse, configurable: true, writable: true });
+      } catch (e) {
+        return false;
+      }
+      return shape.traverse === quietTraverse;
+    }
+    function unhide(shape) {
+      if (hasOwn(shape, 'traverse') && shape.traverse === quietTraverse) delete shape.traverse;
+    }
+    // The Shapes under (x, y), front to back, each with the sensors its own
+    // touch() reported. `hit` is the record getHit() returned for the plain
+    // touch: X_ITE keeps ONE hit record per browser (getHit() returns
+    // this[_hit]; touch(x, y, hit = this[_hit]) rewrites it), so it is read
+    // again after every strict-true touch() rather than calling getHit()
+    // twice. Were it ever a copy, the front Shape would "answer again" and
+    // the list would stop at one layer -- the plain pick, never a guess.
+    function hitLayers(x, y, hit) {
+      const layers = [{ shape: hit.shapeNode, sensors: [...hit.sensors.keys()] }];
+      const hidden = [];
+      try {
+        while (layers.length < MAX_LAYERS) {
+          const front = layers[layers.length - 1].shape;
+          if (!hideFromPointer(front)) break;
+          hidden.push(front);
+          if (liveBrowser.touch(x, y) !== true) break;
+          if (!(hit.id > 0) || !hit.shapeNode || !(hit.sensors instanceof Map)) break;
+          // A Shape already listed answering again means hiding did not
+          // work: stop rather than list it twice.
+          const next = hit.shapeNode;
+          if (layers.some((l) => l.shape === next)) break;
+          layers.push({ shape: next, sensors: [...hit.sensors.keys()] });
+        }
+      } finally {
+        for (const s of hidden) unhide(s);
+        if (hidden.length) liveBrowser.touch(x, y);
+      }
+      return layers;
     }
 
     // ---- VISUAL-3A1 runtime binding (span -> runtime node) ----------------------

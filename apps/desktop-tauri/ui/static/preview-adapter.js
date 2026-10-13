@@ -426,11 +426,14 @@
     retire: function (reason) { retire(reason); },
     // The adapter's plain-data snapshot of one click, as JSON, plus the
     // generation the hit belongs to and the active one at this instant.
-    pick: function (clientX, clientY) {
+    // P0-A: `layer` names which Shape under the pointer (0 = the nearest);
+    // the reply carries the layer returned and how many were found.
+    pick: function (clientX, clientY, layer) {
       var t0 = performance.now();
       var c = canvas();
       var a = c && c.browser ? adapterFor(c.browser) : null;
-      var s = a ? a.pick(Number(clientX), Number(clientY)) : { outcome: 'disabled', reason: 'adapter-unavailable' };
+      var s = a ? a.pick(Number(clientX), Number(clientY), Math.max(0, Math.floor(Number(layer) || 0)))
+        : { outcome: 'disabled', reason: 'adapter-unavailable' };
       var g = s.generation || null;
       return JSON.stringify({
         outcome: s.outcome,
@@ -440,6 +443,8 @@
         sensors: s.sensors ? s.sensors.slice() : [],
         graph: s.graph || {},
         generation: g ? { session: g.sessionId, seq: g.overlayGeneration } : null,
+        layer: s.layer || 0,
+        layers: s.layers || 0,
         active: pick.active,
         ms: performance.now() - t0,
       });

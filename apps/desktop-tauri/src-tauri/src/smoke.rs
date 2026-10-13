@@ -670,19 +670,22 @@ impl SmokeState {
         Ok(())
     }
 
-    /// `--smoke-extrusion`, `--smoke-move` and `--smoke-rotscale` only
-    /// (inside the harness Xvfb): a whole-screen capture as evidence,
-    /// `<dir>/captures/<id>.png` (B3 LV2: the move and rotscale runs too).
+    /// `--smoke-extrusion`, `--smoke-move`, `--smoke-rotscale` and
+    /// `--smoke-pick` only (inside the harness Xvfb): a whole-screen capture
+    /// as evidence, `<dir>/captures/<id>.png` (B3 LV2: the move, rotscale
+    /// and pick runs too).
     pub fn window_capture(&self, id: &str) -> Result<String, String> {
         let dir = {
             let ext = self.5.lock().map_err(|e| e.to_string())?;
             let mv = self.3.lock().map_err(|e| e.to_string())?;
             let rs = self.6.lock().map_err(|e| e.to_string())?;
+            let pk = self.2.lock().map_err(|e| e.to_string())?;
             ext.as_ref()
                 .map(|a| a.dir.clone())
                 .or_else(|| mv.as_ref().and_then(|a| a.save_path.parent().map(Path::to_path_buf)))
                 .or_else(|| rs.as_ref().and_then(|a| a.save_path.parent().map(Path::to_path_buf)))
-                .ok_or("no extrusion, move or rotscale smoke run is armed")?
+                .or_else(|| pk.as_ref().and_then(|a| a.save_path.parent().map(Path::to_path_buf)))
+                .ok_or("no extrusion, move, rotscale or pick smoke run is armed")?
         };
         real_pointer_env()?;
         if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {

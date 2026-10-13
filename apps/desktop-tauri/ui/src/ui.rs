@@ -1070,6 +1070,10 @@ pub async fn structure_edit(op: p::StructureOp) {
         item: sel.id.clone(),
         op,
         confirm_shared: confirm,
+        extent: match op {
+            p::StructureOp::Duplicate => crate::highlight::selection_extent(),
+            p::StructureOp::Delete => None,
+        },
     };
     match call::<p::StructureEditOutcome>("doc_structure_edit", A { request }).await {
         Ok(p::StructureEditOutcome::Applied {
@@ -1077,6 +1081,7 @@ pub async fn structure_edit(op: p::StructureOp) {
             view,
             item,
             renamed,
+            placement,
         }) => {
             crate::gizmo::cancel("the selected node changed");
             u.field_error.set(None);
@@ -1096,11 +1101,12 @@ pub async fn structure_edit(op: p::StructureOp) {
                 p::StructureOp::Delete => "Deleted the node",
                 p::StructureOp::Duplicate => "Duplicated the node",
             };
+            let placed = placement.map(|p| format!("; {p}")).unwrap_or_default();
             if names.is_empty() {
-                flash(&format!("{done} (revision {}).", state.revision));
+                flash(&format!("{done} (revision {}){placed}.", state.revision));
             } else {
                 flash(&format!(
-                    "{done} (revision {}); DEF names in the copy: {names}.",
+                    "{done} (revision {}){placed}; DEF names in the copy: {names}.",
                     state.revision
                 ));
             }

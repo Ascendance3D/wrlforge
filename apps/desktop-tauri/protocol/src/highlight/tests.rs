@@ -537,3 +537,27 @@ fn selection_texts_name_type_def_line_owner_and_proto() {
     );
     assert_eq!(selection_summary("Box", None, None, None, None), "Selected: Box");
 }
+
+#[test]
+fn parent_extent_is_the_largest_enclosing_edge() {
+    // unit_box: the cube [-1, 1]^3 itself (edge 2).
+    assert_eq!(parent_extent(&unit_box(vec![])), Some(2.0));
+    let mut b = unit_box(vec![]);
+    b.r#box[0] = 3.0; // x half-axis 3 -> edge 6
+    b.r#box[12] = 100.0; // translation does not change the size
+    assert_eq!(parent_extent(&b), Some(6.0));
+    // A box rotated 45 degrees about Y: the enclosing x edge grows.
+    let mut r = unit_box(vec![]);
+    let h = std::f64::consts::FRAC_1_SQRT_2;
+    r.r#box[0] = h;
+    r.r#box[2] = -h;
+    r.r#box[8] = h;
+    r.r#box[10] = h;
+    let e = parent_extent(&r).unwrap();
+    assert!((e - 2.0 * 2.0 * h).abs() < 1e-12, "{e}");
+    let mut z = unit_box(vec![]);
+    z.r#box = [0.0; 16];
+    assert_eq!(parent_extent(&z), None);
+    z.r#box[0] = f64::NAN;
+    assert_eq!(parent_extent(&z), None);
+}
