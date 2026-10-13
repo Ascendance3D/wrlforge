@@ -404,6 +404,19 @@ function createWindow() {
         const e = job.editor || {};
         const os = require('os');
         const inTemp = (p) => path.resolve(String(p || '')).startsWith(path.resolve(os.tmpdir()));
+        // WD2-B: optionally record every renderer console message for this job
+        // (the runtime gate is "no unexpected console error/warning").
+        let consoleLog = null;
+        const onConsole = (ev, level, message) => {
+          const lv = ev && ev.level !== undefined ? ev.level : level;
+          const msg = ev && ev.message !== undefined ? ev.message : message;
+          const name = typeof lv === 'number' ? ['verbose', 'info', 'warning', 'error'][lv] || String(lv) : String(lv);
+          consoleLog.push({ level: name, message: String(msg) });
+        };
+        if (e.captureConsole) {
+          consoleLog = [];
+          win.webContents.on('console-message', onConsole);
+        }
 
         // Establish the lane context so editorController resolves the source.
         if (e.context === 'world') {
@@ -543,6 +556,33 @@ function createWindow() {
           await new Promise((r) => setTimeout(r, SETTLE_MS));
         }
 
+        // WD2-B scripted hook sequence: each step calls ONE existing
+        // window.__wrlEditor hook by name (identifier-validated, must already be
+        // a function on the page) with JSON args, records its JSON result, and
+        // optionally captures the window. No arbitrary script is evaluated.
+        if (Array.isArray(e.steps)) {
+          payload.steps = [];
+          for (const st of e.steps) {
+            if (st && typeof st.capture === 'string') {
+              const shot = await win.webContents.capturePage();
+              fs.writeFileSync(st.capture, shot.toPNG());
+              payload.steps.push({ capture: st.capture });
+            } else if (st && typeof st.call === 'string' && /^[A-Za-z][A-Za-z0-9]*$/.test(st.call)) {
+              const args = JSON.stringify(Array.isArray(st.args) ? st.args : []);
+              const raw = await win.webContents.executeJavaScript(`(async () => {
+                const h = window.__wrlEditor;
+                if (!h || typeof h[${JSON.stringify(st.call)}] !== 'function') throw new Error('no __wrlEditor hook ' + ${JSON.stringify(st.call)});
+                const v = await h[${JSON.stringify(st.call)}](...${args});
+                return JSON.stringify(v === undefined ? null : v);
+              })()`);
+              payload.steps.push({ call: st.call, args: st.args || [], label: st.label || null, result: JSON.parse(raw) });
+            } else {
+              throw new Error('editor steps: each step needs a hook name (call) or a capture path');
+            }
+            if (st.wait) await new Promise((r) => setTimeout(r, Number(st.wait) || 0));
+          }
+        }
+
         const status = await win.webContents.executeJavaScript(
           '(window.__wrlEditor && window.__wrlEditor.status) ? JSON.stringify(window.__wrlEditor.status()) : "null"'
         );
@@ -565,6 +605,10 @@ function createWindow() {
             worldPreviewBridge.invalidateSession(sid);
           }
           payload.leak = combinedPreviewLeak();
+        }
+        if (consoleLog) {
+          win.webContents.removeListener('console-message', onConsole);
+          payload.console = consoleLog;
         }
         return payload;
       }

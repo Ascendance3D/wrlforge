@@ -1,0 +1,406 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later AND MIT
+   WRL Forge desktop (Tauri) — built-in theme definitions (UI-THEME-1).
+
+   This file is the ONLY place palette values live. Component styles
+   (style.css) refer to the semantic --wf-* tokens below and never to a raw
+   color. Every built-in theme defines the SAME token set; the contract is
+   enforced by `wrlforge-desktop-protocol`'s theme tests (REQUIRED_TOKENS).
+
+   Color values are adapted from the Tokyo Night VS Code theme:
+     https://github.com/tokyo-night/tokyo-night-vscode-theme
+     commit 7c0f11eaef322f293621ca7befe462214b7ea468 (v1.1.2)
+     themes/tokyo-night-color-theme.json
+     themes/tokyo-night-storm-color-theme.json
+     themes/tokyo-night-light-color-theme.json
+   Copyright (c) 2018-present Enkia. MIT License — full text ships beside this
+   file as LICENSE-tokyo-night.txt. Adaptation: upstream workbench colors are
+   mapped onto WRL Forge semantic roles; translucent upstream values are
+   pre-blended onto their surface; some text/control colors are adjusted to
+   meet WCAG AA (see OPEN_SOURCE_PROVENANCE.md §4). Not a runtime dependency.
+
+   The rendered VRML scene is NOT themed: no token here reaches authored
+   materials, lights, fog, Background or textures. */
+
+/* ---- Tokyo Night (default; also the no-attribute fallback) ------------- */
+:root,
+:root[data-theme="tokyo-night"] {
+  color-scheme: dark;
+
+  /* surfaces, back to front */
+  --wf-bg-app: #101014;
+  --wf-surface-chrome: #16161e;
+  --wf-surface-panel: #16161e;
+  --wf-surface-header: #1e202e;
+  --wf-surface-editor: #1a1b26;
+  --wf-surface-input: #14141b;
+  --wf-surface-raised: #202330;
+  --wf-surface-hover: #202230;
+  --wf-surface-selected: #263152;
+
+  /* text */
+  --wf-text-primary: #c0caf5;
+  --wf-text-editor: #a9b1d6;
+  --wf-text-secondary: #a9b1d6;
+  --wf-text-muted: #8089b3;
+  --wf-text-disabled: #545c7e;
+  --wf-text-on-accent: #ffffff;
+  --wf-text-selected: #c0caf5;
+  --wf-text-placeholder: #8089b3;
+  --wf-text-heading: #7aa2f7;
+  --wf-text-brand: #bb9af7;
+  --wf-accent: #7aa2f7;
+  --wf-link: #7aa2f7;
+
+  /* borders and separators */
+  --wf-border: #101014;
+  --wf-border-subtle: #1f2335;
+  --wf-border-control: #636da6;
+  --wf-separator: #292e42;
+
+  /* buttons */
+  --wf-btn-primary-bg: #3d59a1;
+  --wf-btn-primary-hover-bg: #4a67b5;
+  --wf-btn-primary-pressed-bg: #304375;
+  --wf-btn-primary-fg: #ffffff;
+  --wf-btn-secondary-bg: #3b3e52;
+  --wf-btn-secondary-hover-bg: #444b6a;
+  --wf-btn-secondary-pressed-bg: #2f3245;
+  --wf-btn-secondary-fg: #c0caf5;
+  --wf-btn-disabled-bg: #1e202e;
+  --wf-btn-disabled-fg: #545c7e;
+  --wf-btn-selected-bg: #263152;
+  --wf-btn-selected-fg: #c0caf5;
+
+  /* toolbar icons (reserved for icon toolbars) */
+  --wf-icon-active: #c0caf5;
+  --wf-icon-inactive: #787c99;
+
+  /* tabs and panel headers */
+  --wf-tab-active-bg: #1a1b26;
+  --wf-tab-active-fg: #c0caf5;
+  --wf-tab-inactive-bg: #16161e;
+  --wf-tab-inactive-fg: #8089b3;
+  --wf-tab-active-border: #7aa2f7;
+
+  /* Scene Tree */
+  --wf-tree-hover-bg: #202230;
+  --wf-tree-selected-bg: #263152;
+  --wf-tree-selected-fg: #c0caf5;
+  --wf-tree-selected-indicator: #7aa2f7;
+  --wf-tree-kind: #9aa5ce;
+  --wf-tree-route: #bb9af7;
+  --wf-tree-use: #9ece6a;
+  --wf-tree-proto: #e0af68;
+  --wf-tree-unresolved: #f7768e;
+
+  /* focus */
+  --wf-focus-ring: #7aa2f7;
+  --wf-input-focus-border: #7aa2f7;
+
+  /* states */
+  --wf-error-fg: #f7768e;
+  --wf-error-bg: #38242f;
+  --wf-error-border: #963c47;
+  --wf-warning-fg: #e0af68;
+  --wf-warning-bg: #342d29;
+  --wf-warning-border: #8f6f3c;
+  --wf-success-fg: #9ece6a;
+  --wf-success-bg: #1f2a22;
+  --wf-success-border: #4f6b35;
+  --wf-info-fg: #7dcfff;
+  --wf-info-bg: #1a2a38;
+  --wf-info-border: #0da0ba;
+
+  /* badges */
+  --wf-badge-fg: #acb0d0;
+  --wf-badge-bg: #23253a;
+  --wf-badge-border: #3b3e52;
+
+  /* scrollbars */
+  --wf-scrollbar-track: #16161e;
+  --wf-scrollbar-thumb: #5a6390;
+  --wf-scrollbar-thumb-hover: #737aa2;
+  --wf-scrollbar-thumb-active: #8089b3;
+
+  /* source editor */
+  --wf-editor-selection-bg: #2e3c64;
+  --wf-editor-selection-fg: #c0caf5;
+  --wf-editor-caret: #c0caf5;
+  --wf-editor-line-number: #3b4261;
+  --wf-editor-active-line: #1e202e;
+
+  /* syntax roles — reserved for the future source editor, unused today */
+  --wf-syntax-comment: #8089b3;
+  --wf-syntax-keyword: #bb9af7;
+  --wf-syntax-string: #9ece6a;
+  --wf-syntax-number: #ff9e64;
+  --wf-syntax-node-type: #7dcfff;
+  --wf-syntax-field: #73daca;
+  --wf-syntax-def-name: #e0af68;
+  --wf-syntax-route: #7aa2f7;
+  --wf-syntax-punctuation: #89ddff;
+  --wf-syntax-invalid: #f7768e;
+
+  /* viewport chrome (never the rendered scene) */
+  --wf-viewport-bg: #101014;
+  --wf-viewport-canvas-bg: #0e0e10;
+  --wf-viewport-header-bg: #1e202e;
+  --wf-viewport-status-fg: #8089b3;
+  --wf-viewport-border: #101014;
+
+  /* transform-gizmo axes (VISUAL-3A); must stay recognizably X/Y/Z */
+  --wf-axis-x: #f7768e;
+  --wf-axis-y: #9ece6a;
+  --wf-axis-z: #7aa2f7;
+  --wf-gizmo-halo: #16161e;
+  --wf-gizmo-active: #e0af68;
+  --wf-gizmo-disabled: #737aa2;
+
+  --wf-shadow: 0 4px 14px #00000080;
+}
+
+/* ---- Tokyo Night Storm -------------------------------------------------- */
+:root[data-theme="tokyo-night-storm"] {
+  color-scheme: dark;
+
+  --wf-bg-app: #1b1e2e;
+  --wf-surface-chrome: #1f2335;
+  --wf-surface-panel: #1f2335;
+  --wf-surface-header: #292e42;
+  --wf-surface-editor: #24283b;
+  --wf-surface-input: #1b1e2e;
+  --wf-surface-raised: #2c324a;
+  --wf-surface-hover: #292e42;
+  --wf-surface-selected: #28304d;
+
+  --wf-text-primary: #c0caf5;
+  --wf-text-editor: #a9b1d6;
+  --wf-text-secondary: #a9b1d6;
+  --wf-text-muted: #8a94c2;
+  --wf-text-disabled: #545c7e;
+  --wf-text-on-accent: #ffffff;
+  --wf-text-selected: #c0caf5;
+  --wf-text-placeholder: #8a94c2;
+  --wf-text-heading: #7aa2f7;
+  --wf-text-brand: #bb9af7;
+  --wf-accent: #7aa2f7;
+  --wf-link: #7aa2f7;
+
+  --wf-border: #1b1e2e;
+  --wf-border-subtle: #292e42;
+  --wf-border-control: #737aa2;
+  --wf-separator: #3b4261;
+
+  --wf-btn-primary-bg: #3d59a1;
+  --wf-btn-primary-hover-bg: #4a67b5;
+  --wf-btn-primary-pressed-bg: #34497f;
+  --wf-btn-primary-fg: #ffffff;
+  --wf-btn-secondary-bg: #41496b;
+  --wf-btn-secondary-hover-bg: #4c5579;
+  --wf-btn-secondary-pressed-bg: #363d59;
+  --wf-btn-secondary-fg: #c0caf5;
+  --wf-btn-disabled-bg: #292e42;
+  --wf-btn-disabled-fg: #545c7e;
+  --wf-btn-selected-bg: #28304d;
+  --wf-btn-selected-fg: #c0caf5;
+
+  --wf-icon-active: #c0caf5;
+  --wf-icon-inactive: #8089b3;
+
+  --wf-tab-active-bg: #24283b;
+  --wf-tab-active-fg: #c0caf5;
+  --wf-tab-inactive-bg: #1f2335;
+  --wf-tab-inactive-fg: #8a94c2;
+  --wf-tab-active-border: #7aa2f7;
+
+  --wf-tree-hover-bg: #292e42;
+  --wf-tree-selected-bg: #28304d;
+  --wf-tree-selected-fg: #c0caf5;
+  --wf-tree-selected-indicator: #7aa2f7;
+  --wf-tree-kind: #9aa5ce;
+  --wf-tree-route: #bb9af7;
+  --wf-tree-use: #9ece6a;
+  --wf-tree-proto: #e0af68;
+  --wf-tree-unresolved: #f7768e;
+
+  --wf-focus-ring: #7aa2f7;
+  --wf-input-focus-border: #7aa2f7;
+
+  --wf-error-fg: #f7768e;
+  --wf-error-bg: #3d2a3b;
+  --wf-error-border: #963c47;
+  --wf-warning-fg: #e0af68;
+  --wf-warning-bg: #3a3435;
+  --wf-warning-border: #8f6f3c;
+  --wf-success-fg: #9ece6a;
+  --wf-success-bg: #263331;
+  --wf-success-border: #4f6b35;
+  --wf-info-fg: #7dcfff;
+  --wf-info-bg: #22334a;
+  --wf-info-border: #0da0ba;
+
+  --wf-badge-fg: #a9b1d6;
+  --wf-badge-bg: #2c3046;
+  --wf-badge-border: #41496b;
+
+  --wf-scrollbar-track: #1f2335;
+  --wf-scrollbar-thumb: #636da6;
+  --wf-scrollbar-thumb-hover: #737aa2;
+  --wf-scrollbar-thumb-active: #8a94c2;
+
+  --wf-editor-selection-bg: #373d5a;
+  --wf-editor-selection-fg: #c0caf5;
+  --wf-editor-caret: #c0caf5;
+  --wf-editor-line-number: #3b4261;
+  --wf-editor-active-line: #292e42;
+
+  --wf-syntax-comment: #8a94c2;
+  --wf-syntax-keyword: #bb9af7;
+  --wf-syntax-string: #9ece6a;
+  --wf-syntax-number: #ff9e64;
+  --wf-syntax-node-type: #7dcfff;
+  --wf-syntax-field: #73daca;
+  --wf-syntax-def-name: #e0af68;
+  --wf-syntax-route: #7aa2f7;
+  --wf-syntax-punctuation: #89ddff;
+  --wf-syntax-invalid: #f7768e;
+
+  --wf-viewport-bg: #1b1e2e;
+  --wf-viewport-canvas-bg: #0e0e10;
+  --wf-viewport-header-bg: #292e42;
+  --wf-viewport-status-fg: #8a94c2;
+  --wf-viewport-border: #1b1e2e;
+
+  --wf-axis-x: #f7768e;
+  --wf-axis-y: #9ece6a;
+  --wf-axis-z: #7aa2f7;
+  --wf-gizmo-halo: #16161e;
+  --wf-gizmo-active: #e0af68;
+  --wf-gizmo-disabled: #737aa2;
+
+  --wf-shadow: 0 4px 14px #00000073;
+}
+
+/* ---- Tokyo Night Light -------------------------------------------------- */
+/* Not an inversion of the dark themes: upstream light roles, with accents
+   darkened where they fall under AA on the #d6d8df panel surface. */
+:root[data-theme="tokyo-night-light"] {
+  color-scheme: light;
+
+  --wf-bg-app: #c1c2c7;
+  --wf-surface-chrome: #d6d8df;
+  --wf-surface-panel: #d6d8df;
+  --wf-surface-header: #cbcdd6;
+  --wf-surface-editor: #e6e7ed;
+  --wf-surface-input: #e6e7ed;
+  --wf-surface-raised: #dcdee3;
+  --wf-surface-hover: #e1e2e8;
+  --wf-surface-selected: #ccd3e8;
+
+  --wf-text-primary: #343b59;
+  --wf-text-editor: #343b59;
+  --wf-text-secondary: #363c4d;
+  --wf-text-muted: #4f5266;
+  --wf-text-disabled: #8990b3;
+  --wf-text-on-accent: #ffffff;
+  --wf-text-selected: #343b59;
+  --wf-text-placeholder: #5a5d6f;
+  --wf-text-heading: #2959aa;
+  --wf-text-brand: #65359d;
+  --wf-accent: #2959aa;
+  --wf-link: #2959aa;
+
+  --wf-border: #c1c2c7;
+  --wf-border-subtle: #cbcdd6;
+  --wf-border-control: #6c6e7a;
+  --wf-separator: #b4b7c3;
+
+  --wf-btn-primary-bg: #2959aa;
+  --wf-btn-primary-hover-bg: #3466bd;
+  --wf-btn-primary-pressed-bg: #1f4a8f;
+  --wf-btn-primary-fg: #ffffff;
+  --wf-btn-secondary-bg: #c4c8da;
+  --wf-btn-secondary-hover-bg: #b6bed9;
+  --wf-btn-secondary-pressed-bg: #a8b0cf;
+  --wf-btn-secondary-fg: #343b59;
+  --wf-btn-disabled-bg: #dcdee3;
+  --wf-btn-disabled-fg: #8990b3;
+  --wf-btn-selected-bg: #ccd3e8;
+  --wf-btn-selected-fg: #343b59;
+
+  --wf-icon-active: #343b59;
+  --wf-icon-inactive: #6c6e7a;
+
+  --wf-tab-active-bg: #e6e7ed;
+  --wf-tab-active-fg: #343b59;
+  --wf-tab-inactive-bg: #d6d8df;
+  --wf-tab-inactive-fg: #4f5266;
+  --wf-tab-active-border: #2959aa;
+
+  --wf-tree-hover-bg: #e1e2e8;
+  --wf-tree-selected-bg: #ccd3e8;
+  --wf-tree-selected-fg: #343b59;
+  --wf-tree-selected-indicator: #2959aa;
+  --wf-tree-kind: #4f5266;
+  --wf-tree-route: #65359d;
+  --wf-tree-use: #385f0d;
+  --wf-tree-proto: #6e4a0f;
+  --wf-tree-unresolved: #8c4351;
+
+  --wf-focus-ring: #2959aa;
+  --wf-input-focus-border: #2959aa;
+
+  --wf-error-fg: #8c4351;
+  --wf-error-bg: #ecd3d8;
+  --wf-error-border: #942f2f;
+  --wf-warning-fg: #6e4a0f;
+  --wf-warning-bg: #ede0c8;
+  --wf-warning-border: #8f5e15;
+  --wf-success-fg: #385f0d;
+  --wf-success-bg: #d9e6cf;
+  --wf-success-border: #385f0d;
+  --wf-info-fg: #005f75;
+  --wf-info-bg: #d0e4ec;
+  --wf-info-border: #006c86;
+
+  --wf-badge-fg: #343b59;
+  --wf-badge-bg: #c9ccd9;
+  --wf-badge-border: #979db8;
+
+  --wf-scrollbar-track: #d6d8df;
+  --wf-scrollbar-thumb: #6c6e7a;
+  --wf-scrollbar-thumb-hover: #5a5d6f;
+  --wf-scrollbar-thumb-active: #4f5266;
+
+  --wf-editor-selection-bg: #b6bed9;
+  --wf-editor-selection-fg: #343b59;
+  --wf-editor-caret: #343b59;
+  --wf-editor-line-number: #9da0ab;
+  --wf-editor-active-line: #dfe0e7;
+
+  --wf-syntax-comment: #5f616d;
+  --wf-syntax-keyword: #65359d;
+  --wf-syntax-string: #385f0d;
+  --wf-syntax-number: #8a4520;
+  --wf-syntax-node-type: #005f75;
+  --wf-syntax-field: #33635c;
+  --wf-syntax-def-name: #6e4a0f;
+  --wf-syntax-route: #2959aa;
+  --wf-syntax-punctuation: #4f5266;
+  --wf-syntax-invalid: #8c4351;
+
+  --wf-viewport-bg: #cbccd3;
+  --wf-viewport-canvas-bg: #0e0e10;
+  --wf-viewport-header-bg: #cbcdd6;
+  --wf-viewport-status-fg: #3f4256;
+  --wf-viewport-border: #c1c2c7;
+
+  --wf-axis-x: #bd4040;
+  --wf-axis-y: #385f0d;
+  --wf-axis-z: #2959aa;
+  --wf-gizmo-halo: #ffffff;
+  --wf-gizmo-active: #8f5e15;
+  --wf-gizmo-disabled: #8990b3;
+
+  --wf-shadow: 0 4px 14px #00000033;
+}

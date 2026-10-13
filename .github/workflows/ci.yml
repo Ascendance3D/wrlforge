@@ -43,6 +43,17 @@ jobs:
           - os: macos
             hosted: macos-latest
             self_hosted: '"macos-latest"'
+    # actions/checkout trusts the workspace (safe.directory) only inside its own
+    # temporary HOME, so later git commands fall back to the runner's real
+    # config. On the self-hosted Windows runner the persistent workspace is not
+    # owned by the runner account, git refuses it as "dubious ownership", and
+    # `git diff` then silently degrades to --no-index ("Not a git repository",
+    # exit 129) -- issue #113. Trust exactly this workspace, for this job only,
+    # as command-scope config: nothing is written to the runner's global config.
+    env:
+      GIT_CONFIG_COUNT: 1
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: ${{ github.workspace }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -60,7 +71,11 @@ jobs:
         run: npm run build:icons
 
       - name: Verify icon generation is deterministic
-        run: git diff --exit-code -- assets/generated/icons
+        # Prove git sees the repository first: outside one, `git diff` reports a
+        # usage error that reads like a determinism failure.
+        run: |
+          git rev-parse --is-inside-work-tree
+          git diff --exit-code -- assets/generated/icons
         shell: bash
 
       - name: Bundle native editor

@@ -1,0 +1,2 @@
+ab26c4524f78d806cbccda9a492f36204b5bd5f93db9552dda45403a6ce1a050  WRL Forge_0.1.0_amd64.deb
+674e9c0ed5c811ab30fa6b0188ad9efc793c998ca49ff82adc433274d3251a66  WRL Forge_0.1.0_amd64.AppImage

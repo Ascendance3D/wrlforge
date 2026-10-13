@@ -1,0 +1,641 @@
+{
+  "file": "visual2-world.wrl",
+  "pass": true,
+  "steps": [
+    {
+      "detail": "real X pointer clicks inside the harness Xvfb (calibrated in round 1)",
+      "name": "input path",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night] theme applied",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night] New World: Create Box and place it with the Inspector",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night] New World: Create Sphere and place it with the Inspector",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night] New World: Create Cylinder and place it with the Inspector",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night] New World: Create Cone and place it with the Inspector",
+      "ok": true
+    },
+    {
+      "detail": "covered 18.42% · rev 8 · loaded: 4 root node(s)",
+      "name": "[tokyo-night] viewport renders the four objects (rev 8)",
+      "ok": true
+    },
+    {
+      "detail": "{\"ok\":true}",
+      "name": "[tokyo-night] X_ITE picking compatibility proven",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night] Select off: a viewport click requests no pick",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night] Select on (aria-pressed)",
+      "ok": true
+    },
+    {
+      "detail": "display :99 (1600 1000) window 2097155 of pid 6689 at 1196,280 · offset (0, -0) · check (1233, 257) → (1232, 258)",
+      "name": "real pointer: real X clicks (harness Xvfb, own window, focused) land on the requested viewport point",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night] a camera drag requests no pick",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"-1.6\", \"1.4\", \"0\"] · unchanged true · 11.0 ms",
+      "name": "[tokyo-night]: click Box_1 in the viewport selects exactly Transform Box_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"1.6\", \"1.4\", \"0\"] · unchanged true · 11.0 ms",
+      "name": "[tokyo-night]: click Sphere_1 in the viewport selects exactly Transform Sphere_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"-1.6\", \"-1.4\", \"0\"] · unchanged true · 4.0 ms",
+      "name": "[tokyo-night]: click Cylinder_1 in the viewport selects exactly Transform Cylinder_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"1.6\", \"-1.4\", \"0\"] · unchanged true · 2.0 ms",
+      "name": "[tokyo-night]: click Cone_1 in the viewport selects exactly Transform Cone_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"1.6\", \"-1.4\", \"0\"] · unchanged true · 2.0 ms",
+      "name": "[tokyo-night]: click Cone_1 in the viewport selects exactly Transform Cone_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"-1.6\", \"1.4\", \"0\"] · unchanged true · 10.0 ms",
+      "name": "[tokyo-night]: click Box_1 in the viewport selects exactly Transform Box_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"-1.6\", \"-1.4\", \"0\"] · unchanged true · 2.0 ms",
+      "name": "[tokyo-night]: click Cylinder_1 in the viewport selects exactly Transform Cylinder_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"1.6\", \"1.4\", \"0\"] · unchanged true · 11.0 ms",
+      "name": "[tokyo-night]: click Sphere_1 in the viewport selects exactly Transform Sphere_1",
+      "ok": true
+    },
+    {
+      "detail": "viewer-active-or-no-hit · \"Nothing selectable under the pointer.\"",
+      "name": "[tokyo-night] empty space: NO_HIT; the selection and source are unchanged",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"1.6\", \"1.4\", \"0\"] · unchanged true · 2.0 ms",
+      "name": "[tokyo-night]: click Sphere_1 in the viewport selects exactly Transform Sphere_1",
+      "ok": true
+    },
+    {
+      "detail": "REFUSED_STALE source-changed-since-preview · \"The preview is out of date; select after it updates.\"",
+      "name": "[tokyo-night] edit pending in the preview: the click is refused as stale",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object",
+      "name": "[tokyo-night] Inspector translation reached the viewport: the moved Sphere is picked at its new place",
+      "ok": true
+    },
+    {
+      "detail": "[23, 58, 93] → [110, 12, 12]",
+      "name": "[tokyo-night] Inspector diffuseColor reached the viewport (pixel color changed)",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object",
+      "name": "[tokyo-night] after the Material edit the Sphere is still picked exactly",
+      "ok": true
+    },
+    {
+      "detail": "REFUSED_STALE preview-scene-replaced",
+      "name": "[tokyo-night] preview replaced during a pending pick: the late reply is refused",
+      "ok": true
+    },
+    {
+      "detail": "REFUSED_STALE source-changed-since-preview · Some(\"rev 11 · error (last valid scene kept): \\n********************************************************************************\\nParser error at line 76:23\\nin 'tauri://localhost'\\n\\n}\\nTransform { children [\\n                      ^\\nUnexpected end of file. Expected ']'.\\n********************************************************************************\")",
+      "name": "[tokyo-night] last valid scene after a syntax error: the click is refused",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night] Undo restores the valid document and preview",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"-1.6\", \"1.4\", \"0\"] · unchanged true · 8.0 ms",
+      "name": "[tokyo-night]: click Box_1 in the viewport selects exactly Transform Box_1",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night] Undo / Redo after viewport selection",
+      "ok": true
+    },
+    {
+      "detail": "Saved visual2-world.wrl (1177 B, plain). Backup: none (new file)",
+      "name": "[tokyo-night] Save As writes the world",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"1.6\", \"-1.4\", \"0\"] · unchanged true · 10.0 ms",
+      "name": "[tokyo-night]: click Cone_1 in the viewport selects exactly Transform Cone_1",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night-storm] theme applied",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night-storm] New World: Create Box and place it with the Inspector",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night-storm] New World: Create Sphere and place it with the Inspector",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night-storm] New World: Create Cylinder and place it with the Inspector",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night-storm] New World: Create Cone and place it with the Inspector",
+      "ok": true
+    },
+    {
+      "detail": "covered 18.42% · rev 8 · loaded: 4 root node(s)",
+      "name": "[tokyo-night-storm] viewport renders the four objects (rev 8)",
+      "ok": true
+    },
+    {
+      "detail": "{\"ok\":true}",
+      "name": "[tokyo-night-storm] X_ITE picking compatibility proven",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night-storm] Select off: a viewport click requests no pick",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night-storm] Select on (aria-pressed)",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night-storm] a camera drag requests no pick",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"-1.6\", \"1.4\", \"0\"] · unchanged true · 2.0 ms",
+      "name": "[tokyo-night-storm]: click Box_1 in the viewport selects exactly Transform Box_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"1.6\", \"1.4\", \"0\"] · unchanged true · 2.0 ms",
+      "name": "[tokyo-night-storm]: click Sphere_1 in the viewport selects exactly Transform Sphere_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"-1.6\", \"-1.4\", \"0\"] · unchanged true · 10.0 ms",
+      "name": "[tokyo-night-storm]: click Cylinder_1 in the viewport selects exactly Transform Cylinder_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"1.6\", \"-1.4\", \"0\"] · unchanged true · 2.0 ms",
+      "name": "[tokyo-night-storm]: click Cone_1 in the viewport selects exactly Transform Cone_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"1.6\", \"-1.4\", \"0\"] · unchanged true · 2.0 ms",
+      "name": "[tokyo-night-storm]: click Cone_1 in the viewport selects exactly Transform Cone_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"-1.6\", \"1.4\", \"0\"] · unchanged true · 9.0 ms",
+      "name": "[tokyo-night-storm]: click Box_1 in the viewport selects exactly Transform Box_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"-1.6\", \"-1.4\", \"0\"] · unchanged true · 2.0 ms",
+      "name": "[tokyo-night-storm]: click Cylinder_1 in the viewport selects exactly Transform Cylinder_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"1.6\", \"1.4\", \"0\"] · unchanged true · 2.0 ms",
+      "name": "[tokyo-night-storm]: click Sphere_1 in the viewport selects exactly Transform Sphere_1",
+      "ok": true
+    },
+    {
+      "detail": "viewer-active-or-no-hit · \"Nothing selectable under the pointer.\"",
+      "name": "[tokyo-night-storm] empty space: NO_HIT; the selection and source are unchanged",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"1.6\", \"1.4\", \"0\"] · unchanged true · 9.0 ms",
+      "name": "[tokyo-night-storm]: click Sphere_1 in the viewport selects exactly Transform Sphere_1",
+      "ok": true
+    },
+    {
+      "detail": "REFUSED_STALE source-changed-since-preview · \"The preview is out of date; select after it updates.\"",
+      "name": "[tokyo-night-storm] edit pending in the preview: the click is refused as stale",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object",
+      "name": "[tokyo-night-storm] Inspector translation reached the viewport: the moved Sphere is picked at its new place",
+      "ok": true
+    },
+    {
+      "detail": "[23, 58, 93] → [110, 12, 12]",
+      "name": "[tokyo-night-storm] Inspector diffuseColor reached the viewport (pixel color changed)",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object",
+      "name": "[tokyo-night-storm] after the Material edit the Sphere is still picked exactly",
+      "ok": true
+    },
+    {
+      "detail": "REFUSED_STALE preview-scene-replaced",
+      "name": "[tokyo-night-storm] preview replaced during a pending pick: the late reply is refused",
+      "ok": true
+    },
+    {
+      "detail": "REFUSED_STALE source-changed-since-preview · Some(\"rev 11 · error (last valid scene kept): \\n********************************************************************************\\nParser error at line 76:23\\nin 'tauri://localhost'\\n\\n}\\nTransform { children [\\n                      ^\\nUnexpected end of file. Expected ']'.\\n********************************************************************************\")",
+      "name": "[tokyo-night-storm] last valid scene after a syntax error: the click is refused",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night-storm] Undo restores the valid document and preview",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"-1.6\", \"1.4\", \"0\"] · unchanged true · 2.0 ms",
+      "name": "[tokyo-night-storm]: click Box_1 in the viewport selects exactly Transform Box_1",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night-light] theme applied",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night-light] New World: Create Box and place it with the Inspector",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night-light] New World: Create Sphere and place it with the Inspector",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night-light] New World: Create Cylinder and place it with the Inspector",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night-light] New World: Create Cone and place it with the Inspector",
+      "ok": true
+    },
+    {
+      "detail": "covered 18.42% · rev 8 · loaded: 4 root node(s)",
+      "name": "[tokyo-night-light] viewport renders the four objects (rev 8)",
+      "ok": true
+    },
+    {
+      "detail": "{\"ok\":true}",
+      "name": "[tokyo-night-light] X_ITE picking compatibility proven",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night-light] Select off: a viewport click requests no pick",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night-light] Select on (aria-pressed)",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night-light] a camera drag requests no pick",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"-1.6\", \"1.4\", \"0\"] · unchanged true · 3.0 ms",
+      "name": "[tokyo-night-light]: click Box_1 in the viewport selects exactly Transform Box_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"1.6\", \"1.4\", \"0\"] · unchanged true · 2.0 ms",
+      "name": "[tokyo-night-light]: click Sphere_1 in the viewport selects exactly Transform Sphere_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"-1.6\", \"-1.4\", \"0\"] · unchanged true · 2.0 ms",
+      "name": "[tokyo-night-light]: click Cylinder_1 in the viewport selects exactly Transform Cylinder_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"1.6\", \"-1.4\", \"0\"] · unchanged true · 1.0 ms",
+      "name": "[tokyo-night-light]: click Cone_1 in the viewport selects exactly Transform Cone_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"1.6\", \"-1.4\", \"0\"] · unchanged true · 10.0 ms",
+      "name": "[tokyo-night-light]: click Cone_1 in the viewport selects exactly Transform Cone_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"-1.6\", \"1.4\", \"0\"] · unchanged true · 2.0 ms",
+      "name": "[tokyo-night-light]: click Box_1 in the viewport selects exactly Transform Box_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"-1.6\", \"-1.4\", \"0\"] · unchanged true · 1.0 ms",
+      "name": "[tokyo-night-light]: click Cylinder_1 in the viewport selects exactly Transform Cylinder_1",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"1.6\", \"1.4\", \"0\"] · unchanged true · 10.0 ms",
+      "name": "[tokyo-night-light]: click Sphere_1 in the viewport selects exactly Transform Sphere_1",
+      "ok": true
+    },
+    {
+      "detail": "viewer-active-or-no-hit · \"Nothing selectable under the pointer.\"",
+      "name": "[tokyo-night-light] empty space: NO_HIT; the selection and source are unchanged",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"1.6\", \"1.4\", \"0\"] · unchanged true · 11.0 ms",
+      "name": "[tokyo-night-light]: click Sphere_1 in the viewport selects exactly Transform Sphere_1",
+      "ok": true
+    },
+    {
+      "detail": "REFUSED_STALE source-changed-since-preview · \"The preview is out of date; select after it updates.\"",
+      "name": "[tokyo-night-light] edit pending in the preview: the click is refused as stale",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object",
+      "name": "[tokyo-night-light] Inspector translation reached the viewport: the moved Sphere is picked at its new place",
+      "ok": true
+    },
+    {
+      "detail": "[23, 58, 93] → [110, 12, 12]",
+      "name": "[tokyo-night-light] Inspector diffuseColor reached the viewport (pixel color changed)",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object",
+      "name": "[tokyo-night-light] after the Material edit the Sphere is still picked exactly",
+      "ok": true
+    },
+    {
+      "detail": "REFUSED_STALE preview-scene-replaced",
+      "name": "[tokyo-night-light] preview replaced during a pending pick: the late reply is refused",
+      "ok": true
+    },
+    {
+      "detail": "REFUSED_STALE source-changed-since-preview · Some(\"rev 11 · error (last valid scene kept): \\n********************************************************************************\\nParser error at line 76:23\\nin 'tauri://localhost'\\n\\n}\\nTransform { children [\\n                      ^\\nUnexpected end of file. Expected ']'.\\n********************************************************************************\")",
+      "name": "[tokyo-night-light] last valid scene after a syntax error: the click is refused",
+      "ok": true
+    },
+    {
+      "detail": "",
+      "name": "[tokyo-night-light] Undo restores the valid document and preview",
+      "ok": true
+    },
+    {
+      "detail": "PROVEN shape-promoted-to-proven-simple-object · tree true · inspector true · translation [\"-1.6\", \"1.4\", \"0\"] · unchanged true · 8.0 ms",
+      "name": "[tokyo-night-light]: click Box_1 in the viewport selects exactly Transform Box_1",
+      "ok": true
+    },
+    {
+      "detail": "box:PROVEN background:NO_HIT",
+      "name": "matrix P1-root-shape: 2/2 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "box:PROVEN",
+      "name": "matrix P2-simple-transform: 1/1 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "box:PROVEN",
+      "name": "matrix P3-wd2c-first-object: 1/1 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "box:PROVEN sphere:PROVEN box-again:PROVEN",
+      "name": "matrix P4-box-and-sphere: 3/3 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "left:PROVEN right:PROVEN right-2:PROVEN left-2:PROVEN",
+      "name": "matrix P5-anonymous-twins: 4/4 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "r0-s0:PROVEN r0-s1:PROVEN r0-s2:PROVEN r0-s3:PROVEN r0-s4:PROVEN r0-s5:PROVEN r0-s6:PROVEN r0-s7:PROVEN r0-s8:PROVEN r0-s9:PROVEN r0-s10:PROVEN r0-s11:PROVEN r1-s11:PROVEN r1-s10:PROVEN r1-s9:PROVEN r1-s8:PROVEN r1-s7:PROVEN r1-s6:PROVEN r1-s5:PROVEN r1-s4:PROVEN r1-s3:PROVEN r1-s2:PROVEN r1-s1:PROVEN r1-s0:PROVEN r2-s5:PROVEN r2-s0:PROVEN r2-s11:PROVEN r2-s3:PROVEN r2-s8:PROVEN r2-s1:PROVEN r2-s10:PROVEN r2-s6:PROVEN r2-s2:PROVEN r2-s9:PROVEN r2-s4:PROVEN r2-s7:PROVEN",
+      "name": "matrix P6-many-siblings: 36/36 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "L-up:PROVEN L-down:PROVEN R-up:PROVEN R-down:PROVEN R-down-again:PROVEN R-up-again:PROVEN L-down-again:PROVEN L-up-again:PROVEN",
+      "name": "matrix P7-nested-twins: 8/8 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "thing:PROVEN",
+      "name": "matrix P8-def-no-use: 1/1 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "def-instance:REFUSED_AMBIGUOUS use-instance:REFUSED_AMBIGUOUS",
+      "name": "matrix P9-def-one-use: 2/2 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "r0-def:REFUSED_AMBIGUOUS r0-use1:REFUSED_AMBIGUOUS r0-use2:REFUSED_AMBIGUOUS r0-use3:REFUSED_AMBIGUOUS r1-def:REFUSED_AMBIGUOUS r1-use1:REFUSED_AMBIGUOUS r1-use2:REFUSED_AMBIGUOUS r1-use3:REFUSED_AMBIGUOUS r2-def:REFUSED_AMBIGUOUS r2-use1:REFUSED_AMBIGUOUS r2-use2:REFUSED_AMBIGUOUS r2-use3:REFUSED_AMBIGUOUS",
+      "name": "matrix P10-def-multi-use: 12/12 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "a:PROVEN b:PROVEN",
+      "name": "matrix P11-shared-geometry: 2/2 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "def-shape:REFUSED_AMBIGUOUS use-shape:REFUSED_AMBIGUOUS",
+      "name": "matrix P12-shared-shape: 2/2 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "bar:PROVEN post:PROVEN",
+      "name": "matrix P13-multi-shape-transform: 2/2 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "bar:PROVEN post:PROVEN",
+      "name": "matrix P14-group: 2/2 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "shown:PROVEN hidden-area:NO_HIT",
+      "name": "matrix P15-switch: 2/2 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "local:PROVEN inline:NO_HIT",
+      "name": "matrix P16-inline: 2/2 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "sensed:REFUSED_SENSOR_CONFLICT plain:PROVEN",
+      "name": "matrix P17-touchsensor: 2/2 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "anchored:REFUSED_SENSOR_CONFLICT",
+      "name": "matrix P18-anchor: 1/1 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "inst:UNSUPPORTED",
+      "name": "matrix P19-proto-instance: 1/1 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "front:PROVEN back-edge:PROVEN",
+      "name": "matrix P20-occlusion: 2/2 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "glass:PROVEN",
+      "name": "matrix P21-transparent: 1/1 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "front-left:PROVEN side-left:SKIP(camera-Side-not-bound-by-harness) side-right:SKIP(camera-Side-not-bound-by-harness)",
+      "name": "matrix P22-camera: 1/1 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "box:PROVEN",
+      "name": "matrix P3-wd2c-first-object~crlf: 1/1 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "box:PROVEN",
+      "name": "matrix P3-wd2c-first-object~cr: 1/1 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "box:PROVEN",
+      "name": "matrix P3-wd2c-first-object~bom: 1/1 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "box:PROVEN",
+      "name": "matrix P3-wd2c-first-object~unicode: 1/1 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "box:PROVEN sphere:PROVEN box-again:PROVEN",
+      "name": "matrix P4-box-and-sphere~crlf: 3/3 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "box:PROVEN sphere:PROVEN box-again:PROVEN",
+      "name": "matrix P4-box-and-sphere~cr: 3/3 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "box:PROVEN sphere:PROVEN box-again:PROVEN",
+      "name": "matrix P4-box-and-sphere~bom: 3/3 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "box:PROVEN sphere:PROVEN box-again:PROVEN",
+      "name": "matrix P4-box-and-sphere~unicode: 3/3 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "L-up:PROVEN L-down:PROVEN R-up:PROVEN R-down:PROVEN R-down-again:PROVEN R-up-again:PROVEN L-down-again:PROVEN L-up-again:PROVEN",
+      "name": "matrix P7-nested-twins~crlf: 8/8 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "L-up:PROVEN L-down:PROVEN R-up:PROVEN R-down:PROVEN R-down-again:PROVEN R-up-again:PROVEN L-down-again:PROVEN L-up-again:PROVEN",
+      "name": "matrix P7-nested-twins~cr: 8/8 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "L-up:PROVEN L-down:PROVEN R-up:PROVEN R-down:PROVEN R-down-again:PROVEN R-up-again:PROVEN L-down-again:PROVEN L-up-again:PROVEN",
+      "name": "matrix P7-nested-twins~bom: 8/8 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "L-up:PROVEN L-down:PROVEN R-up:PROVEN R-down:PROVEN R-down-again:PROVEN R-up-again:PROVEN L-down-again:PROVEN L-up-again:PROVEN",
+      "name": "matrix P7-nested-twins~unicode: 8/8 clicks as the oracle expects, WRONG 0",
+      "ok": true
+    },
+    {
+      "detail": "Some((0.296875, -0.3671875))",
+      "name": "object clicks used real X pointer input",
+      "ok": true
+    },
+    {
+      "detail": "picks 187 · proven 153 · refused 28 · no-hit 6 · wrong 0 · oracle mismatches 0 · skipped 2 · late refused 3 · superseded 0",
+      "name": "WRONG_SOURCE_SELECTIONS = 0",
+      "ok": true
+    },
+    {
+      "detail": "snapshot median 1.00 ms p95 2.00 ms max 4.00 ms · total median 2.0 ms p95 11.0 ms max 19.0 ms (n=187)",
+      "name": "pick timing (adapter snapshot / click → applied result)",
+      "ok": true
+    },
+    {
+      "detail": "34 files checked; changed: []",
+      "name": "rust: every fixture file is byte-identical after the picking run",
+      "ok": true
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+[package]
+name = "wrlforge-document"
+description = "WRL Forge canonical document session: one exact source buffer, revisions, undo/redo, line-break view mapping. Pure: no I/O."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+wrlforge-text = { path = "../wrlforge-text" }

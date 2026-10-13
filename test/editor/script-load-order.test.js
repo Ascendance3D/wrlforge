@@ -40,9 +40,14 @@ const EDITOR_PAGE_SCRIPTS = [
   'src/preview/preview-state.js',
   'src/preview/preview-scheduler.js',
   'src/preview/viewpoint-preserve.js',
+  // WD2-D: the private X_ITE pick adapter (window.WrlXitePickAdapter), read by
+  // preview.js / world-preview.js when they acquire a browser.
+  'src/preview/xite-pick-adapter.js',
   'src/editor/scene-selection.js',
   'renderer/scene-tree.js',
   'renderer/scene-inspector.js',
+  // WD2-C: the Model workspace view (Add / Duplicate / Delete / Object panel).
+  'renderer/model-workspace.js',
   'renderer/preview.js',
   'renderer/world-preview.js',
   'renderer/recovery-prompt.js',
@@ -51,6 +56,12 @@ const EDITOR_PAGE_SCRIPTS = [
   // change subscriptions wire up in the same module pass.
   'src/settings/preferences.js',
   'renderer/preferences.js',
+  // UI-0 (#35): the pure registries + workspace presets and the DOM command
+  // binder, before editor.js (which registers every command and panel).
+  'src/editor/workspace-presets.js',
+  'src/editor/command-registry.js',
+  'src/editor/panel-registry.js',
+  'renderer/command-bindings.js',
   'renderer/editor.js',
   'renderer/editor-preview.js',
 ];
@@ -137,6 +148,8 @@ test('all editor-page scripts co-load in one shared global scope without collisi
     'wrlPreview', 'wrlWorldPreview', 'wrlEditorPreview', '__wrlEditor',
     // Phase: Preferences & Settings -- the shared state + dialog.
     'WrlPreferencesCore', 'WrlPreferences',
+    // UI-0 (#35): command + panel registries, presets, binder.
+    'WrlWorkspacePresets', 'WrlCommandRegistry', 'WrlPanelRegistry', 'WrlCommandBindings',
   ]) {
     assert.ok(ctx.window[name], `window.${name} missing after co-load`);
   }

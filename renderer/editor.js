@@ -11,13 +11,20 @@ const bridge = window.vrmlpad.editor;
 const SceneSelection = window.WRLForgeSceneSelection;
 const SceneTreeView = window.WRLForgeSceneTree;
 const InspectorView = window.WRLForgeInspector;
+const ModelWorkspace = window.WRLForgeModelWorkspace;
 const sceneBridge = window.WRLForgeSceneBridge; // from the bundled editor view
+// UI-0 (#35): one command registry and one panel registry per page load. They
+// hold behaviour references only; every enabled/checked/visible answer is read
+// from the authorities below (S, EP(), sceneSelection, WrlPreferences).
+const WorkspacePresets = window.WrlWorkspacePresets;
+const CommandBindings = window.WrlCommandBindings;
+const commandRegistry = window.WrlCommandRegistry.createCommandRegistry();
+const panelRegistry = window.WrlPanelRegistry.createPanelRegistry();
 
 const el = (id) => document.getElementById(id);
 const els = {
-  back: el('backBtn'), save: el('saveBtn'), saveAs: el('saveAsBtn'), reload: el('reloadBtn'),
-  undo: el('undoBtn'), redo: el('redoBtn'), find: el('findBtn'), replace: el('replaceBtn'),
-  goto: el('gotoBtn'), external: el('externalBtn'), close: el('closeBtn'),
+  // Toolbar buttons are data-command controls (UI-0); only Back's label is set here.
+  back: el('backBtn'),
   editor: el('editor'), msg: el('editorMsg'),
   outlineList: el('outlineList'), diagList: el('diagList'), advList: el('advList'),
   diagCount: el('diagCount'), advCount: el('advCount'),
@@ -25,8 +32,11 @@ const els = {
   stFile: el('stFile'), stFormat: el('stFormat'), stDirty: el('stDirty'), stSave: el('stSave'),
   stCursor: el('stCursor'), stDiag: el('stDiag'), stAdv: el('stAdv'),
   themeSelect: el('themeSelect'),
-  zoomOut: el('zoomOutBtn'), zoomIn: el('zoomInBtn'), zoomReset: el('zoomResetBtn'),
   zoomLabel: el('zoomLabel'),
+  // WD2-C: Model workspace.
+  main: el('editorMain'),
+  modelBtn: el('modeModelBtn'), sourceBtn: el('sourceToggleBtn'), addBox: el('addBoxBtn'),
+  modelSelected: el('modelSelected'), modelStatus: el('modelStatus'), objectProps: el('objectProps'),
 };
 
 // Phase: Preferences & Settings -- the theme, zoom, and preview layout
@@ -92,6 +102,27 @@ const S = {
   // filters them by the selected item's range.
   sceneTree: null,
   findings: [],
+  // WD2-B -- the parse session (WD1.4) binding the analysed text to the parse
+  // the scene tree was built from, and the verified receipt of an Inspector
+  // Apply dispatched since that analysis. Both are ephemeral and never leave
+  // the renderer; selection survival re-anchors only through them.
+  analysisSession: null,
+  pendingApply: null,
+  // WD2-C -- the workspace for THIS document ('model' | 'code'; the remembered
+  // preference is only written when the user switches), whether Source is
+  // expanded in Model, display-only friendly labels for the current tree, and
+  // whether the damaged-document notice has been shown for the current error
+  // state (so Source opens once, not on every analysis).
+  workspaceMode: 'code',
+  sourceOpen: false,
+  displayLabels: new Map(),
+  damaged: false,
+  // WD2-D -- the #modelStatus text viewport picking last wrote (so only that
+  // text is ever cleared), and the last pick result (QA introspection only).
+  pickStatusText: null,
+  pickStatusPersistent: false,
+  lastViewportPick: null,
+  pickReasonsLogged: new Set(), // compatibility reasons already logged (once each)
 };
 
 // WD2-A -- one selection authority shared by the scene-tree view and the
@@ -100,6 +131,7 @@ const sceneSelection = SceneSelection.createSelectionController();
 
 let sceneTreeView = null;
 let inspectorView = null;
+let modelWorkspace = null;
 
 function currentText() { return S.handle ? S.handle.getText() : S.baseline; }
 function isDirty() { return UI.isDirty(currentText(), S.baseline); }
@@ -164,18 +196,6 @@ function render() {
   const status = UI.statusModel({
     describe, cursor: S.cursor, diagnostics: S.diagnostics, advisories: S.advisories, saveState: S.saveState,
   });
-  const tb = UI.toolbarModel({ open: status.open, dirty: status.dirty, saving: S.saving });
-
-  els.save.disabled = !tb.save.enabled;
-  els.saveAs.disabled = !tb.saveAs.enabled;
-  els.reload.disabled = !tb.reload.enabled;
-  els.undo.disabled = !tb.undo.enabled;
-  els.redo.disabled = !tb.redo.enabled;
-  els.find.disabled = !tb.find.enabled;
-  els.replace.disabled = !tb.replace.enabled;
-  els.goto.disabled = !tb.gotoLine.enabled;
-  els.external.disabled = !tb.external.enabled;
-  els.close.disabled = !tb.close.enabled;
 
   els.stFile.textContent = status.fileName || '—';
   els.stFile.title = status.sourcePath || '';
@@ -193,6 +213,9 @@ function render() {
   renderOutline();
   renderDiagnostics();
   renderSceneTree();
+  if (modelWorkspace) modelWorkspace.refresh();
+  // Toolbar enabled/pressed state: every bound control re-reads its command.
+  commandRegistry.invalidate();
 }
 
 // WD2-A: scene-tree + inspector re-render. Both consume S.sceneTree and
@@ -464,49 +487,136 @@ async function doBack() {
   await window.vrmlpad.goto(back.page);
 }
 
-// --- wiring ------------------------------------------------------------------
-function wireButtons() {
-  els.save.addEventListener('click', doSave);
-  els.saveAs.addEventListener('click', doSaveAs);
-  els.reload.addEventListener('click', () => doReload(false));
-  els.undo.addEventListener('click', () => S.handle && S.handle.undo());
-  els.redo.addEventListener('click', () => S.handle && S.handle.redo());
-  els.find.addEventListener('click', () => S.handle && S.handle.openSearch());
-  els.replace.addEventListener('click', () => S.handle && S.handle.openSearch());
-  els.goto.addEventListener('click', doGotoLine);
-  els.external.addEventListener('click', doExternal);
-  els.close.addEventListener('click', doClose);
-  els.back.addEventListener('click', doBack);
-  if (els.zoomIn) els.zoomIn.addEventListener('click', () => applyZoom(UI.zoomStep(S.zoom, +1)));
-  if (els.zoomOut) els.zoomOut.addEventListener('click', () => applyZoom(UI.zoomStep(S.zoom, -1)));
-  if (els.zoomReset) els.zoomReset.addEventListener('click', () => applyZoom(UI.ZOOM_DEFAULT));
+// --- commands (UI-0, docs/ui/UI0_COMMAND_WORKSPACE_ARCHITECTURE.md §7) --------
+// Every toolbar / Model-bar / preview button is a `data-command` control bound
+// by WrlCommandBindings; every app shortcut dispatches through the same
+// registry. A handler never branches on ctx.source, so a click, a key and a
+// future menu item behave identically.
+function toolbarState() {
+  return UI.toolbarModel({ open: !!S.handle, dirty: !!S.handle && isDirty(), saving: S.saving });
+}
+const toolbarEnabled = (key) => () => toolbarState()[key].enabled;
+const currentPreset = () => WorkspacePresets.workspacePreset(S.workspaceMode);
+const previewLayoutIs = (layout) => () => !!EP() && EP().getLayout() === layout;
 
-  // Phase: Preferences & Settings -- the single Preferences button on the
-  // editor toolbar opens the shared dialog. The same dialog is reachable
-  // from the Mall + World toolbars.
-  const prefsBtn = document.getElementById('prefsBtn');
-  if (prefsBtn && window.WrlPreferences && typeof window.WrlPreferences.createButton === 'function') {
-    prefsBtn.addEventListener('click', () => {
-      if (typeof window.WrlPreferences.show === 'function') window.WrlPreferences.show(prefsBtn);
-      else window.WrlPreferences.createButton({ id: 'prefsBtn' }).click();
-    });
-  }
+function selectionIsNode() {
+  const id = sceneSelection.getSelection();
+  const item = id != null && S.sceneTree ? sceneBridge.sceneTree.itemById(S.sceneTree, id) : null;
+  return !!(item && item.kind === 'Node');
+}
 
-  // App-level accelerators (CodeMirror owns undo/redo/find/replace via its keymap).
-  window.addEventListener('keydown', (e) => {
-    const cmd = UI.resolveShortcut({ key: e.key, ctrlOrMeta: e.ctrlKey || e.metaKey, shift: e.shiftKey });
-    if (!cmd) return;
-    e.preventDefault();
-    if (cmd === 'save') doSave();
-    else if (cmd === 'saveAs') doSaveAs();
-    else if (cmd === 'gotoLine') doGotoLine();
-    else if (cmd === 'close') doClose();
-    else if (cmd === 'zoomIn') applyZoom(UI.zoomStep(S.zoom, +1));
-    else if (cmd === 'zoomOut') applyZoom(UI.zoomStep(S.zoom, -1));
-    else if (cmd === 'zoomReset') applyZoom(UI.ZOOM_DEFAULT);
-    else if (cmd === 'previewUpdate') { if (EP()) EP().manualUpdate(); }
-    else if (cmd === 'previewMaximize') { if (EP()) EP().toggleMaximize(); }
+// The Model-bar result message is the command's own outcome: a keyboard or
+// menu invocation reports exactly what a click reports.
+function modelAction(fn) {
+  const res = fn();
+  if (res && res.message && modelWorkspace) modelWorkspace.setStatus(res.message, !res.ok);
+  return res;
+}
+
+function registerCommands() {
+  const reg = (record) => commandRegistry.register(record);
+  // File
+  reg({ id: 'file.back', label: 'Back', area: 'file', run: doBack });
+  reg({ id: 'file.save', label: 'Save', area: 'file', run: doSave, enabled: toolbarEnabled('save'), keys: ['Mod+S'] });
+  reg({ id: 'file.saveAs', label: 'Save As…', area: 'file', run: doSaveAs, enabled: toolbarEnabled('saveAs'), keys: ['Mod+Shift+S'] });
+  reg({ id: 'file.reload', label: 'Reload', area: 'file', run: () => doReload(false), enabled: toolbarEnabled('reload') });
+  reg({ id: 'file.openExternal', label: 'External editor', area: 'file', run: doExternal, enabled: toolbarEnabled('external') });
+  reg({ id: 'file.close', label: 'Close', area: 'file', run: doClose, enabled: toolbarEnabled('close'), keys: ['Mod+W'] });
+  // Edit -- undo / redo / find keys belong to CodeMirror's keymap (keyOwner
+  // 'editor'): recorded for inventory and conflict tests, never dispatched here.
+  reg({ id: 'edit.undo', label: 'Undo', area: 'edit', run: () => S.handle && S.handle.undo(), enabled: toolbarEnabled('undo'), keys: ['Mod+Z'], keyOwner: 'editor' });
+  reg({ id: 'edit.redo', label: 'Redo', area: 'edit', run: () => S.handle && S.handle.redo(), enabled: toolbarEnabled('redo'), keys: ['Mod+Y', 'Mod+Shift+Z'], keyOwner: 'editor' });
+  reg({ id: 'edit.find', label: 'Find', area: 'edit', run: () => S.handle && S.handle.openSearch(), enabled: toolbarEnabled('find'), keys: ['Mod+F'], keyOwner: 'editor' });
+  reg({ id: 'edit.replace', label: 'Replace', area: 'edit', run: () => S.handle && S.handle.openSearch(), enabled: toolbarEnabled('replace') });
+  reg({ id: 'edit.gotoLine', label: 'Go to line…', area: 'edit', run: doGotoLine, enabled: toolbarEnabled('gotoLine'), keys: ['Mod+G'] });
+  // View / accessibility
+  reg({ id: 'view.zoomIn', label: 'Increase size', area: 'view', run: () => applyZoom(UI.zoomStep(S.zoom, +1)), keys: ['Mod+=', 'Mod++', 'Mod+Add'] });
+  reg({ id: 'view.zoomOut', label: 'Decrease size', area: 'view', run: () => applyZoom(UI.zoomStep(S.zoom, -1)), keys: ['Mod+-', 'Mod+_', 'Mod+Subtract'] });
+  reg({ id: 'view.zoomReset', label: 'Reset size', area: 'view', run: () => applyZoom(UI.ZOOM_DEFAULT), keys: ['Mod+0'] });
+  reg({
+    id: 'view.highContrast', label: 'High Contrast', area: 'view',
+    run: () => { if (window.WrlPreferences) window.WrlPreferences.setHighContrast(window.WrlPreferences.get('theme') !== 'contrast'); },
+    checked: () => !!window.WrlPreferences && window.WrlPreferences.get('theme') === 'contrast',
   });
+  // Phase: Preferences & Settings -- the single Preferences button on the
+  // editor toolbar opens the shared dialog (also reachable from Mall + World).
+  reg({
+    id: 'view.preferences', label: 'Preferences', area: 'view',
+    run: () => {
+      const P = window.WrlPreferences;
+      if (!P || typeof P.createButton !== 'function') return;
+      if (typeof P.show === 'function') P.show(el('prefsBtn'));
+      else P.createButton({ id: 'prefsBtn' }).click();
+    },
+  });
+  // Workspace -- setWorkspaceMode stays the one writer of S.workspaceMode.
+  reg({ id: 'workspace.code', label: 'Code', area: 'workspace', run: () => setWorkspaceMode('code', true), checked: () => S.workspaceMode === 'code' });
+  reg({ id: 'workspace.model', label: 'Model', area: 'workspace', run: () => setWorkspaceMode('model', true), checked: () => S.workspaceMode === 'model' });
+  reg({
+    id: 'workspace.toggleSource', label: 'Show/Hide Source', area: 'workspace',
+    run: () => { S.sourceOpen = !S.sourceOpen; applyWorkspace(); },
+    enabled: () => S.workspaceMode === 'model',
+    checked: () => S.sourceOpen,
+  });
+  // Preview
+  reg({ id: 'preview.update', label: 'Update', area: 'preview', run: () => { if (EP()) EP().manualUpdate(); }, keys: ['Mod+Enter'] });
+  reg({ id: 'preview.showSaved', label: 'Show saved version', area: 'preview', run: () => (EP() ? EP().showSaved() : undefined) });
+  reg({
+    id: 'preview.toggleMaximize', label: 'Maximize', area: 'preview',
+    run: () => { if (EP()) EP().toggleMaximize(); },
+    checked: previewLayoutIs('preview-max'), keys: ['Mod+Shift+Enter'],
+  });
+  for (const [id, label, layout] of [
+    ['preview.layout.split', 'Split', 'split'],
+    ['preview.layout.previewMax', 'Preview maximized', 'preview-max'],
+    ['preview.layout.editorOnly', 'Editor only', 'editor-only'],
+  ]) {
+    reg({ id, label, area: 'preview', run: () => { if (EP()) EP().setLayout(layout); }, checked: previewLayoutIs(layout) });
+  }
+  reg({
+    id: 'preview.findNewFiles', label: 'Find new files', area: 'preview',
+    run: () => (EP() ? EP().findNewFiles() : undefined),
+    enabled: () => !(EP() && EP().isRescanning()),
+  });
+  // Model (WD2-C) -- gated by the preset's visualAuthoring (true in Code and
+  // Model, so unchanged today).
+  reg({ id: 'model.addBox', label: 'Box', area: 'model', run: () => modelAction(() => addObject('Box')), enabled: () => !!S.handle && currentPreset().visualAuthoring });
+  reg({ id: 'model.addSphere', label: 'Sphere', area: 'model', run: () => modelAction(() => addObject('Sphere')), enabled: () => !!S.handle && currentPreset().visualAuthoring });
+  reg({ id: 'model.duplicate', label: 'Duplicate', area: 'model', run: () => modelAction(() => duplicateSelected(sceneSelection.getSelection())), enabled: () => selectionIsNode() && currentPreset().visualAuthoring });
+  reg({ id: 'model.delete', label: 'Delete', area: 'model', run: () => modelAction(() => deleteSelected(sceneSelection.getSelection())), enabled: () => selectionIsNode() && currentPreset().visualAuthoring });
+}
+
+// --- panels (UI-0, §11.4): descriptive records of the existing panels ---------
+// Visibility is derived from the element on every read; no geometry, no docking.
+function registerPanels() {
+  const q = (sel) => () => document.querySelector(sel);
+  const sectionOf = (id) => () => { const n = el(id); return n && n.closest ? n.closest('section') : null; };
+  // The Source pane toggles only in Model, through its existing command.
+  const setSource = (open) => (S.sourceOpen === open ? { ok: true } : commandRegistry.execute('workspace.toggleSource', { source: 'api' }));
+  panelRegistry.register({
+    id: 'source', title: 'Source', element: () => el('editorCol'),
+    focus: () => { if (S.handle) S.handle.focus(); },
+    canToggle: true, show: () => setSource(true), hide: () => setSource(false),
+  });
+  panelRegistry.register({ id: 'preview', title: 'Preview', element: q('section.preview-col') });
+  panelRegistry.register({ id: 'object', title: 'Object', element: q('section.object-section') });
+  panelRegistry.register({ id: 'outline', title: 'Outline', element: q('section.outline') });
+  panelRegistry.register({ id: 'sceneTree', title: 'Scene', element: () => el('sceneTree') });
+  panelRegistry.register({ id: 'inspector', title: 'Inspector', element: () => el('sceneInspector') });
+  panelRegistry.register({ id: 'diagnostics', title: 'Diagnostics', element: sectionOf('diagList') });
+  panelRegistry.register({ id: 'advisories', title: 'Advisories', element: sectionOf('advList') });
+}
+
+function wireCommands() {
+  registerCommands();
+  registerPanels();
+  CommandBindings.bindControls(commandRegistry, document);
+  // App-level accelerators (CodeMirror owns undo/redo/find/replace via its keymap).
+  CommandBindings.installKeyboard(commandRegistry, { target: window });
+  // Repaint triggers outside render(): selection, and the preview's layout /
+  // rescan state (editor-preview.js loads after this file, so it signals).
+  sceneSelection.subscribe(() => commandRegistry.invalidate());
+  document.addEventListener('wrl-editor-preview-state', () => commandRegistry.invalidate());
 }
 
 function populateThemes() {
@@ -544,6 +654,10 @@ function mountEditor(text, profile) {
     onAnalysis: (a) => {
       if (!UI.isFreshAnalysis(a.version, S.appliedAnalysisVersion)) return;
       S.appliedAnalysisVersion = a.version;
+      // WD2-B -- the analysis the current selection was made against.
+      const previousAnalysis = S.analysisSession && S.sceneTree
+        ? { session: S.analysisSession, tree: S.sceneTree }
+        : null;
       S.diagnostics = a.diagnostics; S.advisories = a.advisories; S.outline = a.outline;
       // WD2-A -- build the scene tree + structured findings from the SAME
       // parse the diagnostics come from (a.parseResult). The renderer never
@@ -611,17 +725,326 @@ function mountEditor(text, profile) {
           console.error('[WD2-A] presentDocumentFindings failed:', e && (e.message || e));
           S.findings = [];
         }
-        // If the previously selected id no longer exists in the new tree,
-        // clear the selection so the inspector renders an empty state.
-        if (sceneSelection.getSelection() && S.sceneTree && !sceneBridge.sceneTree.itemById(S.sceneTree, sceneSelection.getSelection())) {
-          sceneSelection.clearSelection();
-        }
+        // WD2-B -- selection survival. The selected item is re-anchored ONLY
+        // through WD1.4 identity and a verified transaction (the Inspector's
+        // own receipt, or the editor's verified change chain); an unproven
+        // selection is cleared visibly. Never by id, label, DEF or offset.
+        reanchorAfterAnalysis(previousAnalysis, a);
+        S.displayLabels = sceneBridge.firstObject ? sceneBridge.firstObject.displayLabels(S.sceneTree) : new Map();
+        noteDamage();
       } else {
         S.sceneTree = null;
         S.findings = [];
+        S.analysisSession = null;
+        S.pendingApply = null;
+        S.displayLabels = new Map();
+        if (sceneSelection.getSelection()) {
+          sceneSelection.clearSelection();
+          if (inspectorView) inspectorView.setNotice('Selection cleared: the document could not be analysed.');
+        }
       }
       render();
     },
+  });
+}
+
+// WD2-B -- decide the selection for a fresh analysis (see onAnalysis).
+function reanchorAfterAnalysis(previousAnalysis, a) {
+  const pendingApply = S.pendingApply;
+  S.pendingApply = null;
+  let nextSession = null;
+  if (typeof a.text === 'string' && sceneBridge.identity) {
+    try {
+      nextSession = sceneBridge.identity.createParseSession(a.text, a.parseResult);
+    } catch (e) {
+      console.error('[WD2-B] createParseSession failed:', e && (e.message || e));
+    }
+  }
+  S.analysisSession = nextSession;
+  // WD2-C -- a dispatched Add / Duplicate selects exactly the node its verified
+  // insertion created; a Delete clears the selection (the node is gone). Both
+  // only when this analysis is exactly that transaction.
+  if (pendingApply && (pendingApply.select || pendingApply.cleared) && pendingApply.newText === a.text) {
+    if (pendingApply.cleared) { sceneSelection.clearSelection(); return; }
+    let id = null;
+    if (nextSession && S.sceneTree && sceneBridge.firstObject) {
+      try {
+        id = sceneBridge.firstObject.selectInserted({ next: { session: nextSession, tree: S.sceneTree }, pendingApply });
+      } catch (e) {
+        console.error('[WD2-C] selectInserted failed:', e && (e.message || e));
+      }
+    }
+    if (id) { sceneSelection.setSelection(id); return; }
+    sceneSelection.clearSelection();
+    if (inspectorView) inspectorView.setNotice('Selection cleared: the new object could not be proven to be the inserted one.');
+    return;
+  }
+  const selectedId = sceneSelection.getSelection();
+  if (selectedId == null) return;
+  let decision = null;
+  if (nextSession && S.sceneTree && sceneBridge.inspectorEdit) {
+    try {
+      decision = sceneBridge.inspectorEdit.reanchorSelection({
+        previous: previousAnalysis,
+        next: { session: nextSession, tree: S.sceneTree },
+        selectedId,
+        chain: a.transaction || null,
+        pendingApply,
+      });
+    } catch (e) {
+      console.error('[WD2-B] reanchorSelection failed:', e && (e.message || e));
+    }
+  }
+  if (decision && decision.id) {
+    if (decision.id !== selectedId) sceneSelection.setSelection(decision.id);
+    return;
+  }
+  sceneSelection.clearSelection();
+  if (inspectorView) {
+    inspectorView.setNotice('Selection cleared: the previously selected item could not be proven to be the same item after this change.');
+  }
+}
+
+// WD2-B -- the Inspector's field list for the selected item, from the SAME
+// analysis the scene tree came from. Null for non-Node items.
+function inspectorFieldsFor(item) {
+  if (!item || !S.analysisSession || !S.sceneTree || !sceneBridge.inspectorEdit) return null;
+  try {
+    return sceneBridge.inspectorEdit.fieldsForItem({
+      session: S.analysisSession, tree: S.sceneTree, currentText: currentText(), itemId: item.id,
+    });
+  } catch (e) {
+    console.error('[WD2-B] fieldsForItem failed:', e && (e.message || e));
+    return null;
+  }
+}
+
+// WD2-B -- one Inspector Apply: plan + verify (pure), then ONE CodeMirror
+// transaction on the shared buffer, then an immediate analysis so the scene
+// tree, the re-anchored selection and the Inspector refresh together. Dirty
+// tracking, recovery, live preview and diagnostics all follow from the normal
+// onChange/onAnalysis path -- nothing here duplicates them.
+function applyInspectorField(item, field, components) {
+  const refused = (reason) => ({ status: 'refused', reason });
+  if (!S.handle || !item || !field) return refused('stale');
+  if (S.handle.isReadOnly && S.handle.isReadOnly()) return refused('editor-read-only');
+  const plan = sceneBridge.inspectorEdit.prepareInspectorApply({
+    session: S.analysisSession,
+    tree: S.sceneTree,
+    currentText: currentText(),
+    itemId: item.id,
+    fieldIndex: field.index,
+    fieldName: field.name,
+    components,
+  });
+  if (plan.status !== 'ready') return plan;
+  const sent = S.handle.applyVerifiedEdits({ oldText: plan.oldText, edits: plan.edits, newText: plan.newText });
+  if (!sent || !sent.ok) return refused((sent && sent.reason) || 'dispatch-failed');
+  S.pendingApply = { oldText: plan.oldText, newText: plan.newText, receipt: plan.receipt };
+  S.handle.reanalyzeNow();
+  return plan;
+}
+
+// --- WD2-C: Model workspace ----------------------------------------------------
+
+// A blocking syntax error (anything but the header line) pauses every visual
+// edit; in Model the Source pane opens ONCE per damaged state so the user can
+// see why, and the status line says so in words.
+function noteDamage() {
+  const damaged = (S.diagnostics || []).some((d) => d && d.severity === 'error' && d.code !== 'VRML001' && d.code !== 'VRML002');
+  if (damaged && !S.damaged && S.workspaceMode === 'model') {
+    S.sourceOpen = true;
+    applyWorkspace();
+    if (modelWorkspace) modelWorkspace.setStatus('The document has syntax errors, so visual editing is paused. Fix them in Source.', true);
+  } else if (!damaged && S.damaged && modelWorkspace) {
+    modelWorkspace.setStatus('', false);
+  }
+  S.damaged = damaged;
+}
+
+// UI-0: the workspace's behaviour comes from its preset (§12.3), read from the
+// one authority S.workspaceMode; a switch repaints every surface.
+function applyWorkspace() {
+  if (!els.main) return;
+  const preset = WorkspacePresets.workspacePreset(S.workspaceMode);
+  const visual = preset.composition === 'visual-primary';
+  els.main.classList.toggle('workspace-model', visual);
+  els.main.classList.toggle('source-open', visual && S.sourceOpen);
+  // The preview must render in Model even when the remembered preview layout
+  // hid it ("Editor only"): ask once for the current buffer.
+  const ep = EP();
+  if (visual && ep && ep.getLayout() === 'editor-only' && ep.displayedGeneration() === 0 && S.handle) ep.manualUpdate();
+  // WD2-D: viewport picking is armed ONLY where the preset says so (Model);
+  // Code is inert.
+  if (ep && ep.armPicking) ep.armPicking(preset.viewportPicking, viewportPickHandlers);
+  if (!preset.viewportPicking) clearPickStatus();
+  if (modelWorkspace) modelWorkspace.refresh();
+  commandRegistry.invalidate();
+}
+
+// WD2-D -- viewport selection. A proven click selects through the ONE
+// selection authority, exactly like a Scene Tree click: no caret movement, no
+// source scrolling, no second selection state. Every refusal leaves the
+// selection unchanged and says why on the existing #modelStatus line.
+function showPickStatus(text, isError, persistent) {
+  if (!modelWorkspace || !text) return;
+  modelWorkspace.setStatus(text, !!isError);
+  S.pickStatusText = text;
+  S.pickStatusPersistent = !!persistent;
+}
+
+function clearPickStatus() {
+  if (S.pickStatusText != null && els.modelStatus && els.modelStatus.textContent === S.pickStatusText && modelWorkspace) {
+    modelWorkspace.setStatus('', false);
+  }
+  S.pickStatusText = null;
+  S.pickStatusPersistent = false;
+}
+
+function onViewportPick(snapshot, currentCheck) {
+  const VPk = sceneBridge && sceneBridge.viewportPick;
+  if (!VPk || !WorkspacePresets.workspacePreset(S.workspaceMode).viewportPicking) return;
+  const analysis = S.analysisSession && S.sceneTree
+    ? { text: S.analysisSession.text, parse: S.analysisSession.parse, sceneTree: S.sceneTree }
+    : null;
+  const res = VPk.resolvePick({
+    snapshot,
+    currentCheck: snapshot && snapshot.generation ? currentCheck(snapshot.generation) : null,
+    analysis,
+    currentText: currentText(),
+  });
+  S.lastViewportPick = {
+    seq: (S.lastViewportPick ? S.lastViewportPick.seq : 0) + 1,
+    status: res.status, reason: res.reason, generation: res.generation, sceneTreeItemId: res.sceneTreeItemId, source: res.source,
+  };
+  if (res.status === VPk.STATUS.PROVEN) {
+    clearPickStatus();
+    sceneSelection.setSelection(res.sceneTreeItemId);
+    return;
+  }
+  if (res.status === VPk.STATUS.NO_HIT) { clearPickStatus(); return; }
+  const disabled = res.status === VPk.STATUS.COMPATIBILITY_DISABLED;
+  if (disabled) logPickCompatibility(res.reason);
+  showPickStatus(VPk.refusalText(res), disabled, disabled);
+}
+
+// The disable reason is logged ONCE to the console with its contract P-row.
+function logPickCompatibility(reason) {
+  const VPk = sceneBridge && sceneBridge.viewportPick;
+  if (!VPk || !reason || S.pickReasonsLogged.has(reason)) return;
+  S.pickReasonsLogged.add(reason);
+  console.warn(`[WD2-D] viewport picking disabled: ${reason} (${VPk.compatibilityRow(reason)})`);
+}
+
+// Persistent while picking is unavailable for this page (a structural X_ITE
+// compatibility failure is sticky); it survives selection changes and is
+// cleared only on leaving Model.
+function onPickCompatibility(c) {
+  const VPk = sceneBridge && sceneBridge.viewportPick;
+  if (!VPk || !WorkspacePresets.workspacePreset(S.workspaceMode).viewportPicking || !c) return;
+  if (!c.ok && c.reason !== 'compatibility-unproven') {
+    logPickCompatibility(c.reason);
+    showPickStatus(VPk.compatibilityText(c.reason), true, true);
+  }
+}
+
+const viewportPickHandlers = Object.freeze({ onPick: onViewportPick, onCompatibility: onPickCompatibility });
+
+// A contextual refusal line clears on the next selection change; the
+// persistent compatibility line stays while in Model.
+sceneSelection.subscribe(() => { if (!S.pickStatusPersistent) clearPickStatus(); });
+
+function setWorkspaceMode(mode, persist) {
+  S.workspaceMode = WorkspacePresets.resolveWorkspaceMode(mode); // 'code' | 'model' in #35
+  if (persist && window.WrlPreferences) window.WrlPreferences.set('workspaceMode', S.workspaceMode);
+  applyWorkspace();
+}
+
+function rememberedWorkspaceMode() {
+  return window.WrlPreferences ? window.WrlPreferences.get('workspaceMode') : 'code';
+}
+
+// Dispatch one VERIFIED structural plan as ONE CodeMirror transaction, then
+// analyse immediately so the tree, the selection (inserted node / cleared) and
+// the panels refresh together. Never mutates on a refusal.
+function dispatchModelPlan(plan, okMessage) {
+  const FO = sceneBridge.firstObject;
+  if (!plan || plan.status !== 'ready') {
+    return { ok: false, plan, message: plan && plan.status === 'unchanged' ? 'No change.' : FO.refusalText(plan) };
+  }
+  if (S.handle.isReadOnly && S.handle.isReadOnly()) return { ok: false, plan, message: 'The editor is read-only.' };
+  const sent = S.handle.applyVerifiedEdits({ oldText: plan.oldText, edits: plan.edits, newText: plan.newText, userEvent: 'input.model' });
+  if (!sent || !sent.ok) return { ok: false, plan, message: 'The document changed before the edit could be applied; try again.' };
+  S.pendingApply = {
+    oldText: plan.oldText, newText: plan.newText, receipt: plan.receipt,
+    select: plan.select || null, cleared: plan.operation === 'delete',
+  };
+  S.handle.reanalyzeNow();
+  return { ok: true, plan, message: okMessage };
+}
+
+function modelSnapshot(itemId) {
+  return { session: S.analysisSession, tree: S.sceneTree, currentText: currentText(), itemId };
+}
+
+function friendlyLabel(item) {
+  if (!item) return null;
+  const friendly = S.displayLabels.get(item.id);
+  return friendly || (SceneTreeView && SceneTreeView.labelFor ? SceneTreeView.labelFor(item) : item.kind);
+}
+
+function addObject(primitive) {
+  if (!S.handle || !S.analysisSession) return { ok: false, message: 'Open a document first.' };
+  const plan = sceneBridge.firstObject.prepareAdd({ session: S.analysisSession, currentText: currentText(), primitive });
+  return dispatchModelPlan(plan, `${primitive} created at origin.`);
+}
+
+function duplicateSelected(itemId) {
+  if (!S.handle || itemId == null) return { ok: false, message: 'Select an object first.' };
+  const label = friendlyLabel(sceneBridge.sceneTree.itemById(S.sceneTree, itemId));
+  const plan = sceneBridge.firstObject.prepareDuplicate(modelSnapshot(itemId));
+  return dispatchModelPlan(plan, `${label} duplicated. The copy is selected.`);
+}
+
+function deleteSelected(itemId) {
+  if (!S.handle || itemId == null) return { ok: false, message: 'Select an object first.' };
+  const label = friendlyLabel(sceneBridge.sceneTree.itemById(S.sceneTree, itemId));
+  const plan = sceneBridge.firstObject.prepareDelete(modelSnapshot(itemId));
+  return dispatchModelPlan(plan, `${label} deleted.`);
+}
+
+function applyObjectProperty(itemId, key, components) {
+  if (!S.handle) return { status: 'refused', reason: 'stale' };
+  const plan = sceneBridge.firstObject.preparePropertySet({ ...modelSnapshot(itemId), key, components });
+  if (plan.status !== 'ready') return plan;
+  const res = dispatchModelPlan(plan, null);
+  return res.ok ? plan : { status: 'refused', reason: 'dispatch-failed', message: res.message };
+}
+
+function initModelWorkspace() {
+  if (modelWorkspace || !ModelWorkspace || !els.modelBtn) return;
+  modelWorkspace = ModelWorkspace.createModelWorkspace({
+    // The Model-bar buttons are data-command controls (UI-0); the view keeps
+    // only the Source toggle's visibility/label and the text lines.
+    els: { sourceBtn: els.sourceBtn, selected: els.modelSelected, status: els.modelStatus, props: els.objectProps },
+    selection: sceneSelection,
+    getMode: () => S.workspaceMode,
+    isSourceOpen: () => S.sourceOpen,
+    describeSelection: (id) => {
+      const item = S.sceneTree ? sceneBridge.sceneTree.itemById(S.sceneTree, id) : null;
+      return item ? { label: friendlyLabel(item), isNode: item.kind === 'Node' } : null;
+    },
+    objectFor: (id) => {
+      if (!S.analysisSession || !S.sceneTree) return null;
+      try { return sceneBridge.firstObject.objectForItem(modelSnapshot(id)); } catch (e) {
+        console.error('[WD2-C] objectForItem failed:', e && (e.message || e));
+        return null;
+      }
+    },
+    // The panel re-renders only when the selection or the analysed parse changes.
+    analysisToken: () => S.appliedAnalysisVersion,
+    applyProperty: applyObjectProperty,
+    refusalText: (plan) => sceneBridge.firstObject.refusalText(plan),
   });
 }
 
@@ -631,6 +1054,8 @@ function initSceneViews() {
   if (sceneTreeView || inspectorView) return;
   sceneTreeView = SceneTreeView.createSceneTreeView(els.sceneTree, sceneSelection, {
     itemContainingOffset: sceneBridge.sceneTree.itemContainingOffset,
+    // WD2-C: display-only "Box" / "Sphere" for recognised simple objects.
+    displayLabelFor: (item) => S.displayLabels.get(item.id) || null,
   });
   inspectorView = InspectorView.createInspector(els.sceneInspector, sceneSelection, {
     presentation: sceneBridge.presentation,
@@ -648,11 +1073,15 @@ function initSceneViews() {
     // presentation}`), ordered by P4-A. The inspector consumes them
     // directly -- it must NOT call presentDocumentFindings a second time.
     findingsForDocument: () => S.findings,
+    // WD2-B: typed field editing. The Inspector asks; the pure model and the
+    // verified-transaction gate decide; the DOM never computes an offset.
+    fieldsFor: inspectorFieldsFor,
+    applyField: applyInspectorField,
   });
 }
 
 async function init() {
-  wireButtons();
+  wireCommands();
   populateThemes();
   applyZoom(savedZoom()); // set chrome scale + label on cold start (font seeded at mount)
 
@@ -680,11 +1109,13 @@ async function init() {
       if (S.zoom !== UI.resolveZoom(prefs.zoom)) {
         applyZoom(prefs.zoom);
       }
+      commandRegistry.invalidate(); // view.highContrast reads the theme
     });
   }
   // WD2-A: bind the scene-tree view + inspector to the shared selection
   // authority BEFORE the editor mounts, so the first analysis paints them.
   initSceneViews();
+  initModelWorkspace();
 
   // Phase Beta 2 -- run the shared recovery prompt BEFORE we mount anything.
   // The prompt is the single authority for "Restore / Start Fresh"; on the
@@ -721,6 +1152,7 @@ async function init() {
             S.gzip = !!d.gzip;
             S.baseline = d.baseline != null ? d.baseline : d.text;
             const profile = d.profile || (S.context === 'world' ? 'world' : S.context === 'mall' ? 'mall-item' : 'generic');
+            setWorkspaceMode(UI.initialWorkspaceMode({ text: d.text, remembered: rememberedWorkspaceMode() }), false);
             mountEditor(d.text, profile);
             render();
             S.handle.focus();
@@ -748,9 +1180,12 @@ async function init() {
   S.gzip = !!d.gzip;
   S.baseline = d.baseline != null ? d.baseline : d.text;
   const profile = d.profile || (S.context === 'world' ? 'world' : S.context === 'mall' ? 'mall-item' : 'generic');
+  // WD2-C: a new/empty document opens in Model; anything else in the
+  // remembered workspace. Not persisted here -- only a user switch is.
+  setWorkspaceMode(UI.initialWorkspaceMode({ text: d.text, remembered: rememberedWorkspaceMode() }), false);
   mountEditor(d.text, profile);
   render();
-  S.handle.focus();
+  if (S.workspaceMode === 'model' && els.addBox) els.addBox.focus(); else S.handle.focus();
 
   // Live preview covers both profiles: Mall (Phase 7C2) and World (Phase 7C3).
   // The orchestrator sends only text+version to main; the document's context
@@ -762,6 +1197,7 @@ async function init() {
       getVersion: () => S.bufferVersion,
       context: S.context,
     });
+    applyWorkspace(); // WD2-C: Model shows the preview even under "Editor only"
   }
 }
 
@@ -771,6 +1207,21 @@ async function init() {
 // page already has, mirroring the __wrlForge* hooks on the Mall/World pages.
 window.__wrlEditor = {
   ready: () => !!S.handle || els.msg.style.display === 'block',
+  // UI-0 QA: read-only views of the registries + the same execute path a
+  // control uses. No handler, record or state is exposed.
+  commands: Object.freeze({
+    list: () => commandRegistry.list().map((d) => ({
+      id: d.id, label: d.label, area: d.area, keys: [...d.keys], keyOwner: d.keyOwner, isToggle: d.isToggle,
+      enabled: commandRegistry.isEnabled(d.id), checked: commandRegistry.isChecked(d.id),
+    })),
+    isEnabled: (id) => commandRegistry.isEnabled(id),
+    isChecked: (id) => commandRegistry.isChecked(id),
+    execute: (id) => commandRegistry.execute(id, { source: 'api' }),
+  }),
+  panels: Object.freeze({
+    list: () => panelRegistry.list().map((d) => ({ id: d.id, title: d.title, canToggle: d.canToggle, visible: panelRegistry.isVisible(d.id) })),
+    isVisible: (id) => panelRegistry.isVisible(id),
+  }),
   setText: (t) => {
     if (!S.handle) return false;
     S.handle.view.dispatch({ changes: { from: 0, to: S.handle.getText().length, insert: t } });
@@ -803,6 +1254,186 @@ window.__wrlEditor = {
   previewState: () => (window.wrlEditorPreview ? window.wrlEditorPreview._state() : null),
   previewLeak: () => (window.wrlEditorPreview ? window.wrlEditorPreview._leak() : null),
   fitMode: (m) => { const n = el(m === 'fit' ? 'modeFit' : 'modeOriginal'); if (n) { n.checked = true; n.dispatchEvent(new Event('change')); } },
+  // WD2-B QA hooks: each drives or reads the page's own scene tree / Inspector
+  // DOM exactly as a user would (selection, typing into a field control, Enter /
+  // Escape / Apply / Cancel). `bufferEquals` answers a yes/no comparison so no
+  // buffer text is exposed.
+  sceneSelectFirst: (nodeType, nth) => {
+    const items = S.sceneTree ? S.sceneTree.items.filter((it) => it.kind === 'Node' && it.nodeType === nodeType) : [];
+    const item = items[nth | 0];
+    if (!item) return null;
+    sceneSelection.setSelection(item.id);
+    return item.id;
+  },
+  sceneSelection: () => {
+    const id = sceneSelection.getSelection();
+    const item = id && S.sceneTree ? sceneBridge.sceneTree.itemById(S.sceneTree, id) : null;
+    if (!item) return null;
+    const same = S.sceneTree.items.filter((it) => it.kind === item.kind && it.nodeType === item.nodeType);
+    const row = document.querySelector('#sceneTree .scene-row[aria-selected="true"]');
+    return { id, kind: item.kind, nodeType: item.nodeType || null, def: item.def || null,
+      ordinal: same.indexOf(item), rowId: row ? row.dataset.id : null, rowCount: document.querySelectorAll('#sceneTree .scene-row').length };
+  },
+  inspectorFields: () => {
+    const notice = document.querySelector('#sceneInspector .inspector-notice');
+    return {
+      notice: notice ? notice.textContent : null,
+      fields: Array.from(document.querySelectorAll('#sceneInspector .field-row')).map((r) => ({
+        name: r.dataset.fieldName,
+        type: (r.querySelector('.field-type') || {}).textContent || null,
+        state: (r.querySelector('.field-state') || {}).textContent || null,
+        values: Array.from(r.querySelectorAll('input')).map((i) => (i.type === 'checkbox' ? i.checked : i.value)),
+        invalid: Array.from(r.querySelectorAll('input')).map((i) => i.getAttribute('aria-invalid') === 'true'),
+        names: Array.from(r.querySelectorAll('input')).map((i) => (i.getAttribute('aria-labelledby') || '').split(' ')
+          .map((ref) => { const n = document.getElementById(ref); return n ? n.textContent : '?'; }).join(' ')),
+        message: (r.querySelector('.field-msg') || {}).textContent || '',
+        reason: (r.querySelector('.field-reason') || {}).textContent || null,
+      })),
+    };
+  },
+  inspectorSet: (fieldName, comp, value) => {
+    const r = document.querySelector(`#sceneInspector .field-row[data-field-name="${CSS.escape(fieldName)}"]`);
+    const input = r ? r.querySelectorAll('input')[comp | 0] : null;
+    if (!input) return false;
+    input.focus();
+    if (input.type === 'checkbox') { input.checked = !!value; input.dispatchEvent(new Event('change', { bubbles: true })); }
+    else { input.value = String(value); input.dispatchEvent(new Event('input', { bubbles: true })); }
+    return true;
+  },
+  inspectorKey: (fieldName, comp, key) => {
+    const r = document.querySelector(`#sceneInspector .field-row[data-field-name="${CSS.escape(fieldName)}"]`);
+    const input = r ? r.querySelectorAll('input')[comp | 0] : null;
+    if (!input) return false;
+    input.focus();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    return true;
+  },
+  inspectorClick: (fieldName, which) => {
+    const r = document.querySelector(`#sceneInspector .field-row[data-field-name="${CSS.escape(fieldName)}"]`);
+    const b = r ? r.querySelector(which === 'cancel' ? '.field-cancel' : '.field-apply') : null;
+    if (!b) return false;
+    b.focus();
+    b.click();
+    return true;
+  },
+  activeInfo: () => {
+    const a = document.activeElement;
+    const r = a && a.closest ? a.closest('.field-row') : null;
+    return { tag: a ? a.tagName : null, field: r ? r.dataset.fieldName : null,
+      component: a && a.dataset && a.dataset.component != null ? Number(a.dataset.component) : null,
+      focusVisibleOutline: a ? getComputedStyle(a).outlineStyle : null };
+  },
+  bufferEquals: (t) => !!S.handle && S.handle.getText() === t,
+  // WD2-D QA: the last viewport pick result (status / reason / item / spans)
+  // and the CodeMirror selection head, to prove a pick never moves the caret.
+  lastViewportPick: () => S.lastViewportPick,
+  caretHead: () => (S.handle && S.handle.view ? S.handle.view.state.selection.main.head : null),
+  // The active preview canvas's client rect + X_ITE version, for real-pointer QA.
+  previewCanvasRect: () => {
+    const c = document.getElementById(S.context === 'world' ? 'wpCanvas' : 'preview');
+    if (!c) return null;
+    const r = c.getBoundingClientRect();
+    return { left: r.left, top: r.top, width: r.width, height: r.height, version: c.browser ? c.browser.version : null };
+  },
+  pickState: () => {
+    const st = EP() ? EP()._state() : null;
+    return { picking: st ? st.picking : null, mode: S.workspaceMode };
+  },
+  // WD2-C QA hooks: drive / read the Model workspace's own DOM (Add, Duplicate,
+  // Delete, the Object panel, the colour picker), CodeMirror's history depth,
+  // and a READ-ONLY walk of the live X_ITE scene (types, Transform
+  // translations, Box sizes, Sphere radii, Material colours). No buffer text.
+  modelState: () => {
+    const props = Array.from(document.querySelectorAll('#objectProps .prop-row')).map((r) => ({
+      key: r.dataset.prop,
+      label: (r.querySelector('.prop-label') || {}).textContent || null,
+      tech: (r.querySelector('.prop-tech') || {}).textContent || null,
+      state: (r.querySelector('.prop-state') || {}).textContent || '',
+      values: Array.from(r.querySelectorAll('input.prop-num')).map((i) => i.value),
+      color: (r.querySelector('input.prop-color') || {}).value || null,
+      names: Array.from(r.querySelectorAll('input')).map((i) => (i.getAttribute('aria-labelledby') || '').split(' ')
+        .map((ref) => { const n = document.getElementById(ref); return n ? n.textContent : '?'; }).join(' ')),
+      message: (r.querySelector('.prop-msg') || {}).textContent || '',
+    }));
+    const title = document.getElementById('objectTitle');
+    const empty = document.querySelector('#objectProps .empty-note');
+    return {
+      mode: S.workspaceMode, sourceOpen: S.sourceOpen,
+      mainClass: els.main ? els.main.className : null,
+      editorVisible: !!(els.editor && els.editor.offsetParent),
+      previewVisible: !!(document.getElementById('preview') && document.getElementById('preview').offsetParent),
+      selected: els.modelSelected ? els.modelSelected.textContent : null,
+      status: els.modelStatus ? els.modelStatus.textContent : null,
+      statusError: !!(els.modelStatus && els.modelStatus.classList.contains('err')),
+      buttons: ['addBoxBtn', 'addSphereBtn', 'duplicateBtn', 'deleteBtn', 'modeModelBtn', 'modeCodeBtn', 'sourceToggleBtn']
+        .map((id) => { const b = el(id); return { id, disabled: !!(b && b.disabled), hidden: !!(b && b.hidden), pressed: b ? b.getAttribute('aria-pressed') : null, name: b ? (b.getAttribute('aria-label') || b.textContent) : null }; }),
+      title: title ? title.textContent : null,
+      empty: empty ? empty.textContent : null,
+      props,
+      treeRows: Array.from(document.querySelectorAll('#sceneTree .scene-row')).map((r) => r.textContent),
+      remembered: window.WrlPreferences ? window.WrlPreferences.get('workspaceMode') : null,
+    };
+  },
+  propSet: (key, comp, value) => {
+    const input = document.querySelectorAll(`#objectProps .prop-row[data-prop="${CSS.escape(key)}"] input.prop-num`)[comp | 0];
+    if (!input) return false;
+    input.focus(); input.value = String(value); input.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  },
+  propKey: (key, comp, k) => {
+    const input = document.querySelectorAll(`#objectProps .prop-row[data-prop="${CSS.escape(key)}"] input.prop-num`)[comp | 0];
+    if (!input) return false;
+    input.focus(); input.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+    return true;
+  },
+  propColor: (hex) => {
+    const input = document.querySelector('#objectProps .prop-row[data-prop="color"] input.prop-color');
+    if (!input) return false;
+    const before = S.handle ? S.handle.getText() : null;
+    input.focus(); input.value = hex;
+    input.dispatchEvent(new Event('input', { bubbles: true })); // dragging: must NOT commit
+    const committedOnInput = !!S.handle && S.handle.getText() !== before;
+    input.dispatchEvent(new Event('change', { bubbles: true })); // the user's pick
+    return { committedOnInput };
+  },
+  historyDepth: () => (S.handle && S.handle.historyDepth ? S.handle.historyDepth() : null),
+  focusInfo: () => {
+    const a = document.activeElement;
+    const r = a && a.closest ? a.closest('.prop-row') : null;
+    return { id: a ? a.id : null, tag: a ? a.tagName : null, prop: r ? r.dataset.prop : null };
+  },
+  previewScene: () => {
+    const c = document.getElementById('preview');
+    const b = c && c.browser;
+    const scene = b && b.currentScene;
+    if (!scene) return null;
+    const out = { counts: {}, translations: [], boxes: [], spheres: [], colors: [] };
+    const seen = new Set();
+    const n3 = (v) => [v.x, v.y, v.z].map((x) => Math.round(x * 1e6) / 1e6);
+    const visit = (n) => {
+      if (!n || seen.has(n)) return;
+      seen.add(n);
+      const t = n.getNodeTypeName();
+      out.counts[t] = (out.counts[t] || 0) + 1;
+      if (t === 'Transform') out.translations.push(n3(n.translation));
+      if (t === 'Box') out.boxes.push(n3(n.size));
+      if (t === 'Sphere') out.spheres.push(Math.round(n.radius * 1e6) / 1e6);
+      if (t === 'Material') out.colors.push([n.diffuseColor.r, n.diffuseColor.g, n.diffuseColor.b].map((x) => Math.round(x * 1e3) / 1e3));
+      for (const f of ['children', 'appearance', 'material', 'geometry']) {
+        let v;
+        try { v = n[f]; } catch (e) { v = undefined; }
+        if (!v) continue;
+        if (typeof v.length === 'number' && typeof v.getNodeTypeName !== 'function') { for (let i = 0; i < v.length; i += 1) visit(v[i]); }
+        else visit(v);
+      }
+    };
+    for (let i = 0; i < scene.rootNodes.length; i += 1) visit(scene.rootNodes[i]);
+    return out;
+  },
+  previewBBox: () => {
+    const d = window.wrlPreview && window.wrlPreview._debug ? window.wrlPreview._debug() : null;
+    return d && d.bbox ? { min: Array.from(d.bbox.min || []), max: Array.from(d.bbox.max || []) } : null;
+  },
   status: () => ({
     file: els.stFile.textContent, format: els.stFormat.textContent, dirty: isDirty(),
     save: els.stSave.textContent, diag: els.stDiag.textContent, adv: els.stAdv.textContent,

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- RUST-1 isolated renderer proof. NOT a production page.
+     NEGATIVE CONTROL: editor.html's CSP with ONLY 'wasm-unsafe-eval' removed
+     (run.cjs verifies that). WebAssembly compilation must be blocked here. -->
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'none';
+  script-src 'self' file:;
+  style-src 'self' 'unsafe-inline';
+  img-src 'self' file: data: blob: wrlworld:;
+  media-src 'self' file: data: blob: wrlworld:;
+  connect-src 'self' file: data: blob: wrlworld:;
+  font-src 'self' file: data:;
+  worker-src 'self' blob:;
+  child-src blob:;
+  object-src 'none';
+  base-uri 'none';
+">
+<title>RUST-1 wasm proof</title>
+<script type="module" src="proof.mjs"></script>
+</head>
+<body><pre id="out">running</pre></body>
+</html>

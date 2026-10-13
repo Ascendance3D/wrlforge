@@ -1,0 +1,14 @@
+[package]
+name = "wrlforge-text-spike"
+version = "0.0.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+publish = false
+description = "RUST-0 isolated feasibility spike: UTF-16 offset boundary + WD1.2 span-patch algebra. No production callers."
+
+# Standard library only. Adding any dependency here needs owner approval.
+[dependencies]
+
+[[bin]]
+name = "wrlforge-text-spike"
+path = "src/main.rs"

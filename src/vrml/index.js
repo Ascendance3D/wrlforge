@@ -100,6 +100,16 @@ const messages = require('./messages');
 // to map selections forward). NO presentation, NO message text, NO semantic
 // verdict -- the scene tree is a structural projection over the AST only.
 const sceneTree = require('./scene-tree');
+// WD2-B -- typed field-value editing over the same lossless core: an explicitly
+// authored built-in field + a typed value -> a VERIFIED WD1.2 edit set. Pure and
+// browser-safe; it serializes nothing and dispatches nothing.
+const fieldEdit = require('./field-edit');
+// WD2-C -- First Object: new-node templates, exact-span structural edits
+// (insert / duplicate / delete / absent-field insert) and the beginner
+// simple-object facade. Pure; they serialize nothing and dispatch nothing.
+const nodeTemplates = require('./node-templates');
+const structureEdit = require('./structure-edit');
+const simpleObject = require('./simple-object');
 
 const publicDocumentTransaction = Object.freeze({
   // Prove that an edit set is exactly what turned one exact text into another.
@@ -335,8 +345,44 @@ const publicSceneTree = Object.freeze({
   buildSceneTree: sceneTree.buildSceneTree,
   itemContainingOffset: sceneTree.itemContainingOffset,
   itemById: sceneTree.itemById,
+  astNodeForItem: sceneTree.astNodeForItem,
+  itemForAstNode: sceneTree.itemForAstNode,
   KIND: sceneTree.KIND,
   USE_TARGET: sceneTree.USE_TARGET,
+});
+
+const publicFieldEdit = Object.freeze({
+  inspectNodeFields: fieldEdit.inspectNodeFields,
+  planFieldEdit: fieldEdit.planFieldEdit,
+  FIELD_EDIT_STATUS: fieldEdit.FIELD_EDIT_STATUS,
+  FIELD_EDIT_REASON: fieldEdit.FIELD_EDIT_REASON,
+  PLAN_STATUS: fieldEdit.PLAN_STATUS,
+  EDITABLE_TYPES: fieldEdit.EDITABLE_TYPES,
+});
+
+const publicStructureEdit = Object.freeze({
+  planInsertObject: structureEdit.planInsertObject,
+  planDuplicateNode: structureEdit.planDuplicateNode,
+  planDeleteNode: structureEdit.planDeleteNode,
+  planFieldInsert: structureEdit.planFieldInsert,
+  resolveInsertedNode: structureEdit.resolveInsertedNode,
+  STRUCTURE_REASON: structureEdit.STRUCTURE_REASON,
+  INSERTED_STATUS: structureEdit.INSERTED_STATUS,
+  PLAN_STATUS: structureEdit.PLAN_STATUS,
+});
+
+const publicNodeTemplates = Object.freeze({
+  simpleObjectTemplate: nodeTemplates.simpleObjectTemplate,
+  PRIMITIVES: nodeTemplates.PRIMITIVES,
+  VRML97_HEADER: nodeTemplates.VRML97_HEADER,
+});
+
+const publicSimpleObject = Object.freeze({
+  recognize: simpleObject.recognize,
+  displayLabel: simpleObject.displayLabel,
+  describeObject: simpleObject.describeObject,
+  planPropertySet: simpleObject.planPropertySet,
+  OBJECT_REASON: simpleObject.OBJECT_REASON,
 });
 
 // parse(text, opts) -> full result. opts: { profile, maxDepth, maxNodes }.
@@ -381,6 +427,10 @@ module.exports = {
   presentation: publicPresentation,
   messages: publicMessages,
   sceneTree: publicSceneTree,
+  fieldEdit: publicFieldEdit,
+  structureEdit: publicStructureEdit,
+  nodeTemplates: publicNodeTemplates,
+  simpleObject: publicSimpleObject,
   ast,
   diagnostics,
   assetRefs,

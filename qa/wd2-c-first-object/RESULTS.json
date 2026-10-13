@@ -1,0 +1,6676 @@
+{
+  "launches": 1,
+  "runError": null,
+  "survivors": [],
+  "wallClockMs": 62916,
+  "assertions": {
+    "total": 60,
+    "passed": 60,
+    "failed": 0
+  },
+  "checks": [
+    {
+      "name": "1-3 empty document opens in MODEL mode: preview visible, Source collapsed (not removed)",
+      "ok": true,
+      "detail": {
+        "mode": "model",
+        "sourceOpen": false,
+        "mainClass": "main layout-split workspace-model",
+        "editorVisible": false,
+        "previewVisible": true,
+        "selected": "Nothing selected",
+        "status": "",
+        "statusError": false,
+        "buttons": [
+          {
+            "id": "addBoxBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Add Box"
+          },
+          {
+            "id": "addSphereBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Add Sphere"
+          },
+          {
+            "id": "duplicateBtn",
+            "disabled": true,
+            "hidden": false,
+            "pressed": null,
+            "name": "Duplicate"
+          },
+          {
+            "id": "deleteBtn",
+            "disabled": true,
+            "hidden": false,
+            "pressed": null,
+            "name": "Delete"
+          },
+          {
+            "id": "modeModelBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "true",
+            "name": "Model"
+          },
+          {
+            "id": "modeCodeBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "false",
+            "name": "Code"
+          },
+          {
+            "id": "sourceToggleBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "false",
+            "name": "Show Source"
+          }
+        ],
+        "title": null,
+        "empty": "Add a Box or Sphere, or select one in the Scene tree.",
+        "props": [],
+        "treeRows": [
+          "Document"
+        ],
+        "remembered": "code"
+      }
+    },
+    {
+      "name": "Add Box / Add Sphere visible and enabled, labelled",
+      "ok": true,
+      "detail": [
+        {
+          "id": "addBoxBtn",
+          "disabled": false,
+          "hidden": false,
+          "pressed": null,
+          "name": "Add Box"
+        },
+        {
+          "id": "addSphereBtn",
+          "disabled": false,
+          "hidden": false,
+          "pressed": null,
+          "name": "Add Sphere"
+        },
+        {
+          "id": "duplicateBtn",
+          "disabled": true,
+          "hidden": false,
+          "pressed": null,
+          "name": "Duplicate"
+        },
+        {
+          "id": "deleteBtn",
+          "disabled": true,
+          "hidden": false,
+          "pressed": null,
+          "name": "Delete"
+        },
+        {
+          "id": "modeModelBtn",
+          "disabled": false,
+          "hidden": false,
+          "pressed": "true",
+          "name": "Model"
+        },
+        {
+          "id": "modeCodeBtn",
+          "disabled": false,
+          "hidden": false,
+          "pressed": "false",
+          "name": "Code"
+        },
+        {
+          "id": "sourceToggleBtn",
+          "disabled": false,
+          "hidden": false,
+          "pressed": "false",
+          "name": "Show Source"
+        }
+      ]
+    },
+    {
+      "name": "keyboard focus starts on Add Box",
+      "ok": true,
+      "detail": {
+        "id": "addBoxBtn",
+        "tag": "BUTTON",
+        "prop": null
+      }
+    },
+    {
+      "name": "empty document is not persisted as a remembered mode",
+      "ok": true,
+      "detail": "code"
+    },
+    {
+      "name": "5 Add Box -> exact source (header + one generated object, nothing else)",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "5 the new Box is the selection (tree row + Object panel agree)",
+      "ok": true,
+      "detail": {
+        "sa": {
+          "id": "node-17-170",
+          "kind": "Node",
+          "nodeType": "Transform",
+          "def": null,
+          "ordinal": 0,
+          "rowId": "node-17-170",
+          "rowCount": 6
+        },
+        "selected": "Selected: Box",
+        "title": "Box"
+      }
+    },
+    {
+      "name": "status says where it was created",
+      "ok": true,
+      "detail": "Box created at origin."
+    },
+    {
+      "name": "tree shows the display label \"Box\" with the node type kept visible",
+      "ok": true,
+      "detail": [
+        "Document",
+        "BoxTransform",
+        "Shape",
+        "Appearance",
+        "Material",
+        "Box"
+      ]
+    },
+    {
+      "name": "beginner labels for a Box: Position, Rotation, Size, Color (VRML names secondary)",
+      "ok": true,
+      "detail": [
+        {
+          "key": "position",
+          "label": "Position",
+          "tech": "translation · SFVec3f",
+          "state": "(default)",
+          "values": [
+            "0",
+            "0",
+            "0"
+          ],
+          "color": null,
+          "names": [
+            "Position X",
+            "Position Y",
+            "Position Z"
+          ],
+          "message": ""
+        },
+        {
+          "key": "rotation",
+          "label": "Rotation",
+          "tech": "rotation · SFRotation",
+          "state": "(default)",
+          "values": [
+            "0",
+            "0",
+            "1",
+            "0"
+          ],
+          "color": null,
+          "names": [
+            "Rotation Axis X",
+            "Rotation Axis Y",
+            "Rotation Axis Z",
+            "Rotation Angle (radians)"
+          ],
+          "message": ""
+        },
+        {
+          "key": "size",
+          "label": "Size",
+          "tech": "size · SFVec3f",
+          "state": "(default)",
+          "values": [
+            "2",
+            "2",
+            "2"
+          ],
+          "color": null,
+          "names": [
+            "Size Width (X)",
+            "Size Height (Y)",
+            "Size Depth (Z)"
+          ],
+          "message": ""
+        },
+        {
+          "key": "color",
+          "label": "Color",
+          "tech": "diffuseColor · SFColor",
+          "state": "(default)",
+          "values": [],
+          "color": "#cccccc",
+          "names": [
+            "Color"
+          ],
+          "message": ""
+        }
+      ]
+    },
+    {
+      "name": "absent fields show schema defaults (0 0 0 / 0 0 1 0 / 2 2 2 / #cccccc)",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "6 X_ITE shows the new Box (1 Transform, 1 Box size 2 2 2 at the origin)",
+      "ok": true,
+      "detail": {
+        "counts": {
+          "Transform": 1,
+          "Shape": 1,
+          "Appearance": 1,
+          "Material": 1,
+          "Box": 1
+        },
+        "translations": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "boxes": [
+          [
+            2,
+            2,
+            2
+          ]
+        ],
+        "spheres": [],
+        "colors": [
+          [
+            0.8,
+            0.8,
+            0.8
+          ]
+        ]
+      }
+    },
+    {
+      "name": "Add = exactly ONE undo step",
+      "ok": true,
+      "detail": [
+        0,
+        1
+      ]
+    },
+    {
+      "name": "8-9 Position X=3 -> exact source: one inserted \"translation 3 0 0\" line",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "the same Box stays selected after Position",
+      "ok": true,
+      "detail": {
+        "id": "node-17-190",
+        "kind": "Node",
+        "nodeType": "Transform",
+        "def": null,
+        "ordinal": 0,
+        "rowId": "node-17-190",
+        "rowCount": 6
+      }
+    },
+    {
+      "name": "10 X_ITE Box moved to X=3 (translation and world bounds)",
+      "ok": true,
+      "detail": {
+        "scene": {
+          "counts": {
+            "Transform": 1,
+            "Shape": 1,
+            "Appearance": 1,
+            "Material": 1,
+            "Box": 1
+          },
+          "translations": [
+            [
+              3,
+              0,
+              0
+            ]
+          ],
+          "boxes": [
+            [
+              2,
+              2,
+              2
+            ]
+          ],
+          "spheres": [],
+          "colors": [
+            [
+              0.8,
+              0.8,
+              0.8
+            ]
+          ]
+        },
+        "bbox": {
+          "min": [
+            2,
+            -1,
+            -1
+          ],
+          "max": [
+            4,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "\"Applied.\" and focus back on Position X",
+      "ok": true,
+      "detail": {
+        "msg": "Applied.",
+        "focus": {
+          "id": "prop-position-0",
+          "tag": "INPUT",
+          "prop": "position"
+        }
+      }
+    },
+    {
+      "name": "Position = exactly ONE undo step",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "technical Inspector shows the same value on the same node (translation 3 0 0, SFVec3f, editable)",
+      "ok": true,
+      "detail": {
+        "name": "translation",
+        "type": "SFVec3f",
+        "state": "editable",
+        "values": [
+          "3",
+          "0",
+          "0"
+        ],
+        "invalid": [
+          false,
+          false,
+          false
+        ],
+        "names": [
+          "translation X SFVec3f",
+          "translation Y SFVec3f",
+          "translation Z SFVec3f"
+        ],
+        "message": "",
+        "reason": null
+      }
+    },
+    {
+      "name": "11 Size 2 1 0.5 -> exact source",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "12 X_ITE Box dimensions changed",
+      "ok": true,
+      "detail": {
+        "counts": {
+          "Transform": 1,
+          "Shape": 1,
+          "Appearance": 1,
+          "Material": 1,
+          "Box": 1
+        },
+        "translations": [
+          [
+            3,
+            0,
+            0
+          ]
+        ],
+        "boxes": [
+          [
+            2,
+            1,
+            0.5
+          ]
+        ],
+        "spheres": [],
+        "colors": [
+          [
+            0.8,
+            0.8,
+            0.8
+          ]
+        ]
+      }
+    },
+    {
+      "name": "Size (3 components) = exactly ONE undo step",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "Rotation angle 0.5 -> exact source (absent rotation inserted)",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "invalid input is refused before the document; message is text",
+      "ok": true,
+      "detail": {
+        "key": "position",
+        "label": "Position",
+        "tech": "translation · SFVec3f",
+        "state": "",
+        "values": [
+          "3",
+          "abc",
+          "0"
+        ],
+        "color": null,
+        "names": [
+          "Position X",
+          "Position Y",
+          "Position Z"
+        ],
+        "message": "Invalid: \"abc\" is not a number."
+      }
+    },
+    {
+      "name": "13 Color via the colour control -> exactly \"diffuseColor 1 0 0\" inserted",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "the colour control does not commit while dragging (input), only on change",
+      "ok": true,
+      "detail": {
+        "committedOnInput": false
+      }
+    },
+    {
+      "name": "14 X_ITE Material is red",
+      "ok": true,
+      "detail": {
+        "counts": {
+          "Transform": 1,
+          "Shape": 1,
+          "Appearance": 1,
+          "Material": 1,
+          "Box": 1
+        },
+        "translations": [
+          [
+            3,
+            0,
+            0
+          ]
+        ],
+        "boxes": [
+          [
+            2,
+            1,
+            0.5
+          ]
+        ],
+        "spheres": [],
+        "colors": [
+          [
+            1,
+            0,
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "name": "Color = exactly ONE undo step",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "15 Duplicate -> exact bytes of the object copied right after it",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "the COPY (second Transform) is selected after Duplicate",
+      "ok": true,
+      "detail": {
+        "id": "node-262-506",
+        "kind": "Node",
+        "nodeType": "Transform",
+        "def": null,
+        "ordinal": 1,
+        "rowId": "node-262-506",
+        "rowCount": 11
+      }
+    },
+    {
+      "name": "16 two objects exist in X_ITE",
+      "ok": true,
+      "detail": {
+        "counts": {
+          "Transform": 2,
+          "Shape": 2,
+          "Appearance": 2,
+          "Material": 2,
+          "Box": 2
+        },
+        "translations": [
+          [
+            3,
+            0,
+            0
+          ],
+          [
+            3,
+            0,
+            0
+          ]
+        ],
+        "boxes": [
+          [
+            2,
+            1,
+            0.5
+          ],
+          [
+            2,
+            1,
+            0.5
+          ]
+        ],
+        "spheres": [],
+        "colors": [
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "name": "Duplicate = exactly ONE undo step",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "17-18 one Undo -> one object, exact source",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "Undo of Duplicate loses the (removed) selection visibly, never a wrong one",
+      "ok": true,
+      "detail": {
+        "notice": "Note: Selection cleared: the previously selected item could not be proven to be the same item after this change.",
+        "fields": []
+      }
+    },
+    {
+      "name": "19 Redo -> exact duplicated source",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "20 Delete the duplicate -> exact source; selection cleared; status text",
+      "ok": true,
+      "detail": {
+        "mode": "model",
+        "sourceOpen": false,
+        "mainClass": "main layout-split workspace-model",
+        "editorVisible": false,
+        "previewVisible": true,
+        "selected": "Nothing selected",
+        "status": "Box deleted.",
+        "statusError": false,
+        "buttons": [
+          {
+            "id": "addBoxBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Add Box"
+          },
+          {
+            "id": "addSphereBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Add Sphere"
+          },
+          {
+            "id": "duplicateBtn",
+            "disabled": true,
+            "hidden": false,
+            "pressed": null,
+            "name": "Duplicate"
+          },
+          {
+            "id": "deleteBtn",
+            "disabled": true,
+            "hidden": false,
+            "pressed": null,
+            "name": "Delete"
+          },
+          {
+            "id": "modeModelBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "true",
+            "name": "Model"
+          },
+          {
+            "id": "modeCodeBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "false",
+            "name": "Code"
+          },
+          {
+            "id": "sourceToggleBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "false",
+            "name": "Show Source"
+          }
+        ],
+        "title": null,
+        "empty": "Add a Box or Sphere, or select one in the Scene tree.",
+        "props": [],
+        "treeRows": [
+          "Document",
+          "BoxTransform",
+          "Shape",
+          "Appearance",
+          "Material",
+          "Box"
+        ],
+        "remembered": "code"
+      }
+    },
+    {
+      "name": "Delete = exactly ONE undo step",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "21 Undo Delete -> exact source restored",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "22 Add Sphere -> exact source; Sphere selected",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "Sphere labels: Position, Rotation, Radius, Color (radius is NOT \"Size\")",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "23 Radius 2 -> exact source",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "24 X_ITE Sphere radius 2",
+      "ok": true,
+      "detail": {
+        "counts": {
+          "Transform": 3,
+          "Shape": 3,
+          "Appearance": 3,
+          "Material": 3,
+          "Box": 2,
+          "Sphere": 1
+        },
+        "translations": [
+          [
+            3,
+            0,
+            0
+          ],
+          [
+            3,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "boxes": [
+          [
+            2,
+            1,
+            0.5
+          ],
+          [
+            2,
+            1,
+            0.5
+          ]
+        ],
+        "spheres": [
+          2
+        ],
+        "colors": [
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            0.8,
+            0.8,
+            0.8
+          ]
+        ]
+      }
+    },
+    {
+      "name": "technical Inspector agrees: the selected Sphere object's Transform lists only its children (no invented fields)",
+      "ok": true,
+      "detail": [
+        {
+          "name": "children",
+          "type": "MFNode",
+          "state": "read-only",
+          "values": [],
+          "invalid": [],
+          "names": [],
+          "message": "",
+          "reason": "Read-only: type not editable yet."
+        }
+      ]
+    },
+    {
+      "name": "25 Show Source reveals the CodeMirror buffer in Model mode",
+      "ok": true,
+      "detail": {
+        "mode": "model",
+        "sourceOpen": true,
+        "mainClass": "main layout-split workspace-model source-open",
+        "editorVisible": true,
+        "previewVisible": true,
+        "selected": "Selected: Sphere",
+        "status": "",
+        "statusError": false,
+        "buttons": [
+          {
+            "id": "addBoxBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Add Box"
+          },
+          {
+            "id": "addSphereBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Add Sphere"
+          },
+          {
+            "id": "duplicateBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Duplicate"
+          },
+          {
+            "id": "deleteBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Delete"
+          },
+          {
+            "id": "modeModelBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "true",
+            "name": "Model"
+          },
+          {
+            "id": "modeCodeBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "false",
+            "name": "Code"
+          },
+          {
+            "id": "sourceToggleBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "true",
+            "name": "Hide Source"
+          }
+        ],
+        "title": "Sphere",
+        "empty": null,
+        "props": [
+          {
+            "key": "position",
+            "label": "Position",
+            "tech": "translation · SFVec3f",
+            "state": "(default)",
+            "values": [
+              "0",
+              "0",
+              "0"
+            ],
+            "color": null,
+            "names": [
+              "Position X",
+              "Position Y",
+              "Position Z"
+            ],
+            "message": ""
+          },
+          {
+            "key": "rotation",
+            "label": "Rotation",
+            "tech": "rotation · SFRotation",
+            "state": "(default)",
+            "values": [
+              "0",
+              "0",
+              "1",
+              "0"
+            ],
+            "color": null,
+            "names": [
+              "Rotation Axis X",
+              "Rotation Axis Y",
+              "Rotation Axis Z",
+              "Rotation Angle (radians)"
+            ],
+            "message": ""
+          },
+          {
+            "key": "radius",
+            "label": "Radius",
+            "tech": "radius · SFFloat",
+            "state": "",
+            "values": [
+              "2"
+            ],
+            "color": null,
+            "names": [
+              "Radius Radius"
+            ],
+            "message": "Applied."
+          },
+          {
+            "key": "color",
+            "label": "Color",
+            "tech": "diffuseColor · SFColor",
+            "state": "(default)",
+            "values": [],
+            "color": "#cccccc",
+            "names": [
+              "Color"
+            ],
+            "message": ""
+          }
+        ],
+        "treeRows": [
+          "Document",
+          "BoxTransform",
+          "Shape",
+          "Appearance",
+          "Material",
+          "Box",
+          "BoxTransform",
+          "Shape",
+          "Appearance",
+          "Material",
+          "Box",
+          "SphereTransform",
+          "Shape",
+          "Appearance",
+          "Material",
+          "Sphere"
+        ],
+        "remembered": "code"
+      }
+    },
+    {
+      "name": "26-27 Save writes the exact final source; it is valid VRML97 (0 syntax errors)",
+      "ok": true,
+      "detail": {
+        "saved": true,
+        "status": {
+          "file": "first-object.wrl",
+          "format": "Plain",
+          "dirty": false,
+          "save": "Saved",
+          "diag": "0",
+          "adv": "0",
+          "outlineRows": 15
+        }
+      }
+    },
+    {
+      "name": "28 reopened saved file: existing document opens in the remembered (Code) workspace",
+      "ok": true,
+      "detail": {
+        "mode": "code",
+        "sourceOpen": false,
+        "mainClass": "main layout-split",
+        "editorVisible": true,
+        "previewVisible": true,
+        "selected": "Nothing selected",
+        "status": "",
+        "statusError": false,
+        "buttons": [
+          {
+            "id": "addBoxBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Add Box"
+          },
+          {
+            "id": "addSphereBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Add Sphere"
+          },
+          {
+            "id": "duplicateBtn",
+            "disabled": true,
+            "hidden": false,
+            "pressed": null,
+            "name": "Duplicate"
+          },
+          {
+            "id": "deleteBtn",
+            "disabled": true,
+            "hidden": false,
+            "pressed": null,
+            "name": "Delete"
+          },
+          {
+            "id": "modeModelBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "false",
+            "name": "Model"
+          },
+          {
+            "id": "modeCodeBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "true",
+            "name": "Code"
+          },
+          {
+            "id": "sourceToggleBtn",
+            "disabled": false,
+            "hidden": true,
+            "pressed": "false",
+            "name": "Show Source"
+          }
+        ],
+        "title": null,
+        "empty": "Add a Box or Sphere, or select one in the Scene tree.",
+        "props": [],
+        "treeRows": [
+          "Document",
+          "BoxTransform",
+          "Shape",
+          "Appearance",
+          "Material",
+          "Box",
+          "BoxTransform",
+          "Shape",
+          "Appearance",
+          "Material",
+          "Box",
+          "SphereTransform",
+          "Shape",
+          "Appearance",
+          "Material",
+          "Sphere"
+        ],
+        "remembered": "code"
+      }
+    },
+    {
+      "name": "29 reopened scene valid: Box properties read back 3 0 0 / 2 1 0.5 / red",
+      "ok": true,
+      "detail": {
+        "mode": "code",
+        "sourceOpen": false,
+        "mainClass": "main layout-split",
+        "editorVisible": true,
+        "previewVisible": true,
+        "selected": "Selected: Box",
+        "status": "",
+        "statusError": false,
+        "buttons": [
+          {
+            "id": "addBoxBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Add Box"
+          },
+          {
+            "id": "addSphereBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Add Sphere"
+          },
+          {
+            "id": "duplicateBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Duplicate"
+          },
+          {
+            "id": "deleteBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Delete"
+          },
+          {
+            "id": "modeModelBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "false",
+            "name": "Model"
+          },
+          {
+            "id": "modeCodeBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "true",
+            "name": "Code"
+          },
+          {
+            "id": "sourceToggleBtn",
+            "disabled": false,
+            "hidden": true,
+            "pressed": "false",
+            "name": "Show Source"
+          }
+        ],
+        "title": "Box",
+        "empty": null,
+        "props": [
+          {
+            "key": "position",
+            "label": "Position",
+            "tech": "translation · SFVec3f",
+            "state": "",
+            "values": [
+              "3",
+              "0",
+              "0"
+            ],
+            "color": null,
+            "names": [
+              "Position X",
+              "Position Y",
+              "Position Z"
+            ],
+            "message": ""
+          },
+          {
+            "key": "rotation",
+            "label": "Rotation",
+            "tech": "rotation · SFRotation",
+            "state": "",
+            "values": [
+              "0",
+              "0",
+              "1",
+              "0.5"
+            ],
+            "color": null,
+            "names": [
+              "Rotation Axis X",
+              "Rotation Axis Y",
+              "Rotation Axis Z",
+              "Rotation Angle (radians)"
+            ],
+            "message": ""
+          },
+          {
+            "key": "size",
+            "label": "Size",
+            "tech": "size · SFVec3f",
+            "state": "",
+            "values": [
+              "2",
+              "1",
+              "0.5"
+            ],
+            "color": null,
+            "names": [
+              "Size Width (X)",
+              "Size Height (Y)",
+              "Size Depth (Z)"
+            ],
+            "message": ""
+          },
+          {
+            "key": "color",
+            "label": "Color",
+            "tech": "diffuseColor · SFColor",
+            "state": "",
+            "values": [],
+            "color": "#ff0000",
+            "names": [
+              "Color"
+            ],
+            "message": ""
+          }
+        ],
+        "treeRows": [
+          "Document",
+          "BoxTransform",
+          "Shape",
+          "Appearance",
+          "Material",
+          "Box",
+          "BoxTransform",
+          "Shape",
+          "Appearance",
+          "Material",
+          "Box",
+          "SphereTransform",
+          "Shape",
+          "Appearance",
+          "Material",
+          "Sphere"
+        ],
+        "remembered": "code"
+      }
+    },
+    {
+      "name": "reopened preview: 3 objects (2 Box + 1 Sphere)",
+      "ok": true,
+      "detail": {
+        "counts": {
+          "Transform": 3,
+          "Shape": 3,
+          "Appearance": 3,
+          "Material": 3,
+          "Box": 2,
+          "Sphere": 1
+        },
+        "translations": [
+          [
+            3,
+            0,
+            0
+          ],
+          [
+            3,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "boxes": [
+          [
+            2,
+            1,
+            0.5
+          ],
+          [
+            2,
+            1,
+            0.5
+          ]
+        ],
+        "spheres": [
+          2
+        ],
+        "colors": [
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            0.8,
+            0.8,
+            0.8
+          ]
+        ]
+      }
+    },
+    {
+      "name": "switching to Model is remembered through the existing preferences",
+      "ok": true,
+      "detail": {
+        "mode": "model",
+        "sourceOpen": false,
+        "mainClass": "main layout-split workspace-model",
+        "editorVisible": false,
+        "previewVisible": true,
+        "selected": "Selected: Box",
+        "status": "",
+        "statusError": false,
+        "buttons": [
+          {
+            "id": "addBoxBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Add Box"
+          },
+          {
+            "id": "addSphereBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Add Sphere"
+          },
+          {
+            "id": "duplicateBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Duplicate"
+          },
+          {
+            "id": "deleteBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Delete"
+          },
+          {
+            "id": "modeModelBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "true",
+            "name": "Model"
+          },
+          {
+            "id": "modeCodeBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "false",
+            "name": "Code"
+          },
+          {
+            "id": "sourceToggleBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "false",
+            "name": "Show Source"
+          }
+        ],
+        "title": "Box",
+        "empty": null,
+        "props": [
+          {
+            "key": "position",
+            "label": "Position",
+            "tech": "translation · SFVec3f",
+            "state": "",
+            "values": [
+              "3",
+              "0",
+              "0"
+            ],
+            "color": null,
+            "names": [
+              "Position X",
+              "Position Y",
+              "Position Z"
+            ],
+            "message": ""
+          },
+          {
+            "key": "rotation",
+            "label": "Rotation",
+            "tech": "rotation · SFRotation",
+            "state": "",
+            "values": [
+              "0",
+              "0",
+              "1",
+              "0.5"
+            ],
+            "color": null,
+            "names": [
+              "Rotation Axis X",
+              "Rotation Axis Y",
+              "Rotation Axis Z",
+              "Rotation Angle (radians)"
+            ],
+            "message": ""
+          },
+          {
+            "key": "size",
+            "label": "Size",
+            "tech": "size · SFVec3f",
+            "state": "",
+            "values": [
+              "2",
+              "1",
+              "0.5"
+            ],
+            "color": null,
+            "names": [
+              "Size Width (X)",
+              "Size Height (Y)",
+              "Size Depth (Z)"
+            ],
+            "message": ""
+          },
+          {
+            "key": "color",
+            "label": "Color",
+            "tech": "diffuseColor · SFColor",
+            "state": "",
+            "values": [],
+            "color": "#ff0000",
+            "names": [
+              "Color"
+            ],
+            "message": ""
+          }
+        ],
+        "treeRows": [
+          "Document",
+          "BoxTransform",
+          "Shape",
+          "Appearance",
+          "Material",
+          "Box",
+          "BoxTransform",
+          "Shape",
+          "Appearance",
+          "Material",
+          "Box",
+          "SphereTransform",
+          "Shape",
+          "Appearance",
+          "Material",
+          "Sphere"
+        ],
+        "remembered": "model"
+      }
+    },
+    {
+      "name": "remembered Model mode applies to the next existing document",
+      "ok": true,
+      "detail": {
+        "mode": "model",
+        "sourceOpen": false,
+        "mainClass": "main layout-split workspace-model",
+        "editorVisible": false,
+        "previewVisible": true,
+        "selected": "Nothing selected",
+        "status": "",
+        "statusError": false,
+        "buttons": [
+          {
+            "id": "addBoxBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Add Box"
+          },
+          {
+            "id": "addSphereBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Add Sphere"
+          },
+          {
+            "id": "duplicateBtn",
+            "disabled": true,
+            "hidden": false,
+            "pressed": null,
+            "name": "Duplicate"
+          },
+          {
+            "id": "deleteBtn",
+            "disabled": true,
+            "hidden": false,
+            "pressed": null,
+            "name": "Delete"
+          },
+          {
+            "id": "modeModelBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "true",
+            "name": "Model"
+          },
+          {
+            "id": "modeCodeBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "false",
+            "name": "Code"
+          },
+          {
+            "id": "sourceToggleBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "false",
+            "name": "Show Source"
+          }
+        ],
+        "title": null,
+        "empty": "Add a Box or Sphere, or select one in the Scene tree.",
+        "props": [],
+        "treeRows": [
+          "Document",
+          "SphereDEF Lamp Transform",
+          "Shape",
+          "Sphere",
+          "Group",
+          "→ USE Lamp"
+        ],
+        "remembered": "model"
+      }
+    },
+    {
+      "name": "Duplicate of a DEF object refused with a plain sentence; source unchanged",
+      "ok": true,
+      "detail": "Cannot duplicate this object because it contains a DEF name that would conflict (Lamp)."
+    },
+    {
+      "name": "Delete of a referenced object refused, naming the reference; source unchanged",
+      "ok": true,
+      "detail": "Cannot delete this object because other nodes reference it (Lamp)."
+    },
+    {
+      "name": "refusals add no undo step",
+      "ok": true,
+      "detail": {
+        "undo": 0,
+        "redo": 0
+      }
+    },
+    {
+      "name": "damaged document: Source opens automatically with a text explanation",
+      "ok": true,
+      "detail": {
+        "mode": "model",
+        "sourceOpen": true,
+        "mainClass": "main layout-split workspace-model source-open",
+        "editorVisible": true,
+        "previewVisible": true,
+        "selected": "Nothing selected",
+        "status": "The document has syntax errors, so visual editing is paused. Fix them in Source.",
+        "statusError": true,
+        "buttons": [
+          {
+            "id": "addBoxBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Add Box"
+          },
+          {
+            "id": "addSphereBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": null,
+            "name": "Add Sphere"
+          },
+          {
+            "id": "duplicateBtn",
+            "disabled": true,
+            "hidden": false,
+            "pressed": null,
+            "name": "Duplicate"
+          },
+          {
+            "id": "deleteBtn",
+            "disabled": true,
+            "hidden": false,
+            "pressed": null,
+            "name": "Delete"
+          },
+          {
+            "id": "modeModelBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "true",
+            "name": "Model"
+          },
+          {
+            "id": "modeCodeBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "false",
+            "name": "Code"
+          },
+          {
+            "id": "sourceToggleBtn",
+            "disabled": false,
+            "hidden": false,
+            "pressed": "true",
+            "name": "Hide Source"
+          }
+        ],
+        "title": null,
+        "empty": "Add a Box or Sphere, or select one in the Scene tree.",
+        "props": [],
+        "treeRows": [
+          "Document",
+          "Transform",
+          "Shape"
+        ],
+        "remembered": "model"
+      }
+    },
+    {
+      "name": "damaged document: Add refused, nothing written",
+      "ok": true,
+      "detail": "Cannot change the scene while the document has syntax errors. Fix them in Source first."
+    },
+    {
+      "name": "High Contrast + zoom: Object panel renders with accessible names",
+      "ok": true,
+      "detail": {
+        "key": "position",
+        "label": "Position",
+        "tech": "translation · SFVec3f",
+        "state": "",
+        "values": [
+          "3",
+          "0",
+          "0"
+        ],
+        "color": null,
+        "names": [
+          "Position X",
+          "Position Y",
+          "Position Z"
+        ],
+        "message": ""
+      }
+    },
+    {
+      "name": "source-diff: each property step inserted exactly one field line and removed nothing",
+      "ok": true,
+      "detail": [
+        {
+          "name": "position",
+          "from": 31,
+          "removed": "",
+          "inserted": "translation 3 0 0\n  "
+        },
+        {
+          "name": "size",
+          "from": 177,
+          "removed": "",
+          "inserted": "  size 2 1 0.5\n      "
+        },
+        {
+          "name": "rotation",
+          "from": 31,
+          "removed": "",
+          "inserted": "rotation 0 0 1 0.5\n  "
+        },
+        {
+          "name": "color",
+          "from": 161,
+          "removed": "",
+          "inserted": "  diffuseColor 1 0 0\n        "
+        },
+        {
+          "name": "radius",
+          "from": 651,
+          "removed": "",
+          "inserted": "  radius 2\n      "
+        }
+      ]
+    },
+    {
+      "name": "source-diff: Duplicate only inserted a byte copy of the object; Delete only removed it",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "no unexpected console error or warning",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "zero surviving Electron processes",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "all jobs completed",
+      "ok": true,
+      "detail": null
+    }
+  ],
+  "sourceDiffRegions": [
+    {
+      "name": "add",
+      "from": 0,
+      "removed": "",
+      "inserted": "#VRML V2.0 utf8\n\nTransform {\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n        }\n      }\n      geometry Box {\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "name": "position",
+      "from": 31,
+      "removed": "",
+      "inserted": "translation 3 0 0\n  "
+    },
+    {
+      "name": "size",
+      "from": 177,
+      "removed": "",
+      "inserted": "  size 2 1 0.5\n      "
+    },
+    {
+      "name": "rotation",
+      "from": 31,
+      "removed": "",
+      "inserted": "rotation 0 0 1 0.5\n  "
+    },
+    {
+      "name": "color",
+      "from": 161,
+      "removed": "",
+      "inserted": "  diffuseColor 1 0 0\n        "
+    },
+    {
+      "name": "duplicate",
+      "from": 262,
+      "removed": "",
+      "inserted": "Transform {\n  rotation 0 0 1 0.5\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n          diffuseColor 1 0 0\n        }\n      }\n      geometry Box {\n        size 2 1 0.5\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "name": "delete",
+      "from": 262,
+      "removed": "Transform {\n  rotation 0 0 1 0.5\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n          diffuseColor 1 0 0\n        }\n      }\n      geometry Box {\n        size 2 1 0.5\n      }\n    }\n  ]\n}\n",
+      "inserted": ""
+    },
+    {
+      "name": "undo-delete",
+      "from": 262,
+      "removed": "",
+      "inserted": "Transform {\n  rotation 0 0 1 0.5\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n          diffuseColor 1 0 0\n        }\n      }\n      geometry Box {\n        size 2 1 0.5\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "name": "add-sphere",
+      "from": 507,
+      "removed": "",
+      "inserted": "\nTransform {\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n        }\n      }\n      geometry Sphere {\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "name": "radius",
+      "from": 651,
+      "removed": "",
+      "inserted": "  radius 2\n      "
+    }
+  ],
+  "savedTextMatchesOracle": true,
+  "console": [],
+  "jobs": [
+    {
+      "id": "first-object",
+      "editor": {
+        "file": "first-object.wrl",
+        "format": "Plain",
+        "dirty": false,
+        "save": "Saved",
+        "diag": "0",
+        "adv": "0",
+        "outlineRows": 15
+      },
+      "preview": {
+        "state": "current",
+        "failureCategory": null,
+        "displayedGeneration": 13,
+        "requestedGeneration": 13,
+        "haveLastValid": true,
+        "saved": false,
+        "sizeTier": "auto",
+        "context": "mall",
+        "newRefs": 0,
+        "lastRenderMs": 461,
+        "layout": "split",
+        "split": 0.2,
+        "chip": "Live",
+        "world": null
+      },
+      "steps": [
+        {
+          "call": "bufferEquals",
+          "args": [
+            ""
+          ],
+          "label": "buf-start",
+          "result": true
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-start",
+          "result": {
+            "mode": "model",
+            "sourceOpen": false,
+            "mainClass": "main layout-split workspace-model",
+            "editorVisible": false,
+            "previewVisible": true,
+            "selected": "Nothing selected",
+            "status": "",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": true,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": true,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": null,
+            "empty": "Add a Box or Sphere, or select one in the Scene tree.",
+            "props": [],
+            "treeRows": [
+              "Document"
+            ],
+            "remembered": "code"
+          }
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-start",
+          "result": null
+        },
+        {
+          "call": "historyDepth",
+          "args": [],
+          "label": "hist-start",
+          "result": {
+            "undo": 0,
+            "redo": 0
+          }
+        },
+        {
+          "call": "previewScene",
+          "args": [],
+          "label": "scene-start",
+          "result": {
+            "counts": {},
+            "translations": [],
+            "boxes": [],
+            "spheres": [],
+            "colors": []
+          }
+        },
+        {
+          "call": "previewBBox",
+          "args": [],
+          "label": "bbox-start",
+          "result": null
+        },
+        {
+          "call": "focusInfo",
+          "args": [],
+          "label": "focus-start",
+          "result": {
+            "id": "addBoxBtn",
+            "tag": "BUTTON",
+            "prop": null
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-c-first-object/qa/wd2-c-first-object/screenshots/01-empty-model-mode.png"
+        },
+        {
+          "call": "click",
+          "args": [
+            "addBoxBtn"
+          ],
+          "label": "add-box",
+          "result": null
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\n\nTransform {\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n        }\n      }\n      geometry Box {\n      }\n    }\n  ]\n}\n"
+          ],
+          "label": "buf-add",
+          "result": true
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-add",
+          "result": {
+            "mode": "model",
+            "sourceOpen": false,
+            "mainClass": "main layout-split workspace-model",
+            "editorVisible": false,
+            "previewVisible": true,
+            "selected": "Selected: Box",
+            "status": "Box created at origin.",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": "Box",
+            "empty": null,
+            "props": [
+              {
+                "key": "position",
+                "label": "Position",
+                "tech": "translation · SFVec3f",
+                "state": "(default)",
+                "values": [
+                  "0",
+                  "0",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Position X",
+                  "Position Y",
+                  "Position Z"
+                ],
+                "message": ""
+              },
+              {
+                "key": "rotation",
+                "label": "Rotation",
+                "tech": "rotation · SFRotation",
+                "state": "(default)",
+                "values": [
+                  "0",
+                  "0",
+                  "1",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Rotation Axis X",
+                  "Rotation Axis Y",
+                  "Rotation Axis Z",
+                  "Rotation Angle (radians)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "size",
+                "label": "Size",
+                "tech": "size · SFVec3f",
+                "state": "(default)",
+                "values": [
+                  "2",
+                  "2",
+                  "2"
+                ],
+                "color": null,
+                "names": [
+                  "Size Width (X)",
+                  "Size Height (Y)",
+                  "Size Depth (Z)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "color",
+                "label": "Color",
+                "tech": "diffuseColor · SFColor",
+                "state": "(default)",
+                "values": [],
+                "color": "#cccccc",
+                "names": [
+                  "Color"
+                ],
+                "message": ""
+              }
+            ],
+            "treeRows": [
+              "Document",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box"
+            ],
+            "remembered": "code"
+          }
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-add",
+          "result": {
+            "id": "node-17-170",
+            "kind": "Node",
+            "nodeType": "Transform",
+            "def": null,
+            "ordinal": 0,
+            "rowId": "node-17-170",
+            "rowCount": 6
+          }
+        },
+        {
+          "call": "historyDepth",
+          "args": [],
+          "label": "hist-add",
+          "result": {
+            "undo": 1,
+            "redo": 0
+          }
+        },
+        {
+          "call": "previewScene",
+          "args": [],
+          "label": "scene-add",
+          "result": {
+            "counts": {
+              "Transform": 1,
+              "Shape": 1,
+              "Appearance": 1,
+              "Material": 1,
+              "Box": 1
+            },
+            "translations": [
+              [
+                0,
+                0,
+                0
+              ]
+            ],
+            "boxes": [
+              [
+                2,
+                2,
+                2
+              ]
+            ],
+            "spheres": [],
+            "colors": [
+              [
+                0.8,
+                0.8,
+                0.8
+              ]
+            ]
+          }
+        },
+        {
+          "call": "previewBBox",
+          "args": [],
+          "label": "bbox-add",
+          "result": {
+            "min": [
+              -1,
+              -1,
+              -1
+            ],
+            "max": [
+              1,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "call": "focusInfo",
+          "args": [],
+          "label": "focus-add",
+          "result": {
+            "id": "addBoxBtn",
+            "tag": "BUTTON",
+            "prop": null
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-c-first-object/qa/wd2-c-first-object/screenshots/02-box-created-selected.png"
+        },
+        {
+          "call": "propSet",
+          "args": [
+            "position",
+            0,
+            "3"
+          ],
+          "label": "type-pos",
+          "result": true
+        },
+        {
+          "call": "propKey",
+          "args": [
+            "position",
+            0,
+            "Enter"
+          ],
+          "label": "enter-pos",
+          "result": true
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\n\nTransform {\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n        }\n      }\n      geometry Box {\n      }\n    }\n  ]\n}\n"
+          ],
+          "label": "buf-position",
+          "result": true
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-position",
+          "result": {
+            "mode": "model",
+            "sourceOpen": false,
+            "mainClass": "main layout-split workspace-model",
+            "editorVisible": false,
+            "previewVisible": true,
+            "selected": "Selected: Box",
+            "status": "",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": "Box",
+            "empty": null,
+            "props": [
+              {
+                "key": "position",
+                "label": "Position",
+                "tech": "translation · SFVec3f",
+                "state": "",
+                "values": [
+                  "3",
+                  "0",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Position X",
+                  "Position Y",
+                  "Position Z"
+                ],
+                "message": "Applied."
+              },
+              {
+                "key": "rotation",
+                "label": "Rotation",
+                "tech": "rotation · SFRotation",
+                "state": "(default)",
+                "values": [
+                  "0",
+                  "0",
+                  "1",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Rotation Axis X",
+                  "Rotation Axis Y",
+                  "Rotation Axis Z",
+                  "Rotation Angle (radians)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "size",
+                "label": "Size",
+                "tech": "size · SFVec3f",
+                "state": "(default)",
+                "values": [
+                  "2",
+                  "2",
+                  "2"
+                ],
+                "color": null,
+                "names": [
+                  "Size Width (X)",
+                  "Size Height (Y)",
+                  "Size Depth (Z)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "color",
+                "label": "Color",
+                "tech": "diffuseColor · SFColor",
+                "state": "(default)",
+                "values": [],
+                "color": "#cccccc",
+                "names": [
+                  "Color"
+                ],
+                "message": ""
+              }
+            ],
+            "treeRows": [
+              "Document",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box"
+            ],
+            "remembered": "code"
+          }
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-position",
+          "result": {
+            "id": "node-17-190",
+            "kind": "Node",
+            "nodeType": "Transform",
+            "def": null,
+            "ordinal": 0,
+            "rowId": "node-17-190",
+            "rowCount": 6
+          }
+        },
+        {
+          "call": "historyDepth",
+          "args": [],
+          "label": "hist-position",
+          "result": {
+            "undo": 2,
+            "redo": 0
+          }
+        },
+        {
+          "call": "previewScene",
+          "args": [],
+          "label": "scene-position",
+          "result": {
+            "counts": {
+              "Transform": 1,
+              "Shape": 1,
+              "Appearance": 1,
+              "Material": 1,
+              "Box": 1
+            },
+            "translations": [
+              [
+                3,
+                0,
+                0
+              ]
+            ],
+            "boxes": [
+              [
+                2,
+                2,
+                2
+              ]
+            ],
+            "spheres": [],
+            "colors": [
+              [
+                0.8,
+                0.8,
+                0.8
+              ]
+            ]
+          }
+        },
+        {
+          "call": "previewBBox",
+          "args": [],
+          "label": "bbox-position",
+          "result": {
+            "min": [
+              2,
+              -1,
+              -1
+            ],
+            "max": [
+              4,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "call": "focusInfo",
+          "args": [],
+          "label": "focus-position",
+          "result": {
+            "id": "prop-position-0",
+            "tag": "INPUT",
+            "prop": "position"
+          }
+        },
+        {
+          "call": "inspectorFields",
+          "args": [],
+          "label": "inspector-position",
+          "result": {
+            "notice": null,
+            "fields": [
+              {
+                "name": "translation",
+                "type": "SFVec3f",
+                "state": "editable",
+                "values": [
+                  "3",
+                  "0",
+                  "0"
+                ],
+                "invalid": [
+                  false,
+                  false,
+                  false
+                ],
+                "names": [
+                  "translation X SFVec3f",
+                  "translation Y SFVec3f",
+                  "translation Z SFVec3f"
+                ],
+                "message": "",
+                "reason": null
+              },
+              {
+                "name": "children",
+                "type": "MFNode",
+                "state": "read-only",
+                "values": [],
+                "invalid": [],
+                "names": [],
+                "message": "",
+                "reason": "Read-only: type not editable yet."
+              }
+            ]
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-c-first-object/qa/wd2-c-first-object/screenshots/03-position-x3.png"
+        },
+        {
+          "call": "propSet",
+          "args": [
+            "size",
+            0,
+            "2"
+          ],
+          "label": "type-size-x",
+          "result": true
+        },
+        {
+          "call": "propSet",
+          "args": [
+            "size",
+            1,
+            "1"
+          ],
+          "label": "type-size-y",
+          "result": true
+        },
+        {
+          "call": "propSet",
+          "args": [
+            "size",
+            2,
+            "0.5"
+          ],
+          "label": "type-size-z",
+          "result": true
+        },
+        {
+          "call": "propKey",
+          "args": [
+            "size",
+            2,
+            "Enter"
+          ],
+          "label": "enter-size",
+          "result": true
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\n\nTransform {\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n        }\n      }\n      geometry Box {\n        size 2 1 0.5\n      }\n    }\n  ]\n}\n"
+          ],
+          "label": "buf-size",
+          "result": true
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-size",
+          "result": {
+            "mode": "model",
+            "sourceOpen": false,
+            "mainClass": "main layout-split workspace-model",
+            "editorVisible": false,
+            "previewVisible": true,
+            "selected": "Selected: Box",
+            "status": "",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": "Box",
+            "empty": null,
+            "props": [
+              {
+                "key": "position",
+                "label": "Position",
+                "tech": "translation · SFVec3f",
+                "state": "",
+                "values": [
+                  "3",
+                  "0",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Position X",
+                  "Position Y",
+                  "Position Z"
+                ],
+                "message": ""
+              },
+              {
+                "key": "rotation",
+                "label": "Rotation",
+                "tech": "rotation · SFRotation",
+                "state": "(default)",
+                "values": [
+                  "0",
+                  "0",
+                  "1",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Rotation Axis X",
+                  "Rotation Axis Y",
+                  "Rotation Axis Z",
+                  "Rotation Angle (radians)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "size",
+                "label": "Size",
+                "tech": "size · SFVec3f",
+                "state": "",
+                "values": [
+                  "2",
+                  "1",
+                  "0.5"
+                ],
+                "color": null,
+                "names": [
+                  "Size Width (X)",
+                  "Size Height (Y)",
+                  "Size Depth (Z)"
+                ],
+                "message": "Applied."
+              },
+              {
+                "key": "color",
+                "label": "Color",
+                "tech": "diffuseColor · SFColor",
+                "state": "(default)",
+                "values": [],
+                "color": "#cccccc",
+                "names": [
+                  "Color"
+                ],
+                "message": ""
+              }
+            ],
+            "treeRows": [
+              "Document",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box"
+            ],
+            "remembered": "code"
+          }
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-size",
+          "result": {
+            "id": "node-17-211",
+            "kind": "Node",
+            "nodeType": "Transform",
+            "def": null,
+            "ordinal": 0,
+            "rowId": "node-17-211",
+            "rowCount": 6
+          }
+        },
+        {
+          "call": "historyDepth",
+          "args": [],
+          "label": "hist-size",
+          "result": {
+            "undo": 3,
+            "redo": 0
+          }
+        },
+        {
+          "call": "previewScene",
+          "args": [],
+          "label": "scene-size",
+          "result": {
+            "counts": {
+              "Transform": 1,
+              "Shape": 1,
+              "Appearance": 1,
+              "Material": 1,
+              "Box": 1
+            },
+            "translations": [
+              [
+                3,
+                0,
+                0
+              ]
+            ],
+            "boxes": [
+              [
+                2,
+                1,
+                0.5
+              ]
+            ],
+            "spheres": [],
+            "colors": [
+              [
+                0.8,
+                0.8,
+                0.8
+              ]
+            ]
+          }
+        },
+        {
+          "call": "previewBBox",
+          "args": [],
+          "label": "bbox-size",
+          "result": {
+            "min": [
+              2,
+              -0.5,
+              -0.25
+            ],
+            "max": [
+              4,
+              0.5,
+              0.25
+            ]
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-c-first-object/qa/wd2-c-first-object/screenshots/04-size.png"
+        },
+        {
+          "call": "propSet",
+          "args": [
+            "rotation",
+            3,
+            "0.5"
+          ],
+          "label": "type-rot",
+          "result": true
+        },
+        {
+          "call": "propKey",
+          "args": [
+            "rotation",
+            3,
+            "Enter"
+          ],
+          "label": "enter-rot",
+          "result": true
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\n\nTransform {\n  rotation 0 0 1 0.5\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n        }\n      }\n      geometry Box {\n        size 2 1 0.5\n      }\n    }\n  ]\n}\n"
+          ],
+          "label": "buf-rotation",
+          "result": true
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-rotation",
+          "result": {
+            "mode": "model",
+            "sourceOpen": false,
+            "mainClass": "main layout-split workspace-model",
+            "editorVisible": false,
+            "previewVisible": true,
+            "selected": "Selected: Box",
+            "status": "",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": "Box",
+            "empty": null,
+            "props": [
+              {
+                "key": "position",
+                "label": "Position",
+                "tech": "translation · SFVec3f",
+                "state": "",
+                "values": [
+                  "3",
+                  "0",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Position X",
+                  "Position Y",
+                  "Position Z"
+                ],
+                "message": ""
+              },
+              {
+                "key": "rotation",
+                "label": "Rotation",
+                "tech": "rotation · SFRotation",
+                "state": "",
+                "values": [
+                  "0",
+                  "0",
+                  "1",
+                  "0.5"
+                ],
+                "color": null,
+                "names": [
+                  "Rotation Axis X",
+                  "Rotation Axis Y",
+                  "Rotation Axis Z",
+                  "Rotation Angle (radians)"
+                ],
+                "message": "Applied."
+              },
+              {
+                "key": "size",
+                "label": "Size",
+                "tech": "size · SFVec3f",
+                "state": "",
+                "values": [
+                  "2",
+                  "1",
+                  "0.5"
+                ],
+                "color": null,
+                "names": [
+                  "Size Width (X)",
+                  "Size Height (Y)",
+                  "Size Depth (Z)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "color",
+                "label": "Color",
+                "tech": "diffuseColor · SFColor",
+                "state": "(default)",
+                "values": [],
+                "color": "#cccccc",
+                "names": [
+                  "Color"
+                ],
+                "message": ""
+              }
+            ],
+            "treeRows": [
+              "Document",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box"
+            ],
+            "remembered": "code"
+          }
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-rotation",
+          "result": {
+            "id": "node-17-232",
+            "kind": "Node",
+            "nodeType": "Transform",
+            "def": null,
+            "ordinal": 0,
+            "rowId": "node-17-232",
+            "rowCount": 6
+          }
+        },
+        {
+          "call": "historyDepth",
+          "args": [],
+          "label": "hist-rotation",
+          "result": {
+            "undo": 4,
+            "redo": 0
+          }
+        },
+        {
+          "call": "previewScene",
+          "args": [],
+          "label": "scene-rotation",
+          "result": {
+            "counts": {
+              "Transform": 1,
+              "Shape": 1,
+              "Appearance": 1,
+              "Material": 1,
+              "Box": 1
+            },
+            "translations": [
+              [
+                3,
+                0,
+                0
+              ]
+            ],
+            "boxes": [
+              [
+                2,
+                1,
+                0.5
+              ]
+            ],
+            "spheres": [],
+            "colors": [
+              [
+                0.8,
+                0.8,
+                0.8
+              ]
+            ]
+          }
+        },
+        {
+          "call": "previewBBox",
+          "args": [],
+          "label": "bbox-rotation",
+          "result": {
+            "min": [
+              1.8827046688075257,
+              -0.9182168195493894,
+              -0.25
+            ],
+            "max": [
+              4.117295331192475,
+              0.9182168195493894,
+              0.25
+            ]
+          }
+        },
+        {
+          "call": "propSet",
+          "args": [
+            "position",
+            1,
+            "abc"
+          ],
+          "label": "type-invalid",
+          "result": true
+        },
+        {
+          "call": "propKey",
+          "args": [
+            "position",
+            1,
+            "Enter"
+          ],
+          "label": "enter-invalid",
+          "result": true
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\n\nTransform {\n  rotation 0 0 1 0.5\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n        }\n      }\n      geometry Box {\n        size 2 1 0.5\n      }\n    }\n  ]\n}\n"
+          ],
+          "label": "buf-invalid",
+          "result": true
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-invalid",
+          "result": {
+            "mode": "model",
+            "sourceOpen": false,
+            "mainClass": "main layout-split workspace-model",
+            "editorVisible": false,
+            "previewVisible": true,
+            "selected": "Selected: Box",
+            "status": "",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": "Box",
+            "empty": null,
+            "props": [
+              {
+                "key": "position",
+                "label": "Position",
+                "tech": "translation · SFVec3f",
+                "state": "",
+                "values": [
+                  "3",
+                  "abc",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Position X",
+                  "Position Y",
+                  "Position Z"
+                ],
+                "message": "Invalid: \"abc\" is not a number."
+              },
+              {
+                "key": "rotation",
+                "label": "Rotation",
+                "tech": "rotation · SFRotation",
+                "state": "",
+                "values": [
+                  "0",
+                  "0",
+                  "1",
+                  "0.5"
+                ],
+                "color": null,
+                "names": [
+                  "Rotation Axis X",
+                  "Rotation Axis Y",
+                  "Rotation Axis Z",
+                  "Rotation Angle (radians)"
+                ],
+                "message": "Applied."
+              },
+              {
+                "key": "size",
+                "label": "Size",
+                "tech": "size · SFVec3f",
+                "state": "",
+                "values": [
+                  "2",
+                  "1",
+                  "0.5"
+                ],
+                "color": null,
+                "names": [
+                  "Size Width (X)",
+                  "Size Height (Y)",
+                  "Size Depth (Z)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "color",
+                "label": "Color",
+                "tech": "diffuseColor · SFColor",
+                "state": "(default)",
+                "values": [],
+                "color": "#cccccc",
+                "names": [
+                  "Color"
+                ],
+                "message": ""
+              }
+            ],
+            "treeRows": [
+              "Document",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box"
+            ],
+            "remembered": "code"
+          }
+        },
+        {
+          "call": "historyDepth",
+          "args": [],
+          "label": "hist-invalid",
+          "result": {
+            "undo": 4,
+            "redo": 0
+          }
+        },
+        {
+          "call": "propKey",
+          "args": [
+            "position",
+            1,
+            "Escape"
+          ],
+          "label": "escape-invalid",
+          "result": true
+        },
+        {
+          "call": "propColor",
+          "args": [
+            "#ff0000"
+          ],
+          "label": "pick-red",
+          "result": {
+            "committedOnInput": false
+          }
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\n\nTransform {\n  rotation 0 0 1 0.5\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n          diffuseColor 1 0 0\n        }\n      }\n      geometry Box {\n        size 2 1 0.5\n      }\n    }\n  ]\n}\n"
+          ],
+          "label": "buf-color",
+          "result": true
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-color",
+          "result": {
+            "mode": "model",
+            "sourceOpen": false,
+            "mainClass": "main layout-split workspace-model",
+            "editorVisible": false,
+            "previewVisible": true,
+            "selected": "Selected: Box",
+            "status": "",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": "Box",
+            "empty": null,
+            "props": [
+              {
+                "key": "position",
+                "label": "Position",
+                "tech": "translation · SFVec3f",
+                "state": "",
+                "values": [
+                  "3",
+                  "0",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Position X",
+                  "Position Y",
+                  "Position Z"
+                ],
+                "message": ""
+              },
+              {
+                "key": "rotation",
+                "label": "Rotation",
+                "tech": "rotation · SFRotation",
+                "state": "",
+                "values": [
+                  "0",
+                  "0",
+                  "1",
+                  "0.5"
+                ],
+                "color": null,
+                "names": [
+                  "Rotation Axis X",
+                  "Rotation Axis Y",
+                  "Rotation Axis Z",
+                  "Rotation Angle (radians)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "size",
+                "label": "Size",
+                "tech": "size · SFVec3f",
+                "state": "",
+                "values": [
+                  "2",
+                  "1",
+                  "0.5"
+                ],
+                "color": null,
+                "names": [
+                  "Size Width (X)",
+                  "Size Height (Y)",
+                  "Size Depth (Z)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "color",
+                "label": "Color",
+                "tech": "diffuseColor · SFColor",
+                "state": "",
+                "values": [],
+                "color": "#ff0000",
+                "names": [
+                  "Color"
+                ],
+                "message": "Applied."
+              }
+            ],
+            "treeRows": [
+              "Document",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box"
+            ],
+            "remembered": "code"
+          }
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-color",
+          "result": {
+            "id": "node-17-261",
+            "kind": "Node",
+            "nodeType": "Transform",
+            "def": null,
+            "ordinal": 0,
+            "rowId": "node-17-261",
+            "rowCount": 6
+          }
+        },
+        {
+          "call": "historyDepth",
+          "args": [],
+          "label": "hist-color",
+          "result": {
+            "undo": 5,
+            "redo": 0
+          }
+        },
+        {
+          "call": "previewScene",
+          "args": [],
+          "label": "scene-color",
+          "result": {
+            "counts": {
+              "Transform": 1,
+              "Shape": 1,
+              "Appearance": 1,
+              "Material": 1,
+              "Box": 1
+            },
+            "translations": [
+              [
+                3,
+                0,
+                0
+              ]
+            ],
+            "boxes": [
+              [
+                2,
+                1,
+                0.5
+              ]
+            ],
+            "spheres": [],
+            "colors": [
+              [
+                1,
+                0,
+                0
+              ]
+            ]
+          }
+        },
+        {
+          "call": "previewBBox",
+          "args": [],
+          "label": "bbox-color",
+          "result": {
+            "min": [
+              1.8827046688075257,
+              -0.9182168195493894,
+              -0.25
+            ],
+            "max": [
+              4.117295331192475,
+              0.9182168195493894,
+              0.25
+            ]
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-c-first-object/qa/wd2-c-first-object/screenshots/05-color-red.png"
+        },
+        {
+          "call": "click",
+          "args": [
+            "duplicateBtn"
+          ],
+          "label": "duplicate",
+          "result": null
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\n\nTransform {\n  rotation 0 0 1 0.5\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n          diffuseColor 1 0 0\n        }\n      }\n      geometry Box {\n        size 2 1 0.5\n      }\n    }\n  ]\n}\nTransform {\n  rotation 0 0 1 0.5\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n          diffuseColor 1 0 0\n        }\n      }\n      geometry Box {\n        size 2 1 0.5\n      }\n    }\n  ]\n}\n"
+          ],
+          "label": "buf-duplicate",
+          "result": true
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-duplicate",
+          "result": {
+            "mode": "model",
+            "sourceOpen": false,
+            "mainClass": "main layout-split workspace-model",
+            "editorVisible": false,
+            "previewVisible": true,
+            "selected": "Selected: Box",
+            "status": "Box duplicated. The copy is selected.",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": "Box",
+            "empty": null,
+            "props": [
+              {
+                "key": "position",
+                "label": "Position",
+                "tech": "translation · SFVec3f",
+                "state": "",
+                "values": [
+                  "3",
+                  "0",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Position X",
+                  "Position Y",
+                  "Position Z"
+                ],
+                "message": ""
+              },
+              {
+                "key": "rotation",
+                "label": "Rotation",
+                "tech": "rotation · SFRotation",
+                "state": "",
+                "values": [
+                  "0",
+                  "0",
+                  "1",
+                  "0.5"
+                ],
+                "color": null,
+                "names": [
+                  "Rotation Axis X",
+                  "Rotation Axis Y",
+                  "Rotation Axis Z",
+                  "Rotation Angle (radians)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "size",
+                "label": "Size",
+                "tech": "size · SFVec3f",
+                "state": "",
+                "values": [
+                  "2",
+                  "1",
+                  "0.5"
+                ],
+                "color": null,
+                "names": [
+                  "Size Width (X)",
+                  "Size Height (Y)",
+                  "Size Depth (Z)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "color",
+                "label": "Color",
+                "tech": "diffuseColor · SFColor",
+                "state": "",
+                "values": [],
+                "color": "#ff0000",
+                "names": [
+                  "Color"
+                ],
+                "message": ""
+              }
+            ],
+            "treeRows": [
+              "Document",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box"
+            ],
+            "remembered": "code"
+          }
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-duplicate",
+          "result": {
+            "id": "node-262-506",
+            "kind": "Node",
+            "nodeType": "Transform",
+            "def": null,
+            "ordinal": 1,
+            "rowId": "node-262-506",
+            "rowCount": 11
+          }
+        },
+        {
+          "call": "historyDepth",
+          "args": [],
+          "label": "hist-duplicate",
+          "result": {
+            "undo": 6,
+            "redo": 0
+          }
+        },
+        {
+          "call": "previewScene",
+          "args": [],
+          "label": "scene-duplicate",
+          "result": {
+            "counts": {
+              "Transform": 2,
+              "Shape": 2,
+              "Appearance": 2,
+              "Material": 2,
+              "Box": 2
+            },
+            "translations": [
+              [
+                3,
+                0,
+                0
+              ],
+              [
+                3,
+                0,
+                0
+              ]
+            ],
+            "boxes": [
+              [
+                2,
+                1,
+                0.5
+              ],
+              [
+                2,
+                1,
+                0.5
+              ]
+            ],
+            "spheres": [],
+            "colors": [
+              [
+                1,
+                0,
+                0
+              ],
+              [
+                1,
+                0,
+                0
+              ]
+            ]
+          }
+        },
+        {
+          "call": "previewBBox",
+          "args": [],
+          "label": "bbox-duplicate",
+          "result": {
+            "min": [
+              1.8827046688075257,
+              -0.9182168195493894,
+              -0.25
+            ],
+            "max": [
+              4.117295331192475,
+              0.9182168195493894,
+              0.25
+            ]
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-c-first-object/qa/wd2-c-first-object/screenshots/06-duplicated.png"
+        },
+        {
+          "call": "click",
+          "args": [
+            "undoBtn"
+          ],
+          "label": "undo-dup",
+          "result": null
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\n\nTransform {\n  rotation 0 0 1 0.5\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n          diffuseColor 1 0 0\n        }\n      }\n      geometry Box {\n        size 2 1 0.5\n      }\n    }\n  ]\n}\n"
+          ],
+          "label": "buf-undo-dup",
+          "result": true
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-undo-dup",
+          "result": {
+            "mode": "model",
+            "sourceOpen": false,
+            "mainClass": "main layout-split workspace-model",
+            "editorVisible": false,
+            "previewVisible": true,
+            "selected": "Nothing selected",
+            "status": "Box duplicated. The copy is selected.",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": true,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": true,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": null,
+            "empty": "Add a Box or Sphere, or select one in the Scene tree.",
+            "props": [],
+            "treeRows": [
+              "Document",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box"
+            ],
+            "remembered": "code"
+          }
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-undo-dup",
+          "result": null
+        },
+        {
+          "call": "historyDepth",
+          "args": [],
+          "label": "hist-undo-dup",
+          "result": {
+            "undo": 5,
+            "redo": 1
+          }
+        },
+        {
+          "call": "previewScene",
+          "args": [],
+          "label": "scene-undo-dup",
+          "result": {
+            "counts": {
+              "Transform": 1,
+              "Shape": 1,
+              "Appearance": 1,
+              "Material": 1,
+              "Box": 1
+            },
+            "translations": [
+              [
+                3,
+                0,
+                0
+              ]
+            ],
+            "boxes": [
+              [
+                2,
+                1,
+                0.5
+              ]
+            ],
+            "spheres": [],
+            "colors": [
+              [
+                1,
+                0,
+                0
+              ]
+            ]
+          }
+        },
+        {
+          "call": "previewBBox",
+          "args": [],
+          "label": "bbox-undo-dup",
+          "result": {
+            "min": [
+              1.8827046688075257,
+              -0.9182168195493894,
+              -0.25
+            ],
+            "max": [
+              4.117295331192475,
+              0.9182168195493894,
+              0.25
+            ]
+          }
+        },
+        {
+          "call": "inspectorFields",
+          "args": [],
+          "label": "inspector-undo-dup",
+          "result": {
+            "notice": "Note: Selection cleared: the previously selected item could not be proven to be the same item after this change.",
+            "fields": []
+          }
+        },
+        {
+          "call": "click",
+          "args": [
+            "redoBtn"
+          ],
+          "label": "redo-dup",
+          "result": null
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\n\nTransform {\n  rotation 0 0 1 0.5\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n          diffuseColor 1 0 0\n        }\n      }\n      geometry Box {\n        size 2 1 0.5\n      }\n    }\n  ]\n}\nTransform {\n  rotation 0 0 1 0.5\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n          diffuseColor 1 0 0\n        }\n      }\n      geometry Box {\n        size 2 1 0.5\n      }\n    }\n  ]\n}\n"
+          ],
+          "label": "buf-redo-dup",
+          "result": true
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-redo-dup",
+          "result": {
+            "mode": "model",
+            "sourceOpen": false,
+            "mainClass": "main layout-split workspace-model",
+            "editorVisible": false,
+            "previewVisible": true,
+            "selected": "Nothing selected",
+            "status": "Box duplicated. The copy is selected.",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": true,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": true,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": null,
+            "empty": "Add a Box or Sphere, or select one in the Scene tree.",
+            "props": [],
+            "treeRows": [
+              "Document",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box"
+            ],
+            "remembered": "code"
+          }
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-redo-dup",
+          "result": null
+        },
+        {
+          "call": "historyDepth",
+          "args": [],
+          "label": "hist-redo-dup",
+          "result": {
+            "undo": 6,
+            "redo": 0
+          }
+        },
+        {
+          "call": "previewScene",
+          "args": [],
+          "label": "scene-redo-dup",
+          "result": {
+            "counts": {
+              "Transform": 2,
+              "Shape": 2,
+              "Appearance": 2,
+              "Material": 2,
+              "Box": 2
+            },
+            "translations": [
+              [
+                3,
+                0,
+                0
+              ],
+              [
+                3,
+                0,
+                0
+              ]
+            ],
+            "boxes": [
+              [
+                2,
+                1,
+                0.5
+              ],
+              [
+                2,
+                1,
+                0.5
+              ]
+            ],
+            "spheres": [],
+            "colors": [
+              [
+                1,
+                0,
+                0
+              ],
+              [
+                1,
+                0,
+                0
+              ]
+            ]
+          }
+        },
+        {
+          "call": "previewBBox",
+          "args": [],
+          "label": "bbox-redo-dup",
+          "result": {
+            "min": [
+              1.8827046688075257,
+              -0.9182168195493894,
+              -0.25
+            ],
+            "max": [
+              4.117295331192475,
+              0.9182168195493894,
+              0.25
+            ]
+          }
+        },
+        {
+          "call": "sceneSelectFirst",
+          "args": [
+            "Transform",
+            1
+          ],
+          "label": "select-copy",
+          "result": "node-262-506"
+        },
+        {
+          "call": "click",
+          "args": [
+            "deleteBtn"
+          ],
+          "label": "delete",
+          "result": null
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\n\nTransform {\n  rotation 0 0 1 0.5\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n          diffuseColor 1 0 0\n        }\n      }\n      geometry Box {\n        size 2 1 0.5\n      }\n    }\n  ]\n}\n"
+          ],
+          "label": "buf-delete",
+          "result": true
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-delete",
+          "result": {
+            "mode": "model",
+            "sourceOpen": false,
+            "mainClass": "main layout-split workspace-model",
+            "editorVisible": false,
+            "previewVisible": true,
+            "selected": "Nothing selected",
+            "status": "Box deleted.",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": true,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": true,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": null,
+            "empty": "Add a Box or Sphere, or select one in the Scene tree.",
+            "props": [],
+            "treeRows": [
+              "Document",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box"
+            ],
+            "remembered": "code"
+          }
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-delete",
+          "result": null
+        },
+        {
+          "call": "historyDepth",
+          "args": [],
+          "label": "hist-delete",
+          "result": {
+            "undo": 7,
+            "redo": 0
+          }
+        },
+        {
+          "call": "previewScene",
+          "args": [],
+          "label": "scene-delete",
+          "result": {
+            "counts": {
+              "Transform": 1,
+              "Shape": 1,
+              "Appearance": 1,
+              "Material": 1,
+              "Box": 1
+            },
+            "translations": [
+              [
+                3,
+                0,
+                0
+              ]
+            ],
+            "boxes": [
+              [
+                2,
+                1,
+                0.5
+              ]
+            ],
+            "spheres": [],
+            "colors": [
+              [
+                1,
+                0,
+                0
+              ]
+            ]
+          }
+        },
+        {
+          "call": "previewBBox",
+          "args": [],
+          "label": "bbox-delete",
+          "result": {
+            "min": [
+              1.8827046688075257,
+              -0.9182168195493894,
+              -0.25
+            ],
+            "max": [
+              4.117295331192475,
+              0.9182168195493894,
+              0.25
+            ]
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-c-first-object/qa/wd2-c-first-object/screenshots/07-deleted.png"
+        },
+        {
+          "call": "click",
+          "args": [
+            "undoBtn"
+          ],
+          "label": "undo-delete",
+          "result": null
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\n\nTransform {\n  rotation 0 0 1 0.5\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n          diffuseColor 1 0 0\n        }\n      }\n      geometry Box {\n        size 2 1 0.5\n      }\n    }\n  ]\n}\nTransform {\n  rotation 0 0 1 0.5\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n          diffuseColor 1 0 0\n        }\n      }\n      geometry Box {\n        size 2 1 0.5\n      }\n    }\n  ]\n}\n"
+          ],
+          "label": "buf-undo-delete",
+          "result": true
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-undo-delete",
+          "result": {
+            "mode": "model",
+            "sourceOpen": false,
+            "mainClass": "main layout-split workspace-model",
+            "editorVisible": false,
+            "previewVisible": true,
+            "selected": "Nothing selected",
+            "status": "Box deleted.",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": true,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": true,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": null,
+            "empty": "Add a Box or Sphere, or select one in the Scene tree.",
+            "props": [],
+            "treeRows": [
+              "Document",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box"
+            ],
+            "remembered": "code"
+          }
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-undo-delete",
+          "result": null
+        },
+        {
+          "call": "historyDepth",
+          "args": [],
+          "label": "hist-undo-delete",
+          "result": {
+            "undo": 6,
+            "redo": 1
+          }
+        },
+        {
+          "call": "previewScene",
+          "args": [],
+          "label": "scene-undo-delete",
+          "result": {
+            "counts": {
+              "Transform": 2,
+              "Shape": 2,
+              "Appearance": 2,
+              "Material": 2,
+              "Box": 2
+            },
+            "translations": [
+              [
+                3,
+                0,
+                0
+              ],
+              [
+                3,
+                0,
+                0
+              ]
+            ],
+            "boxes": [
+              [
+                2,
+                1,
+                0.5
+              ],
+              [
+                2,
+                1,
+                0.5
+              ]
+            ],
+            "spheres": [],
+            "colors": [
+              [
+                1,
+                0,
+                0
+              ],
+              [
+                1,
+                0,
+                0
+              ]
+            ]
+          }
+        },
+        {
+          "call": "previewBBox",
+          "args": [],
+          "label": "bbox-undo-delete",
+          "result": {
+            "min": [
+              1.8827046688075257,
+              -0.9182168195493894,
+              -0.25
+            ],
+            "max": [
+              4.117295331192475,
+              0.9182168195493894,
+              0.25
+            ]
+          }
+        },
+        {
+          "call": "click",
+          "args": [
+            "addSphereBtn"
+          ],
+          "label": "add-sphere",
+          "result": null
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\n\nTransform {\n  rotation 0 0 1 0.5\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n          diffuseColor 1 0 0\n        }\n      }\n      geometry Box {\n        size 2 1 0.5\n      }\n    }\n  ]\n}\nTransform {\n  rotation 0 0 1 0.5\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n          diffuseColor 1 0 0\n        }\n      }\n      geometry Box {\n        size 2 1 0.5\n      }\n    }\n  ]\n}\n\nTransform {\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n        }\n      }\n      geometry Sphere {\n      }\n    }\n  ]\n}\n"
+          ],
+          "label": "buf-add-sphere",
+          "result": true
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-add-sphere",
+          "result": {
+            "mode": "model",
+            "sourceOpen": false,
+            "mainClass": "main layout-split workspace-model",
+            "editorVisible": false,
+            "previewVisible": true,
+            "selected": "Selected: Sphere",
+            "status": "Sphere created at origin.",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": "Sphere",
+            "empty": null,
+            "props": [
+              {
+                "key": "position",
+                "label": "Position",
+                "tech": "translation · SFVec3f",
+                "state": "(default)",
+                "values": [
+                  "0",
+                  "0",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Position X",
+                  "Position Y",
+                  "Position Z"
+                ],
+                "message": ""
+              },
+              {
+                "key": "rotation",
+                "label": "Rotation",
+                "tech": "rotation · SFRotation",
+                "state": "(default)",
+                "values": [
+                  "0",
+                  "0",
+                  "1",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Rotation Axis X",
+                  "Rotation Axis Y",
+                  "Rotation Axis Z",
+                  "Rotation Angle (radians)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "radius",
+                "label": "Radius",
+                "tech": "radius · SFFloat",
+                "state": "(default)",
+                "values": [
+                  "1"
+                ],
+                "color": null,
+                "names": [
+                  "Radius Radius"
+                ],
+                "message": ""
+              },
+              {
+                "key": "color",
+                "label": "Color",
+                "tech": "diffuseColor · SFColor",
+                "state": "(default)",
+                "values": [],
+                "color": "#cccccc",
+                "names": [
+                  "Color"
+                ],
+                "message": ""
+              }
+            ],
+            "treeRows": [
+              "Document",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box",
+              "SphereTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Sphere"
+            ],
+            "remembered": "code"
+          }
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-add-sphere",
+          "result": {
+            "id": "node-508-664",
+            "kind": "Node",
+            "nodeType": "Transform",
+            "def": null,
+            "ordinal": 2,
+            "rowId": "node-508-664",
+            "rowCount": 16
+          }
+        },
+        {
+          "call": "historyDepth",
+          "args": [],
+          "label": "hist-add-sphere",
+          "result": {
+            "undo": 7,
+            "redo": 0
+          }
+        },
+        {
+          "call": "previewScene",
+          "args": [],
+          "label": "scene-add-sphere",
+          "result": {
+            "counts": {
+              "Transform": 3,
+              "Shape": 3,
+              "Appearance": 3,
+              "Material": 3,
+              "Box": 2,
+              "Sphere": 1
+            },
+            "translations": [
+              [
+                3,
+                0,
+                0
+              ],
+              [
+                3,
+                0,
+                0
+              ],
+              [
+                0,
+                0,
+                0
+              ]
+            ],
+            "boxes": [
+              [
+                2,
+                1,
+                0.5
+              ],
+              [
+                2,
+                1,
+                0.5
+              ]
+            ],
+            "spheres": [
+              1
+            ],
+            "colors": [
+              [
+                1,
+                0,
+                0
+              ],
+              [
+                1,
+                0,
+                0
+              ],
+              [
+                0.8,
+                0.8,
+                0.8
+              ]
+            ]
+          }
+        },
+        {
+          "call": "previewBBox",
+          "args": [],
+          "label": "bbox-add-sphere",
+          "result": {
+            "min": [
+              -1,
+              -1,
+              -1
+            ],
+            "max": [
+              4.117295331192475,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "call": "propSet",
+          "args": [
+            "radius",
+            0,
+            "2"
+          ],
+          "label": "type-radius",
+          "result": true
+        },
+        {
+          "call": "propKey",
+          "args": [
+            "radius",
+            0,
+            "Enter"
+          ],
+          "label": "enter-radius",
+          "result": true
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\n\nTransform {\n  rotation 0 0 1 0.5\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n          diffuseColor 1 0 0\n        }\n      }\n      geometry Box {\n        size 2 1 0.5\n      }\n    }\n  ]\n}\nTransform {\n  rotation 0 0 1 0.5\n  translation 3 0 0\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n          diffuseColor 1 0 0\n        }\n      }\n      geometry Box {\n        size 2 1 0.5\n      }\n    }\n  ]\n}\n\nTransform {\n  children [\n    Shape {\n      appearance Appearance {\n        material Material {\n        }\n      }\n      geometry Sphere {\n        radius 2\n      }\n    }\n  ]\n}\n"
+          ],
+          "label": "buf-radius",
+          "result": true
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-radius",
+          "result": {
+            "mode": "model",
+            "sourceOpen": false,
+            "mainClass": "main layout-split workspace-model",
+            "editorVisible": false,
+            "previewVisible": true,
+            "selected": "Selected: Sphere",
+            "status": "",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": "Sphere",
+            "empty": null,
+            "props": [
+              {
+                "key": "position",
+                "label": "Position",
+                "tech": "translation · SFVec3f",
+                "state": "(default)",
+                "values": [
+                  "0",
+                  "0",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Position X",
+                  "Position Y",
+                  "Position Z"
+                ],
+                "message": ""
+              },
+              {
+                "key": "rotation",
+                "label": "Rotation",
+                "tech": "rotation · SFRotation",
+                "state": "(default)",
+                "values": [
+                  "0",
+                  "0",
+                  "1",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Rotation Axis X",
+                  "Rotation Axis Y",
+                  "Rotation Axis Z",
+                  "Rotation Angle (radians)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "radius",
+                "label": "Radius",
+                "tech": "radius · SFFloat",
+                "state": "",
+                "values": [
+                  "2"
+                ],
+                "color": null,
+                "names": [
+                  "Radius Radius"
+                ],
+                "message": "Applied."
+              },
+              {
+                "key": "color",
+                "label": "Color",
+                "tech": "diffuseColor · SFColor",
+                "state": "(default)",
+                "values": [],
+                "color": "#cccccc",
+                "names": [
+                  "Color"
+                ],
+                "message": ""
+              }
+            ],
+            "treeRows": [
+              "Document",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box",
+              "SphereTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Sphere"
+            ],
+            "remembered": "code"
+          }
+        },
+        {
+          "call": "sceneSelection",
+          "args": [],
+          "label": "sel-radius",
+          "result": {
+            "id": "node-508-681",
+            "kind": "Node",
+            "nodeType": "Transform",
+            "def": null,
+            "ordinal": 2,
+            "rowId": "node-508-681",
+            "rowCount": 16
+          }
+        },
+        {
+          "call": "historyDepth",
+          "args": [],
+          "label": "hist-radius",
+          "result": {
+            "undo": 8,
+            "redo": 0
+          }
+        },
+        {
+          "call": "previewScene",
+          "args": [],
+          "label": "scene-radius",
+          "result": {
+            "counts": {
+              "Transform": 3,
+              "Shape": 3,
+              "Appearance": 3,
+              "Material": 3,
+              "Box": 2,
+              "Sphere": 1
+            },
+            "translations": [
+              [
+                3,
+                0,
+                0
+              ],
+              [
+                3,
+                0,
+                0
+              ],
+              [
+                0,
+                0,
+                0
+              ]
+            ],
+            "boxes": [
+              [
+                2,
+                1,
+                0.5
+              ],
+              [
+                2,
+                1,
+                0.5
+              ]
+            ],
+            "spheres": [
+              2
+            ],
+            "colors": [
+              [
+                1,
+                0,
+                0
+              ],
+              [
+                1,
+                0,
+                0
+              ],
+              [
+                0.8,
+                0.8,
+                0.8
+              ]
+            ]
+          }
+        },
+        {
+          "call": "previewBBox",
+          "args": [],
+          "label": "bbox-radius",
+          "result": {
+            "min": [
+              -2,
+              -2,
+              -2
+            ],
+            "max": [
+              4.117295331192475,
+              2,
+              2
+            ]
+          }
+        },
+        {
+          "call": "inspectorFields",
+          "args": [],
+          "label": "inspector-radius",
+          "result": {
+            "notice": null,
+            "fields": [
+              {
+                "name": "children",
+                "type": "MFNode",
+                "state": "read-only",
+                "values": [],
+                "invalid": [],
+                "names": [],
+                "message": "",
+                "reason": "Read-only: type not editable yet."
+              }
+            ]
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-c-first-object/qa/wd2-c-first-object/screenshots/08-sphere-radius.png"
+        },
+        {
+          "call": "click",
+          "args": [
+            "sourceToggleBtn"
+          ],
+          "label": "show-source",
+          "result": null
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-source",
+          "result": {
+            "mode": "model",
+            "sourceOpen": true,
+            "mainClass": "main layout-split workspace-model source-open",
+            "editorVisible": true,
+            "previewVisible": true,
+            "selected": "Selected: Sphere",
+            "status": "",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Hide Source"
+              }
+            ],
+            "title": "Sphere",
+            "empty": null,
+            "props": [
+              {
+                "key": "position",
+                "label": "Position",
+                "tech": "translation · SFVec3f",
+                "state": "(default)",
+                "values": [
+                  "0",
+                  "0",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Position X",
+                  "Position Y",
+                  "Position Z"
+                ],
+                "message": ""
+              },
+              {
+                "key": "rotation",
+                "label": "Rotation",
+                "tech": "rotation · SFRotation",
+                "state": "(default)",
+                "values": [
+                  "0",
+                  "0",
+                  "1",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Rotation Axis X",
+                  "Rotation Axis Y",
+                  "Rotation Axis Z",
+                  "Rotation Angle (radians)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "radius",
+                "label": "Radius",
+                "tech": "radius · SFFloat",
+                "state": "",
+                "values": [
+                  "2"
+                ],
+                "color": null,
+                "names": [
+                  "Radius Radius"
+                ],
+                "message": "Applied."
+              },
+              {
+                "key": "color",
+                "label": "Color",
+                "tech": "diffuseColor · SFColor",
+                "state": "(default)",
+                "values": [],
+                "color": "#cccccc",
+                "names": [
+                  "Color"
+                ],
+                "message": ""
+              }
+            ],
+            "treeRows": [
+              "Document",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box",
+              "SphereTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Sphere"
+            ],
+            "remembered": "code"
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-c-first-object/qa/wd2-c-first-object/screenshots/09-source-open.png"
+        },
+        {
+          "call": "click",
+          "args": [
+            "saveBtn"
+          ],
+          "label": "save",
+          "result": null
+        },
+        {
+          "call": "status",
+          "args": [],
+          "label": "status-saved",
+          "result": {
+            "file": "first-object.wrl",
+            "format": "Plain",
+            "dirty": false,
+            "save": "Saved",
+            "diag": "0",
+            "adv": "0",
+            "outlineRows": 15
+          }
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "end",
+          "result": {
+            "mode": "model",
+            "sourceOpen": true,
+            "mainClass": "main layout-split workspace-model source-open",
+            "editorVisible": true,
+            "previewVisible": true,
+            "selected": "Selected: Sphere",
+            "status": "",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Hide Source"
+              }
+            ],
+            "title": "Sphere",
+            "empty": null,
+            "props": [
+              {
+                "key": "position",
+                "label": "Position",
+                "tech": "translation · SFVec3f",
+                "state": "(default)",
+                "values": [
+                  "0",
+                  "0",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Position X",
+                  "Position Y",
+                  "Position Z"
+                ],
+                "message": ""
+              },
+              {
+                "key": "rotation",
+                "label": "Rotation",
+                "tech": "rotation · SFRotation",
+                "state": "(default)",
+                "values": [
+                  "0",
+                  "0",
+                  "1",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Rotation Axis X",
+                  "Rotation Axis Y",
+                  "Rotation Axis Z",
+                  "Rotation Angle (radians)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "radius",
+                "label": "Radius",
+                "tech": "radius · SFFloat",
+                "state": "",
+                "values": [
+                  "2"
+                ],
+                "color": null,
+                "names": [
+                  "Radius Radius"
+                ],
+                "message": "Applied."
+              },
+              {
+                "key": "color",
+                "label": "Color",
+                "tech": "diffuseColor · SFColor",
+                "state": "(default)",
+                "values": [],
+                "color": "#cccccc",
+                "names": [
+                  "Color"
+                ],
+                "message": ""
+              }
+            ],
+            "treeRows": [
+              "Document",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box",
+              "SphereTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Sphere"
+            ],
+            "remembered": "code"
+          }
+        }
+      ]
+    },
+    {
+      "id": "reopen",
+      "editor": {
+        "file": "first-object.wrl",
+        "format": "Plain",
+        "dirty": false,
+        "save": "No changes",
+        "diag": "0",
+        "adv": "0",
+        "outlineRows": 15
+      },
+      "preview": {
+        "state": "current",
+        "failureCategory": null,
+        "displayedGeneration": 1,
+        "requestedGeneration": 1,
+        "haveLastValid": true,
+        "saved": false,
+        "sizeTier": "auto",
+        "context": "mall",
+        "newRefs": 0,
+        "lastRenderMs": 526,
+        "layout": "split",
+        "split": 0.2,
+        "chip": "Live",
+        "world": null
+      },
+      "steps": [
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-open",
+          "result": {
+            "mode": "code",
+            "sourceOpen": false,
+            "mainClass": "main layout-split",
+            "editorVisible": true,
+            "previewVisible": true,
+            "selected": "Nothing selected",
+            "status": "",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": true,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": true,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": true,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": null,
+            "empty": "Add a Box or Sphere, or select one in the Scene tree.",
+            "props": [],
+            "treeRows": [
+              "Document",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box",
+              "SphereTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Sphere"
+            ],
+            "remembered": "code"
+          }
+        },
+        {
+          "call": "sceneSelectFirst",
+          "args": [
+            "Transform",
+            0
+          ],
+          "label": "select-first",
+          "result": "node-17-261"
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-selected",
+          "result": {
+            "mode": "code",
+            "sourceOpen": false,
+            "mainClass": "main layout-split",
+            "editorVisible": true,
+            "previewVisible": true,
+            "selected": "Selected: Box",
+            "status": "",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": true,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": "Box",
+            "empty": null,
+            "props": [
+              {
+                "key": "position",
+                "label": "Position",
+                "tech": "translation · SFVec3f",
+                "state": "",
+                "values": [
+                  "3",
+                  "0",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Position X",
+                  "Position Y",
+                  "Position Z"
+                ],
+                "message": ""
+              },
+              {
+                "key": "rotation",
+                "label": "Rotation",
+                "tech": "rotation · SFRotation",
+                "state": "",
+                "values": [
+                  "0",
+                  "0",
+                  "1",
+                  "0.5"
+                ],
+                "color": null,
+                "names": [
+                  "Rotation Axis X",
+                  "Rotation Axis Y",
+                  "Rotation Axis Z",
+                  "Rotation Angle (radians)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "size",
+                "label": "Size",
+                "tech": "size · SFVec3f",
+                "state": "",
+                "values": [
+                  "2",
+                  "1",
+                  "0.5"
+                ],
+                "color": null,
+                "names": [
+                  "Size Width (X)",
+                  "Size Height (Y)",
+                  "Size Depth (Z)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "color",
+                "label": "Color",
+                "tech": "diffuseColor · SFColor",
+                "state": "",
+                "values": [],
+                "color": "#ff0000",
+                "names": [
+                  "Color"
+                ],
+                "message": ""
+              }
+            ],
+            "treeRows": [
+              "Document",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box",
+              "SphereTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Sphere"
+            ],
+            "remembered": "code"
+          }
+        },
+        {
+          "call": "previewScene",
+          "args": [],
+          "label": "scene-open",
+          "result": {
+            "counts": {
+              "Transform": 3,
+              "Shape": 3,
+              "Appearance": 3,
+              "Material": 3,
+              "Box": 2,
+              "Sphere": 1
+            },
+            "translations": [
+              [
+                3,
+                0,
+                0
+              ],
+              [
+                3,
+                0,
+                0
+              ],
+              [
+                0,
+                0,
+                0
+              ]
+            ],
+            "boxes": [
+              [
+                2,
+                1,
+                0.5
+              ],
+              [
+                2,
+                1,
+                0.5
+              ]
+            ],
+            "spheres": [
+              2
+            ],
+            "colors": [
+              [
+                1,
+                0,
+                0
+              ],
+              [
+                1,
+                0,
+                0
+              ],
+              [
+                0.8,
+                0.8,
+                0.8
+              ]
+            ]
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-c-first-object/qa/wd2-c-first-object/screenshots/10-reopened-code-mode.png"
+        },
+        {
+          "call": "click",
+          "args": [
+            "modeModelBtn"
+          ],
+          "label": "switch-model",
+          "result": null
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-switched",
+          "result": {
+            "mode": "model",
+            "sourceOpen": false,
+            "mainClass": "main layout-split workspace-model",
+            "editorVisible": false,
+            "previewVisible": true,
+            "selected": "Selected: Box",
+            "status": "",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": "Box",
+            "empty": null,
+            "props": [
+              {
+                "key": "position",
+                "label": "Position",
+                "tech": "translation · SFVec3f",
+                "state": "",
+                "values": [
+                  "3",
+                  "0",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Position X",
+                  "Position Y",
+                  "Position Z"
+                ],
+                "message": ""
+              },
+              {
+                "key": "rotation",
+                "label": "Rotation",
+                "tech": "rotation · SFRotation",
+                "state": "",
+                "values": [
+                  "0",
+                  "0",
+                  "1",
+                  "0.5"
+                ],
+                "color": null,
+                "names": [
+                  "Rotation Axis X",
+                  "Rotation Axis Y",
+                  "Rotation Axis Z",
+                  "Rotation Angle (radians)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "size",
+                "label": "Size",
+                "tech": "size · SFVec3f",
+                "state": "",
+                "values": [
+                  "2",
+                  "1",
+                  "0.5"
+                ],
+                "color": null,
+                "names": [
+                  "Size Width (X)",
+                  "Size Height (Y)",
+                  "Size Depth (Z)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "color",
+                "label": "Color",
+                "tech": "diffuseColor · SFColor",
+                "state": "",
+                "values": [],
+                "color": "#ff0000",
+                "names": [
+                  "Color"
+                ],
+                "message": ""
+              }
+            ],
+            "treeRows": [
+              "Document",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box",
+              "SphereTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Sphere"
+            ],
+            "remembered": "model"
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-c-first-object/qa/wd2-c-first-object/screenshots/11-switched-to-model.png"
+        }
+      ]
+    },
+    {
+      "id": "refusals",
+      "editor": {
+        "file": "shared.wrl",
+        "format": "Plain",
+        "dirty": true,
+        "save": "Unsaved changes",
+        "diag": "3",
+        "adv": "0",
+        "outlineRows": 2
+      },
+      "preview": {
+        "state": "showing-last-valid",
+        "failureCategory": "scene-load",
+        "displayedGeneration": 1,
+        "requestedGeneration": 2,
+        "haveLastValid": true,
+        "saved": false,
+        "sizeTier": "auto",
+        "context": "mall",
+        "newRefs": 0,
+        "lastRenderMs": 5,
+        "layout": "split",
+        "split": 0.2,
+        "chip": "Showing last good version",
+        "world": null
+      },
+      "steps": [
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-open",
+          "result": {
+            "mode": "model",
+            "sourceOpen": false,
+            "mainClass": "main layout-split workspace-model",
+            "editorVisible": false,
+            "previewVisible": true,
+            "selected": "Nothing selected",
+            "status": "",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": true,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": true,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": null,
+            "empty": "Add a Box or Sphere, or select one in the Scene tree.",
+            "props": [],
+            "treeRows": [
+              "Document",
+              "SphereDEF Lamp Transform",
+              "Shape",
+              "Sphere",
+              "Group",
+              "→ USE Lamp"
+            ],
+            "remembered": "model"
+          }
+        },
+        {
+          "call": "sceneSelectFirst",
+          "args": [
+            "Transform",
+            0
+          ],
+          "label": "select-def",
+          "result": "node-16-81"
+        },
+        {
+          "call": "click",
+          "args": [
+            "duplicateBtn"
+          ],
+          "label": "dup-def",
+          "result": null
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-dup-def",
+          "result": {
+            "mode": "model",
+            "sourceOpen": false,
+            "mainClass": "main layout-split workspace-model",
+            "editorVisible": false,
+            "previewVisible": true,
+            "selected": "Selected: Sphere",
+            "status": "Cannot duplicate this object because it contains a DEF name that would conflict (Lamp).",
+            "statusError": true,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": "Sphere",
+            "empty": null,
+            "props": [
+              {
+                "key": "position",
+                "label": "Position",
+                "tech": "translation · SFVec3f",
+                "state": "(default)",
+                "values": [
+                  "0",
+                  "0",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Position X",
+                  "Position Y",
+                  "Position Z"
+                ],
+                "message": ""
+              },
+              {
+                "key": "rotation",
+                "label": "Rotation",
+                "tech": "rotation · SFRotation",
+                "state": "(default)",
+                "values": [
+                  "0",
+                  "0",
+                  "1",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Rotation Axis X",
+                  "Rotation Axis Y",
+                  "Rotation Axis Z",
+                  "Rotation Angle (radians)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "radius",
+                "label": "Radius",
+                "tech": "radius · SFFloat",
+                "state": "(default)",
+                "values": [
+                  "1"
+                ],
+                "color": null,
+                "names": [
+                  "Radius Radius"
+                ],
+                "message": ""
+              },
+              {
+                "key": "color",
+                "label": "Color",
+                "tech": "diffuseColor · SFColor",
+                "state": "(default)",
+                "values": [],
+                "color": null,
+                "names": [],
+                "message": "Read-only: This object has no Material, so its color cannot be changed here."
+              }
+            ],
+            "treeRows": [
+              "Document",
+              "SphereDEF Lamp Transform",
+              "Shape",
+              "Sphere",
+              "Group",
+              "→ USE Lamp"
+            ],
+            "remembered": "model"
+          }
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\nDEF Lamp Transform { children [ Shape { geometry Sphere { } } ] }\nGroup { children [ USE Lamp ] }\n"
+          ],
+          "label": "buf-dup-def",
+          "result": true
+        },
+        {
+          "call": "click",
+          "args": [
+            "deleteBtn"
+          ],
+          "label": "del-ref",
+          "result": null
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-del-ref",
+          "result": {
+            "mode": "model",
+            "sourceOpen": false,
+            "mainClass": "main layout-split workspace-model",
+            "editorVisible": false,
+            "previewVisible": true,
+            "selected": "Selected: Sphere",
+            "status": "Cannot delete this object because other nodes reference it (Lamp).",
+            "statusError": true,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": "Sphere",
+            "empty": null,
+            "props": [
+              {
+                "key": "position",
+                "label": "Position",
+                "tech": "translation · SFVec3f",
+                "state": "(default)",
+                "values": [
+                  "0",
+                  "0",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Position X",
+                  "Position Y",
+                  "Position Z"
+                ],
+                "message": ""
+              },
+              {
+                "key": "rotation",
+                "label": "Rotation",
+                "tech": "rotation · SFRotation",
+                "state": "(default)",
+                "values": [
+                  "0",
+                  "0",
+                  "1",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Rotation Axis X",
+                  "Rotation Axis Y",
+                  "Rotation Axis Z",
+                  "Rotation Angle (radians)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "radius",
+                "label": "Radius",
+                "tech": "radius · SFFloat",
+                "state": "(default)",
+                "values": [
+                  "1"
+                ],
+                "color": null,
+                "names": [
+                  "Radius Radius"
+                ],
+                "message": ""
+              },
+              {
+                "key": "color",
+                "label": "Color",
+                "tech": "diffuseColor · SFColor",
+                "state": "(default)",
+                "values": [],
+                "color": null,
+                "names": [],
+                "message": "Read-only: This object has no Material, so its color cannot be changed here."
+              }
+            ],
+            "treeRows": [
+              "Document",
+              "SphereDEF Lamp Transform",
+              "Shape",
+              "Sphere",
+              "Group",
+              "→ USE Lamp"
+            ],
+            "remembered": "model"
+          }
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\nDEF Lamp Transform { children [ Shape { geometry Sphere { } } ] }\nGroup { children [ USE Lamp ] }\n"
+          ],
+          "label": "buf-del-ref",
+          "result": true
+        },
+        {
+          "call": "historyDepth",
+          "args": [],
+          "label": "hist-refusals",
+          "result": {
+            "undo": 0,
+            "redo": 0
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-c-first-object/qa/wd2-c-first-object/screenshots/12-refusals.png"
+        },
+        {
+          "call": "setText",
+          "args": [
+            "#VRML V2.0 utf8\nTransform { children [ Shape {\n"
+          ],
+          "label": "break",
+          "result": true
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-broken",
+          "result": {
+            "mode": "model",
+            "sourceOpen": true,
+            "mainClass": "main layout-split workspace-model source-open",
+            "editorVisible": true,
+            "previewVisible": true,
+            "selected": "Nothing selected",
+            "status": "The document has syntax errors, so visual editing is paused. Fix them in Source.",
+            "statusError": true,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": true,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": true,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Hide Source"
+              }
+            ],
+            "title": null,
+            "empty": "Add a Box or Sphere, or select one in the Scene tree.",
+            "props": [],
+            "treeRows": [
+              "Document",
+              "Transform",
+              "Shape"
+            ],
+            "remembered": "model"
+          }
+        },
+        {
+          "call": "click",
+          "args": [
+            "addBoxBtn"
+          ],
+          "label": "add-broken",
+          "result": null
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model-add-broken",
+          "result": {
+            "mode": "model",
+            "sourceOpen": true,
+            "mainClass": "main layout-split workspace-model source-open",
+            "editorVisible": true,
+            "previewVisible": true,
+            "selected": "Nothing selected",
+            "status": "Cannot change the scene while the document has syntax errors. Fix them in Source first.",
+            "statusError": true,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": true,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": true,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Hide Source"
+              }
+            ],
+            "title": null,
+            "empty": "Add a Box or Sphere, or select one in the Scene tree.",
+            "props": [],
+            "treeRows": [
+              "Document",
+              "Transform",
+              "Shape"
+            ],
+            "remembered": "model"
+          }
+        },
+        {
+          "call": "bufferEquals",
+          "args": [
+            "#VRML V2.0 utf8\nTransform { children [ Shape {\n"
+          ],
+          "label": "buf-add-broken",
+          "result": true
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-c-first-object/qa/wd2-c-first-object/screenshots/13-damaged-source-opened.png"
+        }
+      ]
+    },
+    {
+      "id": "contrast-zoom",
+      "editor": {
+        "file": "contrast.wrl",
+        "format": "Plain",
+        "dirty": false,
+        "save": "No changes",
+        "diag": "0",
+        "adv": "0",
+        "outlineRows": 5
+      },
+      "preview": {
+        "state": "current",
+        "failureCategory": null,
+        "displayedGeneration": 1,
+        "requestedGeneration": 1,
+        "haveLastValid": true,
+        "saved": false,
+        "sizeTier": "auto",
+        "context": "mall",
+        "newRefs": 0,
+        "lastRenderMs": 579,
+        "layout": "split",
+        "split": 0.2,
+        "chip": "Live",
+        "world": null
+      },
+      "steps": [
+        {
+          "call": "sceneSelectFirst",
+          "args": [
+            "Transform",
+            0
+          ],
+          "label": "select",
+          "result": "node-17-261"
+        },
+        {
+          "call": "propKey",
+          "args": [
+            "position",
+            0,
+            "Tab"
+          ],
+          "label": "focus",
+          "result": true
+        },
+        {
+          "call": "modelState",
+          "args": [],
+          "label": "model",
+          "result": {
+            "mode": "model",
+            "sourceOpen": false,
+            "mainClass": "main layout-split workspace-model",
+            "editorVisible": false,
+            "previewVisible": true,
+            "selected": "Selected: Box",
+            "status": "",
+            "statusError": false,
+            "buttons": [
+              {
+                "id": "addBoxBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Box"
+              },
+              {
+                "id": "addSphereBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Add Sphere"
+              },
+              {
+                "id": "duplicateBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Duplicate"
+              },
+              {
+                "id": "deleteBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": null,
+                "name": "Delete"
+              },
+              {
+                "id": "modeModelBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "true",
+                "name": "Model"
+              },
+              {
+                "id": "modeCodeBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Code"
+              },
+              {
+                "id": "sourceToggleBtn",
+                "disabled": false,
+                "hidden": false,
+                "pressed": "false",
+                "name": "Show Source"
+              }
+            ],
+            "title": "Box",
+            "empty": null,
+            "props": [
+              {
+                "key": "position",
+                "label": "Position",
+                "tech": "translation · SFVec3f",
+                "state": "",
+                "values": [
+                  "3",
+                  "0",
+                  "0"
+                ],
+                "color": null,
+                "names": [
+                  "Position X",
+                  "Position Y",
+                  "Position Z"
+                ],
+                "message": ""
+              },
+              {
+                "key": "rotation",
+                "label": "Rotation",
+                "tech": "rotation · SFRotation",
+                "state": "",
+                "values": [
+                  "0",
+                  "0",
+                  "1",
+                  "0.5"
+                ],
+                "color": null,
+                "names": [
+                  "Rotation Axis X",
+                  "Rotation Axis Y",
+                  "Rotation Axis Z",
+                  "Rotation Angle (radians)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "size",
+                "label": "Size",
+                "tech": "size · SFVec3f",
+                "state": "",
+                "values": [
+                  "2",
+                  "1",
+                  "0.5"
+                ],
+                "color": null,
+                "names": [
+                  "Size Width (X)",
+                  "Size Height (Y)",
+                  "Size Depth (Z)"
+                ],
+                "message": ""
+              },
+              {
+                "key": "color",
+                "label": "Color",
+                "tech": "diffuseColor · SFColor",
+                "state": "",
+                "values": [],
+                "color": "#ff0000",
+                "names": [
+                  "Color"
+                ],
+                "message": ""
+              }
+            ],
+            "treeRows": [
+              "Document",
+              "BoxTransform",
+              "Shape",
+              "Appearance",
+              "Material",
+              "Box"
+            ],
+            "remembered": "model"
+          }
+        },
+        {
+          "capture": "/home/ryan/Projects/cybertown/.worktrees/wrlforge/wd2-c-first-object/qa/wd2-c-first-object/screenshots/14-contrast-zoom-model.png"
+        }
+      ]
+    }
+  ]
+}

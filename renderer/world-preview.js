@@ -30,6 +30,10 @@
   let viewpointNodes = [];         // live X_ITE viewpoint nodes for the selector
   let userNav = null;              // the user's explicit navigation-mode choice
   const runtimeWarnings = [];
+  // WD2-D: the private X_ITE pick adapter for THIS browser (editor page only),
+  // and the generation this engine activated together with its scene.
+  let pickAdapter = null;
+  let pickShown = null;
 
   const el = (id) => document.getElementById(id);
 
@@ -75,14 +79,36 @@
       now: () => Date.now(),
     });
     browser = res.browser;
+    discardPickAdapter();
+    if (window.WrlXitePickAdapter) {
+      pickAdapter = window.WrlXitePickAdapter.createXitePickAdapter({ X3D: window.X3D, browser });
+    }
     // Discover viewpoints authored inside nested Inline scenes too.
     try { browser.setBrowserOption('EnableInlineViewpoints', true); } catch { /* older X_ITE */ }
     return browser;
   }
 
+  function discardPickAdapter() {
+    pickShown = null;
+    if (pickAdapter) pickAdapter.dispose();
+    pickAdapter = null;
+  }
+
+  function retirePick(reason) {
+    pickShown = null;
+    if (pickAdapter) { pickAdapter.abort(); pickAdapter.retire(reason); }
+  }
+
+  // null while `generation` is the displayed one, else the REFUSED_STALE reason.
+  function pickCurrentCheck(generation) {
+    if (!pickShown || !generation || pickShown.generation !== generation) return 'hit-from-another-preview-generation';
+    if (!browser || browser.currentScene !== pickShown.scene) return 'preview-scene-replaced';
+    return null;
+  }
+
   async function ensureBrowser() {
     if (browser && Readiness.isBrowserUsable(browser)) return browser;
-    if (browser) { browser = null; ready = null; }
+    if (browser) { browser = null; ready = null; discardPickAdapter(); }
     if (!ready) {
       ready = acquireBrowser().catch((err) => {
         // Never cache a rejected promise or a half-initialised browser: Refresh
@@ -146,10 +172,24 @@
     // successful refresh can restore it (DEF -> description -> index -> first).
     const prevView = opts && opts.preserveView ? captureViewState() : null;
 
+    // WD2-D: the editor asks for provenance only in the Model workspace, and
+    // only when the World root string IS the edited document.
+    const provenance = opts && opts.provenance && pickAdapter ? opts.provenance : null;
+    pickShown = null;
     try {
       browser.baseURL = payload.baseURL;
-      const scene = await browser.createX3DFromString(payload.text);
+      let scene;
+      let generation = null;
+      if (provenance) {
+        const r = await pickAdapter.parseWithProvenance(payload.text, provenance);
+        if (!r.scene) return { ...debugState(), ok: false, cancelled: true };
+        scene = r.scene;
+        generation = r.generation;
+      } else {
+        scene = await browser.createX3DFromString(payload.text);
+      }
       await browser.replaceWorld(scene);
+      pickShown = generation && pickAdapter.activate(generation, scene) ? { generation, scene } : null;
       haveValidScene = true;
       setStale(false);
     } catch (err) {
@@ -158,6 +198,7 @@
       // blaming the world.
       if (!Readiness.isBrowserUsable(browser)) {
         browser = null; ready = null;   // next load()/Refresh re-acquires
+        discardPickAdapter();
         const msg = '3D preview lost its graphics context before this world could be parsed. The world was NOT read as invalid — use Refresh to try again.';
         setStatus(msg, 'error');
         setStale(haveValidScene);
@@ -293,6 +334,7 @@
       // the edited text being invalid.
       if (!Readiness.isBrowserUsable(browser)) {
         browser = null; ready = null;
+        discardPickAdapter();
         return { ok: false, initError: '3D preview lost its graphics context; the text was not validated.', detail: String((err && err.message) || err) };
       }
       return { ok: false, error: String((err && err.message) || err) };
@@ -383,7 +425,12 @@
 
   // Public API (used by world.js, the editor live-preview lane, and the
   // read-only visual-QA capture harness).
-  window.wrlWorldPreview = { load, wire, resetView, discoverViewpoints, validateText, _debug: debugState };
+  window.wrlWorldPreview = {
+    load, wire, resetView, discoverViewpoints, validateText, _debug: debugState,
+    // WD2-D: this browser's pick adapter + its <x3d-canvas>, or null.
+    pickTarget: () => (pickAdapter && browser
+      ? { adapter: pickAdapter, element: el('wpCanvas'), retire: retirePick, currentCheck: pickCurrentCheck } : null),
+  };
 
   // QA hook: load (optionally select a viewpoint / reset) and return debug JSON.
   // Read-only; adds no capability beyond what world:previewLoad already returns.

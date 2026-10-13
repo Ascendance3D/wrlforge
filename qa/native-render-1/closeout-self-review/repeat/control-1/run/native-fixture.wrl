@@ -1,0 +1,11 @@
+#VRML V2.0 utf8
+# NATIVE-RENDER-1 smoke fixture (disposable copy).
+Transform { translation -3 1.5 0 children Shape { appearance Appearance { material Material { diffuseColor 0.9 0.2 0.2 } } geometry Box { size 1.5 1.5 1.5 } } }
+Transform { translation 0 1.5 0 children Shape { appearance Appearance { material Material { diffuseColor 0.2 0.8 0.3 specularColor 1 1 1 shininess 0.5 } } geometry Sphere { radius 0.9 } } }
+Transform { translation 3 1.5 0 rotation 0 0 1 0.3 children Shape { appearance Appearance { material Material { diffuseColor 0.2 0.4 0.9 } } geometry Cylinder { radius 0.7 height 1.6 } } }
+Transform { translation -3 -1.5 0 scale -1 1 1 children Shape { appearance Appearance { material Material { diffuseColor 0.9 0.8 0.2 } } geometry Cone { bottomRadius 0.8 height 1.6 } } }
+Transform { translation 0 -1.5 0 children [ TouchSensor {} Shape { geometry Box { size 1.2 1.2 1.2 } } ] }
+DEF SHARED Transform { translation 3 -1.5 0 children Shape { appearance Appearance { material Material { diffuseColor 0.7 0.7 0.7 transparency 0.4 } } geometry Sphere { radius 0.7 } } }
+Transform { translation 0 -5 0 children USE SHARED }
+Group { children Shape { geometry Box {} } }
+Transform { translation 0 0 -4 scale 4 3 0.2 children Shape { appearance Appearance { material Material { diffuseColor 0.3 0.3 0.35 } } geometry Box {} } }

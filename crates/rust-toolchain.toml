@@ -1,0 +1,6 @@
+# Pinned for reproducible RUST-1 builds. rustup reads this file in crates/.
+[toolchain]
+channel = "1.95.0"
+targets = ["wasm32-unknown-unknown"]
+profile = "minimal"
+components = ["rustfmt", "clippy"]

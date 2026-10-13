@@ -16,6 +16,7 @@
 //   wrlforge.editor.zoom                integer ZOOM_MIN..ZOOM_MAX
 //   wrlforge.editor.previewLayout       one of PREF_PREVIEW_LAYOUTS
 //   wrlforge.editor.lastNonContrastTheme one of PREF_THEMES (never 'contrast')
+//   wrlforge.editor.workspaceMode       one of PREF_WORKSPACE_MODES (WD2-C)
 //
 // Pure: no DOM, no fs, no Electron. The renderer wraps this with a
 // state-store + change events. Tolerates missing/garbage storage. Reads
@@ -26,12 +27,17 @@ const KEY_THEME = 'wrlforge.editor.theme';
 const KEY_ZOOM = 'wrlforge.editor.zoom';
 const KEY_PREVIEW_LAYOUT = 'wrlforge.editor.previewLayout';
 const KEY_LAST_NON_CONTRAST_THEME = 'wrlforge.editor.lastNonContrastTheme';
+// WD2-C: the remembered editor workspace -- 'code' (the source-primary layout
+// every earlier release shipped, hence the default) or 'model' (visual-primary,
+// Source collapsible). A new/empty document opens in Model regardless.
+const KEY_WORKSPACE_MODE = 'wrlforge.editor.workspaceMode';
 
 const DEFAULTS = Object.freeze({
   theme: 'dark',
   zoom: 0,
   previewLayout: 'split',
   lastNonContrastTheme: 'dark',
+  workspaceMode: 'code',
 });
 
 // Namespaced to avoid a top-level collision with src/editor/ui-state.js
@@ -39,6 +45,7 @@ const DEFAULTS = Object.freeze({
 // (also THEMES) in the shared classic-script scope of renderer/editor.html.
 const PREF_THEMES = Object.freeze(['dark', 'light', 'terminal', 'tokyo', 'contrast']);
 const PREF_PREVIEW_LAYOUTS = Object.freeze(['split', 'preview-max', 'editor-only']);
+const PREF_WORKSPACE_MODES = Object.freeze(['code', 'model']);
 const PREF_ZOOM_MIN = -3;
 const PREF_ZOOM_MAX = 8;
 
@@ -62,6 +69,9 @@ function isValidTheme(t) {
 function isValidPreviewLayout(l) {
   return typeof l === 'string' && PREF_PREVIEW_LAYOUTS.indexOf(l) !== -1;
 }
+function isValidWorkspaceMode(m) {
+  return typeof m === 'string' && PREF_WORKSPACE_MODES.indexOf(m) !== -1;
+}
 function clampZoom(level) {
   const n = Math.round(Number(level));
   if (!Number.isFinite(n)) return DEFAULTS.zoom;
@@ -82,7 +92,8 @@ function normalize(input) {
     && src.lastNonContrastTheme !== 'contrast'
     ? src.lastNonContrastTheme
     : DEFAULTS.lastNonContrastTheme;
-  return { theme, zoom, previewLayout, lastNonContrastTheme };
+  const workspaceMode = isValidWorkspaceMode(src.workspaceMode) ? src.workspaceMode : DEFAULTS.workspaceMode;
+  return { theme, zoom, previewLayout, lastNonContrastTheme, workspaceMode };
 }
 
 // Read the current preferences from a storage object (e.g. localStorage).
@@ -98,6 +109,7 @@ function read(storage) {
     zoom: safeGet(KEY_ZOOM),
     previewLayout: safeGet(KEY_PREVIEW_LAYOUT),
     lastNonContrastTheme: safeGet(KEY_LAST_NON_CONTRAST_THEME),
+    workspaceMode: safeGet(KEY_WORKSPACE_MODE),
   });
 }
 
@@ -112,6 +124,7 @@ function write(storage, prefs) {
   safeSet(KEY_ZOOM, prefs.zoom);
   safeSet(KEY_PREVIEW_LAYOUT, prefs.previewLayout);
   safeSet(KEY_LAST_NON_CONTRAST_THEME, prefs.lastNonContrastTheme);
+  if (prefs.workspaceMode !== undefined) safeSet(KEY_WORKSPACE_MODE, prefs.workspaceMode);
 }
 
 // Single-key state transition. Returns the new full state, OR the input
@@ -131,6 +144,8 @@ function update(prev, key, value) {
     if (isValidPreviewLayout(value) && prev && prev.previewLayout === value) return prev;
   } else if (key === 'lastNonContrastTheme') {
     if (isValidTheme(value) && value !== 'contrast' && prev && prev.lastNonContrastTheme === value) return prev;
+  } else if (key === 'workspaceMode') {
+    if (isValidWorkspaceMode(value) && prev && prev.workspaceMode === value) return prev;
   }
   const cur = normalize(prev);
   if (key === 'theme') {
@@ -156,6 +171,10 @@ function update(prev, key, value) {
     if (!isValidTheme(value) || value === 'contrast') return cur;
     if (value === cur.lastNonContrastTheme) return cur;
     return { ...cur, lastNonContrastTheme: value };
+  }
+  if (key === 'workspaceMode') {
+    if (!isValidWorkspaceMode(value) || value === cur.workspaceMode) return cur;
+    return { ...cur, workspaceMode: value };
   }
   return cur;
 }
@@ -191,12 +210,12 @@ function zoomModel(level) {
 }
 
 const PREF_API = {
-  KEY_THEME, KEY_ZOOM, KEY_PREVIEW_LAYOUT, KEY_LAST_NON_CONTRAST_THEME,
+  KEY_THEME, KEY_ZOOM, KEY_PREVIEW_LAYOUT, KEY_LAST_NON_CONTRAST_THEME, KEY_WORKSPACE_MODE,
   DEFAULTS,
-  THEMES: PREF_THEMES, PREVIEW_LAYOUTS: PREF_PREVIEW_LAYOUTS,
+  THEMES: PREF_THEMES, PREVIEW_LAYOUTS: PREF_PREVIEW_LAYOUTS, WORKSPACE_MODES: PREF_WORKSPACE_MODES,
   ZOOM_MIN: PREF_ZOOM_MIN, ZOOM_MAX: PREF_ZOOM_MAX,
   THEME_LABELS, PREVIEW_LAYOUT_LABELS,
-  isValidTheme, isValidPreviewLayout, clampZoom,
+  isValidTheme, isValidPreviewLayout, isValidWorkspaceMode, clampZoom,
   normalize, read, write, update,
   setHighContrastEnabled, highContrastEnabled, zoomModel,
 };

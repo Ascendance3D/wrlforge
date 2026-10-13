@@ -296,3 +296,25 @@ test('previewStatusModel surfaces a NEW file reference on the settled states onl
   assert.strictEqual(m({ state: 'current', newRefs: 0 }).label, 'Live');
   assert.strictEqual(m({ state: 'current' }).label, 'Live');
 });
+
+// ---- WD2-C: workspace mode ---------------------------------------------------
+
+test('WD2-C isEmptyScene: empty, whitespace-only, header-only and comment-only documents hold no scene', () => {
+  for (const t of ['', '   ', '\n\n', '#VRML V2.0 utf8', '#VRML V2.0 utf8\n', '#VRML V2.0 utf8\r\n# notes\r\n\r\n', '\t,\n']) {
+    assert.equal(ui.isEmptyScene(t), true, JSON.stringify(t));
+  }
+  for (const t of ['#VRML V2.0 utf8\nGroup { }\n', 'Box {}', '#VRML V2.0 utf8\nROUTE a.b TO c.d\n']) {
+    assert.equal(ui.isEmptyScene(t), false, JSON.stringify(t));
+  }
+  assert.equal(ui.isEmptyScene(null), false);
+});
+
+test('WD2-C initialWorkspaceMode: empty -> model regardless; existing -> remembered; unknown -> code', () => {
+  assert.equal(ui.initialWorkspaceMode({ text: '', remembered: 'code' }), 'model');
+  assert.equal(ui.initialWorkspaceMode({ text: '#VRML V2.0 utf8\n', remembered: 'code' }), 'model');
+  assert.equal(ui.initialWorkspaceMode({ text: '#VRML V2.0 utf8\nGroup { }\n', remembered: 'model' }), 'model');
+  assert.equal(ui.initialWorkspaceMode({ text: '#VRML V2.0 utf8\nGroup { }\n', remembered: 'code' }), 'code');
+  assert.equal(ui.initialWorkspaceMode({ text: '#VRML V2.0 utf8\nGroup { }\n', remembered: 'nonsense' }), 'code');
+  assert.equal(ui.initialWorkspaceMode({ text: '#VRML V2.0 utf8\nGroup {\n', remembered: 'model' }), 'model', 'a damaged doc still opens in Model; the page then reveals Source');
+  assert.deepEqual([...ui.WORKSPACE_MODES], ['code', 'model']);
+});

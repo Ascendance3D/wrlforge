@@ -1,0 +1,23 @@
+ M apps/desktop-tauri/Cargo.lock
+ M apps/desktop-tauri/Cargo.toml
+ M apps/desktop-tauri/protocol/src/lib.rs
+ M apps/desktop-tauri/src-tauri/Cargo.toml
+ M apps/desktop-tauri/src-tauri/src/commands.rs
+ M apps/desktop-tauri/src-tauri/src/lib.rs
+ M apps/desktop-tauri/src-tauri/src/service.rs
+ M apps/desktop-tauri/src-tauri/src/settings.rs
+ M apps/desktop-tauri/ui/src/lib.rs
+ M apps/desktop-tauri/ui/src/panels.rs
+ M apps/desktop-tauri/ui/src/ui.rs
+ M apps/desktop-tauri/ui/static/style.css
+?? apps/desktop-tauri/native-smoke/
+?? apps/desktop-tauri/render/
+?? apps/desktop-tauri/scene/
+?? apps/desktop-tauri/src-tauri/src/native.rs
+?? apps/desktop-tauri/src-tauri/src/viewport/
+?? apps/desktop-tauri/ui/src/native.rs
+?? docs/architecture/NATIVE_RENDER_1.md
+?? qa/native-render-1/
+a150c4043da2a520cf72283e87a71b0412f807d05044c7d10110687910c41b5f  -
+fa4db9e5797096195a0eed3c773f2ffc7c34fdce
+4e8fd35497d8f817010ef8a61e1bf3e984ed7e65

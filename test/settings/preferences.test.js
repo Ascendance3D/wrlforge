@@ -91,7 +91,7 @@ test('normalize: missing object -> DEFAULTS', () => {
 });
 
 test('normalize: valid input passes through unchanged', () => {
-  const v = { theme: 'tokyo', zoom: 4, previewLayout: 'preview-max', lastNonContrastTheme: 'dark' };
+  const v = { theme: 'tokyo', zoom: 4, previewLayout: 'preview-max', lastNonContrastTheme: 'dark', workspaceMode: 'model' };
   assert.deepEqual(normalize(v), v);
 });
 
@@ -139,7 +139,8 @@ test('read: parses the four known keys into the right fields', () => {
     [KEY_PREVIEW_LAYOUT]: 'preview-max',
     [KEY_LAST_NON_CONTRAST_THEME]: 'light',
   });
-  assert.deepEqual(read(s), { theme: 'tokyo', zoom: 5, previewLayout: 'preview-max', lastNonContrastTheme: 'light' });
+  // WD2-C added workspaceMode; absent from storage -> its default.
+  assert.deepEqual(read(s), { theme: 'tokyo', zoom: 5, previewLayout: 'preview-max', lastNonContrastTheme: 'light', workspaceMode: 'code' });
 });
 
 test('read: tolerates throwing storage', () => {
@@ -267,7 +268,7 @@ test('setHighContrastEnabled(on -> off): reverts to lastNonContrastTheme', () =>
 });
 
 test('setHighContrastEnabled: double-on is idempotent (no state churn)', () => {
-  const before = { theme: 'contrast', zoom: 2, previewLayout: 'split', lastNonContrastTheme: 'tokyo' };
+  const before = { theme: 'contrast', zoom: 2, previewLayout: 'split', lastNonContrastTheme: 'tokyo', workspaceMode: 'code' };
   const after = setHighContrastEnabled(before, true);
   assert.deepEqual(after, before);
 });
@@ -322,4 +323,29 @@ test('zoomModel: invalid input clamps to default 0', () => {
   assert.equal(zoomModel('abc').level, 0);
   assert.equal(zoomModel(null).level, 0);
   assert.equal(zoomModel(undefined).level, 0);
+});
+
+// ---- WD2-C: workspaceMode ----------------------------------------------------
+
+test('WD2-C workspaceMode: default is code; model/code accepted; garbage falls back', () => {
+  const P = require('../../src/settings/preferences.js');
+  assert.equal(P.DEFAULTS.workspaceMode, 'code');
+  assert.deepEqual([...P.WORKSPACE_MODES].sort(), ['code', 'model']);
+  assert.equal(normalize({ workspaceMode: 'model' }).workspaceMode, 'model');
+  assert.equal(normalize({ workspaceMode: 'visual' }).workspaceMode, 'code');
+  const s = makeStorage({ [P.KEY_WORKSPACE_MODE]: 'model' });
+  assert.equal(read(s).workspaceMode, 'model');
+});
+
+test('WD2-C workspaceMode: update + write round-trip through the same storage keys', () => {
+  const P = require('../../src/settings/preferences.js');
+  const a = normalize({});
+  const b = update(a, 'workspaceMode', 'model');
+  assert.equal(b.workspaceMode, 'model');
+  assert.equal(update(b, 'workspaceMode', 'model'), b, 'a no-op write returns the same object');
+  assert.equal(update(b, 'workspaceMode', 'nonsense').workspaceMode, 'model', 'an invalid value changes nothing');
+  const s = makeStorage({});
+  write(s, b);
+  assert.equal(read(s).workspaceMode, 'model');
+  assert.equal(P.KEY_WORKSPACE_MODE, 'wrlforge.editor.workspaceMode');
 });
