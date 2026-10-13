@@ -203,6 +203,9 @@ pub struct GizmoState {
     ghost: Option<[f64; 3]>,
     drawn: String,
     loop_on: bool,
+    /// LV2-C: the pivot is outside the canvas, so no handles are drawn;
+    /// holds the status line it replaced, restored when the pivot returns.
+    offscreen: Option<Option<(String, String)>>,
     // ---- test / performance counters --------------------------------------
     pub commits: u64,
     pub cancels: u64,
@@ -283,6 +286,7 @@ pub fn reset(reason: &str) {
         g.rings = None;
         g.missing_field = None;
         g.dropped = None;
+        g.offscreen = None;
         g.drawn.clear();
     });
     ui().gizmo_message.set(None);
@@ -828,9 +832,40 @@ fn tick() {
         (None, None, Some(cam)) => ghost.and_then(|o| ghost_view(&cam, tool, o)),
         _ => None,
     };
+    // LV2-C: handles are drawn only for a pivot inside the canvas. A pivot
+    // outside it would put handles over the toolbar or other panels; the
+    // overlays are also clipped to the canvas (style.css). A drag in
+    // progress keeps its handles (clipped) until it ends.
+    // A pivot behind the camera has no screen position: outside too.
+    let pivot = target
+        .as_ref()
+        .map(|t| if t.tool == Tool::Move { t.origin_w() } else { t.pivot_w() });
+    let outside = drag.is_none()
+        && pivot
+            .zip(cam)
+            .is_some_and(|(p, c)| !gz::project(&c, p).is_some_and(|q| c.contains(q)));
+    offscreen(outside);
+    let what = if outside { None } else { what };
     let drew = draw(what);
     if drew {
         GIZMO.with_borrow_mut(|g| g.frame_ms.push(now() - t0));
+    }
+}
+
+const OFFSCREEN_TEXT: &str = "The pivot is outside the view, so no handles are drawn. Use View → Frame Selection (or orbit) to bring it into view.";
+
+/// Enter or leave the "pivot outside the view" state (LV2-C). A newer
+/// status line written meanwhile (a new target) is kept to restore.
+fn offscreen(outside: bool) {
+    let u = ui();
+    if outside {
+        let current = u.gizmo_message.get_untracked();
+        if current.as_ref().map(|m| m.1.as_str()) != Some(OFFSCREEN_TEXT) {
+            GIZMO.with_borrow_mut(|g| g.offscreen = Some(current));
+            msg("none", OFFSCREEN_TEXT);
+        }
+    } else if let Some(before) = GIZMO.with_borrow_mut(|g| g.offscreen.take()) {
+        u.gizmo_message.set(before);
     }
 }
 

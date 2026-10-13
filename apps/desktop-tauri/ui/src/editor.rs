@@ -366,6 +366,7 @@ pub async fn history(undo: bool) {
     struct A {
         session: u64,
         item: Option<String>,
+        instance: Option<(u64, u64)>,
     }
     let revision = CORE.with_borrow(|c| c.revision);
     let sel = ui::ui()
@@ -373,14 +374,55 @@ pub async fn history(undo: bool) {
         .get_untracked()
         .filter(|s| s.session == session && s.revision == revision);
     let item = sel.as_ref().map(|s| s.id.clone());
-    match call::<p::HistoryOutcome>(cmd, A { session, item }).await {
-        Ok(p::HistoryOutcome::Applied { state, view, item }) => {
+    // LV2-C: a selected PROTO body node is shown on ONE rendered instance;
+    // Rust carries that instance too, or the selection is not kept.
+    let instance = sel
+        .as_ref()
+        .and_then(|_| crate::highlight::selection_instance(session, revision));
+    match call::<p::HistoryOutcome>(
+        cmd,
+        A {
+            session,
+            item,
+            instance,
+        },
+    )
+    .await
+    {
+        Ok(p::HistoryOutcome::Applied {
+            state,
+            view,
+            item,
+            instance: carried,
+            instance_lost,
+        }) => {
             adopt_change(&state, view);
+            // The instance could not be proven after the change: the same
+            // source node may still exist, but which copy is shown cannot
+            // be -- clear the selection rather than show another instance.
+            let lost = instance.is_some() && carried.is_none();
+            let item = item.filter(|_| !lost);
+            crate::pick::set_instance_hint(carried.filter(|_| item.is_some()).map(|r| {
+                crate::pick::InstanceHint {
+                    session,
+                    revision: state.revision,
+                    item: r.item,
+                    span: (r.preview_from, r.preview_to),
+                }
+            }));
             // D5: the status line names the revision now shown.
             ui::flash(&format!(
-                "{} (revision {}).",
+                "{} (revision {}).{}",
                 if undo { "Undone" } else { "Redone" },
-                state.revision
+                state.revision,
+                if lost {
+                    format!(
+                        " The selection was cleared: its PROTO instance cannot be proven after the change ({}).",
+                        instance_lost.unwrap_or_else(|| "instance-not-carried".into())
+                    )
+                } else {
+                    String::new()
+                }
             ));
             if let Some(sel) = carry_selection(sel, item, state.revision) {
                 ui::inspect(sel).await;

@@ -440,7 +440,9 @@ pub fn svg_path(edges: &[Edge], ox: f64, oy: f64) -> String {
         .join("")
 }
 
-pub use mesh::{build_mesh, display, fingerprint, mesh_edges, Display, Mesh, ShapeReport};
+pub use mesh::{
+    build_mesh, display, fingerprint, mesh_edges, split_hidden, Display, EdgeSplit, Mesh, ShapeReport,
+};
 
 mod mesh;
 

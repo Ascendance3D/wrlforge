@@ -481,8 +481,9 @@ pub fn plan_duplicate(src: &str, node_from: u64, node_to: u64, confirm_shared: b
     duplicate_with(src, node_from, node_to, confirm_shared, None).0
 }
 
-/// P0-B: [`plan_duplicate`] with the copy moved `step` units along +X in its
-/// parent's coordinates, so the duplicate is visible next to the original
+/// P0-B: [`plan_duplicate`] with the copy moved `step` units (signed) along
+/// parent axis `axis` (0 = X, 1 = Y, 2 = Z), so the duplicate is visible
+/// next to the original. LV2-C: the editor chooses the axis from the view
 /// (see [`Placement`] for the rule). Only the COPY changes: the original's
 /// bytes are untouched (the edit is a pure insertion after it). Returns the
 /// plan and, when it is ready, how the copy was placed.
@@ -491,9 +492,10 @@ pub fn plan_duplicate_offset(
     node_from: u64,
     node_to: u64,
     confirm_shared: bool,
+    axis: usize,
     step: f64,
 ) -> (Plan, Option<Placement>) {
-    duplicate_with(src, node_from, node_to, confirm_shared, Some(step))
+    duplicate_with(src, node_from, node_to, confirm_shared, Some((axis, step)))
 }
 
 fn duplicate_with(
@@ -501,7 +503,7 @@ fn duplicate_with(
     node_from: u64,
     node_to: u64,
     confirm_shared: bool,
-    step: Option<f64>,
+    step: Option<(usize, f64)>,
 ) -> (Plan, Option<Placement>) {
     let (plan, placement) = duplicate_inner(src, node_from, node_to, confirm_shared, step);
     match plan {
@@ -515,7 +517,7 @@ fn duplicate_inner(
     node_from: u64,
     node_to: u64,
     confirm_shared: bool,
-    step: Option<f64>,
+    step: Option<(usize, f64)>,
 ) -> (Plan, Option<Placement>) {
     let p = parse(src);
     let (node, _slot) = match gate(&p, node_from, node_to, confirm_shared) {
@@ -625,8 +627,8 @@ fn duplicate_inner(
     copy.push_str(&src[at..b]);
     // P0-B: move the copy (never the original) so it is visible.
     let placement = match step {
-        Some(s) => {
-            let (placed, how) = place_copy(&p, &copy, s);
+        Some((axis, s)) => {
+            let (placed, how) = place_copy(&p, &copy, axis, s);
             copy = placed;
             Some(how)
         }
@@ -696,34 +698,36 @@ fn duplicate_inner(
 
 /// P0-B: how a duplicate was placed next to its original.
 ///
-/// THE RULE. The copy is moved `step` units along +X in its parent's
-/// coordinate system (the original's own frame for the Transform's
-/// translation), so it sits beside the original:
+/// THE RULE. The copy is moved `step` units (signed) along ONE axis of its
+/// parent's coordinate system (the original's own frame for the
+/// Transform's translation), so it sits beside the original:
 ///
-/// * a `Transform` whose `translation` is three plain numbers: only the copy's
-///   X lexeme is rewritten (`x + step`, rounded to the larger of the two
-///   decimal counts); Y and Z keep their exact lexemes;
-/// * a `Transform` without a `translation` field: `translation <step> 0 0` is
-///   written as the copy's first field;
+/// * a `Transform` whose `translation` is three plain numbers: only the
+///   copy's lexeme on that axis is rewritten (`v + step`, rounded to the
+///   larger of the two decimal counts); the other two keep their exact
+///   lexemes;
+/// * a `Transform` without a `translation` field: the translation (`step`
+///   on the axis, `0` on the others) is written as the copy's first field;
 /// * a node that may be a Transform child -- `Shape`, `Group`, `Transform`
 ///   (with a `translation IS ...` or otherwise non-literal value),
 ///   `Billboard`, `Collision`, `LOD`, `Switch`, `Anchor`, `Inline`, or an
 ///   instance of a PROTO declared once in this document whose type node is
 ///   one of those -- is wrapped:
-///   `Transform { translation <step> 0 0 children [ <copy> ] }`;
+///   `Transform { translation <offset> children [ <copy> ] }`;
 /// * anything else (sensors, interpolators, Script, lights whose scope
 ///   would change, bindable nodes, EXTERNPROTO instances, ...) is copied in
 ///   place, as before, and the reason is reported.
 ///
-/// `step` is [`duplicate_step`]: about the object's rendered size.
+/// The editor derives `step` and the axis from the node's proven rendered
+/// size and the current view (`wrlforge_desktop_protocol::duplicate`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Placement {
-    /// The copy is a Transform; its translation X became `x`.
-    Translated { x: String },
-    /// The copy is a Transform that had no translation; one was written.
-    TranslationAdded { step: String },
-    /// The copy was wrapped in a new Transform translated by `step`.
-    Wrapped { step: String },
+    /// The copy is a Transform; its translation on `axis` became `value`.
+    Translated { axis: char, value: String },
+    /// The copy is a Transform that had no translation; `vector` was written.
+    TranslationAdded { vector: String },
+    /// The copy was wrapped in a new Transform translated by `vector`.
+    Wrapped { vector: String },
     /// The copy was not moved.
     InPlace { why: String },
 }
@@ -732,40 +736,26 @@ impl Placement {
     /// One short sentence for the status line.
     pub fn describe(&self) -> String {
         match self {
-            Placement::Translated { x } => format!("the copy's translation X is now {x}"),
-            Placement::TranslationAdded { step } => {
-                format!("the copy was given translation {step} 0 0")
+            Placement::Translated { axis, value } => {
+                format!("the copy's translation {axis} is now {value}")
             }
-            Placement::Wrapped { step } => {
-                format!("the copy was wrapped in a Transform at {step} 0 0")
+            Placement::TranslationAdded { vector } => {
+                format!("the copy was given translation {vector}")
+            }
+            Placement::Wrapped { vector } => {
+                format!("the copy was wrapped in a Transform at {vector}")
             }
             Placement::InPlace { why } => format!("the copy was not moved: {why}"),
         }
     }
 }
 
-/// The fallback step when the renderer reports no size (a default VRML97
-/// Box is 2 units wide; 2.5 clears it).
-pub const DEFAULT_DUPLICATE_STEP: f64 = 2.5;
-
-/// The duplicate offset for an object whose largest rendered extent in its
-/// parent's coordinates is `extent`: 1.2 x that, rounded UP to a short
-/// number (1, 2, 2.5 or 5 x 10^k) so the written translation stays readable.
-/// Without a usable extent: [`DEFAULT_DUPLICATE_STEP`].
-pub fn duplicate_step(extent: Option<f64>) -> f64 {
-    let Some(e) = extent.filter(|e| e.is_finite() && *e > 1e-6 && *e < 1e7) else {
-        return DEFAULT_DUPLICATE_STEP;
-    };
-    let v = e * 1.2;
-    let k = 10f64.powf(v.log10().floor());
-    let m = v / k;
-    let n = [1.0, 2.0, 2.5, 5.0, 10.0]
-        .into_iter()
-        .find(|n| *n >= m - 1e-9)
-        .unwrap_or(10.0);
-    // Round away the binary noise of `n * k` (0.025, not 0.025000000000000001).
-    let s = crate::manipulate::format_component(n * k, 6).unwrap_or_default();
-    s.parse::<f64>().ok().filter(|x| *x > 0.0).unwrap_or(DEFAULT_DUPLICATE_STEP)
+/// The translation text: `step` on `axis`, `0` on the others.
+fn axis_vector(axis: usize, step: &str) -> String {
+    (0..3)
+        .map(|i| if i == axis { step } else { "0" })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Decimal places a number lexeme spells (an exponent counts as many).
@@ -811,14 +801,18 @@ fn wrappable(p: &ParseResult, ty: &str) -> bool {
     }
 }
 
-/// Place the copy `copy` (a lone node statement) `step` units along +X.
+/// Place the copy `copy` (a lone node statement) `step` units along `axis`.
 /// Every rewrite is re-proven by the caller (the copy is re-parsed alone and
 /// in the document); anything unexpected here leaves the copy in place.
-fn place_copy(p: &ParseResult, copy: &str, step: f64) -> (String, Placement) {
+fn place_copy(p: &ParseResult, copy: &str, axis: usize, step: f64) -> (String, Placement) {
     let in_place = |why: &str| (copy.to_string(), Placement::InPlace { why: why.into() });
+    if axis > 2 {
+        return in_place("the offset axis is not X, Y or Z");
+    }
     let Some(step_text) = crate::manipulate::format_component(step, 6) else {
         return in_place("the offset is not a finite number");
     };
+    let vector = axis_vector(axis, &step_text);
     let alone = parse(copy);
     let n = match alone.tree.statements.as_slice() {
         [Ast::Node(n)] if sound(&alone) => n,
@@ -826,9 +820,9 @@ fn place_copy(p: &ParseResult, copy: &str, step: f64) -> (String, Placement) {
     };
     let wrap = || {
         (
-            format!("Transform {{ translation {step_text} 0 0 children [ {copy} ] }}"),
+            format!("Transform {{ translation {vector} children [ {copy} ] }}"),
             Placement::Wrapped {
-                step: step_text.clone(),
+                vector: vector.clone(),
             },
         )
     };
@@ -853,13 +847,13 @@ fn place_copy(p: &ParseResult, copy: &str, step: f64) -> (String, Placement) {
                         match open {
                             Some(o) if copy[o + 1..close].trim().is_empty() => {
                                 let out = format!(
-                                    "{} translation {step_text} 0 0 }}{}",
+                                    "{} translation {vector} }}{}",
                                     &copy[..o + 1],
                                     &copy[close + 1..]
                                 );
                                 return (
                                     out,
-                                    Placement::TranslationAdded { step: step_text },
+                                    Placement::TranslationAdded { vector },
                                 );
                             }
                             _ => return wrap(),
@@ -876,17 +870,17 @@ fn place_copy(p: &ParseResult, copy: &str, step: f64) -> (String, Placement) {
                     " ".to_string()
                 };
                 let out = format!(
-                    "{}translation {step_text} 0 0{sep}{}",
+                    "{}translation {vector}{sep}{}",
                     &copy[..at],
                     &copy[at..]
                 );
-                (out, Placement::TranslationAdded { step: step_text })
+                (out, Placement::TranslationAdded { vector })
             }
             [f] if !f.is_binding => match f.value.as_deref() {
                 Some(Ast::Numbers { values, .. })
                     if values.len() == 3 && values.iter().all(|v| v.valid) =>
                 {
-                    let x = &values[0];
+                    let x = &values[axis];
                     let (a, b) = (x.range.start.byte as usize, x.range.end.byte as usize);
                     let d = decimals_of(&copy[a..b]).max(decimals_of(&step_text));
                     let Some(nx) = crate::manipulate::format_component(x.value + step, d as u8)
@@ -897,7 +891,13 @@ fn place_copy(p: &ParseResult, copy: &str, step: f64) -> (String, Placement) {
                         return in_place("the translation is too large to move by this step");
                     }
                     let out = format!("{}{nx}{}", &copy[..a], &copy[b..]);
-                    (out, Placement::Translated { x: nx })
+                    (
+                        out,
+                        Placement::Translated {
+                            axis: ['X', 'Y', 'Z'][axis],
+                            value: nx,
+                        },
+                    )
                 }
                 _ => wrap(),
             },

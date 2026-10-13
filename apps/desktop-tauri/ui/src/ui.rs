@@ -1060,6 +1060,15 @@ pub async fn structure_edit(op: p::StructureOp) {
         }
         None => false,
     };
+    // LV2-C: where the copy goes, from the node's proven rendered bounds
+    // and the camera on screen. Without them the copy is not moved (Rust
+    // reports why); nothing is guessed.
+    let choice = match op {
+        p::StructureOp::Duplicate => crate::highlight::selection_bounds()
+            .zip(ipc::gizmo_camera())
+            .and_then(|(b, cam)| p::duplicate::choose(&cam, &b).ok()),
+        p::StructureOp::Delete => None,
+    };
     #[derive(serde::Serialize)]
     struct A {
         request: p::StructureEditRequest,
@@ -1070,10 +1079,7 @@ pub async fn structure_edit(op: p::StructureOp) {
         item: sel.id.clone(),
         op,
         confirm_shared: confirm,
-        extent: match op {
-            p::StructureOp::Duplicate => crate::highlight::selection_extent(),
-            p::StructureOp::Delete => None,
-        },
+        offset: choice.as_ref().map(|c| c.offset),
     };
     match call::<p::StructureEditOutcome>("doc_structure_edit", A { request }).await {
         Ok(p::StructureEditOutcome::Applied {
@@ -1102,14 +1108,15 @@ pub async fn structure_edit(op: p::StructureOp) {
                 p::StructureOp::Duplicate => "Duplicated the node",
             };
             let placed = placement.map(|p| format!("; {p}")).unwrap_or_default();
-            if names.is_empty() {
-                flash(&format!("{done} (revision {}){placed}.", state.revision));
+            let done = if names.is_empty() {
+                format!("{done} (revision {}){placed}", state.revision)
             } else {
-                flash(&format!(
-                    "{done} (revision {}){placed}; DEF names in the copy: {names}.",
+                format!(
+                    "{done} (revision {}){placed}; DEF names in the copy: {names}",
                     state.revision
-                ));
-            }
+                )
+            };
+            flash(&format!("{done}."));
             // One discrete command: show it everywhere now.
             analyze().await;
             let span = u.analysis.with_untracked(|a| {
@@ -1125,6 +1132,19 @@ pub async fn structure_edit(op: p::StructureOp) {
                 select_from(verb, s, r, from, to);
             }
             preview(false).await;
+            // LV2-C: no axis kept the copy in view: show the original and
+            // the copy together (camera only; never the authored Viewpoint).
+            if let Some(c) = choice.filter(|c| !c.in_view) {
+                let both: Vec<[f64; 3]> = c.original.iter().chain(&c.copy).copied().collect();
+                flash(&match crate::camera::frame_points(&both) {
+                    Ok(()) => format!(
+                        "{done}; the copy did not fit in the view, so the camera moved to show it (camera only)."
+                    ),
+                    Err(why) => format!(
+                        "{done}; the copy is outside the view ({why}): use View → Frame Selection."
+                    ),
+                });
+            }
         }
         Ok(p::StructureEditOutcome::Refused { reason, message }) => {
             let m = format!("Not changed — {verb}: {message}");

@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod camera;
 pub mod command;
+pub mod duplicate;
 pub mod gizmo;
 pub mod highlight;
 pub mod layout;
@@ -107,6 +108,13 @@ pub enum HistoryOutcome {
         /// The selected node's item id carried through the exact change, or
         /// `None` when it cannot be proven (or nothing was selected).
         item: Option<String>,
+        /// LV2-C: the selected PROTO body node's rendered instance, carried
+        /// through the exact change (proven like a gizmo commit's), or why
+        /// it could not be (`instance_lost`). Both `None` when none was sent.
+        #[serde(default)]
+        instance: Option<InstanceRef>,
+        #[serde(default)]
+        instance_lost: Option<String>,
     },
     Nothing,
 }
@@ -675,12 +683,13 @@ pub struct StructureEditRequest {
     /// The user confirmed editing a shared PROTO definition.
     #[serde(default)]
     pub confirm_shared: bool,
-    /// P0-B Duplicate: the selected node's largest rendered extent in its
-    /// parent's coordinates, as the preview measured it (VIEW data, never
-    /// identity). Rust derives the copy's offset from it
-    /// (`structure_edit::duplicate_step`); `None` uses the fixed step.
+    /// LV2-C Duplicate: where the copy goes -- a signed step along one
+    /// parent axis, chosen by the editor from the node's PROVEN rendered
+    /// size and the current view (`duplicate::choose`; VIEW data, never
+    /// identity). `None` (no proven size): the copy is placed exactly over
+    /// the original and the status line says why.
     #[serde(default)]
-    pub extent: Option<f64>,
+    pub offset: Option<duplicate::Offset>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

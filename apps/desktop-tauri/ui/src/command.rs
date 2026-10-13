@@ -174,6 +174,7 @@ pub fn run(id: CommandId) {
         CommandId::ViewUpdatePreview => spawn_local(ui::preview(true)),
         // B2-CAMERA: the renderer's camera only (no source, dirty or undo).
         CommandId::ViewFitAll => crate::camera::fit(),
+        CommandId::ViewFrameSelection => crate::camera::frame_selection(),
         CommandId::ViewFront
         | CommandId::ViewBack
         | CommandId::ViewLeft

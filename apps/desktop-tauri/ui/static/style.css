@@ -250,19 +250,21 @@ x3d-canvas.picking { cursor: crosshair; }
    pointer input itself; only usable handles do. Axis colors are the theme's
    --wf-axis-* tokens over a halo, so they read on any rendered background.
    Disabled = faded, dashed, no pointer input: never looks usable. */
-.viewport-stage { position: relative; flex: 1 1 auto; min-height: 6rem; display: flex; }
+/* LV2-C: every overlay is clipped to the canvas -- painting AND pointer
+   input (clip-path) -- so no handle or outline covers the toolbar. */
+.viewport-stage { position: relative; flex: 1 1 auto; min-height: 6rem; display: flex; overflow: hidden; }
 .viewport-stage x3d-canvas#viewport { flex: 1 1 auto; height: auto; }
-.gizmo { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.gizmo { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; clip-path: inset(0); }
 .gizmo[data-state="hidden"] { display: none; }
 .gz-handle { pointer-events: none; }
 /* B2 selection outline: a cyan box over a dark halo, view state only. */
-.selection-outline { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.selection-outline { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; clip-path: inset(0); }
 .selection-outline[data-state="hidden"] { display: none; }
 .selection-outline path { fill: none; stroke-linejoin: round; stroke-linecap: round; }
 .selection-outline .hl-halo { stroke: var(--wf-gizmo-halo); stroke-width: 3.5; opacity: .5; }
 /* B3 (LV2): the OTHER instances a shared PROTO definition edit changes:
    dashed amber, under the selection outline, never taking pointer input. */
-.shared-outline { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
+.shared-outline { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; clip-path: inset(0); }
 .shared-outline[data-state="hidden"] { display: none; }
 .shared-outline path { fill: none; stroke-linejoin: round; stroke-linecap: round; }
 .shared-outline .hl-shared-halo { stroke: var(--wf-gizmo-halo); stroke-width: 3; opacity: .45; }
@@ -280,6 +282,9 @@ x3d-canvas.picking { cursor: crosshair; }
 .highlight-info { color: var(--wf-text-primary); background: var(--wf-surface-panel); border: 1px solid var(--wf-border); }
 .highlight-status[hidden], .highlight-info[hidden] { display: none; }
 .selection-outline .hl-line { stroke: var(--wf-selection-outline); stroke-width: 1.6; }
+/* LV2-C: edges hidden behind the object's own faces: faint and dashed, so
+   they never read as visible geometry (still shown for transparent parts). */
+.selection-outline .hl-hidden { stroke: var(--wf-selection-outline); stroke-width: 1; stroke-dasharray: 3 4; opacity: .4; }
 /* LV2: the geometry's own edges are solid and fine; the bounding-box
    fallback is dashed; an owner Shape (of a selected Material, ...) dotted. */
 .selection-outline[data-mode="precise"] .hl-line { stroke-width: 1.4; }

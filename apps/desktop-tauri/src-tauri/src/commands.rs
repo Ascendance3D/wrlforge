@@ -193,8 +193,9 @@ pub fn doc_undo(
     svc: State<'_, Service>,
     session: p::SessionId,
     item: Option<String>,
+    instance: Option<(u64, u64)>,
 ) -> Result<p::HistoryOutcome, String> {
-    svc.history_with_item(session, true, item.as_deref())
+    svc.history_with_instance(session, true, item.as_deref(), instance)
 }
 
 #[tauri::command]
@@ -202,8 +203,9 @@ pub fn doc_redo(
     svc: State<'_, Service>,
     session: p::SessionId,
     item: Option<String>,
+    instance: Option<(u64, u64)>,
 ) -> Result<p::HistoryOutcome, String> {
-    svc.history_with_item(session, false, item.as_deref())
+    svc.history_with_instance(session, false, item.as_deref(), instance)
 }
 
 #[tauri::command]

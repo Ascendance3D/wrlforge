@@ -99,6 +99,13 @@ pub struct FrameInput {
     pub field_of_view: f64,
     /// Viewport width, height (px).
     pub viewport: [f64; 2],
+    /// LV2-C Frame Selection: the viewpoint's model matrix (viewpoint →
+    /// world, the shared element order of `gizmo::Camera`) and its current
+    /// user orientation offset. Not needed by the standard views.
+    #[serde(default)]
+    pub model: Option<[f64; 16]>,
+    #[serde(default)]
+    pub orientation_offset: Option<[f64; 4]>,
 }
 
 /// The user offsets to write onto the bound viewpoint, plus the user pose
@@ -240,12 +247,29 @@ pub fn standard_view(input: &FrameInput, view: StandardView) -> Result<ViewOffse
         c[1] - dir[1] * distance,
         c[2] - dir[2] * distance,
     ];
-    let user_orientation = view.orientation();
+    Ok(offsets(
+        input,
+        c,
+        user_position,
+        view.orientation(),
+        distance,
+    ))
+}
+
+/// The user offsets that put the camera at `user_position` with
+/// `user_orientation`, rotating about `c`.
+fn offsets(
+    input: &FrameInput,
+    c: [f64; 3],
+    user_position: [f64; 3],
+    user_orientation: [f64; 4],
+    distance: f64,
+) -> ViewOffsets {
     // user = offset ⊗ authored  =>  offset = user ⊗ authored⁻¹
     let offset = quat_mul(quat(user_orientation), conj(quat(input.orientation)));
     let p = input.position;
     let r = input.center_of_rotation;
-    Ok(ViewOffsets {
+    ViewOffsets {
         position_offset: [
             user_position[0] - p[0],
             user_position[1] - p[1],
@@ -257,7 +281,62 @@ pub fn standard_view(input: &FrameInput, view: StandardView) -> Result<ViewOffse
         user_orientation,
         distance,
         near_distance: 0.0125 * distance,
-    })
+    }
+}
+
+/// LV2-C Frame Selection: the user offsets that show every `world` point,
+/// looking the SAME way as now (only the camera position and its center of
+/// rotation move), framed by the View All rule. Camera only: the authored
+/// viewpoint fields are never changed.
+pub fn frame_points(input: &FrameInput, world: &[[f64; 3]]) -> Result<ViewOffsets, &'static str> {
+    let (Some(model), Some(oo)) = (input.model, input.orientation_offset) else {
+        return Err(BAD_INPUT);
+    };
+    let scalars = [input.field_of_view, input.viewport[0], input.viewport[1]];
+    if world.is_empty()
+        || !finite(&model)
+        || !finite(&oo)
+        || !finite(&input.orientation)
+        || !finite(&scalars)
+        || !finite(&input.position)
+        || !finite(&input.center_of_rotation)
+    {
+        return Err(BAD_INPUT);
+    }
+    let inv = crate::gizmo::invert(&model).ok_or(BAD_INPUT)?;
+    let user_orientation = rotation(quat_mul(quat(oo), quat(input.orientation)));
+    let axes = [
+        rotate(user_orientation, [1.0, 0.0, 0.0]),
+        rotate(user_orientation, [0.0, 1.0, 0.0]),
+        rotate(user_orientation, [0.0, 0.0, 1.0]),
+    ];
+    let mut lo = [f64::MAX; 3];
+    let mut hi = [f64::MIN; 3];
+    for w in world {
+        let h: Vec<f64> = (0..4)
+            .map(|r| inv[r] * w[0] + inv[4 + r] * w[1] + inv[8 + r] * w[2] + inv[12 + r])
+            .collect();
+        if !finite(&h) || h[3].abs() < 1e-12 {
+            return Err(BAD_INPUT);
+        }
+        let l = [h[0] / h[3], h[1] / h[3], h[2] / h[3]];
+        for (i, a) in axes.iter().enumerate() {
+            let d = a[0] * l[0] + a[1] * l[1] + a[2] * l[2];
+            lo[i] = lo[i].min(d);
+            hi[i] = hi[i].max(d);
+        }
+    }
+    let extent = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
+    let distance =
+        framing_distance(extent, input.field_of_view, input.viewport).ok_or(EMPTY_SCENE)?;
+    let mid = [0, 1, 2].map(|i| (lo[i] + hi[i]) / 2.0);
+    let c = [0, 1, 2].map(|k| (0..3).map(|i| axes[i][k] * mid[i]).sum::<f64>());
+    // The camera looks along -Z of its orientation: it stands on +Z.
+    let user_position = [0, 1, 2].map(|k| c[k] + axes[2][k] * distance);
+    if !finite(&user_position) {
+        return Err(BAD_INPUT);
+    }
+    Ok(offsets(input, c, user_position, user_orientation, distance))
 }
 
 #[cfg(test)]
@@ -349,6 +428,8 @@ mod tests {
             center_of_rotation: [0.0, 0.0, 0.0],
             field_of_view: FRAC_PI_4,
             viewport: [800.0, 600.0],
+            model: None,
+            orientation_offset: None,
         }
     }
 
@@ -426,5 +507,77 @@ mod tests {
             assert!(close(&rotate(r, v), &rotate(back, v)), "{r:?} -> {back:?}");
         }
         assert_eq!(rotation([0.0, 0.0, 0.0, 1.0]), [0.0, 0.0, 1.0, 0.0]);
+    }
+
+    fn box_points(center: [f64; 3], size: [f64; 3], shift: [f64; 3]) -> Vec<[f64; 3]> {
+        (0..8)
+            .map(|i| {
+                [0, 1, 2].map(|k| {
+                    let s = if i & (1 << k) != 0 { 0.5 } else { -0.5 };
+                    center[k] + s * size[k] + shift[k]
+                })
+            })
+            .collect()
+    }
+
+    fn translated(t: [f64; 3]) -> [f64; 16] {
+        let mut m = [0.0; 16];
+        m[0] = 1.0;
+        m[5] = 1.0;
+        m[10] = 1.0;
+        m[15] = 1.0;
+        m[12] = t[0];
+        m[13] = t[1];
+        m[14] = t[2];
+        m
+    }
+
+    fn same_view(a: &ViewOffsets, b: &ViewOffsets) -> bool {
+        close(&a.user_position, &b.user_position)
+            && close(
+                &rotate(a.user_orientation, [0.0, 0.0, -1.0]),
+                &rotate(b.user_orientation, [0.0, 0.0, -1.0]),
+            )
+            && close(&a.center_of_rotation_offset, &b.center_of_rotation_offset)
+            && (a.distance - b.distance).abs() < 1e-9
+    }
+
+    #[test]
+    fn frame_points_keeps_the_view_direction_and_frames_like_view_all() {
+        let mut i = input();
+        i.model = Some(translated([0.0; 3]));
+        i.orientation_offset = Some([0.0, 0.0, 1.0, 0.0]);
+        let pts = box_points(i.center, i.size, [0.0; 3]);
+        // Looking along -Z now: the same as the Front view of that box.
+        let f = frame_points(&i, &pts).unwrap();
+        assert!(same_view(
+            &f,
+            &standard_view(&i, StandardView::Front).unwrap()
+        ));
+        // Turned to look along -X now: the same as the Right view.
+        i.orientation_offset = Some([0.0, 1.0, 0.0, FRAC_PI_2]);
+        let f = frame_points(&i, &pts).unwrap();
+        assert!(same_view(
+            &f,
+            &standard_view(&i, StandardView::Right).unwrap()
+        ));
+        // A viewpoint under a Transform: world points are taken into its
+        // own coordinates first.
+        i.model = Some(translated([5.0, 0.0, 0.0]));
+        let moved = box_points(i.center, i.size, [5.0, 0.0, 0.0]);
+        assert!(same_view(&frame_points(&i, &moved).unwrap(), &f));
+    }
+
+    #[test]
+    fn frame_points_refuses_without_a_usable_camera() {
+        let mut i = input();
+        let pts = box_points(i.center, i.size, [0.0; 3]);
+        assert_eq!(frame_points(&i, &pts), Err(BAD_INPUT));
+        i.model = Some(translated([0.0; 3]));
+        i.orientation_offset = Some([0.0, 0.0, 1.0, 0.0]);
+        assert_eq!(frame_points(&i, &[]), Err(BAD_INPUT));
+        assert_eq!(frame_points(&i, &[[1.0, 1.0, 1.0]]), Err(EMPTY_SCENE));
+        i.model = Some([0.0; 16]);
+        assert_eq!(frame_points(&i, &pts), Err(BAD_INPUT));
     }
 }

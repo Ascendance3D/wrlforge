@@ -674,10 +674,10 @@ impl Service {
     }
 
     pub fn undo(&self, id: p::SessionId) -> Result<p::HistoryOutcome, String> {
-        self.history(id, true, None)
+        self.history(id, true, None, None)
     }
     pub fn redo(&self, id: p::SessionId) -> Result<p::HistoryOutcome, String> {
-        self.history(id, false, None)
+        self.history(id, false, None, None)
     }
     /// Undo/redo carrying the selected Scene Tree item across the change.
     /// The node span is mapped through the EXACT changes applied
@@ -689,23 +689,58 @@ impl Service {
         undo: bool,
         item: Option<&str>,
     ) -> Result<p::HistoryOutcome, String> {
-        self.history(id, undo, item)
+        self.history(id, undo, item, None)
+    }
+    /// LV2-C: [`Self::history_with_item`] that also carries the selected
+    /// PROTO body node's rendered instance (`instance`: its preview span in
+    /// the current revision) through the exact change, proven exactly like
+    /// a gizmo commit's (`carry_instance`). Never a search.
+    pub fn history_with_instance(
+        &self,
+        id: p::SessionId,
+        undo: bool,
+        item: Option<&str>,
+        instance: Option<(u64, u64)>,
+    ) -> Result<p::HistoryOutcome, String> {
+        self.history(id, undo, item, instance)
     }
     fn history(
         &self,
         id: p::SessionId,
         undo: bool,
         item: Option<&str>,
+        instance: Option<(u64, u64)>,
     ) -> Result<p::HistoryOutcome, String> {
         self.with(id, |s| {
+            let old = instance.map(|_| s.doc.text().to_string());
             let r = if undo { s.doc.undo() } else { s.doc.redo() };
             match r {
                 Ok(a) => {
-                    let item = Self::carry(item, s.doc.last_changes());
+                    let carried = Self::carry(item, s.doc.last_changes());
+                    let (instance, instance_lost) =
+                        match (instance, old, item.and_then(node_span)) {
+                            (Some((f, t)), Some(old), Some(body)) => {
+                                let off = preview_offset(&old);
+                                match carry_instance(
+                                    &old,
+                                    s.doc.text(),
+                                    body,
+                                    &format!("node-{}-{}", f + off, t + off),
+                                    s.doc.last_changes(),
+                                ) {
+                                    Ok(r) => (Some(r), None),
+                                    Err(why) => (None, Some(why.to_string())),
+                                }
+                            }
+                            (Some(_), _, _) => (None, Some("instance-without-a-node".into())),
+                            _ => (None, None),
+                        };
                     p::HistoryOutcome::Applied {
                         state: Self::state(s, a),
                         view: s.doc.view(),
-                        item,
+                        item: carried,
+                        instance,
+                        instance_lost,
                     }
                 }
                 Err(_) => p::HistoryOutcome::Nothing,
@@ -1182,13 +1217,38 @@ impl Service {
                     structure_edit::plan_delete(s.doc.text(), from, to, r.confirm_shared),
                     None,
                 ),
-                p::StructureOp::Duplicate => structure_edit::plan_duplicate_offset(
-                    s.doc.text(),
-                    from,
-                    to,
-                    r.confirm_shared,
-                    structure_edit::duplicate_step(r.extent),
-                ),
+                p::StructureOp::Duplicate => match r.offset {
+                    Some(o) if o.valid() => structure_edit::plan_duplicate_offset(
+                        s.doc.text(),
+                        from,
+                        to,
+                        r.confirm_shared,
+                        usize::from(o.axis),
+                        o.step,
+                    ),
+                    Some(_) => {
+                        return refused(
+                            field_edit::reason::INPUT_SHAPE,
+                            "The Duplicate offset is not a usable axis and distance.".into(),
+                        )
+                    }
+                    // LV2-C: no proven size, no guessed offset.
+                    None => {
+                        let plan = structure_edit::plan_duplicate(
+                            s.doc.text(),
+                            from,
+                            to,
+                            r.confirm_shared,
+                        );
+                        let ready = matches!(plan, structure_edit::Plan::Ready { .. });
+                        (
+                            plan,
+                            ready.then(|| structure_edit::Placement::InPlace {
+                                why: p::duplicate::NO_SIZE.into(),
+                            }),
+                        )
+                    }
+                },
             };
             let (plan, placement) = plan;
             match plan {
@@ -2895,11 +2955,11 @@ mod tests {
             item,
             op,
             confirm_shared: false,
-            extent: None,
+            offset: Some(p::duplicate::Offset { axis: 0, step: 2.5 }),
         };
         // Duplicate: the copy is selected, its DEF renamed, and (P0-B) it
         // is placed beside the original: a Shape is wrapped in a Transform
-        // moved by the fixed step (no rendered extent was measured).
+        // moved by the requested offset.
         let o = svc
             .structure_edit(&req(0, span(text, "DEF A Shape {}"), p::StructureOp::Duplicate))
             .unwrap();
@@ -2947,7 +3007,7 @@ mod tests {
             item: span(proto, "Shape {}"),
             op: p::StructureOp::Delete,
             confirm_shared: false,
-            extent: None,
+            offset: None,
         };
         let o = svc.structure_edit(&r).unwrap();
         assert!(matches!(o, p::StructureEditOutcome::Refused { ref reason, .. }
@@ -2957,6 +3017,106 @@ mod tests {
         assert_eq!(
             svc.text(id).unwrap(),
             "#VRML V2.0 utf8\nPROTO P [] { Group { children [ ] } }\nP {}\n"
+        );
+    }
+
+    /// LV2-C: Undo / Redo keep a selected PROTO body node on the SAME
+    /// rendered instance only when Rust proves that instance through the
+    /// exact change; otherwise the instance is reported lost (the UI then
+    /// clears the selection). Never the nearest or another instance.
+    #[test]
+    fn undo_redo_carry_the_selected_proto_instance_or_lose_it() {
+        let svc = Service::new(clock);
+        let text = "#VRML V2.0 utf8\nPROTO P [] { Transform { translation 0 0 0 } }\nP {}\nP {}\n";
+        let id = svc.open_text_for_test(text);
+        let u16at = |t: &str, needle: &str, nth: usize| -> (u64, u64) {
+            let b = t.match_indices(needle).nth(nth).unwrap().0;
+            let f = t[..b].encode_utf16().count() as u64;
+            (f, f + needle.encode_utf16().count() as u64)
+        };
+        let edit = |rev: u64, (f, t): (u64, u64), insert: &str| {
+            svc.edit(&p::EditRequest {
+                session: id,
+                base_revision: rev,
+                from: f,
+                to: t,
+                insert: insert.into(),
+                item: None,
+            })
+            .unwrap()
+        };
+        // Revision 1: the shared body's translation changes.
+        edit(0, u16at(text, "0 0 0", 0), "1 0 0");
+        let v1 = svc.text(id).unwrap();
+        let body = u16at(&v1, "Transform { translation 1 0 0 }", 0);
+        let second = u16at(&v1, "P {}", 1);
+        let item = format!("node-{}-{}", body.0, body.1);
+        let o = svc.history_with_instance(id, true, Some(&item), Some(second)).unwrap();
+        let p::HistoryOutcome::Applied { item: carried, instance, instance_lost, .. } = o else {
+            panic!("{o:?}")
+        };
+        let v0 = svc.text(id).unwrap();
+        assert_eq!(v0, text);
+        let want = u16at(text, "P {}", 1);
+        assert_eq!(instance_lost, None);
+        let i = instance.expect("the second instance is carried");
+        assert_eq!(i.item, format!("node-{}-{}", want.0, want.1));
+        assert_eq!((i.preview_from, i.preview_to), want);
+        assert!(carried.is_some());
+        // Redo, then a change that rewrites the instance itself: undoing it
+        // cannot prove that instance, so it is reported lost.
+        let p::HistoryOutcome::Applied { state, .. } = svc.redo(id).unwrap() else {
+            panic!("redo")
+        };
+        let v1 = svc.text(id).unwrap();
+        edit(state.revision, u16at(&v1, "P {}", 1), "P { }");
+        let v2 = svc.text(id).unwrap();
+        let body = u16at(&v2, "Transform { translation 1 0 0 }", 0);
+        let item = format!("node-{}-{}", body.0, body.1);
+        let o = svc
+            .history_with_instance(id, true, Some(&item), Some(u16at(&v2, "P { }", 0)))
+            .unwrap();
+        let p::HistoryOutcome::Applied { instance, instance_lost, .. } = o else {
+            panic!("{o:?}")
+        };
+        assert_eq!(instance, None);
+        assert!(instance_lost.is_some());
+    }
+
+    /// LV2-C: without a proven size there is no guessed offset: the copy is
+    /// placed exactly over the original and the reason is reported. An
+    /// unusable offset is refused and changes nothing.
+    #[test]
+    fn duplicate_without_a_proven_size_is_not_moved() {
+        let svc = Service::new(clock);
+        let text = "#VRML V2.0 utf8\nShape { geometry Box {} }\n";
+        let id = svc.open_text_for_test(text);
+        let b = text.find("Shape").unwrap();
+        let item = format!("node-{b}-{}", text.len() - 1);
+        let req = |offset| p::StructureEditRequest {
+            session: id,
+            base_revision: 0,
+            item: item.clone(),
+            op: p::StructureOp::Duplicate,
+            confirm_shared: false,
+            offset,
+        };
+        let bad = svc
+            .structure_edit(&req(Some(p::duplicate::Offset { axis: 3, step: 1.0 })))
+            .unwrap();
+        assert!(matches!(bad, p::StructureEditOutcome::Refused { .. }), "{bad:?}");
+        assert_eq!(svc.text(id).unwrap(), text);
+        let o = svc.structure_edit(&req(None)).unwrap();
+        let p::StructureEditOutcome::Applied { placement, .. } = o else {
+            panic!("{o:?}")
+        };
+        assert_eq!(
+            placement.as_deref(),
+            Some("the copy was not moved: the preview has no proven size for the selected node")
+        );
+        assert_eq!(
+            svc.text(id).unwrap(),
+            "#VRML V2.0 utf8\nShape { geometry Box {} }\nShape { geometry Box {} }\n"
         );
     }
 
@@ -2979,7 +3139,10 @@ mod tests {
                 op: p::StructureOp::Duplicate,
                 confirm_shared: false,
                 // A 4-unit object: 1.2 x 4 = 4.8, rounded up to 5.
-                extent: Some(4.0),
+                offset: Some(p::duplicate::Offset {
+                    axis: 0,
+                    step: p::duplicate::step(4.0).unwrap(),
+                }),
             })
             .unwrap();
         let p::StructureEditOutcome::Applied { state, item, renamed, placement, .. } = o else {

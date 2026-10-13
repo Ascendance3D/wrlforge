@@ -1264,6 +1264,8 @@ pub fn Viewport() -> impl IntoView {
                 // gizmo. Drawn from the renderer's camera by `highlight.rs`;
                 // it never takes pointer input.
                 <svg id="selection-outline" class="selection-outline" data-state="hidden" aria-hidden="true">
+                    // LV2-C: edges the object's own faces hide (faint, dashed).
+                    <path id="hl-hidden" class="hl-hidden"></path>
                     <path id="hl-halo" class="hl-halo"></path>
                     <path id="hl-line" class="hl-line"></path>
                 </svg>

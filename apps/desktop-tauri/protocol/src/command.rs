@@ -106,6 +106,7 @@ pub enum CommandId {
     ViewZoomReset,
     // B2-CAMERA: viewport camera (editor state only, never the source).
     ViewFitAll,
+    ViewFrameSelection,
     ViewFront,
     ViewBack,
     ViewLeft,
@@ -709,6 +710,19 @@ pub const COMMANDS: &[CommandSpec] = &[
     planned(CommandId::ViewZoomReset, "view.zoomReset", "Actual Size", Menu::View, FUTURE_LANE),
     camera_cmd(CommandId::ViewFitAll, "view.camera.fit", "View All",
         "Fit: frame the whole scene in the 3D Viewport (camera only; the source is not changed)"),
+    CommandSpec {
+        id: CommandId::ViewFrameSelection,
+        key: "view.camera.frameSelection",
+        label: "Frame Selection",
+        menu: Menu::View,
+        shortcuts: &[],
+        requires: Requires::NodeSelected,
+        action: Action::UiOnly,
+        mutates_document: false,
+        hint: "Move the camera to show the selected object, looking the same way (camera only; the source is not changed)",
+        native_keys: &[],
+        check: Check::None,
+    },
     camera_cmd(CommandId::ViewFront, "view.camera.front", "Front", "Look at the whole scene from the front (along -Z)"),
     camera_cmd(CommandId::ViewBack, "view.camera.back", "Back", "Look at the whole scene from the back (along +Z)"),
     camera_cmd(CommandId::ViewLeft, "view.camera.left", "Left", "Look at the whole scene from the left (along +X)"),
@@ -947,7 +961,7 @@ pub const ALLOWED_BACKEND: &[&str] = &[
 ];
 
 impl CommandId {
-    pub const ALL: [CommandId; 64] = [
+    pub const ALL: [CommandId; 65] = [
         CommandId::FileNewWorld,
         CommandId::FileOpen,
         CommandId::FileSave,
@@ -987,6 +1001,7 @@ impl CommandId {
         CommandId::ViewZoomOut,
         CommandId::ViewZoomReset,
         CommandId::ViewFitAll,
+        CommandId::ViewFrameSelection,
         CommandId::ViewFront,
         CommandId::ViewBack,
         CommandId::ViewLeft,
@@ -1313,6 +1328,7 @@ pub const MENUS: &[MenuDef] = {
                 C(ViewTop),
                 C(ViewBottom),
                 C(ViewResetCamera),
+                C(ViewFrameSelection),
                 G("Zoom"),
                 C(ViewZoomIn),
                 C(ViewZoomOut),

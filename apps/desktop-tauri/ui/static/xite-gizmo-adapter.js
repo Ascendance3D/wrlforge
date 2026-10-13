@@ -464,7 +464,15 @@
           viewport: [Number(rect[2]), Number(rect[3])],
         };
         var all = out.center.concat(out.size, out.position, out.orientation, out.centerOfRotation, out.viewport, [out.fieldOfView]);
-        return finiteAll(all) ? out : { reason: 'camera-unreadable' };
+        if (!finiteAll(all)) return { reason: 'camera-unreadable' };
+        // LV2-C Frame Selection: viewpoint -> world and the current user
+        // orientation offset (plain numbers; omitted when unreadable).
+        var model = m16(vp.getModelMatrix());
+        var oo = vp._orientationOffset;
+        var ooNums = oo ? [oo.x, oo.y, oo.z, oo.angle].map(Number) : null;
+        if (model) out.model = model;
+        if (ooNums && finiteAll(ooNums)) out.orientationOffset = ooNums;
+        return out;
       } catch (e) {
         return { reason: 'camera-unreadable' };
       }

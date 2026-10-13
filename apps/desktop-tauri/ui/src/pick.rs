@@ -107,6 +107,73 @@ thread_local! {
     pub static PICK: RefCell<PickState> = RefCell::new(PickState::default());
 }
 
+/// What a pick status line describes: the selection, document revision
+/// and viewport tool at the moment it was written. Any other state makes
+/// the line stale ("Shape 2 of 3" about another object), so it is cleared
+/// -- never rewritten to guess what it now means.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MessageContext {
+    session: Option<u64>,
+    revision: u64,
+    selected: Option<(u64, u64, String)>,
+    tools: [bool; 4],
+}
+
+thread_local! {
+    static MESSAGE_CONTEXT: RefCell<Option<MessageContext>> = const { RefCell::new(None) };
+}
+
+/// The context now; `track` subscribes the calling effect to it.
+fn message_context(track: bool) -> MessageContext {
+    let u = ui();
+    let get = |s: RwSignal<bool>| if track { s.get() } else { s.get_untracked() };
+    let selected =
+        |s: &Option<ui::Selected>| s.as_ref().map(|s| (s.session, s.revision, s.id.clone()));
+    let session = |d: &Option<p::DocumentInfo>| d.as_ref().map(|d| d.session);
+    MessageContext {
+        session: if track {
+            u.doc.with(session)
+        } else {
+            u.doc.with_untracked(session)
+        },
+        revision: if track {
+            u.revision.get()
+        } else {
+            u.revision.get_untracked()
+        },
+        selected: if track {
+            u.selected.with(selected)
+        } else {
+            u.selected.with_untracked(selected)
+        },
+        tools: [u.pick_mode, u.move_mode, u.rotate_mode, u.scale_mode].map(get),
+    }
+}
+
+/// Show a pick status line (`ok` | `none` | `refused`) bound to the
+/// current selection, revision and tool.
+pub fn message(kind: &str, text: String) {
+    MESSAGE_CONTEXT.with_borrow_mut(|c| *c = Some(message_context(false)));
+    ui().pick_message.set(Some((kind.into(), text)));
+}
+
+/// Clear the status line and the hit cycle the moment anything else changes
+/// the selection, the document or the tool: the Scene Tree, a breadcrumb,
+/// Parent, a source selection, Escape, Undo / Redo, a reload or a tool
+/// switch. A repeated click at the same place changes none of these until
+/// its own pick applies, so hit cycling is kept.
+pub fn watch_message() {
+    Effect::new(move |_| {
+        let now = message_context(true);
+        let stale = MESSAGE_CONTEXT.with_borrow(|c| c.as_ref().is_some_and(|then| *then != now));
+        if stale {
+            MESSAGE_CONTEXT.with_borrow_mut(|c| *c = None);
+            PICK.with_borrow_mut(|p| p.cycle = None);
+            ui().pick_message.set(None);
+        }
+    });
+}
+
 pub fn active() -> Option<Gen> {
     PICK.with_borrow(|p| p.active)
 }
@@ -352,7 +419,6 @@ async fn resolve(
 /// moved while it was in flight) are refused, never applied. A refusal never
 /// clears an existing selection.
 async fn apply(session: u64, out: p::PickOutcome, layer: Option<(u32, u32)>) -> p::PickOutcome {
-    let u = ui();
     // P0-A: where this hit sits among the Shapes under the pointer.
     let (nth, behind) = match layer {
         Some((l, n)) if n > 1 => (
@@ -390,20 +456,17 @@ async fn apply(session: u64, out: p::PickOutcome, layer: Option<(u32, u32)>) -> 
                 set_instance_hint(None);
                 crate::highlight::repicked();
                 crate::gizmo::repicked();
-                u.pick_message.set(Some((
-                    "ok".into(),
+                message(
+                    "ok",
                     if nth.is_empty() {
                         format!("Selected {label} from the viewport.")
                     } else {
                         format!("Selected {label} ({}){behind}.", nth.trim_start())
                     },
-                )))
+                )
             }
             Err(why) => {
-                u.pick_message.set(Some((
-                    "refused".into(),
-                    format!("Selection not changed: {why}."),
-                )));
+                message("refused", format!("Selection not changed: {why}."));
                 return local(
                     "REFUSED_STALE",
                     "scene-tree-moved",
@@ -414,10 +477,7 @@ async fn apply(session: u64, out: p::PickOutcome, layer: Option<(u32, u32)>) -> 
             }
         }
     } else if out.status == "NO_HIT" {
-        u.pick_message.set(Some((
-            "none".into(),
-            "Nothing selectable under the pointer.".into(),
-        )));
+        message("none", "Nothing selectable under the pointer.".into());
     } else {
         // The exact reason id is shown too: a refusal is never generic. A
         // layer behind the front one is named, so the user knows which
@@ -427,10 +487,10 @@ async fn apply(session: u64, out: p::PickOutcome, layer: Option<(u32, u32)>) -> 
         } else {
             format!("{} is unavailable{behind}: ", nth.trim_start())
         };
-        u.pick_message.set(Some((
-            "refused".into(),
+        message(
+            "refused",
             format!("{what}{} [{}: {}]", out.message, out.status, out.reason),
-        )));
+        );
     }
     out
 }
@@ -487,6 +547,7 @@ pub fn install() {
             &opts,
         );
     }
+    watch_message();
     // The viewport lives as long as the page.
     down.forget();
     up.forget();

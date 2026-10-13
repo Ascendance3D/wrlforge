@@ -234,6 +234,30 @@ pub fn fit() {
     }
 }
 
+/// LV2-C: move the camera (only) so every `world` point is in view, looking
+/// the same way as now. `Err` says why nothing changed.
+pub fn frame_points(world: &[[f64; 3]]) -> Result<(), String> {
+    let input = ipc::camera_frame()?;
+    let o = p::camera::frame_points(&input, world).map_err(String::from)?;
+    let a = ipc::camera_apply(&o);
+    if a.ok {
+        Ok(())
+    } else {
+        Err(a.reason.unwrap_or_else(|| "the view could not be changed".into()))
+    }
+}
+
+/// View → Frame Selection: the selected object's proven outline box.
+pub fn frame_selection() {
+    let corners = crate::highlight::selection_bounds()
+        .ok_or_else(|| "the selection has no proven outline in the viewport".to_string())
+        .and_then(|b| p::highlight::world_corners(&b).map_err(String::from));
+    match corners.and_then(|c| frame_points(&c)) {
+        Ok(()) => ui::flash("Framed the selection (camera only; the source is unchanged)."),
+        Err(why) => ui::flash(&format!("Frame Selection is not available: {why}.")),
+    }
+}
+
 /// View → Front / Back / Left / Right / Top / Bottom.
 pub fn standard(view: p::camera::StandardView) {
     let name = format!("{view:?}");

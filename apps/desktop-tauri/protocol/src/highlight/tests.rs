@@ -496,7 +496,11 @@ fn display_prefers_the_geometry_and_falls_back_to_the_box_saying_why() {
     let b = unit_box(vec![]);
     let m = build_mesh(&[report(3, cube(), ident())]).unwrap();
     match display(&cam, &b, Ok(&m)).unwrap() {
-        Display::Precise(e) => assert_eq!(e.len(), 12),
+        // Straight on: the front face's 4 edges; the back face and the
+        // depth edges are hidden behind it (LV2-C).
+        Display::Precise { edges, hidden, depth } => {
+            assert_eq!((edges.len(), hidden.len(), depth), (4, 8, None));
+        }
         other => panic!("{other:?}"),
     }
     match display(&cam, &b, Err(refusal::TOO_DETAILED)).unwrap() {
@@ -561,3 +565,56 @@ fn parent_extent_is_the_largest_enclosing_edge() {
     z.r#box[0] = f64::NAN;
     assert_eq!(parent_extent(&z), None);
 }
+
+// ---- LV2-C: hidden edges ----------------------------------------------------
+
+#[test]
+fn a_cube_seen_from_a_corner_hides_exactly_its_three_back_edges() {
+    let m = build_mesh(&[report(3, cube(), ident())]).unwrap();
+    let s = split_hidden(&cam_from([4.0, 3.0, 6.0]), &ident(), &m).unwrap().unwrap();
+    assert_eq!((s.visible.len(), s.hidden.len()), (9, 3), "{s:?}");
+    // Together they are the same twelve edges as before.
+    assert_eq!(mesh_edges(&cam_from([4.0, 3.0, 6.0]), &ident(), &m).unwrap().len(), 12);
+}
+
+#[test]
+fn a_thin_open_surface_hides_nothing() {
+    // One quad (two triangles): every boundary edge is in front.
+    let q = vec![
+        -1.0, -1.0, 0.0, 1.0, -1.0, 0.0, 1.0, 1.0, 0.0, -1.0, -1.0, 0.0, 1.0, 1.0, 0.0, -1.0, 1.0, 0.0,
+    ];
+    let m = build_mesh(&[report(3, q, ident())]).unwrap();
+    let s = split_hidden(&cam_from([1.0, 2.0, 5.0]), &ident(), &m).unwrap().unwrap();
+    assert_eq!((s.visible.len(), s.hidden.len()), (4, 0));
+}
+
+#[test]
+fn an_edge_partly_behind_a_face_is_split_where_it_passes_under() {
+    // A line from far left to far right passing behind a quad at z = 1.
+    let quad = vec![
+        -0.5, -0.5, 1.0, 0.5, -0.5, 1.0, 0.5, 0.5, 1.0, -0.5, -0.5, 1.0, 0.5, 0.5, 1.0, -0.5, 0.5, 1.0,
+    ];
+    let line = vec![-2.0, 0.0, 0.0, 2.0, 0.0, 0.0];
+    let m = build_mesh(&[report(3, quad, ident()), report(1, line, ident())]).unwrap();
+    let cam = cam_at(6.0);
+    let s = split_hidden(&cam, &ident(), &m).unwrap().unwrap();
+    // The quad's 4 edges and the line's two outer parts are visible; the
+    // middle of the line is hidden.
+    assert_eq!((s.visible.len(), s.hidden.len()), (6, 1), "{s:?}");
+    let (a, b) = s.hidden[0];
+    let inner = |x: f64| {
+        let l = gz::project(&cam, [-0.5, 0.0, 1.0]).unwrap().0;
+        let r = gz::project(&cam, [0.5, 0.0, 1.0]).unwrap().0;
+        x > l - 3.5 && x < r + 3.5
+    };
+    assert!(inner(a.0) && inner(b.0), "{a:?} {b:?}");
+}
+
+#[test]
+fn too_much_geometry_skips_the_hidden_edge_test_and_says_so() {
+    let m = build_mesh(&[report(3, cube(), ident())]).unwrap();
+    // Within the limits the test runs; the limits themselves are generous.
+    assert!(split_hidden(&cam_at(6.0), &ident(), &m).unwrap().is_ok());
+    assert!(mesh::MAX_OCCLUDERS >= 50_000 && mesh::MAX_SAMPLES >= 200_000);
+}
+

@@ -101,7 +101,13 @@ pub struct Reads {
     /// none (the box is drawn then). Keyed by the shape list's
     /// fingerprint, so a failure is not retried until the list changes.
     mesh: Option<(Vec<(u8, u32)>, Result<hl::Mesh, String>)>,
+    /// LV2-C: the last outline worked out, for exactly this camera, these
+    /// bounds and these shape matrices (the hidden-edge split is only
+    /// recomputed when one of them changes).
+    shown: Option<(ShownKey, hl::Display)>,
 }
+
+type ShownKey = (p::gizmo::Camera, hl::Bounds, Option<Vec<[f64; 16]>>);
 
 #[derive(Default)]
 pub struct HighlightState {
@@ -136,6 +142,10 @@ pub struct HighlightState {
     pub box_reason: Option<String>,
     /// LV2: the owner note shown while an owner Shape is outlined.
     owner_note: Option<String>,
+    /// LV2-C: the hidden-edge path data last drawn ("" when none), and why
+    /// the hidden edges were not separated this frame, if they were not.
+    pub hidden_path: String,
+    pub depth_reason: Option<String>,
 }
 
 type FrameCallback = Closure<dyn FnMut(f64)>;
@@ -213,21 +223,41 @@ fn current_key() -> Option<Key> {
     ))
 }
 
-/// P0-B: the selected node's largest rendered extent in its parent's
-/// coordinates, read from the outline's PROVEN target for exactly the
-/// current selection (session, item, revision, preview generation). `None`
-/// when no outline is proven for it (Duplicate then uses the fixed step).
-pub fn selection_extent() -> Option<f64> {
+/// LV2-C: the selected node's rendered bounds, read from the outline's
+/// PROVEN target for exactly the current selection (session, item,
+/// revision, preview generation). `None` when no outline is proven for it,
+/// or when the outline is an owner Shape's (not the node's own size).
+pub fn selection_bounds() -> Option<hl::Bounds> {
     let key = current_key()?;
     let t = HIGHLIGHT.with_borrow(|h| (h.key.as_ref() == Some(&key)).then(|| h.target.clone()))??;
-    // LV2: an owner Shape's box is not the selected node's extent.
     if t.owner.is_some() {
         return None;
     }
     let mut reads = HIGHLIGHT.with_borrow_mut(|h| std::mem::take(&mut h.reads));
     let b = bounds_of(&t, &mut reads);
     HIGHLIGHT.with_borrow_mut(|h| h.reads = reads);
-    b.ok().as_ref().and_then(hl::parent_extent)
+    b.ok()
+}
+
+/// LV2-C: the rendered PROTO instance (preview span) the selected body node
+/// is shown on in (`session`, `revision`): the outline's proven instance for
+/// exactly the current selection, else the instance carried into this
+/// revision. `None` for a node outside a PROTO body or with none proven.
+pub fn selection_instance(session: u64, revision: u64) -> Option<(u64, u64)> {
+    let proven = current_key().filter(|k| k.0 == session && k.2 == revision).and_then(|key| {
+        HIGHLIGHT.with_borrow(|h| {
+            (h.key.as_ref() == Some(&key))
+                .then(|| h.target.as_ref().filter(|t| t.body).and_then(|t| t.inst))
+                .flatten()
+        })
+    });
+    proven.or_else(|| crate::pick::instance_hint(session, revision).map(|h| h.span))
+}
+
+/// P0-B: the selected node's largest rendered extent in its parent's
+/// coordinates (see [`selection_bounds`]).
+pub fn selection_extent() -> Option<f64> {
+    selection_bounds().as_ref().and_then(hl::parent_extent)
 }
 
 /// Locate and prove the selected node; on success the frame loop draws it.
@@ -498,7 +528,15 @@ fn display_of(t: &Proven, reads: &mut Reads) -> Result<hl::Display, String> {
         Some((_, Err(e))) => Err(e.as_str()),
         None => Err(hl::refusal::GEOMETRY_UNAVAILABLE),
     };
-    hl::display(&cam, &b, mesh).map_err(String::from)
+    let key: ShownKey = (cam, b.clone(), mesh.as_ref().ok().map(|m| m.matrices()));
+    if let Some((k, d)) = &reads.shown {
+        if *k == key {
+            return Ok(d.clone());
+        }
+    }
+    let d = hl::display(&cam, &b, mesh).map_err(String::from)?;
+    reads.shown = Some((key, d.clone()));
+    Ok(d)
 }
 
 /// B3 (LV2): the secondary outline edges of every OTHER proven instance,
@@ -510,7 +548,9 @@ fn others_edges() -> Vec<Vec<hl::Edge>> {
     let mut out = Vec::with_capacity(list.len());
     for (t, reads) in list.iter_mut() {
         match display_of(t, reads) {
-            Ok(hl::Display::Precise(e)) => out.push(e),
+            // The other instances: their visible edges only (dashed amber
+            // already; hidden parts would be indistinguishable).
+            Ok(hl::Display::Precise { edges, .. }) => out.push(edges),
             Ok(hl::Display::Box { edges, .. }) => out.push(edges.to_vec()),
             Err(_) => {}
         }
@@ -624,12 +664,27 @@ fn tick() {
     HIGHLIGHT.with_borrow_mut(|h| h.reads = reads);
     let owned = t.owner.is_some();
     match shown {
-        Ok(hl::Display::Precise(edges)) => {
+        Ok(hl::Display::Precise {
+            edges,
+            hidden,
+            depth,
+        }) => {
             if ui().highlight_message.get_untracked().is_some() {
                 note(None);
             }
-            HIGHLIGHT.with_borrow_mut(|h| h.box_reason = None);
-            info(HIGHLIGHT.with_borrow(|h| h.owner_note.clone()));
+            HIGHLIGHT.with_borrow_mut(|h| {
+                h.box_reason = None;
+                h.depth_reason = depth.clone();
+            });
+            let depth_note = depth.map(|why| {
+                format!("Hidden edges are not told apart for this object: it has too many triangles or edges to test [{why}].")
+            });
+            let owner = HIGHLIGHT.with_borrow(|h| h.owner_note.clone());
+            info(match (owner, depth_note) {
+                (Some(o), Some(d)) => Some(format!("{o} {d}")),
+                (o, d) => o.or(d),
+            });
+            draw_hidden(&hidden);
             draw(Some((&edges, if owned { "owner-precise" } else { "precise" })));
             draw_shared(&others_edges());
         }
@@ -641,7 +696,11 @@ fn tick() {
             if ui().highlight_message.get_untracked() != msg {
                 note(msg);
             }
-            HIGHLIGHT.with_borrow_mut(|h| h.box_reason = Some(reason));
+            HIGHLIGHT.with_borrow_mut(|h| {
+                h.box_reason = Some(reason);
+                h.depth_reason = None;
+            });
+            draw_hidden(&[]);
             info(HIGHLIGHT.with_borrow(|h| h.owner_note.clone()));
             draw(Some((&edges, if owned { "owner-box" } else { "box" })));
             draw_shared(&others_edges());
@@ -657,12 +716,36 @@ fn tick() {
     }
 }
 
+/// LV2-C: the parts of the precise outline its own geometry hides, drawn
+/// faint and dashed under the visible edges ("" clears them).
+fn draw_hidden(edges: &[hl::Edge]) {
+    let Some(svg) = crate::element_by_id::<web_sys::Element>("selection-outline") else {
+        return;
+    };
+    let d = if edges.is_empty() {
+        String::new()
+    } else {
+        let r = svg.get_bounding_client_rect();
+        hl::svg_path(edges, r.left(), r.top())
+    };
+    if HIGHLIGHT.with_borrow(|h| h.hidden_path == d) {
+        return;
+    }
+    HIGHLIGHT.with_borrow_mut(|h| h.hidden_path = d.clone());
+    if let Some(e) = crate::element_by_id::<web_sys::Element>("hl-hidden") {
+        let _ = e.set_attribute("d", &d);
+    }
+}
+
 /// Update the overlay; `None` hides it. The mode ("precise", "box",
 /// "owner-precise", "owner-box") styles it.
 fn draw(edges: Option<(&[hl::Edge], &'static str)>) {
     let Some(svg) = crate::element_by_id::<web_sys::Element>("selection-outline") else {
         return;
     };
+    if edges.is_none() {
+        draw_hidden(&[]);
+    }
     let (d, mode) = match edges {
         Some((e, mode)) => {
             let r = svg.get_bounding_client_rect();

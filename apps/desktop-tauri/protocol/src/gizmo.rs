@@ -258,6 +258,11 @@ impl Camera {
             && self.rect[2] > 0.0
             && self.rect[3] > 0.0
     }
+    /// Is the client point (CSS px) inside the rendered canvas rectangle?
+    pub fn contains(&self, p: (f64, f64)) -> bool {
+        let [l, t, w, h] = self.rect;
+        p.0 >= l && p.0 <= l + w && p.1 >= t && p.1 <= t + h
+    }
     pub(crate) fn view_proj(&self) -> [f64; 16] {
         mat_mul(&self.proj, &self.view)
     }
