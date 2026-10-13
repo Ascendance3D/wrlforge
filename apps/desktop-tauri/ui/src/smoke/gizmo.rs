@@ -1229,6 +1229,13 @@ async fn fixtures(c: &p::GizmoSmoke, perf: &mut Perf, r: &mut R) -> Option<()> {
             shown.is_some(),
             u.preview_status.get_untracked(),
         );
+        if label.starts_with("shared PROTO") {
+            proto_body(&tag, r).await?;
+            click("btn-save")?;
+            wait_ms(5000, || (!u.dirty.get_untracked()).then_some(())).await?;
+            r.step(&format!("{tag}: saved"), !u.dirty.get_untracked(), "");
+            continue;
+        }
         if twins {
             twins_and_viewpoint(&tag, r).await?;
             click("btn-save")?;
@@ -1289,6 +1296,125 @@ async fn fixtures(c: &p::GizmoSmoke, perf: &mut Perf, r: &mut R) -> Option<()> {
         wait_ms(5000, || (!u.dirty.get_untracked()).then_some(())).await?;
         r.step(&format!("{tag}: saved"), !u.dirty.get_untracked(), "");
     }
+    Some(())
+}
+
+/// B3: Move on a Transform inside a SHARED PROTO body with two instances
+/// (one top-level at the origin, one inside a Transform at y = -3).
+/// A Scene Tree selection cannot say which instance is meant: refused with a
+/// visible reason. A REAL click on the top-level instance binds THAT
+/// instance's copy; the drag previews on it alone; the commit (after the
+/// shared-definition consent, answered Yes by the harness) changes ONE
+/// translation token of the PROTO body; Undo / Redo are one step each.
+async fn proto_body(tag: &str, r: &mut R) -> Option<()> {
+    let u = ui();
+    if !u.move_mode.get_untracked() {
+        click("btn-move")?;
+    }
+    let refused = tree_click("Transform CarXForm", || {
+        GIZMO.with_borrow(|g| g.last_unproven.as_deref() == Some("proto-instance-not-picked"))
+    })
+    .await;
+    ipc::sleep(200).await;
+    let state = crate::element_by_id::<web_sys::Element>("gizmo")
+        .and_then(|e| e.get_attribute("data-state"));
+    let msg = crate::element_by_id::<HtmlElement>("gizmo-status")
+        .and_then(|e| e.text_content())
+        .unwrap_or_default();
+    r.step(
+        &format!("{tag}: a Scene Tree selection of the PROTO body Transform with TWO instances on screen is refused (which instance is not proven): no usable handles, a visible reason"),
+        refused
+            && state.as_deref() != Some("ready")
+            && msg.contains("PROTO Car")
+            && msg.contains("click the instance"),
+        format!("{state:?} · {msg}"),
+    );
+    let item = u.selected.get_untracked().map(|s| s.id);
+    // A REAL click on the top-level instance (at the origin).
+    let out = real_select_at([0.0, 0.0, 0.0]).await;
+    let picked = out.as_ref().filter(|o| o.is_proven()).and_then(|o| o.item.clone());
+    click("btn-move")?;
+    let t = gz_ready(10_000).await;
+    r.step(
+        &format!("{tag}: a real click on the top-level instance selects the body Transform and binds THAT instance (handles at its origin, shared PROTO named)"),
+        picked.is_some()
+            && picked == item
+            && t.as_ref().is_some_and(|t| {
+                Some(&t.item) == item.as_ref()
+                    && t.shared.as_ref().is_some_and(|s| s.proto == "Car" && s.instances == 2)
+                    && t.origin == [0.0, 0.0, 0.0]
+            }),
+        format!(
+            "{:?} · {:?} · unproven {:?} · refusal {:?} · {}",
+            out.map(|o| (o.status, o.item)),
+            t.as_ref().map(|t| (&t.item, t.origin, &t.shared)),
+            GIZMO.with_borrow(|g| g.last_unproven.clone()),
+            GIZMO.with_borrow(|g| g.last_refusal.clone()),
+            crate::element_by_id::<HtmlElement>("gizmo-status")
+                .and_then(|e| e.text_content())
+                .unwrap_or_default()
+        ),
+    );
+    let t = t?;
+    // The selection outline is drawn on the picked instance's copy.
+    let outlined = wait_ms(5000, || {
+        crate::highlight::HIGHLIGHT.with_borrow(|h| {
+            (h.target.as_ref().is_some_and(|p| p.body) && !h.path.is_empty()).then_some(())
+        })
+    })
+    .await;
+    r.step(
+        &format!("{tag}: the selection outline of the PROTO body Transform is drawn on the picked instance (proven through its instance)"),
+        outlined.is_some(),
+        format!("{:?}", crate::highlight::HIGHLIGHT.with_borrow(|h| (h.target.as_ref().map(|p| p.ancestors.clone()), h.last_refusal.clone(), h.path.len()))),
+    );
+    still_camera().await?;
+    let (a0, a1) = item_span(&t.item)?;
+    let before = source().await?;
+    let commits = GIZMO.with_borrow(|g| g.commits);
+    let at = press_and_move(Axis::X, 100.0, 6).await?;
+    let mid = source().await?;
+    let rend = rendered();
+    real("up", at.0, at.1).await.ok()?;
+    wait_ms(5000, || {
+        (GIZMO.with_borrow(|g| g.commits) > commits).then_some(())
+    })
+    .await;
+    editor::idle().await;
+    let after = source().await?;
+    let (from, old, new) = super::change(&before.text, &after.text);
+    let inside = (a0..a1).contains(&from);
+    if after.text != before.text && !inside {
+        WRONG.set(WRONG.get() + 1);
+    }
+    let line = after
+        .text
+        .lines()
+        .find(|l| l.trim_start().starts_with("translation ") && l.contains(&new))
+        .unwrap_or_default()
+        .to_string();
+    r.step(
+        &format!("{tag}: during the drag the PICKED instance is drawn moved and the source is unchanged; the release (consent: shared definition) changes ONE translation token inside the PROTO body"),
+        mid == before
+            && rend.is_some_and(|v| v[0] > 0.3 && v[1] == 0.0 && v[2] == 0.0)
+            && after.revision == before.revision + 1
+            && inside
+            && old == "0"
+            && line.trim() == format!("translation {new} 0 0")
+            && u.shared_ok.with_untracked(|v| v.iter().any(|(_, n)| n == "Car")),
+        format!("rendered {rend:?} · @{from} in [{a0}, {a1}) · {old:?} → {new:?} · {line:?}"),
+    );
+    editor::history(true).await;
+    editor::idle().await;
+    let undone = text() == before.text;
+    editor::history(false).await;
+    editor::idle().await;
+    let redone = text() == after.text;
+    r.step(
+        &format!("{tag}: the shared-definition move is ONE undo step: Undo restores the body, Redo re-applies it"),
+        undone && redone,
+        format!("undo {undone} · redo {redone}"),
+    );
     Some(())
 }
 

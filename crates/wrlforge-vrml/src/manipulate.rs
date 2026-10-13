@@ -65,6 +65,10 @@ pub mod reason {
     pub const FACTOR_INVALID: &str = "scale-factor-invalid";
     pub const RESULT_SINGULAR: &str = "result-would-be-singular";
     pub const RESULT_IMPRECISE: &str = "result-not-representable";
+    /// B3: a Transform in a PROTO body whose parent frame is not provably
+    /// the instance's own frame (nested under a transforming node, in a
+    /// nested PROTO, or driven through `IS`).
+    pub const BODY_FRAME: &str = "transform-not-at-proto-instance-frame";
 }
 
 /// Which manipulation the target is asked for: each tool needs ITS field
@@ -142,8 +146,12 @@ pub struct Target {
     pub node_to: u64,
     pub def: Option<String>,
     /// The node's position among the top-level node statements (the
-    /// preview's root nodes).
-    pub root_index: usize,
+    /// preview's root nodes). `None` for a PROTO body Transform (B3): it has
+    /// one runtime node per instance, none of them a root node.
+    pub root_index: Option<usize>,
+    /// B3: the Transform is part of the BODY of this shared PROTO
+    /// definition; a commit edits every instance and needs consent.
+    pub shared: Option<field_edit::SharedDefinition>,
     /// Index of the tool's field (`translation`, `rotation` or `scale`) in
     /// `node.fields`.
     pub field_index: usize,
@@ -293,6 +301,99 @@ pub fn origin_of(
     o.iter().all(|v| v.is_finite()).then_some(o)
 }
 
+/// Grouping nodes that add no coordinate transformation to their
+/// `children` (ISO/IEC 14772-1 6.1 Anchor, 6.8 Collision, 6.21 Group).
+const FRAME_NEUTRAL: [&str; 3] = ["Group", "Anchor", "Collision"];
+
+/// B3: whether a node of `node_type` adds no coordinate transformation to
+/// its `children` (the only ancestors a PROTO body Transform may have).
+pub fn is_frame_neutral(node_type: &str) -> bool {
+    FRAME_NEUTRAL.contains(&node_type)
+}
+
+/// Fields of a body Transform that may be bound with `IS` without changing
+/// (or animating) its frame.
+const IS_FRAME_NEUTRAL: [&str; 5] = [
+    "children",
+    "addChildren",
+    "removeChildren",
+    "bboxCenter",
+    "bboxSize",
+];
+
+/// B3: the Transform at exactly `[from, to)` when it is a statement of the
+/// BODY of a top-level PROTO, or reached from one only through the
+/// `children` of frame-neutral grouping nodes whose DEF names (if any) are
+/// never USEd. Its parent frame is then the instance's own frame. `Err` is
+/// the plain-language reason.
+fn body_frame_node(p: &ParseResult, from: u64, to: u64) -> Result<&Node, &'static str> {
+    fn at(n: &Node, from: u64, to: u64) -> bool {
+        n.range.start.offset as u64 == from && n.range.end.offset as u64 == to
+    }
+    fn contains(n: &Node, from: u64, to: u64) -> bool {
+        (n.range.start.offset as u64) <= from && to <= n.range.end.offset as u64
+    }
+    /// The node at the span under `n` through neutral `children` only.
+    fn down<'a>(
+        p: &ParseResult,
+        n: &'a Node,
+        from: u64,
+        to: u64,
+    ) -> Result<&'a Node, &'static str> {
+        if at(n, from, to) {
+            return Ok(n);
+        }
+        if !FRAME_NEUTRAL.contains(&n.node_type.as_str()) {
+            return Err("it is inside a node that changes its coordinate frame");
+        }
+        if let Some(d) = &n.def {
+            if name_uses(p, d).1 > 0 {
+                return Err("an enclosing node is USEd elsewhere");
+            }
+        }
+        for f in &n.fields {
+            let Ast::Field(fl) = f else { continue };
+            let items: Vec<&Ast> = match fl.value.as_deref() {
+                Some(Ast::Array { items, .. }) => items.iter().collect(),
+                Some(v) => vec![v],
+                None => vec![],
+            };
+            for it in items {
+                if let Ast::Node(c) = it {
+                    if contains(c, from, to) {
+                        if fl.name != "children" {
+                            return Err("it is not in a children field");
+                        }
+                        return down(p, c, from, to);
+                    }
+                }
+            }
+        }
+        Err("its place in the PROTO body is not proven")
+    }
+    for s in &p.tree.statements {
+        let Ast::Proto(pr) = s else { continue };
+        for b in &pr.body {
+            let Ast::Node(n) = b else { continue };
+            if !contains(n, from, to) {
+                continue;
+            }
+            let t = down(p, n, from, to)?;
+            for f in &t.fields {
+                if let Ast::Field(fl) = f {
+                    if matches!(fl.value.as_deref(), Some(Ast::Is { .. }))
+                        && !IS_FRAME_NEUTRAL.contains(&fl.name.as_str())
+                    {
+                        return Err("its frame is bound to the PROTO interface (IS)");
+                    }
+                }
+            }
+            return Ok(t);
+        }
+    }
+    Err("it is not directly in the body of a top-level PROTO")
+}
+
 /// Whether the gizmo may move the node at `[from, to)`, and where it is.
 pub fn translate_target(src: &str, from: u64, to: u64) -> Result<Target, Refusal> {
     manip_target(src, from, to, Tool::Move)
@@ -319,24 +420,40 @@ fn target_in(
             format!("This object cannot be {verb}: its source cannot be edited safely."),
         ));
     }
-    // B1 opened the Inspector to PROTO bodies; the gizmos are not there yet.
-    if fields.shared.is_some() {
-        return Err(refuse(
-            field_edit::reason::NODE_IN_PROTO_SCOPE,
-            format!("This object is part of a shared PROTO definition and cannot be {verb} with the gizmo yet. Use the Inspector."),
-        ));
-    }
     if fields.node_type.as_deref() != Some("Transform") {
         return Err(refuse(
             reason::NOT_TRANSFORM,
             format!("Only a Transform can be {verb}. Select the object's Transform."),
         ));
     }
-    let Some((root_index, node)) = top_level_at(p, from, to) else {
-        return Err(refuse(
-            reason::NOT_TOP_LEVEL,
-            format!("Only a top-level Transform can be {verb} yet (a nested Transform needs its parent's coordinate frame). Use the Inspector."),
-        ));
+    // B3: a PROTO body Transform is manipulated as the shared definition.
+    // Its parent frame must be the instance's own frame: a statement of the
+    // body of a top-level PROTO, under frame-neutral grouping nodes only.
+    let shared = fields.shared.clone();
+    let (root_index, node) = if let Some(sh) = &shared {
+        if sh.name_ambiguous {
+            return Err(refuse(
+                field_edit::reason::PROTO_NAME_AMBIGUOUS,
+                format!("PROTO {} is declared more than once; which definition an instance uses is not proven.", sh.proto),
+            ));
+        }
+        match body_frame_node(p, from, to) {
+            Ok(n) => (None, n),
+            Err(why) => {
+                return Err(refuse(
+                    reason::BODY_FRAME,
+                    format!("This Transform in PROTO {} cannot be {verb} with the handles: {why}. Use the Inspector.", sh.proto),
+                ))
+            }
+        }
+    } else {
+        let Some((i, node)) = top_level_at(p, from, to) else {
+            return Err(refuse(
+                reason::NOT_TOP_LEVEL,
+                format!("Only a top-level Transform can be {verb} yet (a nested Transform needs its parent's coordinate frame). Use the Inspector."),
+            ));
+        };
+        (Some(i), node)
     };
     let def = node.def.clone();
     if let Some(def) = &def {
@@ -445,6 +562,7 @@ fn target_in(
         node_to: to,
         def,
         root_index,
+        shared,
         field_index: tf.index,
         translation,
         rotation,
@@ -455,6 +573,32 @@ fn target_in(
         origin,
         pivot,
     })
+}
+
+/// B3: the target for a COMMIT: `manip_target`, then the field-edit node
+/// gate with the caller's consent -- a shared PROTO definition is refused
+/// without it (`SHARED_DEFINITION_UNCONFIRMED`), exactly as an Inspector
+/// edit is.
+fn commit_target(
+    src: &str,
+    from: u64,
+    to: u64,
+    tool: Tool,
+    confirm_shared: bool,
+) -> Result<Target, Refusal> {
+    let p = parse(src);
+    let target = target_in(&p, src, from, to, tool)?;
+    if let Err(r) = field_edit::node_gate(&p, from, to, confirm_shared) {
+        let message = match (r, &target.shared) {
+            (field_edit::reason::SHARED_DEFINITION_UNCONFIRMED, Some(sh)) => format!(
+                "This Transform is part of the shared definition PROTO {} ({} instance(s)); changing it changes every instance and was not confirmed.",
+                sh.proto, sh.instances
+            ),
+            _ => format!("This object cannot be {}: its source cannot be edited safely.", tool.verb()),
+        };
+        return Err(refuse(r, message));
+    }
+    Ok(target)
 }
 
 /// A finite value as a VRML97 float token with at most `decimals` places:
@@ -495,6 +639,20 @@ pub fn plan_translate(
     value: f64,
     decimals: u8,
 ) -> (Plan, Option<String>) {
+    plan_translate_with(src, from, to, axis, value, decimals, false)
+}
+
+/// `plan_translate` with the user's consent to edit a shared PROTO
+/// definition (B3). Without it a PROTO body Transform is refused.
+pub fn plan_translate_with(
+    src: &str,
+    from: u64,
+    to: u64,
+    axis: Axis,
+    value: f64,
+    decimals: u8,
+    confirm_shared: bool,
+) -> (Plan, Option<String>) {
     let refused = |reason: &'static str, message: String| {
         (
             Plan::Refused {
@@ -505,7 +663,7 @@ pub fn plan_translate(
             None,
         )
     };
-    let target = match translate_target(src, from, to) {
+    let target = match commit_target(src, from, to, Tool::Move, confirm_shared) {
         Ok(t) => t,
         Err(r) => {
             return (
@@ -543,7 +701,7 @@ pub fn plan_translate(
         return (Plan::Unchanged, None);
     }
     let req = Request {
-        confirm_shared: false,
+        confirm_shared,
         node_from: from,
         node_to: to,
         field_index: target.field_index,
@@ -651,6 +809,7 @@ fn ready_plan(
     target: &Target,
     texts: &[String],
     allowed: &[usize],
+    confirm_shared: bool,
 ) -> (Plan, Option<String>) {
     let tool_field = if texts.len() == 4 {
         "rotation"
@@ -661,7 +820,7 @@ fn ready_plan(
         return (Plan::Unchanged, None);
     }
     let req = Request {
-        confirm_shared: false,
+        confirm_shared,
         node_from: target.node_from,
         node_to: target.node_to,
         field_index: target.field_index,
@@ -716,7 +875,19 @@ pub fn plan_rotate(
     axis: Axis,
     delta: f64,
 ) -> (Plan, Option<String>) {
-    let target = match manip_target(src, from, to, Tool::Rotate) {
+    plan_rotate_with(src, from, to, axis, delta, false)
+}
+
+/// `plan_rotate` with consent to edit a shared PROTO definition (B3).
+pub fn plan_rotate_with(
+    src: &str,
+    from: u64,
+    to: u64,
+    axis: Axis,
+    delta: f64,
+    confirm_shared: bool,
+) -> (Plan, Option<String>) {
+    let target = match commit_target(src, from, to, Tool::Rotate, confirm_shared) {
         Ok(t) => t,
         Err(r) => return refused_plan(r.reason, r.message),
     };
@@ -795,7 +966,7 @@ pub fn plan_rotate(
             "The rotation cannot be written precisely enough; nothing was changed.",
         );
     }
-    ready_plan(src, &target, &texts, &allowed)
+    ready_plan(src, &target, &texts, &allowed, confirm_shared)
 }
 
 /// The exact-source edit scaling the Transform at `[from, to)` by `factor`
@@ -810,7 +981,19 @@ pub fn plan_scale(
     axis: Option<Axis>,
     factor: f64,
 ) -> (Plan, Option<String>) {
-    let target = match manip_target(src, from, to, Tool::Scale) {
+    plan_scale_with(src, from, to, axis, factor, false)
+}
+
+/// `plan_scale` with consent to edit a shared PROTO definition (B3).
+pub fn plan_scale_with(
+    src: &str,
+    from: u64,
+    to: u64,
+    axis: Option<Axis>,
+    factor: f64,
+    confirm_shared: bool,
+) -> (Plan, Option<String>) {
+    let target = match commit_target(src, from, to, Tool::Scale, confirm_shared) {
         Ok(t) => t,
         Err(r) => return refused_plan(r.reason, r.message),
     };
@@ -845,7 +1028,7 @@ pub fn plan_scale(
         }
         texts[k] = t;
     }
-    ready_plan(src, &target, &texts, &comps)
+    ready_plan(src, &target, &texts, &comps, confirm_shared)
 }
 
 #[cfg(test)]

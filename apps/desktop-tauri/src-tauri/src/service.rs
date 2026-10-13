@@ -1368,7 +1368,7 @@ impl Service {
                     revision: current,
                     item: r.item.clone(),
                     def_name: t.def,
-                    root_index: t.root_index as u32,
+                    root_index: t.root_index.map(|i| i as u32),
                     preview_from: from - preview_offset(&text),
                     preview_to: to - preview_offset(&text),
                     translation: t.translation,
@@ -1378,6 +1378,11 @@ impl Service {
                     scale_orientation: t.scale_orientation,
                     center: t.center,
                     pivot: t.pivot,
+                    shared: t.shared.as_ref().map(|s| p::SharedProto {
+                        proto: s.proto.clone(),
+                        instances: s.instances as u32,
+                        name_ambiguous: s.name_ambiguous,
+                    }),
                 },
                 Err(e) => p::TranslateTargetOutcome::Refused {
                     reason: e.reason.into(),
@@ -1413,9 +1418,10 @@ impl Service {
         let Some((from, to)) = node_span(&r.item) else {
             return Ok(refused(field_edit::reason::NOT_A_NODE, "Not an object."));
         };
-        if let Err(e) = manipulate::manip_target(&text, from, to, manip_tool(r.tool)) {
-            return Ok(refused(e.reason, &e.message));
-        }
+        let target = match manipulate::manip_target(&text, from, to, manip_tool(r.tool)) {
+            Ok(t) => t,
+            Err(e) => return Ok(refused(e.reason, &e.message)),
+        };
         let unprovable = "The preview cannot prove which rendered object is this Transform, so it cannot be changed here. Use the Inspector.";
         let snap = &r.snapshot;
         let (Some(shape), "found", 1..=MAX_PICK_GRAPH) = (
@@ -1433,12 +1439,40 @@ impl Service {
         let hit = hit_of(shape, snap);
         Ok(
             match pk::resolve_node(&hit, &parsed, preview_offset(&text), from, to) {
-                Ok(chain) if chain.len() == 1 && chain[0].node_type == "Transform" => {
+                Ok(chain)
+                    if target.shared.is_none()
+                        && chain.len() == 1
+                        && chain[0].node_type == "Transform" =>
+                {
                     p::TranslateProveOutcome::Proven {
                         revision: current,
                         item: r.item.clone(),
                     }
                 }
+                // B3: a PROTO body Transform. The runtime node is ONE
+                // instance's copy; its proven chain must be the Transform,
+                // frame-neutral body groups only, then a TOP-LEVEL instance
+                // of exactly that PROTO -- so its parent frame is the world,
+                // like a top-level Transform's.
+                Ok(chain)
+                    if target.shared.as_ref().is_some_and(|sh| {
+                        chain.len() >= 2
+                            && chain[0].node_type == "Transform"
+                            && chain[chain.len() - 1].node_type == sh.proto
+                            && chain[1..chain.len() - 1]
+                                .iter()
+                                .all(|n| manipulate::is_frame_neutral(&n.node_type))
+                    }) =>
+                {
+                    p::TranslateProveOutcome::Proven {
+                        revision: current,
+                        item: r.item.clone(),
+                    }
+                }
+                Ok(_) if target.shared.is_some() => refused(
+                    manipulate::reason::BODY_FRAME,
+                    "This PROTO instance is inside another node, so the handles cannot follow its frame. Use the Inspector.",
+                ),
                 Ok(_) => refused(manipulate::reason::NOT_TOP_LEVEL, unprovable),
                 Err(res) => refused(res.reason(), unprovable),
             },
@@ -1462,6 +1496,9 @@ impl Service {
                 item: r.item.clone(),
                 preview_from: from - off,
                 preview_to: to - off,
+                // B3: a PROTO body node has one runtime copy per instance.
+                body: field_edit::shared_definition(&wrlforge_vrml::parse(&text), from, to)
+                    .is_some(),
             }),
             _ => Ok(p::HighlightTargetOutcome::Refused {
                 reason: field_edit::reason::NOT_A_NODE.into(),
@@ -1513,8 +1550,22 @@ impl Service {
         Ok(match pk::resolve_node(&hit, &parsed, off, from, to) {
             Ok(chain) => {
                 let mut ancestors = Vec::with_capacity(chain.len().saturating_sub(1));
-                for n in chain.iter().skip(1) {
-                    if p::highlight::ancestor_kind(&n.node_type).is_none() {
+                let span = |n: &wrlforge_vrml::ast::Node| {
+                    (n.range.start.offset as u64, n.range.end.offset as u64)
+                };
+                let in_body = |n: &wrlforge_vrml::ast::Node| {
+                    let (f, t) = span(n);
+                    field_edit::shared_definition(&parsed, f, t).is_some()
+                };
+                for (i, n) in chain.iter().enumerate().skip(1) {
+                    // B3: the instance a PROTO body chain was proven through
+                    // (the chain proof joined the body link to exactly this
+                    // document instance): it renders as its body root, the
+                    // previous link, and adds no frame.
+                    let proto_instance = !wrlforge_vrml::node_schema::is_vrml97_node(&n.node_type)
+                        && in_body(chain[i - 1])
+                        && !in_body(n);
+                    if !proto_instance && p::highlight::ancestor_kind(&n.node_type).is_none() {
                         return Ok(refused(
                             p::highlight::refusal::ANCESTOR,
                             "It is inside a node whose placement the outline cannot follow.",
@@ -1528,6 +1579,7 @@ impl Service {
                         preview_from: f - off,
                         preview_to: t - off,
                         node_type: n.node_type.clone(),
+                        proto_instance,
                     });
                 }
                 p::HighlightProveOutcome::Proven {
@@ -1595,13 +1647,14 @@ impl Service {
             let Some((node_from, node_to)) = node_span(&r.item) else {
                 return refused(field_edit::reason::NOT_A_NODE, "Not an object.".into());
             };
-            let (plan, text) = manipulate::plan_translate(
+            let (plan, text) = manipulate::plan_translate_with(
                 s.doc.text(),
                 node_from,
                 node_to,
                 manip_axis(r.axis),
                 r.value,
                 r.decimals,
+                r.confirm_shared,
             );
             Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text)
         })
@@ -1616,12 +1669,13 @@ impl Service {
                 Ok(span) => span,
                 Err(o) => return o,
             };
-            let (plan, text) = manipulate::plan_rotate(
+            let (plan, text) = manipulate::plan_rotate_with(
                 s.doc.text(),
                 node_from,
                 node_to,
                 manip_axis(r.axis),
                 r.delta,
+                r.confirm_shared,
             );
             Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text)
         })
@@ -1634,12 +1688,13 @@ impl Service {
                 Ok(span) => span,
                 Err(o) => return o,
             };
-            let (plan, text) = manipulate::plan_scale(
+            let (plan, text) = manipulate::plan_scale_with(
                 s.doc.text(),
                 node_from,
                 node_to,
                 r.axis.map(manip_axis),
                 r.factor,
+                r.confirm_shared,
             );
             Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text)
         })
@@ -3871,6 +3926,7 @@ mod tests {
                 scale_orientation,
                 center,
                 pivot,
+                shared,
                 ..
             } => p::TranslateTargetOutcome::Ready {
                 revision: 0,
@@ -3886,6 +3942,7 @@ mod tests {
                 scale_orientation,
                 center,
                 pivot,
+                shared,
             },
             other => other,
         }
@@ -3900,6 +3957,7 @@ mod tests {
         d: f64,
     ) -> p::TranslateOutcome {
         svc.rotate(&p::RotateRequest {
+            confirm_shared: false,
             session: id,
             base_revision: rev,
             item: item.into(),
@@ -3918,6 +3976,7 @@ mod tests {
         f: f64,
     ) -> p::TranslateOutcome {
         svc.scale(&p::ScaleRequest {
+            confirm_shared: false,
             session: id,
             base_revision: rev,
             item: item.into(),
@@ -4164,6 +4223,7 @@ mod tests {
         v: f64,
     ) -> p::TranslateOutcome {
         svc.translate(&p::TranslateRequest {
+            confirm_shared: false,
             session: id,
             base_revision: rev,
             item: item.into(),
@@ -4205,6 +4265,213 @@ mod tests {
             graph,
             ..Default::default()
         }
+    }
+
+    /// B3: a Transform in a shared PROTO body. The target is Ready (no root
+    /// index, the shared definition named); the runtime proof accepts the
+    /// PICKED instance's copy only when its chain is the Transform, neutral
+    /// body groups and a TOP-LEVEL instance; a commit is refused without
+    /// consent and with it writes exactly one token of the body, as one
+    /// undo step.
+    #[test]
+    fn gizmo_on_a_shared_proto_body_transform_needs_consent_and_one_token() {
+        use p::gizmo::Axis as A;
+        let dir = tmp("b3-proto-gizmo");
+        let path = dir.join("car.wrl");
+        let xf = "DEF CarXForm Transform { translation 0 0 0 rotation 0 1 0 0 scale 1 1 1 children [ Shape { geometry Box { } } ] }";
+        let group = format!("Group {{\n\t\tbboxSize IS bboxSize\n\t\tchildren [\n\t\t\t{xf}\n\t\t]\n\t}}");
+        let inst = "Car { }";
+        let text = format!(
+            "#VRML V2.0 utf8\nPROTO Car [ field SFVec3f bboxSize 1 1 1 ] {{\n\t{group}\n}}\n{inst}\nTransform {{ translation 5 0 0 children Car {{ }} }}\n"
+        );
+        fs::write(&path, &text).unwrap();
+        let (o, svc) = svc_open(&path);
+        let doc = opened(o);
+        let id = doc.session;
+        let rev0 = doc.revision;
+        let u16at = |b: usize| text[..b].encode_utf16().count() as u64;
+        let span_of = |needle: &str| {
+            let b = text.find(needle).unwrap();
+            (u16at(b), u16at(b + needle.len()))
+        };
+        let (xs, gs, is) = (span_of(xf), span_of(&group), span_of(inst));
+        let item = format!("node-{}-{}", xs.0, xs.1);
+        match target(&svc, id, rev0, &item) {
+            p::TranslateTargetOutcome::Ready {
+                root_index,
+                shared,
+                def_name,
+                ..
+            } => {
+                assert_eq!(root_index, None);
+                assert_eq!(def_name.as_deref(), Some("CarXForm"));
+                let sh = shared.expect("shared definition");
+                assert_eq!((sh.proto.as_str(), sh.instances), ("Car", 2));
+            }
+            o => panic!("{o:?}"),
+        }
+        // The runtime chain of one instance's copy, as snapshotBodySpan
+        // reports it: Transform -> Group -> BODY:instance -> SCENE.
+        let node = |ty: &str, ctx: &str, sp: (u64, u64), parents: &[&str]| p::PickGraphNode {
+            type_name: Some(ty.into()),
+            ctx_kind: ctx.into(),
+            occurrences: vec![p::PickSpan { start: sp.0, end: sp.1 }],
+            parents: parents.iter().map(|s| s.to_string()).collect(),
+        };
+        let body_snap = |instance_parent: &str, extra: Option<p::PickGraphNode>| {
+            let mut graph = std::collections::BTreeMap::new();
+            graph.insert("n1".to_string(), node("Transform", "proto-body", xs, &["n2"]));
+            graph.insert("n2".to_string(), node("Group", "proto-body", gs, &["BODY:n3"]));
+            graph.insert("n3".to_string(), node("Car", "document", is, &[instance_parent]));
+            if let Some(e) = extra {
+                graph.insert("n4".to_string(), e);
+            }
+            p::PickSnapshot {
+                outcome: "found".into(),
+                shape: Some("n1".into()),
+                ctx_kind: Some("proto-body".into()),
+                graph,
+                ..Default::default()
+            }
+        };
+        let hash = p::preview_hash(&text);
+        let prove = |snap: p::PickSnapshot| {
+            svc.translate_prove(&p::TranslateProveRequest {
+                session: id,
+                revision: rev0,
+                preview_hash: hash,
+                generation: 1,
+                item: item.clone(),
+                snapshot: snap,
+                tool: p::gizmo::Tool::Move,
+            })
+            .unwrap()
+        };
+        assert!(matches!(
+            prove(body_snap("SCENE", None)),
+            p::TranslateProveOutcome::Proven { .. }
+        ));
+        // The instance nested in a Transform: its frame is not the world.
+        let nested = text.rfind("Transform {").unwrap();
+        let nested_end = text.rfind('}').unwrap() + 1;
+        let ns = (u16at(nested), u16at(nested_end));
+        let inner = text[..nested_end].rfind("Car { }").unwrap();
+        let mut snap = body_snap("n4", Some(node("Transform", "document", ns, &["SCENE"])));
+        if let Some(n3) = snap.graph.get_mut("n3") {
+            n3.occurrences = vec![p::PickSpan {
+                start: u16at(inner),
+                end: u16at(inner + inst.len()),
+            }];
+        }
+        match prove(snap) {
+            p::TranslateProveOutcome::Refused { reason, .. } => {
+                assert_eq!(reason, manipulate::reason::BODY_FRAME)
+            }
+            o => panic!("{o:?}"),
+        }
+        // The selection highlight of the body Shape: located as the picked
+        // instance's copy; the proven chain marks the instance link (no
+        // frame of its own), so the outline composes the body frames only.
+        let shp = span_of("Shape { geometry Box { } }");
+        let sitem = format!("node-{}-{}", shp.0, shp.1);
+        match svc
+            .highlight_target(&p::HighlightTargetRequest {
+                session: id,
+                revision: rev0,
+                item: sitem.clone(),
+            })
+            .unwrap()
+        {
+            p::HighlightTargetOutcome::Ready { body, .. } => assert!(body),
+            o => panic!("{o:?}"),
+        }
+        let mut hs = body_snap("SCENE", None);
+        hs.graph.insert("n0".to_string(), node("Shape", "proto-body", shp, &["n1"]));
+        hs.shape = Some("n0".into());
+        match svc
+            .highlight_prove(&p::HighlightProveRequest {
+                session: id,
+                revision: rev0,
+                preview_hash: hash,
+                generation: 1,
+                item: sitem,
+                snapshot: hs,
+            })
+            .unwrap()
+        {
+            p::HighlightProveOutcome::Proven { ancestors, .. } => {
+                let got: Vec<(&str, bool)> = ancestors
+                    .iter()
+                    .map(|a| (a.node_type.as_str(), a.proto_instance))
+                    .collect();
+                assert_eq!(got, [("Transform", false), ("Group", false), ("Car", true)]);
+            }
+            o => panic!("{o:?}"),
+        }
+        // No consent: nothing changes.
+        match mv(&svc, id, rev0, &item, A::X, 1.5) {
+            p::TranslateOutcome::Refused { reason, .. } => assert_eq!(
+                reason,
+                field_edit::reason::SHARED_DEFINITION_UNCONFIRMED
+            ),
+            o => panic!("{o:?}"),
+        }
+        assert_eq!(svc.text(id).unwrap(), text);
+        // Consent: one token of the PROTO body, one undo step.
+        let (st, it, written) = moved(
+            svc.translate(&p::TranslateRequest {
+                session: id,
+                base_revision: rev0,
+                item: item.clone(),
+                axis: A::X,
+                value: 1.5,
+                decimals: 3,
+                confirm_shared: true,
+            })
+            .unwrap(),
+        );
+        assert_eq!(written, "1.5");
+        let after = text.replacen(
+            "CarXForm Transform { translation 0 0 0",
+            "CarXForm Transform { translation 1.5 0 0",
+            1,
+        );
+        assert_eq!(svc.text(id).unwrap(), after);
+        assert!(matches!(svc.undo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), text);
+        assert!(matches!(svc.redo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), after);
+        // Rotate and scale go the same way.
+        let rev = svc.text_at(id).unwrap().1;
+        assert!(matches!(
+            rot(&svc, id, rev, &it, A::Y, 0.5),
+            p::TranslateOutcome::Refused { .. }
+        ));
+        let r = svc
+            .rotate(&p::RotateRequest {
+                session: id,
+                base_revision: rev,
+                item: it.clone(),
+                axis: A::Y,
+                delta: 0.5,
+                confirm_shared: true,
+            })
+            .unwrap();
+        let (st2, it2, _) = moved(r);
+        assert!(svc.text(id).unwrap().contains("rotation 0 1 0 0.5 scale 1 1 1"));
+        let r = svc
+            .scale(&p::ScaleRequest {
+                session: id,
+                base_revision: st2.revision,
+                item: it2,
+                axis: None,
+                factor: 2.0,
+                confirm_shared: true,
+            })
+            .unwrap();
+        moved(r);
+        assert!(svc.text(id).unwrap().contains("scale 2 2 2 children"));
+        let _ = st;
     }
 
     /// VISUAL-3A1: twin anonymous Transforms with EQUAL translations and
@@ -4563,6 +4830,7 @@ mod tests {
                             preview_from: pv(parent).0,
                             preview_to: pv(parent).1,
                             node_type: "Transform".into(),
+                            proto_instance: false,
                         }]
                     );
                 }
@@ -4998,6 +5266,7 @@ mod recovery_tests {
         check("create");
         let o = svc
             .translate(&p::TranslateRequest {
+                confirm_shared: false,
                 session: id,
                 base_revision: state.revision,
                 item: item.clone(),
@@ -5014,7 +5283,7 @@ mod recovery_tests {
         for (what, o) in [
             (
                 "rotate",
-                svc.rotate(&p::RotateRequest { session: id, base_revision: rev, item: item.clone(), axis: p::gizmo::Axis::Y, delta: 0.5 }),
+                svc.rotate(&p::RotateRequest { confirm_shared: false, session: id, base_revision: rev, item: item.clone(), axis: p::gizmo::Axis::Y, delta: 0.5 }),
             ),
         ] {
             match o.unwrap() {

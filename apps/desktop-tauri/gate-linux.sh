@@ -33,7 +33,7 @@ res() { if [[ "$2" == 1 ]]; then log "PASS $1 :: $3"; else log "FAIL $1 :: $3"; 
 # ---- the complete inventory at this commit --------------------------------
 # cargo: "<binary>|passed|ignored" per test target, doc-tests included. Each
 # must run, with exactly these counts, 0 failed and 0 filtered out.
-inv_app='unittests:wrl_forge_desktop|88|1
+inv_app='unittests:wrl_forge_desktop|89|1
 unittests:wrl_forge|0|0
 tests:app_shell|5|0
 tests:flux_regression|6|0
@@ -50,7 +50,7 @@ doc:wrlforge_scene|0|0
 doc:wrlforge_ui|0|0'
 inv_crates='unittests:wrlforge_document|15|0
 unittests:wrlforge_text|25|0
-unittests:wrlforge_vrml|189|0
+unittests:wrlforge_vrml|191|0
 unittests:wrlforge_wasm|3|0
 doc:wrlforge_document|0|0
 doc:wrlforge_text|0|0
@@ -64,14 +64,14 @@ dock:damaged|7
 pick:report|130
 create:report|51
 extrusion:report|58
-move:report|156
+move:report|164
 rotscale:report|72
 recovery:restore|34
 recovery:later|15
 theme:report|82
 texture:report|46
 native:report|46'
-guards_want=151; node_want=56; route_want=2; fx_want=58
+guards_want=151; node_want=60; route_want=2; fx_want=58
 
 # ---- 0. the checkout -------------------------------------------------------
 head="$(git -C "$wt" rev-parse HEAD)"; dirty="$(git -C "$wt" status --porcelain | wc -l)"
@@ -123,7 +123,7 @@ res test-shared-crates "$([[ $rc -eq 0 && $ok -eq 0 ]] && echo 1)" "exit=$rc $(a
 (cd "$app" && timeout 300 ./test-xite-guards.sh) >"$out/xite-guards.txt" 2>&1; rc=$?
 s="$(tail -1 "$out/xite-guards.txt")"
 res xite-guards "$([[ $rc -eq 0 && "$s" == "SUMMARY pass=$guards_want fail=0" ]] && echo 1)" "exit=$rc $s (want $guards_want)"
-(cd "$wt" && timeout 120 node --test test/preview/xite-pick-adapter.test.js test/preview/xite-pick-guards.test.js test/preview/xite-pick-binding.test.js test/preview/xite-gizmo-highlight.test.js) >"$out/node-adapter.txt" 2>&1; rc=$?
+(cd "$wt" && timeout 120 node --test test/preview/xite-pick-adapter.test.js test/preview/xite-pick-guards.test.js test/preview/xite-pick-binding.test.js test/preview/xite-pick-body-binding.test.js test/preview/xite-gizmo-highlight.test.js) >"$out/node-adapter.txt" 2>&1; rc=$?
 np="$(sed -n 's/^ℹ pass //p' "$out/node-adapter.txt")"; nf="$(sed -n 's/^ℹ fail //p' "$out/node-adapter.txt")"; ns="$(sed -n 's/^ℹ skipped //p' "$out/node-adapter.txt")"; nt="$(sed -n 's/^ℹ todo //p' "$out/node-adapter.txt")"
 res js-adapter-tests "$([[ $rc -eq 0 && "$np" == "$node_want" && "$nf" == 0 && "$ns" == 0 && "${nt:-0}" == 0 ]] && echo 1)" "exit=$rc pass=$np fail=$nf skipped=$ns todo=${nt:-0} (want $node_want)"
 (cd "$app/src-tauri" && cargo test -p wrl-forge-desktop route_warning -j 16) >"$out/route-tests.txt" 2>&1; rc=$?

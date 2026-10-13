@@ -302,7 +302,20 @@ pub fn move_fixtures() -> Vec<(&'static str, &'static str, String)> {
             doc("", "\n", "Box_1", "").replace("translation 0 0 0", "translation 0.0 0.0 0.0"),
         ),
         (TWINS_FILE, TWINS_LABEL, twins_fixture()),
+        (PROTO_FILE, PROTO_LABEL, proto_fixture()),
     ]
+}
+
+/// B3: the shared-PROTO fixture's file name and label.
+pub const PROTO_FILE: &str = "fx-proto-body.wrl";
+pub const PROTO_LABEL: &str = "shared PROTO body Transform";
+
+/// B3: a Transform in a PROTO body (under a Group whose bboxSize is an IS,
+/// like the Chevy's), and TWO instances: one top-level, one inside a moved
+/// Transform. A scene-tree selection cannot say which instance is meant;
+/// a real click on the top-level one binds that one.
+pub fn proto_fixture() -> String {
+    "#VRML V2.0 utf8\n# B3 — shared PROTO body ✓\nPROTO Car [ field SFVec3f bboxSize 2 2 2 ] {\n  Group {\n    bboxSize IS bboxSize\n    children [\n      DEF CarXForm Transform {\n        translation 0 0 0\n        children [ Shape { appearance Appearance { material Material { diffuseColor 0.2 0.5 0.9 } } geometry Box { } } ]\n      }\n    ]\n  }\n}\nCar { }\nTransform { translation 0 -3 0 children [ Car { } ] }\n# fin ✓\n".into()
 }
 
 /// VISUAL-3A1: the twin fixture's file name and label.
@@ -1672,6 +1685,30 @@ mod tests {
                 !wrlforge_vrml::field_edit::has_blocking_syntax_error(&p),
                 "{file}"
             );
+            if file == PROTO_FILE {
+                // The PROTO body Transform: a target, a commit only with
+                // consent, one translation token.
+                let at = text.find("DEF CarXForm").unwrap();
+                let u16 = |b: usize| text[..b].encode_utf16().count() as u64;
+                let end = at + text[at..].find("\n      }").unwrap() + "\n      }".len();
+                let (f, t) = (u16(at), u16(end));
+                let tg = translate_target(&text, f, t).unwrap();
+                assert_eq!(tg.root_index, None);
+                assert!(tg.shared.is_some());
+                assert!(matches!(
+                    plan_translate(&text, f, t, Axis::X, 1.75, 2).0,
+                    wrlforge_vrml::field_edit::Plan::Refused { .. }
+                ));
+                let (plan, _) = wrlforge_vrml::manipulate::plan_translate_with(
+                    &text, f, t, Axis::X, 1.75, 2, true,
+                );
+                let wrlforge_vrml::field_edit::Plan::Ready { new_text, .. } = plan else {
+                    panic!("{file}: {plan:?}")
+                };
+                let got = one_translation_token(text.as_bytes(), new_text.as_bytes());
+                assert_eq!(got.as_ref().map(|(_, n)| n.as_str()), Some("1.75"));
+                continue;
+            }
             let t = p
                 .tree
                 .statements
@@ -1727,8 +1764,14 @@ mod tests {
         assert!(gizmo.contains("try { push(browser.currentScene.rootNodes); } catch (e) { return out; }"));
         assert!(gizmo.contains("'preview-root-order-disagrees'"));
         assert!(!gizmo.contains("getNamedNode(String(name)); } catch (e) { named = null; }\n      if (!named) return { ok: true"));
-        assert!(preview.contains("var node = adapter.nodeAt(gen, f, t);"));
-        assert!(preview.contains("adapter.nodeAt(gen, f, t) === node"));
+        // B3: a PROTO body node binds the picked instance's copy
+        // (bodyNodeAt), re-proved as the SAME node before every use.
+        assert!(preview.contains(
+            "var node = isBody ? adapter.bodyNodeAt(gen, f, t) : adapter.nodeAt(gen, f, t);"
+        ));
+        assert!(preview.contains(
+            "(isBody ? adapter.bodyNodeAt(gen, f, t, node) : adapter.nodeAt(gen, f, t)) === node"
+        ));
         assert!(!preview.contains("rootNodes["));
     }
 

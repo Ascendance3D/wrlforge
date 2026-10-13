@@ -722,7 +722,9 @@ pub enum TranslateTargetOutcome {
         revision: u64,
         item: String,
         def_name: Option<String>,
-        root_index: u32,
+        /// `None` for a PROTO body Transform (B3): one runtime node per
+        /// instance, none of them a root node.
+        root_index: Option<u32>,
         preview_from: u64,
         preview_to: u64,
         translation: [f64; 3],
@@ -740,6 +742,11 @@ pub enum TranslateTargetOutcome {
         /// World position of the rotation / scale pivot (`T + C`).
         #[serde(default)]
         pivot: [f64; 3],
+        /// B3: the Transform is part of this shared PROTO definition. The
+        /// preview binds the PICKED instance's copy of it; a commit edits
+        /// the definition (every instance) and needs `confirm_shared`.
+        #[serde(default)]
+        shared: Option<SharedProto>,
     },
     Refused {
         reason: String,
@@ -807,6 +814,9 @@ pub enum HighlightTargetOutcome {
         item: String,
         preview_from: u64,
         preview_to: u64,
+        /// B3: a PROTO body node -- located as the PICKED instance's copy.
+        #[serde(default)]
+        body: bool,
     },
     Refused {
         reason: String,
@@ -840,6 +850,10 @@ pub struct HighlightAncestor {
     pub preview_from: u64,
     pub preview_to: u64,
     pub node_type: String,
+    /// B3: the PROTO instance the inner chain was proven through (its body
+    /// root is the next inner ancestor; the instance adds no frame).
+    #[serde(default)]
+    pub proto_instance: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -896,6 +910,9 @@ pub struct TranslateRequest {
     pub axis: gizmo::Axis,
     pub value: f64,
     pub decimals: u8,
+    /// B3: the user confirmed editing a shared PROTO definition.
+    #[serde(default)]
+    pub confirm_shared: bool,
 }
 
 /// VISUAL-4B: one completed rotation drag. `delta` (radians) turns the
@@ -909,6 +926,9 @@ pub struct RotateRequest {
     pub item: String,
     pub axis: gizmo::Axis,
     pub delta: f64,
+    /// B3: the user confirmed editing a shared PROTO definition.
+    #[serde(default)]
+    pub confirm_shared: bool,
 }
 
 /// VISUAL-4B: one completed scale drag: `scale[axis] *= factor`, or every
@@ -921,6 +941,9 @@ pub struct ScaleRequest {
     pub item: String,
     pub axis: Option<gizmo::Axis>,
     pub factor: f64,
+    /// B3: the user confirmed editing a shared PROTO definition.
+    #[serde(default)]
+    pub confirm_shared: bool,
 }
 
 /// The outcome of a Move, Rotate or Scale commit.
