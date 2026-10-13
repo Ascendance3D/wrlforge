@@ -496,7 +496,10 @@
     // B3: `body` -- a PROTO body node: the PICKED instance's copy
     // (bodyNodeAt), its ancestors followed up THAT copy's runtime chain and
     // checked span by span (chainOf).
-    highlightBounds: function (seq, from, to, spans, body) {
+    // LV2: `geometry` 1 adds the node's shape list (matrices, types, vertex
+    // counts), 2 the vertices too -- for the precise outline -- as `shapes`,
+    // or `shapesReason` when they cannot be read (the box stays usable).
+    highlightBounds: function (seq, from, to, spans, body, geometry) {
       var c = canvas();
       if (c && c.browser) adapterFor(c.browser);
       var out = function (o) { return JSON.stringify(o); };
@@ -519,7 +522,13 @@
         if (!info) return out({ ok: false, reason: 'runtime-ancestor-not-proven' });
         ancestors.push(info);
       }
-      return out({ ok: true, box: b.box, ancestors: ancestors });
+      var result = { ok: true, box: b.box, ancestors: ancestors };
+      if (geometry === 1 || geometry === 2) {
+        var sh = pick.gizmo.shapes(node, geometry === 2);
+        if (sh.ok) result.shapes = sh.shapes;
+        else result.shapesReason = sh.reason;
+      }
+      return out(result);
     },
     gizmoSet: function (x, y, z) { return !!pick.gizmo && pick.gizmo.set(x, y, z); },
     // VISUAL-4B: name is translation / rotation / scale; values a number array.

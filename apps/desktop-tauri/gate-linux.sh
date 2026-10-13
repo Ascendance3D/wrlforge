@@ -33,16 +33,16 @@ res() { if [[ "$2" == 1 ]]; then log "PASS $1 :: $3"; else log "FAIL $1 :: $3"; 
 # ---- the complete inventory at this commit --------------------------------
 # cargo: "<binary>|passed|ignored" per test target, doc-tests included. Each
 # must run, with exactly these counts, 0 failed and 0 filtered out.
-inv_app='unittests:wrl_forge_desktop|89|1
+inv_app='unittests:wrl_forge_desktop|90|1
 unittests:wrl_forge|0|0
 tests:app_shell|5|0
 tests:flux_regression|6|0
 tests:scope_regression|3|0
 tests:typed_regression|3|0
-unittests:wrlforge_desktop_protocol|96|0
+unittests:wrlforge_desktop_protocol|104|0
 unittests:wrlforge_render|0|0
 unittests:wrlforge_scene|25|0
-unittests:wrlforge_ui|21|0
+unittests:wrlforge_ui|22|0
 doc:wrl_forge_desktop|0|0
 doc:wrlforge_desktop_protocol|0|0
 doc:wrlforge_render|0|0
@@ -62,7 +62,7 @@ dock:main|65
 dock:restore|7
 dock:damaged|7
 pick:report|133
-create:report|51
+create:report|53
 extrusion:report|58
 move:report|164
 rotscale:report|72
@@ -71,7 +71,7 @@ recovery:later|15
 theme:report|82
 texture:report|46
 native:report|46'
-guards_want=151; node_want=60; route_want=2; fx_want=58
+guards_want=151; node_want=64; route_want=2; fx_want=58
 
 # ---- 0. the checkout -------------------------------------------------------
 head="$(git -C "$wt" rev-parse HEAD)"; dirty="$(git -C "$wt" status --porcelain | wc -l)"

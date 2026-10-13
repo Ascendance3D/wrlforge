@@ -295,7 +295,7 @@ fn command_item(id: CommandId) -> AnyView {
             tabindex="-1"
             aria-disabled=move || if reason().is_some() { "true" } else { "false" }
             aria-checked=move || checked().map(|c| if c { "true" } else { "false" })
-            title=move || match reason() {
+            data-tip=move || match reason() {
                 Some(why) => format!("{} — not available: {why}", id.spec().hint),
                 None => command::title(id),
             }
@@ -323,7 +323,7 @@ fn panel_item(show: CommandId, hide: CommandId) -> AnyView {
             aria-checked=move || if on() { "true" } else { "false" }
             aria-disabled="false"
             data-command=move || cur().key()
-            title=move || command::title(cur())
+            data-tip=move || command::title(cur())
             on:click=move |_| activate(cur())>
             <span class="check" aria-hidden="true">{move || if on() { "✓" } else { "" }}</span>
             <span class="menu-label">{p.title()}</span>
@@ -340,7 +340,7 @@ fn preset_item(id: CommandId) -> AnyView {
         <button role="menuitemradio" class="create-item menu-item" tabindex="-1" id=item_dom_id(id)
             data-command=id.key() aria-disabled="false"
             aria-checked=move || if on() { "true" } else { "false" }
-            title=command::title(id)
+            data-tip=command::title(id)
             on:click=move |_| activate(id)>
             <span class="check" aria-hidden="true">{move || if on() { "●" } else { "" }}</span>
             <span class="menu-label">{id.spec().label}</span>

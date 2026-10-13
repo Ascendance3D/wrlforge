@@ -1491,15 +1491,28 @@ impl Service {
         }
         let off = preview_offset(&text);
         match node_span(&r.item) {
-            Some((from, to)) if from >= off => Ok(p::HighlightTargetOutcome::Ready {
-                revision: current,
-                item: r.item.clone(),
-                preview_from: from - off,
-                preview_to: to - off,
-                // B3: a PROTO body node has one runtime copy per instance.
-                body: field_edit::shared_definition(&wrlforge_vrml::parse(&text), from, to)
-                    .is_some(),
-            }),
+            Some((from, to)) if from >= off => {
+                let parsed = wrlforge_vrml::parse(&text);
+                // LV2: a node that is never drawn has nothing to outline;
+                // say so instead of failing later for another reason.
+                let ty = field_edit::inspect_node_fields(&parsed, &text, from, to).node_type;
+                if let Some(t) = ty.filter(|t| {
+                    p::highlight::node_role(t) == p::highlight::NodeRole::NotRendered
+                }) {
+                    return Ok(p::HighlightTargetOutcome::Refused {
+                        reason: p::highlight::refusal::NOT_RENDERED.into(),
+                        message: format!("A {t} is not drawn, so it has no shape to outline."),
+                    });
+                }
+                Ok(p::HighlightTargetOutcome::Ready {
+                    revision: current,
+                    item: r.item.clone(),
+                    preview_from: from - off,
+                    preview_to: to - off,
+                    // B3: a PROTO body node has one runtime copy per instance.
+                    body: field_edit::shared_definition(&parsed, from, to).is_some(),
+                })
+            }
             _ => Ok(p::HighlightTargetOutcome::Refused {
                 reason: field_edit::reason::NOT_A_NODE.into(),
                 message: "Only a node instance can be outlined.".into(),
@@ -1557,7 +1570,33 @@ impl Service {
                     let (f, t) = span(n);
                     field_edit::shared_definition(&parsed, f, t).is_some()
                 };
-                for (i, n) in chain.iter().enumerate().skip(1) {
+                // LV2: a non-geometry node (Appearance, Material, a texture,
+                // Coordinate, ...) has no bounds of its own. The outline is
+                // of the Shape that owns it -- the FIRST Shape of its proven
+                // chain -- labeled as the owner; the frame chain starts
+                // above that Shape.
+                let mut owner = None;
+                let mut first = 1;
+                if p::highlight::node_role(&chain[0].node_type) == p::highlight::NodeRole::Property {
+                    let Some(k) = chain.iter().position(|n| n.node_type == "Shape") else {
+                        return Ok(refused(
+                            p::highlight::refusal::NO_OWNER,
+                            "This node is not drawn by itself and no Shape that uses it was proven.",
+                        ));
+                    };
+                    let (f, t) = span(chain[k]);
+                    if f < off {
+                        return Ok(refused(pk::reason::SPAN_OUT_OF_RANGE, unprovable));
+                    }
+                    owner = Some(p::HighlightAncestor {
+                        preview_from: f - off,
+                        preview_to: t - off,
+                        node_type: "Shape".into(),
+                        proto_instance: false,
+                    });
+                    first = k + 1;
+                }
+                for (i, n) in chain.iter().enumerate().skip(first) {
                     // B3: the instance a PROTO body chain was proven through
                     // (the chain proof joined the body link to exactly this
                     // document instance): it renders as its body root, the
@@ -1568,7 +1607,10 @@ impl Service {
                     if !proto_instance && p::highlight::ancestor_kind(&n.node_type).is_none() {
                         return Ok(refused(
                             p::highlight::refusal::ANCESTOR,
-                            "It is inside a node whose placement the outline cannot follow.",
+                            &format!(
+                                "It is inside a {}, whose placement the outline cannot follow.",
+                                n.node_type
+                            ),
                         ));
                     }
                     let (f, t) = (n.range.start.offset as u64, n.range.end.offset as u64);
@@ -1587,6 +1629,7 @@ impl Service {
                     item: r.item.clone(),
                     node_type: chain[0].node_type.clone(),
                     ancestors,
+                    owner,
                 }
             }
             Err(res) => refused(res.reason(), unprovable),
@@ -4864,6 +4907,122 @@ mod tests {
         assert!(matches!(
             prove(rev, hash, &item(sh1), none),
             p::HighlightProveOutcome::Refused { reason, .. } if reason == "runtime-node-for-span-not-unique"
+        ));
+        assert_eq!(svc.text_at(id).unwrap(), (text.clone(), rev), "read-only");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// LV2: a non-geometry node (Material) proves through its chain and is
+    /// outlined as its OWNING Shape (the ancestors start above the Shape);
+    /// one with no Shape in its chain refuses with that reason, not as a
+    /// Billboard; a node that is never drawn refuses at the target with
+    /// its own reason. Nothing is written.
+    #[test]
+    fn highlight_outlines_the_owning_shape_of_a_material_and_names_true_reasons() {
+        let dir = tmp("lv2-highlight-owner");
+        let path = dir.join("owner.wrl");
+        let mat = "Material { diffuseColor 1 0 0 }";
+        let app = format!("Appearance {{ material {mat} }}");
+        let shape = format!("Shape {{ appearance {app} geometry Box {{ }} }}");
+        let t = format!("Transform {{ children [ {shape} ] }}");
+        let vp = "Viewpoint { position 0 0 10 }";
+        let lone = "Material { }";
+        let text = format!("#VRML V2.0 utf8\n{t}\n{vp}\n{lone}\n");
+        fs::write(&path, &text).unwrap();
+        let (o, svc) = svc_open(&path);
+        let doc = opened(o);
+        let (id, rev) = (doc.session, doc.revision);
+        let span = |b: usize, len: usize| (b as u64, (b + len) as u64);
+        let t0 = text.find(&t).unwrap();
+        let sh0 = t0 + t.find(&shape).unwrap();
+        let ap0 = sh0 + shape.find(&app).unwrap();
+        let m0 = ap0 + app.find(mat).unwrap();
+        let (tsp, shsp, apsp, msp) = (
+            span(t0, t.len()),
+            span(sh0, shape.len()),
+            span(ap0, app.len()),
+            span(m0, mat.len()),
+        );
+        let vpsp = span(text.find(vp).unwrap(), vp.len());
+        let lonesp = span(text.rfind(lone).unwrap(), lone.len());
+        let hash = p::preview_hash(&text);
+        let item = |(f, t): (u64, u64)| format!("node-{f}-{t}");
+        let node = |ty: &str, sp: (u64, u64), parents: &[&str]| p::PickGraphNode {
+            type_name: Some(ty.into()),
+            ctx_kind: "document".into(),
+            occurrences: vec![p::PickSpan { start: sp.0, end: sp.1 }],
+            parents: parents.iter().map(|s| s.to_string()).collect(),
+        };
+        let mut snap = located("Material", msp, &["n2"]);
+        snap.graph.insert("n2".into(), node("Appearance", apsp, &["n3"]));
+        snap.graph.insert("n3".into(), node("Shape", shsp, &["n4"]));
+        snap.graph.insert("n4".into(), node("Transform", tsp, &["SCENE"]));
+        let prove = |it: &str, snap: p::PickSnapshot| {
+            svc.highlight_prove(&p::HighlightProveRequest {
+                session: id,
+                revision: rev,
+                preview_hash: hash,
+                generation: 1,
+                item: it.into(),
+                snapshot: snap,
+            })
+            .unwrap()
+        };
+        let anc = |sp: (u64, u64), ty: &str| p::HighlightAncestor {
+            preview_from: sp.0,
+            preview_to: sp.1,
+            node_type: ty.into(),
+            proto_instance: false,
+        };
+        match prove(&item(msp), snap) {
+            p::HighlightProveOutcome::Proven {
+                node_type,
+                ancestors,
+                owner,
+                ..
+            } => {
+                assert_eq!(node_type, "Material");
+                assert_eq!(owner, Some(anc(shsp, "Shape")));
+                assert_eq!(ancestors, vec![anc(tsp, "Transform")]);
+            }
+            o => panic!("{o:?}"),
+        }
+        // A Material with no Shape in its proven chain.
+        match prove(&item(lonesp), located("Material", lonesp, &["SCENE"])) {
+            p::HighlightProveOutcome::Refused { reason, .. } => {
+                assert_eq!(reason, p::highlight::refusal::NO_OWNER)
+            }
+            o => panic!("{o:?}"),
+        }
+        // A rendered node keeps no owner.
+        assert!(matches!(
+            prove(&item(tsp), located("Transform", tsp, &["SCENE"])),
+            p::HighlightProveOutcome::Proven { owner: None, .. }
+        ));
+        // A Viewpoint is never drawn: refused at the target, by that reason.
+        match svc
+            .highlight_target(&p::HighlightTargetRequest {
+                session: id,
+                revision: rev,
+                item: item(vpsp),
+            })
+            .unwrap()
+        {
+            p::HighlightTargetOutcome::Refused { reason, message } => {
+                assert_eq!(reason, p::highlight::refusal::NOT_RENDERED);
+                assert!(message.contains("Viewpoint"), "{message}");
+            }
+            o => panic!("{o:?}"),
+        }
+        // The Material itself is a valid target (outlined through its owner).
+        assert!(matches!(
+            svc.highlight_target(&p::HighlightTargetRequest {
+                session: id,
+                revision: rev,
+                item: item(msp),
+            })
+            .unwrap(),
+            p::HighlightTargetOutcome::Ready { .. }
         ));
         assert_eq!(svc.text_at(id).unwrap(), (text.clone(), rev), "read-only");
         fs::remove_dir_all(&dir).unwrap();

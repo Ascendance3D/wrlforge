@@ -173,6 +173,18 @@ x3d-canvas#viewport { flex: 1 1 auto; width: 100%; min-height: 6rem; display: bl
 .crumbs .crumb.current { color: var(--wf-text-primary); font-weight: 600; }
 .crumbs .crumb-sep { color: var(--wf-text-muted); }
 .inspector-context { margin: 0 .6rem .2rem; color: var(--wf-warning-fg); font-size: .96rem; }
+/* LV2: where the node is, and what owns a non-geometry node. */
+.inspector h3 .line-badge { font-size: .85rem; font-weight: 400; color: var(--wf-text-secondary); white-space: nowrap; }
+.inspector-owner { margin: 0 .6rem .25rem; font-size: .96rem; color: var(--wf-text-secondary); }
+.inspector-owner .owner-badge { display: inline-block; padding: .05rem .4rem; border-radius: 3px; font-weight: 600;
+  color: var(--wf-tree-selected-fg); background: var(--wf-tree-selected-bg); border: 1px solid var(--wf-tree-selected-indicator); }
+/* LV2: the app-drawn tooltip (never a native title: WebKitGTK keeps those
+   on screen until the pointer moves). Never takes pointer input. */
+.app-tooltip { position: fixed; z-index: 1000; max-width: min(32rem, calc(100vw - 8px)); pointer-events: none;
+  padding: .25rem .5rem; border-radius: 4px; font-size: .92rem; line-height: 1.3; white-space: pre-line;
+  color: var(--wf-text-primary); background: var(--wf-surface-chrome); border: 1px solid var(--wf-tree-selected-indicator);
+  box-shadow: var(--wf-shadow); }
+.app-tooltip[hidden] { display: none; }
 .fields { border-collapse: collapse; width: 100%; font-size: 1rem; }
 .fields tr { cursor: pointer; }
 .fields tr:hover { background: var(--wf-surface-hover); }
@@ -186,6 +198,8 @@ x3d-canvas#viewport { flex: 1 1 auto; width: 100%; min-height: 6rem; display: bl
 /* B3: the fixed facts never shrink; the message takes the rest and
    ellipsizes (full text in its tooltip); the credit goes first. */
 .statusbar > span { flex: none; }
+.statusbar > span.sel { color: var(--wf-text-primary); font-weight: 600; overflow: hidden; text-overflow: ellipsis; flex: 0 3 auto; min-width: 6rem; }
+.statusbar > span.sel:empty { display: none; }
 .statusbar > span.msg { color: var(--wf-warning-fg); overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 4rem; }
 .statusbar > span.spacer { flex: 1 1 auto; }
 .statusbar > span.credit { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -246,11 +260,22 @@ x3d-canvas.picking { cursor: crosshair; }
 .selection-outline[data-state="hidden"] { display: none; }
 .selection-outline path { fill: none; stroke-linejoin: round; stroke-linecap: round; }
 .selection-outline .hl-halo { stroke: var(--wf-gizmo-halo); stroke-width: 3.5; opacity: .5; }
-.highlight-status { position: absolute; left: .4rem; bottom: .4rem; max-width: calc(100% - .8rem); pointer-events: none;
-  font-size: .92rem; padding: .1rem .4rem; border-radius: 3px; color: var(--wf-warning-fg); background: var(--wf-warning-bg);
+/* LV2: the outline notes stack at the bottom left, over the canvas. */
+.highlight-notes { position: absolute; left: .4rem; bottom: .4rem; max-width: calc(100% - .8rem); pointer-events: none;
+  display: flex; flex-direction: column; align-items: flex-start; gap: .2rem; }
+.highlight-status, .highlight-info { max-width: 100%; font-size: .92rem; padding: .1rem .4rem; border-radius: 3px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.highlight-status[hidden] { display: none; }
+.highlight-status { color: var(--wf-warning-fg); background: var(--wf-warning-bg); }
+.highlight-info { color: var(--wf-text-primary); background: var(--wf-surface-panel); border: 1px solid var(--wf-border); }
+.highlight-status[hidden], .highlight-info[hidden] { display: none; }
 .selection-outline .hl-line { stroke: var(--wf-selection-outline); stroke-width: 1.6; }
+/* LV2: the geometry's own edges are solid and fine; the bounding-box
+   fallback is dashed; an owner Shape (of a selected Material, ...) dotted. */
+.selection-outline[data-mode="precise"] .hl-line { stroke-width: 1.4; }
+.selection-outline[data-mode="precise"] .hl-halo { stroke-width: 3; opacity: .45; }
+.selection-outline[data-mode="box"] .hl-line { stroke-dasharray: 7 5; }
+.selection-outline[data-mode^="owner"] .hl-line { stroke-dasharray: 2 4; opacity: .9; }
+.selection-outline[data-mode^="owner"] .hl-halo { opacity: .3; }
 .gz-handle .gz-hit { stroke: transparent; stroke-width: 16; stroke-linecap: round; }
 .gz-handle .gz-halo { stroke: var(--wf-gizmo-halo); stroke-width: 7; stroke-linecap: round; }
 .gz-handle .gz-line { stroke-width: 3.5; stroke-linecap: round; }
@@ -425,10 +450,11 @@ x3d-canvas.picking { cursor: crosshair; }
 .menubar-button:hover, .menubar-button[aria-expanded="true"] { background: var(--wf-surface-hover); }
 .menubar-button:focus-visible { outline-offset: -3px; }
 .menubar-button .mnemonic { text-decoration: underline; text-underline-offset: 2px; }
-.menubar-list { min-width: 17rem; top: calc(100% + 2px); z-index: 40; }
+.menubar-list { min-width: 17rem; width: max-content; max-width: calc(100vw - 1rem); top: calc(100% + 2px); z-index: 40; }
 .menu-item { width: 100%; }
 .menu-item .check { display: inline-block; width: 1rem; text-align: center; color: var(--wf-accent); flex: none; }
-.menu-item .menu-label { flex: 1 1 auto; }
+/* LV2: a label never wraps into two lines (the list grows instead). */
+.menu-item .menu-label { flex: 1 1 auto; white-space: nowrap; }
 .menu-item .menu-key { color: var(--wf-text-muted); font-size: .92rem; padding-left: 1.5rem; white-space: nowrap; }
 .menu-item[aria-disabled="true"] { color: var(--wf-text-disabled); cursor: default; }
 .menu-item[aria-disabled="true"]:hover { background: transparent; color: var(--wf-text-disabled); }

@@ -25,6 +25,7 @@ mod recovery;
 mod smoke;
 mod syntax;
 mod theme;
+mod tooltip;
 mod ui;
 
 use leptos::prelude::*;
@@ -56,6 +57,7 @@ pub fn start() {
     pick::install();
     gizmo::install();
     highlight::install();
+    tooltip::install();
     ui::start_external_watch();
     syntax::install();
     // The UI stays hidden (style.css) until `<html data-theme>` is set, so a
@@ -223,10 +225,16 @@ fn App() -> impl IntoView {
                 <span>{move || { let (l, c, s) = u.cursor.get();
                     if s > 0 { format!("Ln {l}, Col {c} ({s} sel)") } else { format!("Ln {l}, Col {c}") } }}</span>
                 <span>{move || format!("rev {}", u.revision.get())}</span>
-                <span class="msg" title=move || u.message.get()>{move || u.message.get()}</span>
+                // LV2: what is selected, in words (type, DEF, line, owner,
+                // PROTO context).
+                <span class="sel" id="status-selection">{move || panels::selection_facts().map(|f| {
+                    p::highlight::selection_summary(&f.node_type, f.def.as_deref(), f.line,
+                        f.owner.as_ref().map(|(l, n)| (l.as_str(), *n)), f.context.as_deref())
+                }).unwrap_or_default()}</span>
+                <span class="msg" data-tip=move || u.message.get()>{move || u.message.get()}</span>
                 <span class="spacer"></span>
                 // B3: moved from the toolbar, where it was cut off at 1366 px.
-                <span class="profile" id="profile" title="The Mall Item and World Project profiles are not yet migrated to Rust.">
+                <span class="profile" id="profile" data-tip="The Mall Item and World Project profiles are not yet migrated to Rust.">
                     "Profile: Generic VRML97"
                 </span>
                 <span class="muted credit">"Rust core · Tauri 2 · no Electron"</span>

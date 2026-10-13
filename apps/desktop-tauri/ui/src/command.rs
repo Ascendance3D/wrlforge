@@ -352,7 +352,7 @@ pub fn CommandButton(
     let text = text.unwrap_or_else(|| command.spec().label.to_string());
     view! {
         <button id=dom_id class:secondary=secondary data-command=command.key()
-            title=title(command)
+            data-tip=title(command)
             disabled=move || !enabled(command)
             on:click=move |_| run(command)>{text}</button>
     }

@@ -42,7 +42,8 @@ function fakeX3D() {
   }
   SFNode.prototype.getValue = function () { return this._n; };
   SFNode.prototype.getNodeTypeName = function () { return this._n.type; };
-  return { SFVec3f: function () {}, SFNode, Box3 };
+  function Matrix4() { this.m = 'identity'; }
+  return { SFVec3f: function () {}, SFNode, Box3, Matrix4 };
 }
 const fakeBrowser = (version = '16.5.0') => ({ version, getActiveLayer() {}, getViewport() {} });
 
@@ -113,12 +114,12 @@ test('ancestor(): a Transform reports its rendered fields; other types only thei
 
 test('source: the private bounding-box surfaces live in the gizmo adapter only', () => {
   const giz = code(GIZMO);
-  for (const re of [/\.getBBox\(/, /\bX3D\.Box3\b/, /\.getInnerNode\(/]) assert.match(giz, re);
+  for (const re of [/\.getBBox\(/, /\bX3D\.Box3\b/, /\.getInnerNode\(/, /\.getShapes\(/, /\.getVertices\(/]) assert.match(giz, re);
   const others = [PREVIEW, ...fs.readdirSync(path.join(TAURI, 'ui', 'src'), { recursive: true })
     .filter((f) => String(f).endsWith('.rs')).map((f) => path.join(TAURI, 'ui', 'src', String(f)))];
   for (const f of others) {
     const src = code(f);
-    for (const re of [/getBBox/, /\bBox3\b/, /getInnerNode/]) assert.doesNotMatch(src, re, `${path.relative(ROOT, f)}: ${re}`);
+    for (const re of [/getBBox/, /\bBox3\b/, /getInnerNode/, /getShapes/, /getVertices/]) assert.doesNotMatch(src, re, `${path.relative(ROOT, f)}: ${re}`);
   }
 });
 
@@ -129,7 +130,7 @@ test('source: bounds() and ancestor() sit behind the exact-version compatibility
     assert.ok(i > 0, name);
     return giz.slice(i, giz.indexOf('\n    }\n', i));
   };
-  for (const name of ['bounds', 'ancestor']) {
+  for (const name of ['bounds', 'ancestor', 'shapes']) {
     const b = body(name);
     assert.match(b, /compatibility\(\)\.ok/, `${name} checks compatibility`);
     assert.doesNotMatch(b, /\.\w+\s*=(?!=)|setField|\.set\(|replaceWorld|addChildObject/, `${name} writes nothing`);
@@ -147,4 +148,69 @@ test('G3 (Tauri 16.5.0): the bounding-box surfaces exist in the fetched bundle',
   if (!fs.existsSync(dist)) return t.skip('run apps/desktop-tauri/fetch-xite.sh first (build-ui.sh does)');
   const min = fs.readFileSync(dist, 'utf8');
   for (const s of ['add("Box3"', 'getBBox(', 'getInnerNode(']) assert.ok(min.includes(s), `16.5.0 x_ite.min.js no longer contains ${s}`);
+});
+
+// ---- LV2 precise outline: shapes() ------------------------------------------
+
+// A fake X_ITE geometry node: getVertices() is x y z w per vertex and
+// throws on a write (the outline never writes).
+function geometry(k, xyzw) {
+  const verts = Object.freeze(xyzw.slice());
+  return { getGeometryType() { return k; }, getVertices() { return verts; } };
+}
+const M = (tx) => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, tx, 0, 0, 1];
+
+test('shapes(): X_ITE\'s own shape list of the proven node -- matrices, types, counts, and x y z when asked', () => {
+  const A = load().createXiteGizmoAdapter({ X3D: fakeX3D(), browser: fakeBrowser() });
+  const tri = geometry(3, [0, 0, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1]);
+  const line = geometry(1, [0, 0, 0, 1, 2, 0, 0, 1]);
+  let seen = null;
+  const node = {
+    getShapes(list, m) {
+      seen = m;
+      list.push({ modelMatrix: M(5), shapeNode: { getGeometry() { return tri; } } });
+      list.push({ modelMatrix: M(-1), shapeNode: { getGeometry() { return line; } } });
+      return list;
+    },
+  };
+  const counts = plain(A.shapes(node, false));
+  assert.equal(seen.m, 'identity', 'measured from the node\'s parent frame');
+  assert.deepEqual(counts, { ok: true, shapes: [{ m: M(5), k: 3, n: 3 }, { m: M(-1), k: 1, n: 2 }] });
+  const full = plain(A.shapes(node, true));
+  assert.deepEqual(full.shapes[0].v, [0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  assert.deepEqual(full.shapes[1].v, [0, 0, 0, 2, 0, 0]);
+  // A PROTO instance is measured through getInnerNode.
+  assert.equal(plain(A.shapes({ getInnerNode() { return node; } }, false)).shapes.length, 2);
+});
+
+test('shapes(): a geometry node is its own single shape (identity matrix)', () => {
+  const A = load().createXiteGizmoAdapter({ X3D: fakeX3D(), browser: fakeBrowser() });
+  const r = plain(A.shapes(geometry(3, [0, 0, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1]), true));
+  assert.deepEqual(r.shapes[0].m, M(0));
+  assert.equal(r.shapes[0].n, 3);
+});
+
+test('shapes(): refusals -- too detailed, an unreadable shape, no geometry, wrong X_ITE, no Matrix4', () => {
+  const A = load().createXiteGizmoAdapter({ X3D: fakeX3D(), browser: fakeBrowser() });
+  const big = geometry(3, new Array(4 * 9).fill(1));
+  const one = (g) => ({ getShapes(list) { list.push({ modelMatrix: M(0), shapeNode: { getGeometry() { return g; } } }); return list; } });
+  assert.deepEqual(plain(A.shapes(one(big), false, 6)), { ok: false, reason: 'geometry-too-detailed' });
+  assert.deepEqual(plain(A.shapes(one(null), false)), { ok: false, reason: 'geometry-unavailable' });
+  assert.deepEqual(plain(A.shapes(one(geometry(3, [0, 0, 0])), false)), { ok: false, reason: 'geometry-unavailable' });
+  assert.deepEqual(plain(A.shapes(one(geometry(3, [NaN, 0, 0, 1])), true)), { ok: false, reason: 'geometry-unavailable' });
+  assert.deepEqual(plain(A.shapes({ type: 'Material' }, false)), { ok: false, reason: 'node-has-no-rendered-geometry' });
+  assert.deepEqual(plain(A.shapes(null, false)), { ok: false, reason: 'runtime-node-not-proven' });
+  const old = load().createXiteGizmoAdapter({ X3D: fakeX3D(), browser: fakeBrowser('15.1.10') });
+  assert.deepEqual(plain(old.shapes(one(big), false)), { ok: false, reason: 'geometry-unavailable' });
+  const X = fakeX3D(); delete X.Matrix4;
+  assert.deepEqual(plain(load().createXiteGizmoAdapter({ X3D: X, browser: fakeBrowser() }).shapes(one(big), false)), { ok: false, reason: 'geometry-unavailable' });
+});
+
+test('G3 (Tauri 16.5.0): the shape-list surfaces exist in the fetched bundle', (t) => {
+  const dist = path.join(TAURI, 'target', 'xite', '16.5.0', 'dist', 'x_ite.min.js');
+  if (!fs.existsSync(dist)) return t.skip('run apps/desktop-tauri/fetch-xite.sh first (build-ui.sh does)');
+  const min = fs.readFileSync(dist, 'utf8');
+  for (const s of ['add("Matrix4"', 'getShapes(e,t){', 'getVertices(){return this.vertices}', 'getGeometryType(){return this.geometryType}', 'getGeometry(){return this.geometryNode}']) {
+    assert.ok(min.includes(s), `16.5.0 x_ite.min.js no longer contains ${s}`);
+  }
 });

@@ -59,6 +59,8 @@ pub struct Ui {
     pub gizmo_message: RwSignal<Option<(String, String)>>,
     /// B2: why the selected node has no viewport outline, if it has none.
     pub highlight_message: RwSignal<Option<String>>,
+    /// LV2: a neutral note about what the outline shows (an owner Shape).
+    pub highlight_info: RwSignal<Option<String>>,
     /// B1: the shared PROTO definitions the user agreed to edit, per
     /// document session: (session, PROTO name). Asked once per definition.
     pub shared_ok: RwSignal<Vec<(u64, String)>>,
@@ -244,6 +246,7 @@ pub fn ui() -> Ui {
             scale_mode: RwSignal::new(false),
             gizmo_message: RwSignal::new(None),
             highlight_message: RwSignal::new(None),
+            highlight_info: RwSignal::new(None),
             shared_ok: RwSignal::new(Vec::new()),
             place_origin: RwSignal::new(false),
             native: RwSignal::new(p::NativeState::default()),

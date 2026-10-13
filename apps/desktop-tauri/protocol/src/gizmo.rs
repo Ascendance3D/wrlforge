@@ -258,11 +258,11 @@ impl Camera {
             && self.rect[2] > 0.0
             && self.rect[3] > 0.0
     }
-    fn view_proj(&self) -> [f64; 16] {
+    pub(crate) fn view_proj(&self) -> [f64; 16] {
         mat_mul(&self.proj, &self.view)
     }
     /// Normalized device coordinates → client CSS px.
-    fn ndc_to_client(&self, x: f64, y: f64) -> (f64, f64) {
+    pub(crate) fn ndc_to_client(&self, x: f64, y: f64) -> (f64, f64) {
         let [vx, vy, vw, vh] = self.viewport;
         let px = vx + (x + 1.0) / 2.0 * vw;
         let py = vy + (y + 1.0) / 2.0 * vh;

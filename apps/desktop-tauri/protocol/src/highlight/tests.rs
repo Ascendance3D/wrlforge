@@ -266,3 +266,274 @@ fn ancestor_kinds_are_an_explicit_list() {
         assert_eq!(ancestor_kind(t), None, "{t}");
     }
 }
+
+// ---- LV2: node roles, refusal messages, the precise outline ---------------
+
+#[test]
+fn node_roles_separate_geometry_owners_and_never_drawn_nodes() {
+    for t in ["Shape", "Box", "IndexedFaceSet", "Transform", "Group", "Billboard", "MyProto"] {
+        assert_eq!(node_role(t), NodeRole::Rendered, "{t}");
+    }
+    for t in [
+        "Appearance",
+        "Material",
+        "ImageTexture",
+        "PixelTexture",
+        "MovieTexture",
+        "TextureTransform",
+        "Coordinate",
+        "Normal",
+        "Color",
+        "TextureCoordinate",
+        "FontStyle",
+    ] {
+        assert_eq!(node_role(t), NodeRole::Property, "{t}");
+    }
+    for t in [
+        "Viewpoint",
+        "NavigationInfo",
+        "Background",
+        "TimeSensor",
+        "TouchSensor",
+        "PointLight",
+        "Script",
+        "PositionInterpolator",
+        "WorldInfo",
+    ] {
+        assert_eq!(node_role(t), NodeRole::NotRendered, "{t}");
+    }
+}
+
+#[test]
+fn every_refusal_code_has_its_own_true_message() {
+    let generic = refusal_message("no-such-reason");
+    let codes = [
+        refusal::NO_BOUNDS,
+        refusal::ANCESTOR,
+        refusal::ANCESTOR_DISAGREES,
+        refusal::BEHIND_CAMERA,
+        refusal::CAMERA_INVALID,
+        refusal::NOT_FINITE,
+        refusal::NOT_RENDERED,
+        refusal::NO_OWNER,
+        refusal::GEOMETRY_UNAVAILABLE,
+        refusal::TOO_DETAILED,
+        refusal::NO_EDGES,
+        refusal::GEOMETRY_INVALID,
+        "proto-instance-not-picked",
+        "proto-instance-not-rendered",
+        "proto-instance",
+        "runtime-node-for-span-not-unique",
+        "runtime-node-referenced-by-several-source-occurrences",
+        "runtime-node-has-several-live-parents",
+        "document-has-syntax-errors",
+        "not-a-node",
+        "preview-scene-replaced",
+        "camera-unavailable",
+        "adapter-unavailable",
+        "runtime-ancestor-not-proven",
+        "bounds-unavailable",
+    ];
+    for c in codes {
+        assert_ne!(refusal_message(c), generic, "{c} falls through to the generic text");
+    }
+    // Only the ancestor refusal may name a Billboard; the non-geometry and
+    // never-drawn cases say what they really are.
+    for c in codes.iter().filter(|c| **c != refusal::ANCESTOR) {
+        assert!(!refusal_message(c).contains("Billboard"), "{c}");
+    }
+    assert!(refusal_message(refusal::ANCESTOR).contains("Billboard"));
+    assert!(refusal_message(refusal::NOT_RENDERED).contains("not drawn"));
+    assert!(refusal_message(refusal::NO_OWNER).contains("Shape"));
+    assert!(refusal_message(refusal::NO_BOUNDS).contains("no rendered geometry"));
+    // The instance-count message is not the "drawn more than once" one.
+    assert_ne!(
+        refusal_message("proto-instance-not-picked"),
+        refusal_message("runtime-node-for-span-not-unique")
+    );
+}
+
+fn report(k: u8, v: Vec<f64>, m: [f64; 16]) -> ShapeReport {
+    ShapeReport {
+        m,
+        k,
+        n: (v.len() / 3) as u32,
+        v: Some(v),
+    }
+}
+
+fn ident() -> [f64; 16] {
+    translate([0.0; 3])
+}
+
+/// A unit cube as 12 triangles, counter-clockwise from outside.
+fn cube() -> Vec<f64> {
+    let p = |i: usize| -> [f64; 3] {
+        let s = |b: usize| if i & (1 << b) != 0 { 1.0 } else { -1.0 };
+        [s(0), s(1), s(2)]
+    };
+    // Faces as corner quads (outward CCW), split into two triangles each.
+    let quads = [
+        [0, 2, 3, 1], // -z
+        [4, 5, 7, 6], // +z
+        [0, 1, 5, 4], // -y
+        [2, 6, 7, 3], // +y
+        [0, 4, 6, 2], // -x
+        [1, 3, 7, 5], // +x
+    ];
+    let mut v = Vec::new();
+    for q in quads {
+        for i in [q[0], q[1], q[2], q[0], q[2], q[3]] {
+            v.extend(p(i));
+        }
+    }
+    v
+}
+
+#[test]
+fn a_cube_outline_is_its_twelve_edges_not_the_face_diagonals() {
+    let m = build_mesh(&[report(3, cube(), ident())]).unwrap();
+    assert_eq!(m.edge_count(), 18, "12 edges + 6 diagonals welded");
+    let cam = cam_at(6.0);
+    let edges = mesh_edges(&cam, &ident(), &m).unwrap();
+    assert_eq!(edges.len(), 12);
+    // The same picture as the bounding box of the same cube.
+    let corners = world_corners(&unit_box(vec![])).unwrap();
+    let boxed = outline(&cam, &corners).unwrap();
+    let key = |e: &Edge| {
+        let r = |v: f64| (v * 1000.0).round() as i64;
+        let (a, b) = (((r(e.0 .0)), r(e.0 .1)), (r(e.1 .0), r(e.1 .1)));
+        if a < b { (a, b) } else { (b, a) }
+    };
+    let mut x: Vec<_> = edges.iter().map(key).collect();
+    let mut y: Vec<_> = boxed.iter().map(key).collect();
+    x.sort();
+    y.sort();
+    assert_eq!(x, y);
+}
+
+/// A shallow fold: A flat (y = 0, z <= 0), B rising 20 degrees (z >= 0).
+fn fold(same_direction: bool) -> Vec<f64> {
+    let (p0, p1, q, r) = (
+        [-1.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, -1.0],
+        [0.0, 20f64.to_radians().tan(), 1.0],
+    );
+    let b = if same_direction { [p0, p1, r] } else { [p1, p0, r] };
+    [p0, p1, q].iter().chain(b.iter()).flatten().copied().collect()
+}
+
+fn cam_from(pos: V3) -> Camera {
+    Camera {
+        view: translate([-pos[0], -pos[1], -pos[2]]),
+        ..cam_at(0.0)
+    }
+}
+
+#[test]
+fn a_smooth_edge_is_drawn_only_on_the_silhouette() {
+    for same in [false, true] {
+        let m = build_mesh(&[report(3, fold(same), ident())]).unwrap();
+        assert_eq!(m.edge_count(), 5);
+        // Above both faces: the ridge is interior.
+        let above = mesh_edges(&cam_from([0.0, 3.0, 5.0]), &ident(), &m).unwrap();
+        assert_eq!(above.len(), 4, "same={same}");
+        // Between the two planes: one front, one back -- the ridge is the
+        // silhouette, whichever way the triangles were wound.
+        let grazing = mesh_edges(&cam_from([0.0, 0.1, 5.0]), &ident(), &m).unwrap();
+        assert_eq!(grazing.len(), 5, "same={same}");
+    }
+}
+
+#[test]
+fn shape_and_ancestor_matrices_place_the_edges() {
+    let m = build_mesh(&[report(1, vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0], translate([2.0, 0.0, 0.0]))]).unwrap();
+    let cam = cam_at(10.0);
+    let parent = translate([0.0, 1.0, 0.0]);
+    let e = mesh_edges(&cam, &parent, &m).unwrap();
+    assert_eq!(e.len(), 1);
+    let want = (
+        gz::project(&cam, [2.0, 1.0, 0.0]).unwrap(),
+        gz::project(&cam, [3.0, 1.0, 0.0]).unwrap(),
+    );
+    let close2 = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1e-9 && (a.1 - b.1).abs() < 1e-9;
+    assert!(close2(e[0].0, want.0) && close2(e[0].1, want.1), "{e:?} vs {want:?}");
+    // New matrices from the renderer are taken only for the same shapes.
+    let mut m2 = m.clone();
+    assert!(m2.update_matrices(&[report(1, vec![0.0; 6], ident())]));
+    assert!(!m2.update_matrices(&[report(3, vec![0.0; 9], ident())]));
+}
+
+#[test]
+fn malformed_points_only_or_huge_geometry_refuses_the_precise_outline() {
+    let mut no_v = report(3, cube(), ident());
+    no_v.v = None;
+    assert_eq!(build_mesh(&[no_v]), Err(refusal::GEOMETRY_INVALID));
+    let mut short = report(3, cube(), ident());
+    short.n += 1;
+    assert_eq!(build_mesh(&[short]), Err(refusal::GEOMETRY_INVALID));
+    let mut nan = cube();
+    nan[4] = f64::NAN;
+    assert_eq!(build_mesh(&[report(3, nan, ident())]), Err(refusal::GEOMETRY_INVALID));
+    assert_eq!(build_mesh(&[report(0, vec![0.0; 9], ident())]), Err(refusal::NO_EDGES));
+    assert_eq!(build_mesh(&[]), Err(refusal::NO_EDGES));
+    let huge = ShapeReport {
+        m: ident(),
+        k: 3,
+        n: (mesh::MAX_VERTICES + 3) as u32,
+        v: None,
+    };
+    assert_eq!(build_mesh(&[huge]), Err(refusal::TOO_DETAILED));
+    // A vertex behind the camera refuses the whole precise outline.
+    let m = build_mesh(&[report(3, cube(), ident())]).unwrap();
+    assert_eq!(mesh_edges(&cam_at(0.5), &ident(), &m), Err(refusal::BEHIND_CAMERA));
+}
+
+#[test]
+fn display_prefers_the_geometry_and_falls_back_to_the_box_saying_why() {
+    let cam = cam_at(6.0);
+    let b = unit_box(vec![]);
+    let m = build_mesh(&[report(3, cube(), ident())]).unwrap();
+    match display(&cam, &b, Ok(&m)).unwrap() {
+        Display::Precise(e) => assert_eq!(e.len(), 12),
+        other => panic!("{other:?}"),
+    }
+    match display(&cam, &b, Err(refusal::TOO_DETAILED)).unwrap() {
+        Display::Box { reason, .. } => assert_eq!(reason, refusal::TOO_DETAILED),
+        other => panic!("{other:?}"),
+    }
+    // An ancestor the outline cannot follow refuses BOTH: no box in the
+    // wrong place either.
+    let bill = unit_box(vec![RenderedAncestor {
+        node_type: "Billboard".into(),
+        frame: None,
+        proto_instance: false,
+    }]);
+    assert_eq!(display(&cam, &bill, Ok(&m)), Err(refusal::ANCESTOR));
+    // The precise outline is behind the camera; so is the box: nothing.
+    assert_eq!(display(&cam_at(0.5), &b, Ok(&m)), Err(refusal::BEHIND_CAMERA));
+}
+
+#[test]
+fn selection_texts_name_type_def_line_owner_and_proto() {
+    assert_eq!(owner_badge("Material", "Shape", Some(37)), "Material of Shape at line 37");
+    assert_eq!(owner_badge("Coordinate", "Shape Wheel", None), "Coordinate of Shape Wheel");
+    assert_eq!(proto_context("Car", 2), "inside PROTO Car (shared, 2 instances)");
+    assert_eq!(proto_context("Car", 1), "inside PROTO Car (shared, 1 instance)");
+    assert_eq!(
+        selection_summary(
+            "Material",
+            None,
+            Some(40),
+            Some(("Shape", Some(37))),
+            Some(&proto_context("Car", 2))
+        ),
+        "Selected: Material · line 40 · of Shape at line 37 · inside PROTO Car (shared, 2 instances)"
+    );
+    assert_eq!(
+        selection_summary("Transform", Some("Wheel"), Some(3), None, None),
+        "Selected: Transform Wheel · line 3"
+    );
+    assert_eq!(selection_summary("Box", None, None, None, None), "Selected: Box");
+}

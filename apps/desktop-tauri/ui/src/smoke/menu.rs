@@ -1198,7 +1198,7 @@ async fn clipboard(r: &mut R) -> Option<()> {
     let _ = tree.focus();
     open_click("edit").await?;
     let paste_off = attr(&dom_id(CommandId::EditPaste), "aria-disabled");
-    let paste_title = attr(&dom_id(CommandId::EditPaste), "title").unwrap_or_default();
+    let paste_title = attr(&dom_id(CommandId::EditPaste), "data-tip").unwrap_or_default();
     let n = runs();
     real_click_id(&dom_id(CommandId::EditPaste)).await?;
     let still_open = list_open("edit");
@@ -1718,7 +1718,7 @@ async fn world_and_reserved(r: &mut R) -> Option<()> {
     let reasons_ok = items.len() == 6
         && items.iter().all(|i| {
             i.get_attribute("aria-disabled").as_deref() == Some("true")
-                && i.get_attribute("title")
+                && i.get_attribute("data-tip")
                     .is_some_and(|t| t.contains(NOT_MIGRATED))
         });
     let groups: Vec<String> = all("#menu-world-list .menu-group")
