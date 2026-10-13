@@ -82,7 +82,13 @@ pub async fn run(plan: p::SmokePlan) {
     let mut r = R(vec![]);
     let done = match (&plan.create, &plan.pick, &plan.gizmo) {
         _ if plan.rotscale.is_some() => {
-            rotscale::run(plan.rotscale.as_ref().unwrap(), &mut r).await
+            {
+                // The ring grab points (after a fixed-pixel orbit) were
+                // calibrated in the Source preset's viewport; in the larger
+                // Modeling viewport the Y grab point lies under the Z ring.
+                crate::dock::set_preset(p::layout::PresetId::Source);
+                rotscale::run(plan.rotscale.as_ref().unwrap(), &mut r).await
+            }
         }
         _ if plan.extrusion.is_some() => {
             extrusion::run(plan.extrusion.as_ref().unwrap(), &mut r).await
