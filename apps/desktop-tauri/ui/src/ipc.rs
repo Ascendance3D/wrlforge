@@ -29,6 +29,10 @@ extern "C" {
     fn preview_pick_js(client_x: f64, client_y: f64, layer: u32) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = retire, catch)]
     fn preview_retire_js(reason: &str) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = sceneInput, catch)]
+    fn preview_scene_input_js(interact: JsValue) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = sceneField, catch)]
+    fn preview_scene_field_js(def: &str, field: &str) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = pixel, catch)]
     async fn preview_pixel_js(client_x: f64, client_y: f64) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = pickStatus, catch)]
@@ -642,6 +646,25 @@ pub async fn preview_capture() -> Option<Vec<u8>> {
 /// Retire the generation on screen: it can no longer be picked.
 pub fn preview_retire(reason: &str) {
     let _ = preview_retire_js(reason);
+}
+
+/// Tests: one runtime field of a DEF-named node on screen, as text.
+pub fn preview_scene_field(def: &str, field: &str) -> String {
+    preview_scene_field_js(def, field)
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_default()
+}
+
+/// LINUX-EDIT-INPUT-SAFETY: give authored pointing sensors the pointer
+/// (`Some(true)`, Interact only) or not (`Some(false)`); `None` only reads.
+/// Returns `edit`, `interact` or `unavailable:<why>`.
+pub fn preview_scene_input(interact: Option<bool>) -> String {
+    let arg = interact.map_or(JsValue::UNDEFINED, JsValue::from_bool);
+    preview_scene_input_js(arg)
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_else(|| "unavailable:bridge-missing".into())
 }
 
 /// `{"ok":bool,"reason":..}`: whether viewport picking is available.

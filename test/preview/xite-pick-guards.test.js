@@ -122,7 +122,9 @@ test('G2: the installed X_ITE is exactly 15.1.10', () => {
 
 const PRIVATE_NAMES = ['VRMLParser', 'nodeStatement', 'comments', 'lastIndex', 'getScene', 'getExecutionContext',
   'isInsideProtoDeclaration', 'touch', 'getHit', 'shapeNode', 'sensors', 'getParents', 'getWorld', 'getLayer0',
-  'groupNodes', 'getViewport', 'X3DBaseNode', 'X3DExecutionContext', 'X3DScene', 'getTypeName'];
+  'groupNodes', 'getViewport', 'X3DBaseNode', 'X3DExecutionContext', 'X3DScene', 'getTypeName',
+  // LINUX-EDIT-INPUT-SAFETY: the scene input gate's pointer-sensor entry points.
+  'buttonPressEvent', 'motionNotifyEvent', 'buttonReleaseEvent'];
 
 test('G3 (Tauri 16.5.0): every private surface exists in the fetched bundle', (t) => {
   const dist = path.join(ROOT, TAURI, 'target', 'xite', TAURI_PIN, 'dist', 'x_ite.min.js');
@@ -138,7 +140,7 @@ test('G3: every private surface still exists in the shipped bundle; none is publ
     assert.ok(min.includes(name), `x_ite.min.js no longer contains ${name}`);
   }
   const dts = read('node_modules/x_ite/dist/x_ite.d.ts');
-  for (const name of ['nodeStatement', 'getHit', 'getParents', 'getLayer0']) {
+  for (const name of ['nodeStatement', 'getHit', 'getParents', 'getLayer0', 'buttonPressEvent', 'motionNotifyEvent']) {
     assert.ok(!new RegExp(`\\b${name}\\b`).test(dts), `x_ite.d.ts now declares ${name}: revisit the private adapter`);
   }
 });
@@ -158,7 +160,8 @@ function productionFiles() {
 }
 
 const PRIVATE = [/\bVRMLParser\b/, /\bnodeStatement\b/, /\.touch\s*\(/, /\bgetHit\b/, /\bgetParents\b/,
-  /\bgetLayer0\b/, /\bgroupNodes?\b/, /\bgetViewport\b/, /\bisInsideProtoDeclaration\b/, /\.getExecutionContext\s*\(/];
+  /\bgetLayer0\b/, /\bgroupNodes?\b/, /\bgetViewport\b/, /\bisInsideProtoDeclaration\b/, /\.getExecutionContext\s*\(/,
+  /\bbuttonPressEvent\b/, /\bmotionNotifyEvent\b/, /\bbuttonReleaseEvent\b/];
 
 test('G8: private X_ITE picking surfaces are referenced only by the adapter', () => {
   const files = productionFiles();
@@ -241,9 +244,9 @@ test('the C0 research spike is not a production input', () => {
 // ---- contract surface (QA #1 / #2 blocking findings) ---------------------------
 // The seven WD2-D contract methods plus the VISUAL-3A1 binding amendment
 // (snapshotSpan, nodeAt, spansOf) and the B3 PROTO body binding
-// (snapshotBodySpan, bodyNodeAt, chainOf, and the LV2 bodyInstances);
-// nothing else.
-const CONTRACT_METHODS = ['abort', 'activate', 'bodyInstances', 'bodyNodeAt', 'chainOf', 'compatibility', 'dispose', 'nodeAt', 'parseWithProvenance', 'pick', 'retire', 'snapshotBodySpan', 'snapshotSpan', 'spansOf'];
+// (snapshotBodySpan, bodyNodeAt, chainOf, and the LV2 bodyInstances) and the
+// LINUX-EDIT-INPUT-SAFETY scene input gate (sceneInput); nothing else.
+const CONTRACT_METHODS = ['abort', 'activate', 'bodyInstances', 'bodyNodeAt', 'chainOf', 'compatibility', 'dispose', 'nodeAt', 'parseWithProvenance', 'pick', 'retire', 'sceneInput', 'snapshotBodySpan', 'snapshotSpan', 'spansOf'];
 
 function freshAdapterModule() {
   const abs = path.join(ROOT, ADAPTER);

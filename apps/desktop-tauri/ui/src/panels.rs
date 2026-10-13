@@ -1197,6 +1197,13 @@ pub fn Viewport() -> impl IntoView {
                     aria-pressed=move || if u.scale_mode.get() { "true" } else { "false" }
                     disabled=move || !crate::command::enabled(CommandId::ToolScale)
                     on:click=move |_| crate::command::run(CommandId::ToolScale)>"Scale"</button>
+                // LINUX-EDIT-INPUT-SAFETY: the world's own sensors get the
+                // pointer only here; every other state edits.
+                <button id="btn-interact" class="secondary small" hidden=move || u.native.with(|s| s.native_shown())
+                    data-command=CommandId::ToolInteract.key() data-tip=crate::command::title(CommandId::ToolInteract)
+                    aria-pressed=move || if u.interact_mode.get() { "true" } else { "false" }
+                    disabled=move || !crate::command::enabled(CommandId::ToolInteract)
+                    on:click=move |_| crate::command::run(CommandId::ToolInteract)>"Interact"</button>
                 </span>
                 <span class="sep" hidden=move || u.native.with(|s| s.native_shown())></span>
                 // B2-CAMERA: the camera controls (View menu → Camera). The
@@ -1419,6 +1426,7 @@ pub fn toggle_select() {
     let u = ui();
     u.pick_mode.update(|m| *m = !*m);
     if u.pick_mode.get_untracked() {
+        leave_interact();
         u.move_mode.set(false);
         u.rotate_mode.set(false);
         u.scale_mode.set(false);
@@ -1440,6 +1448,7 @@ pub fn toggle_gizmo(tool: wrlforge_desktop_protocol::gizmo::Tool) {
     };
     mine.update(|m| *m = !*m);
     if mine.get_untracked() {
+        leave_interact();
         u.pick_mode.set(false);
         for o in others {
             o.set(false);
@@ -1447,6 +1456,60 @@ pub fn toggle_gizmo(tool: wrlforge_desktop_protocol::gizmo::Tool) {
         crate::gizmo::start();
     } else {
         u.gizmo_message.set(None);
+    }
+}
+
+/// LINUX-EDIT-INPUT-SAFETY: the Interact toggle (toolbar button, Tools
+/// menu). Interact is the one state in which the world's TouchSensors, drag
+/// sensors and Anchors get the pointer; it ends every editing tool, and no
+/// click selects. Leaving it closes the sensor gate first, then reloads the
+/// preview from the source, so state the world changed while it ran (an
+/// open door, a moved PlaneSensor target) is never edited against. The
+/// runtime never writes the source.
+pub fn toggle_interact() {
+    let u = ui();
+    if u.interact_mode.get_untracked() {
+        leave_interact();
+        return;
+    }
+    crate::gizmo::cancel("Interact started");
+    u.pick_mode.set(false);
+    u.move_mode.set(false);
+    u.rotate_mode.set(false);
+    u.scale_mode.set(false);
+    u.pick_message.set(None);
+    u.gizmo_message.set(None);
+    u.interact_mode.set(true);
+    let state = crate::ipc::preview_scene_input(Some(true));
+    if state != "interact" {
+        // Fail closed and say why: the editor keeps the pointer.
+        u.interact_mode.set(false);
+        crate::ipc::preview_scene_input(Some(false));
+        crate::ui::flash(&format!("Interact is not available: the scene input gate is {state}."));
+    }
+}
+
+/// Leave Interact (no-op when it is off): sensors lose the pointer at once,
+/// then the preview is reloaded from the source text.
+pub fn leave_interact() {
+    let u = ui();
+    if !u.interact_mode.get_untracked() {
+        return;
+    }
+    u.interact_mode.set(false);
+    crate::ipc::preview_scene_input(Some(false));
+    spawn_local(crate::ui::preview(true));
+}
+
+/// The viewport status suffix for the sensor gate: nothing while editing
+/// (the normal state), a reminder in Interact, a warning when the gate is
+/// missing (the world's sensors would then respond to editing clicks).
+pub fn scene_input_note() -> String {
+    let state = crate::ipc::preview_scene_input(None);
+    match state.as_str() {
+        "edit" => String::new(),
+        "interact" => " · Interact: the world responds to clicks".into(),
+        _ => format!(" · WARNING: scene sensors are not blocked while editing ({state})"),
     }
 }
 

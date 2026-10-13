@@ -44,6 +44,9 @@ pub struct Ui {
     pub create_error: RwSignal<Option<String>>,
     /// VISUAL-2: the viewport Select mode (a click selects, a drag navigates).
     pub pick_mode: RwSignal<bool>,
+    /// LINUX-EDIT-INPUT-SAFETY: the explicit Interact mode, the only state
+    /// in which the world's own sensors get the pointer.
+    pub interact_mode: RwSignal<bool>,
     /// B2-CAMERA: the authored viewpoints of the scene on screen (the
     /// viewport's viewpoint list). View state only.
     pub viewpoints: RwSignal<crate::ipc::ViewpointList>,
@@ -267,6 +270,7 @@ pub fn ui() -> Ui {
             preview_loads: RwSignal::new(0),
             create_error: RwSignal::new(None),
             pick_mode: RwSignal::new(false),
+            interact_mode: RwSignal::new(false),
             viewpoints: RwSignal::new(Default::default()),
             pick_message: RwSignal::new(None),
             move_mode: RwSignal::new(false),
@@ -874,6 +878,7 @@ pub async fn preview(force: bool) {
                 let mut note = crate::camera::note(why);
                 if status.starts_with("loaded") {
                     note = crate::camera::after_load(session, seq, auto_fit, camera, note);
+                    note.push_str(&crate::panels::scene_input_note());
                 }
                 u.preview_status
                     .set(format!("rev {} · {status}{note}", src.revision));

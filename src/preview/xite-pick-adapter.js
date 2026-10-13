@@ -492,8 +492,64 @@
     function dispose() {
       abort();
       retire('preview-scene-replaced');
+      removeGate();
       disposed = true;
       liveBrowser = null;
+    }
+
+    // ---- scene input gate (LINUX-EDIT-INPUT-SAFETY) --------------------------
+    // X_ITE's PointingDevice calls browser.buttonPressEvent / motionNotifyEvent
+    // from its own mousedown / mousemove listeners on the canvas, BEFORE the
+    // editor learns the click is a pick: a TouchSensor fired its touchTime (and
+    // every ROUTE behind it) while Select was active. While the editor owns the
+    // pointer -- every state except Interact -- both entry points answer "no
+    // sensor" without activating or hovering one: TouchSensors, drag sensors
+    // and Anchors stay quiet, and the press falls through to the viewer, so a
+    // drag that starts on a sensor orbits. Release is never gated: nothing is
+    // activated while closed, and a press made in Interact finishes normally.
+    // touch() / getHit() are not gated, so pick refusals still see the authored
+    // sensors. The wrappers are own properties of this one browser; dispose()
+    // removes them. Installed (closed) by the first sceneInput() call, so a
+    // host that never asks (the Electron editor) keeps X_ITE's own behavior; a
+    // missing surface reports unavailable.
+    const GATED = ['buttonPressEvent', 'motionNotifyEvent'];
+    const gate = { open: false, wrappers: null, reason: null, tried: false };
+    function installGate() {
+      gate.tried = true;
+      const b = liveBrowser;
+      if (!b || !fn(b, 'buttonPressEvent') || !fn(b, 'motionNotifyEvent') || !fn(b, 'buttonReleaseEvent')) {
+        gate.reason = 'pointer-sensor-entry-missing';
+        return;
+      }
+      if (GATED.some((k) => Object.prototype.hasOwnProperty.call(b, k))) {
+        gate.reason = 'pointer-sensor-entry-already-wrapped';
+        return;
+      }
+      gate.wrappers = {};
+      for (const k of GATED) {
+        const original = b[k];
+        const wrapper = function () { return gate.open ? original.apply(this, arguments) : false; };
+        gate.wrappers[k] = wrapper;
+        b[k] = wrapper;
+      }
+    }
+
+    function removeGate() {
+      const b = liveBrowser;
+      if (!b || !gate.wrappers) return;
+      for (const k of GATED) if (b[k] === gate.wrappers[k]) delete b[k];
+      gate.wrappers = null;
+      gate.open = false;
+      gate.reason = 'adapter-disposed';
+    }
+
+    // sceneInput(open?): open (true) only for the explicit Interact mode;
+    // anything else closes. Returns 'interact' | 'edit' | 'unavailable:<why>'.
+    function sceneInput(open) {
+      if (!gate.tried && !disposed) installGate();
+      if (!gate.wrappers) return `unavailable:${gate.reason}`;
+      if (open !== undefined) gate.open = open === true;
+      return gate.open ? 'interact' : 'edit';
     }
 
     // ---- pick ------------------------------------------------------------------
@@ -990,8 +1046,8 @@
     // The WHOLE public surface (contract §Private X_ITE adapter, plus the
     // VISUAL-3A1 binding amendment: snapshotSpan, nodeAt, spansOf, and the
     // B3 PROTO body binding: snapshotBodySpan, bodyNodeAt, chainOf, and the
-    // LV2 instance listing bodyInstances).
-    return Object.freeze({ compatibility, parseWithProvenance, activate, retire, pick, abort, dispose, snapshotSpan, nodeAt, spansOf, snapshotBodySpan, bodyNodeAt, chainOf, bodyInstances });
+    // LV2 instance listing bodyInstances, and the scene input gate sceneInput).
+    return Object.freeze({ compatibility, parseWithProvenance, activate, retire, pick, abort, dispose, snapshotSpan, nodeAt, spansOf, snapshotBodySpan, bodyNodeAt, chainOf, bodyInstances, sceneInput });
   }
 
   const pickAdapterApi = Object.freeze({ createXitePickAdapter });

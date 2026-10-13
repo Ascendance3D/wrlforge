@@ -728,3 +728,26 @@ fn viewport_keys_fit_only_unmodified_and_never_shadow_a_shortcut() {
     }
     assert_eq!(from_shortcut("f", true, false), Some(EditFind));
 }
+
+#[test]
+fn interact_is_the_one_explicit_sensor_mode_and_never_edits() {
+    use CommandId::*;
+    let s = ToolInteract.spec();
+    assert_eq!(s.key, "tool.interact");
+    assert_eq!(s.label, "Interact");
+    assert_eq!(
+        (s.menu, s.requires, s.action, s.mutates_document, s.check),
+        (Menu::Tools, Requires::ViewportTool, Action::UiOnly, false, Check::Interact)
+    );
+    assert!(s.shortcuts.is_empty());
+    assert!(s.hint.contains("Leaving Interact reloads the preview from the source"));
+    assert_eq!(CommandId::from_key("tool.interact"), Some(ToolInteract));
+    // Needs a document and the X_ITE viewport, like the other tools.
+    let mut ctx = CommandContext { has_document: true, ..Default::default() };
+    assert_eq!(ToolInteract.refusal(ctx), None);
+    ctx.native_viewport = true;
+    assert!(ToolInteract.refusal(ctx).is_some());
+    assert!(ToolInteract.refusal(CommandContext::default()).is_some());
+    // No viewport key fires it.
+    assert!(VIEWPORT_KEYS.iter().all(|(_, id)| *id != ToolInteract));
+}

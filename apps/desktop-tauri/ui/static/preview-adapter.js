@@ -93,6 +93,11 @@
     capture: null, camera: null, trace: null,
     // B2-CAMERA: the newest load's automatic-Fit result.
     autoFit: null,
+    // LINUX-EDIT-INPUT-SAFETY: authored pointing sensors get the pointer only
+    // in the explicit Interact mode (`interact`); every browser's adapter
+    // gets the gate closed (edit) unless Interact is on. `input` is the
+    // adapter's answer: 'edit' | 'interact' | 'unavailable:<why>'.
+    interact: false, input: 'unavailable:no-adapter',
   };
 
   function adapterFor(browser) {
@@ -120,8 +125,18 @@
           pick.adapter = null;
         }
       }
+      applyInput();
     }
     return pick.adapter;
+  }
+
+  function applyInput() {
+    try {
+      pick.input = pick.adapter ? String(pick.adapter.sceneInput(pick.interact === true)) : 'unavailable:no-adapter';
+    } catch (e) {
+      pick.input = 'unavailable:gate-error';
+    }
+    return pick.input;
   }
 
   // A retired generation can no longer be manipulated: any temporary
@@ -424,6 +439,30 @@
     },
     // Retire the generation on screen (document changed / closed / replaced).
     retire: function (reason) { retire(reason); },
+    // LINUX-EDIT-INPUT-SAFETY: true only for the explicit Interact mode. A
+    // canvas that has no adapter yet gets the mode when its first scene
+    // loads (before replaceWorld). Returns the gate state ('edit' |
+    // 'interact' | 'unavailable:<why>'); no argument only reads it.
+    // Tests (LINUX-EDIT-INPUT-SAFETY): one field of a DEF-named node in the
+    // scene on screen, as text, through the public SAI (read only); '' when
+    // there is no such node or field. Shows whether an authored sensor fired.
+    sceneField: function (def, field) {
+      try {
+        var c = canvas();
+        var s = c && c.browser ? c.browser.currentScene : null;
+        var n = s ? s.getNamedNode(String(def)) : null;
+        var v = n ? n[String(field)] : undefined;
+        return v === undefined || v === null ? '' : String(v);
+      } catch (e) {
+        return '';
+      }
+    },
+    sceneInput: function (interact) {
+      if (interact !== undefined) pick.interact = interact === true;
+      var c = canvas();
+      if (c && c.browser) adapterFor(c.browser);
+      return applyInput();
+    },
     // The adapter's plain-data snapshot of one click, as JSON, plus the
     // generation the hit belongs to and the active one at this instant.
     // P0-A: `layer` names which Shape under the pointer (0 = the nearest);

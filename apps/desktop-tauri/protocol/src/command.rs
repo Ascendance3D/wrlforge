@@ -124,6 +124,7 @@ pub enum CommandId {
     ToolMove,
     ToolRotate,
     ToolScale,
+    ToolInteract,
     ToolExtrusionOutline,
     WorldMallValidate,
     WorldMallRepack,
@@ -245,6 +246,8 @@ pub enum Check {
     Theme(&'static str),
     /// Live Preview is on.
     LivePreview,
+    /// The explicit Interact mode (authored sensors get the pointer).
+    Interact,
 }
 
 /// What had the keyboard focus when a menu opened (or now, for a shortcut).
@@ -759,6 +762,11 @@ pub const COMMANDS: &[CommandSpec] = &[
         "Rotate: drag the X (red), Y (green) or Z (blue) ring of the selected object (world axes, about its center). Shift snaps to 15°. Esc cancels."),
     tool_cmd(CommandId::ToolScale, "tool.scale", "Scale", Check::Gizmo(Tool::Scale),
         "Scale: drag the X, Y or Z handle (the object's own scale axes) or the center square (uniform). Esc cancels."),
+    // LINUX-EDIT-INPUT-SAFETY: the one mode in which the world's own
+    // TouchSensors, drag sensors and Anchors get the pointer. Every other
+    // state edits: a click never fires an authored sensor.
+    tool_cmd(CommandId::ToolInteract, "tool.interact", "Interact", Check::Interact,
+        "Interact: test the world as authored (TouchSensors, drag sensors, Anchors respond to clicks). No selection or editing. Leaving Interact reloads the preview from the source."),
     CommandSpec {
         id: CommandId::ToolExtrusionOutline,
         key: "tool.extrusionOutline",
@@ -979,7 +987,7 @@ pub const ALLOWED_BACKEND: &[&str] = &[
 ];
 
 impl CommandId {
-    pub const ALL: [CommandId; 66] = [
+    pub const ALL: [CommandId; 67] = [
         CommandId::FileNewWorld,
         CommandId::FileOpen,
         CommandId::FileSave,
@@ -1037,6 +1045,7 @@ impl CommandId {
         CommandId::ToolMove,
         CommandId::ToolRotate,
         CommandId::ToolScale,
+        CommandId::ToolInteract,
         CommandId::ToolExtrusionOutline,
         CommandId::WorldMallValidate,
         CommandId::WorldMallRepack,
@@ -1376,6 +1385,8 @@ pub const MENUS: &[MenuDef] = {
                 C(ToolMove),
                 C(ToolRotate),
                 C(ToolScale),
+                Sep,
+                C(ToolInteract),
                 Sep,
                 C(ToolExtrusionOutline),
             ],
