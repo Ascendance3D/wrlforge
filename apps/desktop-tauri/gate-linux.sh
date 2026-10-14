@@ -62,6 +62,7 @@ dock:main|65
 dock:restore|7
 dock:damaged|7
 pick:report|172
+keys:report|29
 create:report|53
 extrusion:report|58
 move:report|206
@@ -71,7 +72,7 @@ recovery:later|15
 theme:report|82
 texture:report|46
 native:report|46'
-guards_want=151; node_want=85; route_want=2; fx_want=58; iso_want=9
+guards_want=151; node_want=91; route_want=2; fx_want=58; iso_want=9
 
 # ---- 0. the checkout -------------------------------------------------------
 head="$(git -C "$wt" rev-parse HEAD)"; dirty="$(git -C "$wt" status --porcelain | wc -l)"
@@ -144,6 +145,7 @@ gui() { local name=$1; shift; (cd "$app" && timeout 600 "$@") >"$out/gui-$name.t
 gui menu ./smoke.sh --headless --menu &
 gui dock ./smoke.sh --headless --dock &
 gui pick ./smoke.sh --headless --pick &
+gui keys ./smoke.sh --headless --keys &
 gui create ./smoke.sh --headless --create &
 gui extrusion ./smoke.sh --headless --extrusion &
 gui move ./smoke.sh --headless --move &

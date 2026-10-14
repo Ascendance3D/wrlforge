@@ -35,6 +35,8 @@ extern "C" {
     fn preview_scene_input_fault_js(why: &str) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = sceneInputBlocked, catch)]
     fn preview_scene_input_blocked_js() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = sceneKeysBlocked, catch)]
+    fn preview_scene_keys_blocked_js() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = sceneField, catch)]
     fn preview_scene_field_js(def: &str, field: &str) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = pixel, catch)]
@@ -713,6 +715,14 @@ pub fn preview_scene_input_fault(why: &str) -> String {
 /// Tests: how many presses the adapter's pointer block stopped.
 pub fn preview_scene_input_blocked() -> u64 {
     preview_scene_input_blocked_js()
+        .ok()
+        .and_then(|v| v.as_f64())
+        .map_or(0, |n| n as u64)
+}
+
+/// Tests: how many keys the adapter's keyboard block stopped at the canvas.
+pub fn preview_scene_keys_blocked() -> u64 {
+    preview_scene_keys_blocked_js()
         .ok()
         .and_then(|v| v.as_f64())
         .map_or(0, |n| n as u64)

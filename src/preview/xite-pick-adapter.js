@@ -520,7 +520,100 @@
     const gate = { open: false, wrappers: null, reason: 'pointer-sensor-gate-not-installed' };
     function gateVerified() {
       const b = liveBrowser;
-      return !!(b && gate.wrappers && GATED.every((k) => b[k] === gate.wrappers[k]));
+      return !!(b && gate.wrappers && GATED.every((k) => b[k] === gate.wrappers[k])) && keyProblem(b) === null;
+    }
+
+    // ---- keyboard sensor gate (LINUX-KEY-INPUT-SAFETY) -----------------------
+    // X_ITE's KeyDeviceSensor context listens for keydown / keyup on the
+    // browser element (the <x3d-canvas>, which takes the focus on a click)
+    // and calls keydown(event) / keyup(event) on every enabled KeySensor and
+    // StringSensor. Both sensors call event.preventDefault() for EVERY key,
+    // and the application shortcut handler skips a prevented key: after a
+    // viewport click, an enabled keyboard sensor received Ctrl+Z, Delete, F
+    // or Escape and the shortcut did not run. The component loads with the
+    // first scene that uses it (an X3D world or Inline), after this adapter
+    // exists. While the gate is closed each sensor's keydown / keyup answers
+    // nothing: no field changes, no ROUTE runs, no preventDefault, so the
+    // key goes on to the application. X_ITE's own key listener (modifier
+    // state for the viewer) is not changed. A keyup (or an auto-repeat)
+    // reaches a sensor only for a key it received pressed while the gate was
+    // open, so a key held across a mode switch reports nothing it did not
+    // see pressed.
+    // The wrappers are own properties of the sensor node; verification
+    // checks every enabled sensor, and the host verifies before each key
+    // that would reach the canvas, so a sensor enabled since the last check
+    // is wrapped before it can receive a key.
+    const KEY_TYPES = ['KeySensor', 'StringSensor'];
+    let keyWrappers = new WeakMap();
+    let keysDown = new WeakMap();
+    let keyReason = null;
+
+    // null when every keyboard sensor is gated (or none can exist), else why not.
+    function keyProblem(b) {
+      let reg = null;
+      try { reg = fn(b, 'getConcreteNodes') ? b.getConcreteNodes() : null; } catch (e) { reg = null; }
+      if (!reg || typeof reg.get !== 'function') return 'key-sensor-registry-missing';
+      try {
+        if (!KEY_TYPES.some((t) => !!reg.get(t))) return null; // the component is not loaded: no keyboard sensor exists
+        if (!fn(b, 'getKeyDeviceSensorNodes')) return 'key-sensor-entry-missing';
+        const nodes = b.getKeyDeviceSensorNodes();
+        if (!nodes || typeof nodes[Symbol.iterator] !== 'function') return 'key-sensor-entry-missing';
+        for (const n of nodes) {
+          const w = keyWrappers.get(n);
+          if (!w || n.keydown !== w.keydown || n.keyup !== w.keyup) return 'key-sensor-gate-not-verified';
+        }
+        return null;
+      } catch (e) {
+        return 'key-sensor-gate-install-error';
+      }
+    }
+
+    const keyId = (ev) => String((ev && (ev.code || ev.key || ev.keyCode)) || '');
+    function wrapKeyNode(n) {
+      const w = keyWrappers.get(n);
+      if (w && n.keydown === w.keydown && n.keyup === w.keyup) return true;
+      if (hasOwn(n, 'keydown') || hasOwn(n, 'keyup')) { keyReason = 'key-sensor-entry-already-wrapped'; return false; }
+      if (!fn(n, 'keydown') || !fn(n, 'keyup')) { keyReason = 'key-sensor-entry-missing'; return false; }
+      const down = n.keydown, up = n.keyup;
+      const mine = {
+        keydown: function (ev) {
+          if (!gate.open) return undefined;
+          let held = keysDown.get(n);
+          if (!held) keysDown.set(n, (held = new Set()));
+          // An auto-repeat of a key pressed before the gate opened: the
+          // world never saw that press.
+          if (ev && ev.repeat && !held.has(keyId(ev))) return undefined;
+          held.add(keyId(ev));
+          return down.apply(this, arguments); // its exceptions propagate unchanged
+        },
+        keyup: function (ev) {
+          if (!gate.open) return undefined;
+          const held = keysDown.get(n);
+          if (!held || !held.delete(keyId(ev))) return undefined;
+          return up.apply(this, arguments);
+        },
+      };
+      n.keydown = mine.keydown;
+      n.keyup = mine.keyup;
+      keyWrappers.set(n, mine);
+      return true;
+    }
+
+    function installKeyGate(b) {
+      keyReason = keyProblem(b);
+      if (keyReason !== 'key-sensor-gate-not-verified') return;
+      try {
+        keyReason = null;
+        for (const n of b.getKeyDeviceSensorNodes()) if (!wrapKeyNode(n)) return;
+        keyReason = keyProblem(b);
+      } catch (e) {
+        keyReason = 'key-sensor-gate-install-error';
+      }
+    }
+
+    function closeGate() {
+      gate.open = false;
+      keysDown = new WeakMap(); // nothing pressed in Interact is released later
     }
 
     function installGate() {
@@ -544,7 +637,9 @@
           wrappers[k] = wrapper;
           b[k] = wrapper;
         }
-        if (!gateVerified()) gate.reason = 'pointer-sensor-gate-not-verified';
+        installKeyGate(b);
+        if (keyReason) gate.reason = keyReason;
+        else if (!gateVerified()) gate.reason = 'pointer-sensor-gate-not-verified';
       } catch (e) {
         gate.reason = 'pointer-sensor-gate-install-error';
       }
@@ -552,8 +647,18 @@
 
     function removeGate() {
       const b = liveBrowser;
-      gate.open = false;
+      closeGate();
       gate.reason = 'adapter-disposed';
+      try {
+        const nodes = b && fn(b, 'getKeyDeviceSensorNodes') ? b.getKeyDeviceSensorNodes() : [];
+        for (const n of nodes) {
+          const w = keyWrappers.get(n);
+          if (!w) continue;
+          if (n.keydown === w.keydown) delete n.keydown;
+          if (n.keyup === w.keyup) delete n.keyup;
+        }
+      } catch (e) { /* the browser is gone */ }
+      keyWrappers = new WeakMap();
       if (!b || !gate.wrappers) return;
       for (const k of GATED) if (b[k] === gate.wrappers[k]) delete b[k];
       gate.wrappers = null;
@@ -564,11 +669,14 @@
     function sceneInput(open) {
       if (disposed) return 'unavailable:adapter-disposed';
       if (!gateVerified()) {
-        gate.open = false;
+        closeGate();
         installGate();
         if (!gateVerified()) return `unavailable:${gate.reason}`;
       }
-      if (open !== undefined) gate.open = open === true;
+      if (open !== undefined) {
+        if (open === true) gate.open = true;
+        else closeGate();
+      }
       return gate.open ? 'interact' : 'edit';
     }
 

@@ -3,6 +3,8 @@
 # In-window end-to-end smoke test on DISPOSABLE copies (never a user file).
 # Usage: ./smoke.sh [--headless] --create      (VISUAL-1 New World → Create workflow)
 #        ./smoke.sh [--headless] --pick        (VISUAL-2 viewport picking; needs node for the oracle plan)
+#        ./smoke.sh [--headless] --keys        (LINUX-KEY-INPUT-SAFETY: KeySensor / StringSensor
+#                   fixtures with real X keys; needs node for the plan)
 #        ./smoke.sh [--headless] --move        (VISUAL-3A translation gizmo; real X input needs xdotool)
 #        ./smoke.sh [--headless] --extrusion [--research DIR]
 #                   (VISUAL-4A Extrusion create / Inspector / outline editor;
@@ -22,7 +24,7 @@
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 bin="${WRLFORGE_BIN:-$here/target/debug/wrl-forge}"
-xvfb=(); extra=(); cfg=""; create=0; pick=0; move=0; extrusion=0; rotscale=0; recovery=0; dock=0; menu=0; research=""
+xvfb=(); extra=(); cfg=""; create=0; pick=0; keys=0; move=0; extrusion=0; rotscale=0; recovery=0; dock=0; menu=0; research=""
 while [[ "${1:-}" == --* ]]; do
   case "$1" in
     --headless) xvfb=(xvfb-run -a -s "-screen 0 1600x1000x24");;
@@ -35,6 +37,7 @@ while [[ "${1:-}" == --* ]]; do
     --config-dir) cfg="$2"; shift;;
     --create) create=1;;
     --pick) pick=1;;
+    --keys) keys=1;;
     --move) move=1;;
     --extrusion) extrusion=1;;
     --rotscale) rotscale=1;;
@@ -75,6 +78,18 @@ if [[ $pick -eq 1 ]]; then
   code=$?
   pass=$(sed -n 's/.*"pass": *\(true\|false\).*/\1/p' "$d/report.json" 2>/dev/null | head -1)
   echo "pick: exit=$code pass=${pass:-none} report=$d/report.json"
+  [[ $code -eq 0 && "$pass" == "true" ]] || fail=1
+fi
+if [[ $keys -eq 1 ]]; then
+  # The keyboard sensor fixtures only, through the same picking run (its
+  # matrix, then the key checks), in their own process and time limit.
+  d="$work/keys.d"; mkdir -p "$d/plan" "$d/config"
+  node "$here/smoke-pick-plan.cjs" "$d/plan" --keys || exit 2
+  marker=(); [[ ${#xvfb[@]} -gt 0 ]] && marker=(env WRLFORGE_SMOKE_XVFB=1)
+  timeout 300 "${xvfb[@]}" "${marker[@]}" "${iso[@]}" "$bin" --smoke-pick "$d/plan" --smoke-report "$d/report.json" --config-dir "$d/config" >"$d/stdout.txt" 2>"$d/stderr.txt"
+  code=$?
+  pass=$(sed -n 's/.*"pass": *\(true\|false\).*/\1/p' "$d/report.json" 2>/dev/null | head -1)
+  echo "keys: exit=$code pass=${pass:-none} report=$d/report.json"
   [[ $code -eq 0 && "$pass" == "true" ]] || fail=1
 fi
 if [[ $move -eq 1 ]]; then

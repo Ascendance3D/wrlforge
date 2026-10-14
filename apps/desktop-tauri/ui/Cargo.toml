@@ -27,6 +27,7 @@ features = [
   "Window", "Document", "Element", "HtmlElement", "HtmlTextAreaElement",
   "HtmlInputElement", "HtmlSelectElement", "NodeList",
   "Event", "EventInit", "EventTarget", "InputEvent", "InputEventInit", "KeyboardEvent", "KeyboardEventInit",
+  "CompositionEvent", "CompositionEventInit",
   "Performance", "console", "DomRect", "CssStyleDeclaration",
   "Range", "TreeWalker", "Node", "DomRectList",
   "PointerEvent", "MouseEvent", "AddEventListenerOptions", "PointerEventInit",

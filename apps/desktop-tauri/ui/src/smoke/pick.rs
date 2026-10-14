@@ -784,6 +784,13 @@ async fn matrix(c: &p::PickSmoke, s: &mut Stats, r: &mut R) -> Option<()> {
         })
         .await;
         let loaded = ready(20_000).await;
+        // LINUX-KEY-INPUT-SAFETY (`--keys`): no theme round ran first, so
+        // real input is calibrated on the first fixture.
+        if c.keys_only && c.real_pointer && REAL.get().is_none() {
+            click("btn-select")?;
+            ipc::sleep(300).await;
+            calibrate(r).await;
+        }
         let (mut ok, mut wrong, mut skipped, mut detail) = (0u32, 0u32, 0u32, Vec::new());
         let mut run = 0u32;
         let layered = fx.clicks.iter().any(|c| !c.then.is_empty());
@@ -875,6 +882,12 @@ async fn matrix(c: &p::PickSmoke, s: &mut Stats, r: &mut R) -> Option<()> {
             s.wrong += sensor_gate(c, fx, r).await?;
             s.wrong += interact_session(c, fx, r).await?;
             s.wrong += gate_unavailable(c, fx, i, r).await?;
+        }
+        if fx.id == "S2-key-sensor" || fx.id == "S3-string-sensor" {
+            s.wrong += key_gate(c, fx, r).await?;
+        }
+        if fx.id == "S4-viewport-typing" {
+            viewport_typing(c, fx, r).await?;
         }
     }
     Some(())
@@ -1874,8 +1887,12 @@ pub(super) async fn run(c: &p::PickSmoke, r: &mut R) -> Option<()> {
             "dispatched pointer events on the viewport (no harness Xvfb)"
         },
     );
-    for (i, theme) in c.themes.iter().enumerate() {
-        workflow(c, theme, i == 0, &mut s, r).await?;
+    // LINUX-KEY-INPUT-SAFETY: `smoke.sh --keys` runs only the keyboard
+    // sensor fixtures (their own run and time limit).
+    if !c.keys_only {
+        for (i, theme) in c.themes.iter().enumerate() {
+            workflow(c, theme, i == 0, &mut s, r).await?;
+        }
     }
     matrix(c, &mut s, r).await?;
     let (late, sup) = PICK.with_borrow(|p| (p.late_refused, p.superseded));
@@ -1906,5 +1923,494 @@ pub(super) async fn run(c: &p::PickSmoke, r: &mut R) -> Option<()> {
             s.total_ms.len()
         ),
     );
+    Some(())
+}
+
+// ---- LINUX-KEY-INPUT-SAFETY: keyboard sensors ----------------------------------
+
+/// The runtime fields that show whether the S2 KeySensor / S3 StringSensor
+/// (or anything behind them) received a key.
+fn key_watch(fx: &p::PickFixture) -> &'static [(&'static str, &'static str)] {
+    if fx.id.starts_with("S2") {
+        &[
+            ("KS", "isActive"),
+            ("KS", "keyPress"),
+            ("KS", "keyRelease"),
+            ("KS", "actionKeyPress"),
+            ("KS", "actionKeyRelease"),
+            ("KS", "shiftKey"),
+            ("KS", "controlKey"),
+            ("KS", "altKey"),
+            ("KeyLight", "on"),
+            ("DoorTouch", "touchTime"),
+        ]
+    } else {
+        &[
+            ("SS", "isActive"),
+            ("SS", "enteredText"),
+            ("SS", "finalText"),
+            ("KeyLight", "on"),
+            ("DoorTouch", "touchTime"),
+        ]
+    }
+}
+
+fn key_fields(fx: &p::PickFixture) -> Vec<String> {
+    key_watch(fx)
+        .iter()
+        .map(|(d, f)| format!("{d}.{f}={}", ipc::preview_scene_field(d, f)))
+        .collect()
+}
+
+fn key_diff(now: &[String], base: &[String]) -> Vec<String> {
+    now.iter().zip(base).filter(|(n, b)| n != b).map(|(n, _)| n.clone()).collect()
+}
+
+/// The focused element: `#id`, or the tag and class.
+fn focus_desc() -> String {
+    doc_el()
+        .and_then(|d| d.active_element())
+        .map(|e| {
+            if e.id().is_empty() {
+                format!("{}.{}", e.tag_name().to_lowercase(), e.class_name())
+            } else {
+                format!("#{}", e.id())
+            }
+        })
+        .unwrap_or_else(|| "none".into())
+}
+
+async fn keys(list: &[&str], x: f64, y: f64) -> Option<()> {
+    for k in list {
+        super::gizmo::real(k, x, y).await.ok()?;
+        ipc::sleep(80).await;
+    }
+    ipc::sleep(300).await;
+    Some(())
+}
+
+/// Undo (menu command) until the Source shows `hash` again (at most `n`).
+async fn undo_to(hash: u64, n: u32) -> bool {
+    for _ in 0..n {
+        if untouched().await.is_some_and(|t| t.textarea_hash == hash) {
+            return true;
+        }
+        crate::command::run(p::command::CommandId::EditUndo);
+        ipc::sleep(500).await;
+    }
+    untouched().await.is_some_and(|t| t.textarea_hash == hash)
+}
+
+/// LINUX-KEY-INPUT-SAFETY on `S2-key-sensor` (KeySensor) and
+/// `S3-string-sensor` (StringSensor), with REAL X keyboard input. X_ITE's
+/// keyboard sensors read keydown / keyup on the focused X_ITE canvas and
+/// call preventDefault() for every key, so before this lane a viewport
+/// click followed by Ctrl+D, Ctrl+Z or Escape reached the sensor (a ROUTE
+/// ran) and the application shortcut did not run. Checks: editing keys
+/// reach no sensor and shortcuts run; Source, Scene Tree, Inspector and
+/// Find keys reach no sensor; Interact delivers keys to the sensor (a held
+/// key, a typed string); dialog and Source keys in Interact do not; a key
+/// held across a mode switch reports nothing false; the gate fails closed
+/// (keys blocked, shortcuts kept) and recovers to edit; a scene reload.
+/// Returns the WRONG count.
+async fn key_gate(c: &p::PickSmoke, fx: &p::PickFixture, r: &mut R) -> Option<u32> {
+    use p::command::CommandId as C;
+    let u = ui();
+    let tag = if fx.id.starts_with("S2") { "S2" } else { "S3" };
+    let key_sensor = tag == "S2";
+    let (sx, sy) = fx
+        .clicks
+        .iter()
+        .find(|k| k.id == "static")
+        .and_then(|k| project(k.world, fx.camera))?;
+    let real = REAL.get().is_some();
+    click("btn-select")?;
+    ready(8000).await?;
+    ipc::sleep(300).await;
+    let sensor = if key_sensor { "KS" } else { "SS" };
+    let loaded = ipc::preview_scene_field(sensor, "enabled");
+    let authored = key_fields(fx);
+    let start = untouched().await?;
+    let start_text = textarea().map(|t| t.value()).unwrap_or_default();
+    let spin0 = ipc::preview_scene_field("Spin", "rotation");
+
+    // (K1) Edit: a Select click gives the canvas the focus; ordinary keys,
+    // a held key with repeat, AltGr (Ctrl+Alt) and Alt reach no sensor.
+    gesture(sx, sy).await;
+    let focus1 = focus_desc();
+    keys(
+        &["key-a", "key-2", "key-9", "key-c", "key-shift+a", "key-Return", "key-space", "key-BackSpace", "key-Delete",
+          "key-Left", "key-Up", "key-Down", "key-Right", "key-F2", "key-F7", "key-ctrl+alt+s", "key-alt+Home"],
+        sx,
+        sy,
+    )
+    .await?;
+    super::gizmo::real("keydown-z", sx, sy).await.ok()?;
+    ipc::sleep(900).await;
+    let held = key_fields(fx);
+    super::gizmo::real("keyup-z", sx, sy).await.ok()?;
+    ipc::sleep(400).await;
+    let now = key_fields(fx);
+    let spin1 = ipc::preview_scene_field("Spin", "rotation");
+    let doc1 = untouched().await?;
+    capture(c, &format!("{}-edit-keys", tag.to_lowercase())).await;
+    r.step(
+        &format!("{tag}: edit mode: after a Select click (canvas focused) letters, digits, Shift, Enter, Space, BackSpace, Delete, arrows, F2, F7, Ctrl+Alt (AltGr), Alt+Home and a held key with repeat reach no {sensor}; the light stays off; the TimeSensor spin keeps turning; the source is unchanged"),
+        real && loaded == "true" && focus1 == "#viewport" && held == authored && now == authored && spin1 != spin0 && doc1.same_doc(&start),
+        format!("real {real} · {sensor}.enabled {loaded} · focus {focus1} · held changed {:?} · changed {:?} · spin {spin0} -> {spin1} · source same {}", key_diff(&held, &authored), key_diff(&now, &authored), doc1.same_doc(&start)),
+    );
+
+    // (K2) The application shortcuts from the focused viewport still run:
+    // a keyboard sensor no longer swallows them (preventDefault). An X3D
+    // world is not a VRML97 document for the Rust analysis (missing
+    // '#VRML V2.0 utf8' header), so picks refuse; the selection comes from
+    // the Scene Tree and the edit to undo from the Source.
+    crate::command::run(C::ViewFocusSource);
+    ipc::sleep(200).await;
+    keys(&["key-z"], sx, sy).await?;
+    let typed2 = src_hash() != start.textarea_hash;
+    gesture(sx, sy).await;
+    let focus2 = focus_desc();
+    keys(&["key-ctrl+z"], sx, sy).await?;
+    let undone = wait_ms(3000, || (src_hash() == start.textarea_hash).then_some(())).await.is_some();
+    keys(&["key-ctrl+y"], sx, sy).await?;
+    let redone = wait_ms(3000, || (src_hash() != start.textarea_hash).then_some(())).await.is_some();
+    keys(&["key-ctrl+z"], sx, sy).await?;
+    let undone2 = wait_ms(3000, || (src_hash() == start.textarea_hash).then_some(())).await.is_some();
+    let node = all("li.tree-item.kind-node").into_iter().next()?.dyn_into::<HtmlElement>().ok()?;
+    node.click();
+    ipc::sleep(400).await;
+    gesture(sx, sy).await;
+    let had = selected_id().is_some();
+    let focus2b = focus_desc();
+    keys(&["key-Escape"], sx, sy).await?;
+    let cleared = selected_id().is_none();
+    keys(&["key-ctrl+f"], sx, sy).await?;
+    let find = focus_desc() == "#find-query";
+    keys(&["key-Escape"], sx, sy).await?;
+    let now = key_fields(fx);
+    capture(c, &format!("{}-edit-shortcuts", tag.to_lowercase())).await;
+    r.step(
+        &format!("{tag}: edit mode: with the viewport focused, Ctrl+Z undoes, Ctrl+Y redoes, Escape clears the selection and Ctrl+F opens Find; {sensor} receives none of them"),
+        typed2 && focus2 == "#viewport" && undone && redone && undone2 && had && focus2b == "#viewport" && cleared && find && now == authored,
+        format!("typed {typed2} · focus {focus2} · undo {undone} redo {redone} undo {undone2} · escape: selected {had} focus {focus2b} cleared {cleared} · find {find} · changed {:?}", key_diff(&now, &authored)),
+    );
+
+    // (K3) Source typing, Scene Tree navigation, Inspector typing and Find.
+    crate::command::run(C::ViewFocusSource);
+    ipc::sleep(300).await;
+    let fsrc = focus_desc();
+    keys(&["key-a", "key-b"], sx, sy).await?;
+    let typed = textarea().is_some_and(|t| p::view_hash(&t.value()) != start.textarea_hash);
+    let restored_src = undo_to(start.textarea_hash, 4).await;
+    let tree = doc_el()?.query_selector("ul.tree").ok()??.dyn_into::<HtmlElement>().ok()?;
+    tree.focus().ok()?;
+    keys(&["key-Down", "key-Up", "key-Down"], sx, sy).await?;
+    let ftree = focus_desc();
+    let node = all("li.tree-item.kind-node").into_iter().next()?.dyn_into::<HtmlElement>().ok()?;
+    node.click();
+    ipc::sleep(500).await;
+    let input = all(".inspector input[type=text]")
+        .into_iter()
+        .filter_map(|e| e.dyn_into::<HtmlElement>().ok())
+        .next();
+    let inspector = input.is_some();
+    if let Some(i) = input {
+        i.focus().ok()?;
+        keys(&["key-2", "key-Escape"], sx, sy).await?;
+    }
+    let finsp = focus_desc();
+    crate::command::run(C::ViewFocusSource);
+    ipc::sleep(200).await;
+    keys(&["key-ctrl+f", "key-z", "key-9", "key-Escape"], sx, sy).await?;
+    let restored = undo_to(start.textarea_hash, 4).await;
+    let now = key_fields(fx);
+    r.step(
+        &format!("{tag}: Source typing (the text is typed), Scene Tree arrows, Inspector typing and Find reach no {sensor}; the source is restored by Undo"),
+        fsrc == "#source" && typed && restored_src && ftree != "#viewport" && inspector && finsp != "#viewport" && restored && now == authored,
+        format!("source focus {fsrc} typed {typed} undo {restored_src} · tree focus {ftree} · inspector input {inspector} focus {finsp} · restored {restored} · changed {:?}", key_diff(&now, &authored)),
+    );
+
+    // (K4) Interact: keys reach the sensor when the viewport has the focus.
+    click("btn-interact")?;
+    ipc::sleep(500).await;
+    let gate = ipc::preview_scene_input(None);
+    super::gizmo::real("click", sx, sy).await.ok()?;
+    ipc::sleep(REAL_CLICK_GAP_MS).await;
+    let focus4 = focus_desc();
+    let (ok4, detail4) = if key_sensor {
+        super::gizmo::real("keydown-a", sx, sy).await.ok()?;
+        ipc::sleep(400).await;
+        let f = |n: &str| ipc::preview_scene_field("KS", n);
+        let down = (f("isActive"), f("keyPress"), ipc::preview_scene_field("KeyLight", "on"));
+        capture(c, "s2-interact-key-held").await;
+        super::gizmo::real("keyup-a", sx, sy).await.ok()?;
+        ipc::sleep(400).await;
+        let up = (f("isActive"), f("keyRelease"), ipc::preview_scene_field("KeyLight", "on"));
+        keys(&["key-F2", "key-shift+a"], sx, sy).await?;
+        let action = (f("actionKeyPress"), f("actionKeyRelease"), f("keyPress"));
+        let ok = down == ("true".into(), "a".into(), "true".into())
+            && up == ("false".into(), "a".into(), "false".into())
+            && action.0 == "2"
+            && action.1 == "2"
+            && action.2 == "A";
+        (ok, format!("held {down:?} · released {up:?} · F2/Shift+A {action:?}"))
+    } else {
+        keys(&["key-a", "key-b"], sx, sy).await?;
+        let f = |n: &str| ipc::preview_scene_field("SS", n);
+        let mid = (f("isActive"), f("enteredText"), ipc::preview_scene_field("KeyLight", "on"));
+        capture(c, "s3-interact-typing").await;
+        keys(&["key-BackSpace", "key-c", "key-Return"], sx, sy).await?;
+        let end = (f("isActive"), f("enteredText"), f("finalText"));
+        let ok = mid == ("true".into(), "ab".into(), "true".into())
+            && end == ("false".into(), "".into(), "ac".into());
+        (ok, format!("typing {mid:?} · after BackSpace, c, Enter {end:?}"))
+    };
+    r.step(
+        &format!("{tag}: Interact: with the viewport focused, real keys reach {sensor} (and its ROUTE to the light)"),
+        gate == "interact" && focus4 == "#viewport" && ok4,
+        format!("gate {gate} · focus {focus4} · {detail4} · src same {}", src_hash() == start.textarea_hash),
+    );
+
+    // (K5) Interact: keys in a dialog or the (read-only) Source never reach
+    // the world, and source editing stays refused.
+    let base5 = key_fields(fx);
+    let refused0 = ipc::interact_refusals();
+    crate::command::run(C::HelpAbout);
+    ipc::sleep(400).await;
+    let fdlg = focus_desc();
+    let in_dialog = doc_el()?.active_element().is_some_and(|e| e.closest("[role=dialog]").ok().flatten().is_some());
+    keys(&["key-a", "key-2", "key-Escape"], sx, sy).await?;
+    crate::command::run(C::ViewFocusSource);
+    ipc::sleep(200).await;
+    keys(&["key-c", "key-9"], sx, sy).await?;
+    let now = key_fields(fx);
+    let end5 = untouched().await?;
+    let same5 = end5.textarea_hash == start.textarea_hash;
+    r.step(
+        &format!("{tag}: Interact: keys typed in the About dialog and in the read-only Source never reach {sensor}; the source is unchanged"),
+        in_dialog && now == base5 && same5 && u.interact_mode.get_untracked(),
+        format!("dialog focus {fdlg} ({in_dialog}) · changed {:?} · source same {same5} · refusals +{}", key_diff(&now, &base5), ipc::interact_refusals() - refused0),
+    );
+
+    // (K6) A key held while Interact ends, and late keys after it; a key
+    // held in edit mode and released in Interact reports no release.
+    super::gizmo::real("click", sx, sy).await.ok()?;
+    ipc::sleep(REAL_CLICK_GAP_MS).await;
+    super::gizmo::real("keydown-a", sx, sy).await.ok()?;
+    ipc::sleep(300).await;
+    let held6 = ipc::preview_scene_field(sensor, "isActive");
+    let loads = u.preview_loads.get_untracked();
+    click("btn-select")?;
+    let reloaded = wait_ms(8000, || (u.preview_loads.get_untracked() > loads).then_some(())).await.is_some();
+    ready(8000).await;
+    super::gizmo::real("keyup-a", sx, sy).await.ok()?;
+    ipc::sleep(300).await;
+    let after_release = key_fields(fx);
+    let src6a = src_hash() == start.textarea_hash;
+    let f6a = focus_desc();
+    gesture(sx, sy).await;
+    let f6b = focus_desc();
+    keys(&["key-a", "key-b", "key-F2"], sx, sy).await?;
+    let src6b = src_hash() == start.textarea_hash;
+    let late = key_fields(fx);
+    super::gizmo::real("keydown-b", sx, sy).await.ok()?;
+    ipc::sleep(200).await;
+    click("btn-interact")?;
+    ipc::sleep(500).await;
+    super::gizmo::real("keyup-b", sx, sy).await.ok()?;
+    ipc::sleep(400).await;
+    let release_only = key_fields(fx);
+    click("btn-select")?;
+    ipc::sleep(300).await;
+    ready(8000).await;
+    let gate6 = ipc::preview_scene_input(None);
+    r.step(
+        &format!("{tag}: a key held when Interact ends reports nothing after the reload; late keys after Interact reach no {sensor}; a key pressed while editing and released in Interact reports no release"),
+        (!key_sensor || held6 == "true") && reloaded && after_release == authored && late == authored && release_only == authored && gate6 == "edit",
+        format!("src same {} (after release {src6a}, after late keys {src6b}) · focus after release {f6a}, after click {f6b} · text {:?} · held in Interact isActive {held6}", src_hash() == start.textarea_hash, text_change(&start_text)).to_string() + &format!(" · reloaded {reloaded} · after release {:?} · late {:?} · release-only {:?} · gate {gate6}", key_diff(&after_release, &authored), key_diff(&late, &authored), key_diff(&release_only, &authored)),
+    );
+
+    // (K7) Fail closed: the gate unavailable with X_ITE's own sensor entry
+    // points LIVE (worst case). No key reaches the canvas; the shortcuts work.
+    let blocked0 = ipc::preview_scene_keys_blocked();
+    let gate7 = ipc::preview_scene_input_fault("test-key-fault");
+    crate::panels::check_scene_input();
+    let vp = viewport()?;
+    vp.focus().ok()?;
+    ipc::sleep(100).await;
+    let focus7 = focus_desc();
+    keys(&["key-a", "key-2", "key-F2", "key-shift+a"], sx, sy).await?;
+    // The worst case: a key dispatched AT the canvas (the focus got there).
+    let ev = |t: &str, k: &str, ctrl: bool| {
+        let init = web_sys::KeyboardEventInit::new();
+        init.set_key(k);
+        init.set_ctrl_key(ctrl);
+        init.set_bubbles(true);
+        init.set_cancelable(true);
+        init.set_composed(true);
+        web_sys::KeyboardEvent::new_with_keyboard_event_init_dict(t, &init).ok()
+    };
+    for (k, ctrl) in [("q", false), ("f", true)] {
+        let _ = vp.dispatch_event(&ev("keydown", k, ctrl)?.into());
+        let _ = vp.dispatch_event(&ev("keyup", k, ctrl)?.into());
+    }
+    ipc::sleep(300).await;
+    let find7 = focus_desc() == "#find-query";
+    let blocked = ipc::preview_scene_keys_blocked() - blocked0;
+    keys(&["key-Escape"], sx, sy).await?;
+    let now7 = key_fields(fx);
+    let note = u.pick_message.with_untracked(|m| m.as_ref().map(|(_, t)| t.clone())).unwrap_or_default();
+    capture(c, &format!("{}-gate-unavailable", tag.to_lowercase())).await;
+    r.step(
+        &format!("{tag}: gate unavailable (X_ITE entry points live): the focus leaves the canvas, real keys and a key dispatched at the canvas reach no {sensor}, the canvas Ctrl+F still opens Find, and the reason is shown"),
+        gate7.starts_with("unavailable:") && focus7 != "#viewport" && blocked >= 2 && find7 && now7 == authored && note.contains("Viewport input blocked") && !u.interact_mode.get_untracked(),
+        format!("src same {} · ", src_hash() == start.textarea_hash).to_string() + &format!("gate {gate7} · focus {focus7} · blocked {blocked} · find {find7} · changed {:?} · note {:?}", key_diff(&now7, &authored), note.chars().take(80).collect::<String>()),
+    );
+
+    // (K8) Recovery (closed, never Interact) and a scene reload.
+    let gate8 = ipc::preview_scene_input_fault("");
+    crate::panels::check_scene_input();
+    let loads = u.preview_loads.get_untracked();
+    leptos::task::spawn_local(crate::ui::preview(true));
+    let reloaded8 = wait_ms(8000, || (u.preview_loads.get_untracked() > loads).then_some(())).await.is_some();
+    ready(8000).await;
+    click("btn-select")?;
+    ipc::sleep(200).await;
+    gesture(sx, sy).await;
+    let focus8 = focus_desc();
+    keys(&["key-a", "key-F2", "key-space"], sx, sy).await?;
+    let now8 = key_fields(fx);
+    let gate8b = ipc::preview_scene_input(None);
+    let end = untouched().await?;
+    let same = end.textarea_hash == start.textarea_hash;
+    r.step(
+        &format!("{tag}: after the fault ends the gate recovers CLOSED (edit, not Interact); after a scene reload keys on the focused canvas reach no {sensor}; the source equals the original"),
+        gate8 == "edit" && gate8b == "edit" && reloaded8 && !u.interact_mode.get_untracked() && focus8 == "#viewport" && now8 == authored && same,
+        format!("recovered {gate8} · reloaded {reloaded8} · focus {focus8} · changed {:?} · gate {gate8b} · source same {same}", key_diff(&now8, &authored)),
+    );
+    // (K9) IME composition (synthetic: Xvfb has no input method). X_ITE's
+    // sensors read keydown only; a composing keydown ('Process') and the
+    // composition events reach no sensor in edit mode, and in Interact the
+    // StringSensor takes no composed text (X_ITE upstream behavior).
+    let compose = |vp: &HtmlElement| -> Option<()> {
+        let init = web_sys::KeyboardEventInit::new();
+        init.set_key("Process");
+        init.set_is_composing(true);
+        init.set_bubbles(true);
+        init.set_cancelable(true);
+        init.set_composed(true);
+        let kd = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init).ok()?;
+        let _ = vp.dispatch_event(&kd);
+        for (t, d) in [("compositionstart", ""), ("compositionupdate", "\u{3042}"), ("compositionend", "\u{3042}")] {
+            let ci = web_sys::CompositionEventInit::new();
+            ci.set_data(d);
+            ci.set_bubbles(true);
+            ci.set_composed(true);
+            let ev = web_sys::CompositionEvent::new_with_event_init_dict(t, &ci).ok()?;
+            let _ = vp.dispatch_event(&ev);
+        }
+        let ku = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict("keyup", &init).ok()?;
+        let _ = vp.dispatch_event(&ku);
+        Some(())
+    };
+    let vp = viewport()?;
+    vp.focus().ok()?;
+    compose(&vp)?;
+    ipc::sleep(300).await;
+    let edit9 = key_fields(fx);
+    click("btn-interact")?;
+    ipc::sleep(500).await;
+    super::gizmo::real("click", sx, sy).await.ok()?;
+    ipc::sleep(REAL_CLICK_GAP_MS).await;
+    let base9 = key_fields(fx);
+    compose(&vp)?;
+    ipc::sleep(300).await;
+    let int9 = key_fields(fx);
+    click("btn-select")?;
+    ipc::sleep(300).await;
+    ready(8000).await;
+    let src9 = src_hash() == start.textarea_hash;
+    r.step(
+        &format!("{tag}: IME composition (synthetic) at the viewport reaches no {sensor} while editing; in Interact {sensor} takes no composed text (X_ITE reads keydown only); the source is unchanged"),
+        edit9 == authored && int9 == base9 && src9 && ipc::preview_scene_input(None) == "edit",
+        format!("edit changed {:?} · interact changed {:?} · source same {src9}", key_diff(&edit9, &authored), key_diff(&int9, &base9)),
+    );
+    // The key checks select nothing from a pick (an X3D world refuses every
+    // pick); the matrix above counts WRONG_SOURCE_SELECTIONS.
+    Some(0)
+}
+
+/// Where the Source differs from `base`: (offset, removed, inserted).
+fn text_change(base: &str) -> Option<(usize, String, String)> {
+    let now = textarea()?.value();
+    let (a, b): (Vec<char>, Vec<char>) = (base.chars().collect(), now.chars().collect());
+    let pre = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    if pre == a.len() && pre == b.len() {
+        return None;
+    }
+    let suf = a[pre..].iter().rev().zip(b[pre..].iter().rev()).take_while(|(x, y)| x == y).count();
+    Some((pre, a[pre..a.len() - suf].iter().collect(), b[pre..b.len() - suf].iter().collect()))
+}
+
+fn src_hash() -> u64 {
+    textarea().map_or(0, |t| p::view_hash(&t.value()))
+}
+
+/// LINUX-KEY-INPUT-SAFETY on `S4-viewport-typing` (plain VRML97), REAL X
+/// keys. WebKitGTK inserts typed text at the DOCUMENT selection; a click on
+/// the X_ITE canvas gives the canvas the focus but can leave that selection
+/// in the Source textarea it had before. A letter, Space, BackSpace or
+/// Delete typed with the viewport focused must never edit the Source:
+/// (a) the Source focused with a selected range, then a viewport click;
+/// (b) the same while Interact made the Source read-only, then Select.
+async fn viewport_typing(c: &p::PickSmoke, fx: &p::PickFixture, r: &mut R) -> Option<()> {
+    use p::command::CommandId as C;
+    let (sx, sy) = fx.clicks.first().and_then(|k| project(k.world, fx.camera))?;
+    click("btn-select")?;
+    ready(8000).await?;
+    let base = textarea()?.value();
+    let typed = ["key-a", "key-space", "key-shift+a", "key-2", "key-BackSpace", "key-Delete"];
+    for interact in [false, true] {
+        let start = untouched().await?;
+        if interact {
+            click("btn-interact")?;
+            ipc::sleep(500).await;
+        }
+        crate::command::run(C::ViewFocusSource);
+        ipc::sleep(300).await;
+        let ta = textarea()?;
+        let _ = ta.set_selection_range(20, 40);
+        let fsrc = focus_desc();
+        let ro = ta.read_only();
+        let b0 = ipc::preview_scene_input_blocked();
+        super::gizmo::real("click", sx, sy).await.ok()?;
+        ipc::sleep(REAL_CLICK_GAP_MS).await;
+        let mut trace = vec![format!("click1 {} gate {}", focus_desc(), ipc::preview_scene_input(None))];
+        if interact {
+            click("btn-select")?;
+            trace.push(format!("select {}", focus_desc()));
+            ipc::sleep(300).await;
+            ready(8000).await;
+            trace.push(format!("ready {} gate {}", focus_desc(), ipc::preview_scene_input(None)));
+            super::gizmo::real("click", sx, sy).await.ok()?;
+            ipc::sleep(REAL_CLICK_GAP_MS).await;
+            trace.push(format!("click2 {}", focus_desc()));
+        }
+        trace.push(format!("blocked +{}", ipc::preview_scene_input_blocked() - b0));
+        let focus = focus_desc();
+        keys(&typed, sx, sy).await?;
+        let after = focus_desc();
+        let change = text_change(&base);
+        let end = untouched().await?;
+        let v = if interact { "b" } else { "a" };
+        capture(c, &format!("s4-viewport-typing-{v}")).await;
+        r.step(
+            &format!("S4 ({v}): the Source focused with a selected range{}, then a viewport click: typed letters, Space, BackSpace and Delete never edit the Source; the focus stays in the viewport", if interact { " while Interact made it read-only, then Select" } else { "" }),
+            fsrc == "#source" && ro == interact && focus == "#viewport" && after == "#viewport" && change.is_none() && end.textarea_hash == start.textarea_hash,
+            format!("source focus {fsrc} read-only {ro} · {} · focus {focus} -> {after} · change {change:?} · revision {} -> {}", trace.join(" / "), start.revision, end.revision),
+        );
+        undo_to(start.textarea_hash, 8).await;
+    }
     Some(())
 }

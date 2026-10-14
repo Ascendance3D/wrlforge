@@ -1569,7 +1569,7 @@ pub fn gate_unavailable(state: &str) {
     u.pick_message.set(Some((
         "refused".into(),
         format!(
-            "{BLOCKED_NOTE}: the scene input gate is {state}. The world's sensors cannot be kept from editing clicks, so the 3D Viewport takes no clicks or drags until the gate passes its check."
+            "{BLOCKED_NOTE}: the scene input gate is {state}. The world's sensors cannot be kept from editing input, so the 3D Viewport takes no clicks, drags or keys until the gate passes its check (application shortcuts still work)."
         ),
     )));
 }
@@ -1613,12 +1613,12 @@ pub fn install_scene_input_warning() {
 
 /// The viewport status suffix for the sensor gate: nothing while editing
 /// (the normal state), a reminder in Interact, a warning when the gate is
-/// missing (the viewport then takes no pointer input at all).
+/// missing (the viewport then takes no pointer or key input at all).
 pub fn scene_input_note() -> String {
     let state = check_scene_input();
     match state.as_str() {
         "edit" => String::new(),
-        "interact" => " · Interact: the world responds to clicks; source edits are refused".into(),
+        "interact" => " · Interact: the world responds to clicks and keys; source edits are refused".into(),
         _ => format!(" · WARNING: viewport input blocked, the scene sensor gate is {state}"),
     }
 }

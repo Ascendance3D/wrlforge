@@ -21,6 +21,8 @@ function sensorBrowser({ version = '16.5.0', omit = null } = {}) {
     buttonPressEvent(x, y) { log.push(['press', x, y]); return true; },
     buttonReleaseEvent() { log.push(['release']); },
     motionNotifyEvent(x, y) { log.push(['motion', x, y]); return true; },
+    // X_ITE's concrete node registry; no keyboard sensor component loaded.
+    getConcreteNodes() { return new Map([['Transform', {}]]); },
   };
   if (omit) delete proto[omit];
   const X3D = createFakeX3D();
@@ -177,4 +179,145 @@ test('an install error is unavailable, not a crash', () => {
   delete browser.motionNotifyEvent;
   Object.preventExtensions(browser);
   assert.equal(a.sceneInput(false), 'unavailable:pointer-sensor-gate-install-error');
+});
+
+// ---- LINUX-KEY-INPUT-SAFETY: the keyboard sensor gate -----------------------
+// X_ITE's KeyDeviceSensor context calls keydown(event) / keyup(event) on each
+// enabled KeySensor / StringSensor (prototype methods), and both call
+// event.preventDefault() for every key, so the application's shortcut
+// handler skipped the key. The component (and its registry entries and
+// browser methods) arrives with the first scene that uses it.
+
+const KEY_PROTO = {
+  keydown(ev) { ev.preventDefault(); this.log.push(['down', this.name, ev.code]); },
+  keyup(ev) { ev.preventDefault(); this.log.push(['up', this.name, ev.code]); },
+};
+function keyNode(name, log) { return Object.assign(Object.create(KEY_PROTO), { name, log }); }
+function keyEvent(code) {
+  return { code, key: code, prevented: false, preventDefault() { this.prevented = true; } };
+}
+// Load the KeyDeviceSensor component into a sensorBrowser (as X_ITE does).
+function loadKeyComponent(b, ...names) {
+  const nodes = new Set(names.map((n) => keyNode(n, b.log)));
+  b.proto.getConcreteNodes = () => new Map([['Transform', {}], ['KeySensor', {}], ['StringSensor', {}]]);
+  b.proto.getKeyDeviceSensorNodes = () => nodes;
+  // X_ITE's own dispatch: every enabled sensor gets the event.
+  b.press = (code) => { const ev = keyEvent(code); for (const n of nodes) n.keydown(ev); return ev; };
+  b.release = (code) => { const ev = keyEvent(code); for (const n of nodes) n.keyup(ev); return ev; };
+  return nodes;
+}
+
+test('keys: a closed gate keeps KeySensor and StringSensor quiet and the key unprevented', () => {
+  const b = sensorBrowser();
+  const a = createXitePickAdapter({ X3D: b.X3D, browser: b.browser });
+  assert.equal(a.sceneInput(false), 'edit', 'no keyboard component: nothing to gate');
+  loadKeyComponent(b, 'KS', 'SS');
+  assert.equal(a.sceneInput(), 'edit', 'the newly loaded sensors are gated by the next check');
+  for (const code of ['KeyZ', 'Delete', 'Escape', 'KeyF']) {
+    const ev = b.press(code);
+    b.release(code);
+    assert.equal(ev.prevented, false, `${code} goes on to the application`);
+  }
+  assert.deepEqual(b.log, [], 'no sensor saw a key');
+});
+
+test('keys: Interact delivers keys; leaving it closes them again', () => {
+  const b = sensorBrowser();
+  const a = createXitePickAdapter({ X3D: b.X3D, browser: b.browser });
+  loadKeyComponent(b, 'KS');
+  assert.equal(a.sceneInput(true), 'interact');
+  assert.equal(b.press('KeyA').prevented, true);
+  b.release('KeyA');
+  assert.deepEqual(b.log, [['down', 'KS', 'KeyA'], ['up', 'KS', 'KeyA']]);
+  assert.equal(a.sceneInput(false), 'edit');
+  assert.equal(b.press('KeyB').prevented, false, 'a late key after Interact ends is not delivered');
+  assert.equal(b.log.length, 2);
+});
+
+test('keys: a key held across a mode switch never reports a release it did not press', () => {
+  const b = sensorBrowser();
+  const a = createXitePickAdapter({ X3D: b.X3D, browser: b.browser });
+  loadKeyComponent(b, 'KS');
+  a.sceneInput(false);
+  b.press('ShiftLeft'); // pressed while editing
+  a.sceneInput(true);
+  b.release('ShiftLeft'); // released in Interact
+  assert.deepEqual(b.log, [], 'no keyRelease for a key the world never saw pressed');
+  b.press('KeyQ'); // pressed in Interact, then Interact ends while held
+  a.sceneInput(false);
+  a.sceneInput(true);
+  b.release('KeyQ');
+  assert.deepEqual(b.log, [['down', 'KS', 'KeyQ']], 'the release after a close/reopen is not delivered');
+  b.press('KeyR'); b.press('KeyR'); // key repeat
+  b.release('KeyR');
+  // An auto-repeat of a key pressed while editing is not a press the world saw.
+  a.sceneInput(false);
+  b.press('KeyT');
+  a.sceneInput(true);
+  const rep = keyEvent('KeyT');
+  rep.repeat = true;
+  for (const n of b.browser.getKeyDeviceSensorNodes()) n.keydown(rep);
+  b.release('KeyT');
+  assert.equal(b.log.length, 4, 'neither the repeat nor the release of KeyT reached the sensor');
+  assert.equal(rep.prevented, false);
+  assert.deepEqual(b.log.slice(1), [['down', 'KS', 'KeyR'], ['down', 'KS', 'KeyR'], ['up', 'KS', 'KeyR']]);
+});
+
+test('keys: fails closed when the keyboard entry point is missing or a sensor method is replaced', () => {
+  const b = sensorBrowser();
+  const a = createXitePickAdapter({ X3D: b.X3D, browser: b.browser });
+  const nodes = loadKeyComponent(b, 'KS');
+  delete b.proto.getKeyDeviceSensorNodes;
+  assert.equal(a.sceneInput(true), 'unavailable:key-sensor-entry-missing', 'component loaded, entry missing');
+  b.proto.getKeyDeviceSensorNodes = () => nodes;
+  assert.equal(a.sceneInput(), 'edit', 'recovers CLOSED');
+  assert.equal(a.sceneInput(true), 'interact');
+  const [ks] = nodes;
+  const foreign = function () { return 'foreign'; };
+  ks.keydown = foreign;
+  assert.equal(a.sceneInput(), 'unavailable:key-sensor-entry-already-wrapped');
+  assert.equal(a.sceneInput(true), 'unavailable:key-sensor-entry-already-wrapped', 'Interact cannot open it');
+  assert.equal(ks.keydown, foreign, 'a foreign wrapper is never replaced');
+  b.release('KeyA');
+  assert.deepEqual(b.log, [], 'the remaining wrapper is closed');
+  delete ks.keydown;
+  delete ks.keyup;
+  assert.equal(a.sceneInput(), 'edit', 'rewrapped, verified, closed');
+});
+
+test('keys: a sensor enabled after the check is gated by the next one; a missing registry fails closed', () => {
+  const b = sensorBrowser();
+  const a = createXitePickAdapter({ X3D: b.X3D, browser: b.browser });
+  const nodes = loadKeyComponent(b, 'KS');
+  assert.equal(a.sceneInput(false), 'edit');
+  const late = keyNode('LATE', b.log);
+  nodes.add(late);
+  assert.equal(a.sceneInput(false), 'edit');
+  assert.equal(own(late, 'keydown'), true, 'wrapped');
+  b.press('KeyA');
+  assert.deepEqual(b.log, []);
+  delete b.proto.getConcreteNodes;
+  assert.equal(a.sceneInput(true), 'unavailable:key-sensor-registry-missing');
+  b.proto.getConcreteNodes = () => { throw new Error('boom'); };
+  assert.equal(a.sceneInput(true), 'unavailable:key-sensor-registry-missing');
+});
+
+test('keys: an install error is unavailable; dispose removes only its own key wrappers', () => {
+  const b = sensorBrowser();
+  const a = createXitePickAdapter({ X3D: b.X3D, browser: b.browser });
+  const nodes = loadKeyComponent(b, 'KS', 'SS');
+  const [ks, ss] = nodes;
+  Object.preventExtensions(ss);
+  assert.equal(a.sceneInput(false), 'unavailable:key-sensor-gate-install-error');
+  const b2 = sensorBrowser();
+  const a2 = createXitePickAdapter({ X3D: b2.X3D, browser: b2.browser });
+  const [k2, s2] = loadKeyComponent(b2, 'KS', 'SS');
+  a2.sceneInput(false);
+  const later = () => 'later';
+  s2.keyup = later;
+  a2.dispose();
+  assert.equal(own(k2, 'keydown'), false);
+  assert.equal(own(k2, 'keyup'), false);
+  assert.equal(s2.keyup, later, 'a foreign wrapper stays');
+  assert.equal(own(ks, 'keydown') && own(ss, 'keydown'), false);
 });

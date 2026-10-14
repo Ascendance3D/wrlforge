@@ -769,7 +769,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     // TouchSensors, drag sensors and Anchors get the pointer. Every other
     // state edits: a click never fires an authored sensor.
     tool_cmd(CommandId::ToolInteract, "tool.interact", "Interact", Check::Interact,
-        "Interact: test the world as authored (TouchSensors, drag sensors, Anchors respond to clicks). No selection or editing. Leaving Interact reloads the preview from the source."),
+        "Interact: test the world as authored (TouchSensors, drag sensors, Anchors respond to clicks; KeySensors and StringSensors to keys while the 3D Viewport has the focus). No selection or editing. Leaving Interact reloads the preview from the source."),
     CommandSpec {
         id: CommandId::ToolExtrusionOutline,
         key: "tool.extrusionOutline",

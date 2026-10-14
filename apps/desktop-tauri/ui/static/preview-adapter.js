@@ -145,7 +145,15 @@
     }
     // An unavailable gate ends Interact here too: when the gate recovers it
     // comes back closed (edit), never in Interact by itself.
-    if (pick.input !== 'edit' && pick.input !== 'interact') pick.interact = false;
+    if (pick.input !== 'edit' && pick.input !== 'interact') {
+      pick.interact = false;
+      // LINUX-KEY-INPUT-SAFETY: and the canvas gives up the keyboard focus.
+      var c = canvas();
+      if (c && c.parentElement && document.activeElement === c) {
+        if (!c.parentElement.hasAttribute('tabindex')) c.parentElement.setAttribute('tabindex', '-1');
+        c.parentElement.focus({ preventScroll: true });
+      }
+    }
     return pick.input;
   }
 
@@ -176,6 +184,83 @@
     }
   }
   BLOCKED.forEach(function (t) { window.addEventListener(t, guardSceneInput, { capture: true }); });
+
+  // LINUX-KEY-INPUT-SAFETY: X_ITE's KeySensor / StringSensor get keydown /
+  // keyup from the X_ITE canvas when it has the focus. The adapter's gate
+  // keeps each sensor quiet outside Interact; it is verified again BEFORE
+  // every key that would reach the canvas (window capture runs first), so a
+  // keyboard sensor loaded or enabled since the last check is gated before
+  // it sees a key. While the gate is not verified (FAILS CLOSED) no key
+  // reaches the canvas: the focus moves to the viewport stage (still the 3D
+  // Viewport for the viewport keys) and a copy of the key goes there, so the
+  // application's own shortcuts and menu keys still work. Text and IME
+  // events cannot carry a sensor key (X_ITE reads keydown / keyup only);
+  // they are stopped at the canvas the same way, without a copy.
+  var KEYS = ['keydown', 'keyup', 'keypress'];
+  var TEXT = ['beforeinput', 'input', 'compositionstart', 'compositionupdate', 'compositionend'];
+  pick.keyBlocked = 0;
+  function onCanvas(ev) {
+    var c = canvas();
+    return c && (ev.composedPath ? ev.composedPath().indexOf(c) >= 0 : c.contains(ev.target)) ? c : null;
+  }
+  function stage(c) {
+    var s = c.parentElement;
+    if (s && !s.hasAttribute('tabindex')) s.setAttribute('tabindex', '-1');
+    return s;
+  }
+  function guardSceneKeys(ev) {
+    var c = onCanvas(ev);
+    if (!c) return;
+    if (pick.adapter) applyInput();
+    if (inputSafe()) return;
+    ev.stopImmediatePropagation();
+    var s = stage(c);
+    if (s) s.focus({ preventScroll: true });
+    if (ev.type === 'keydown') {
+      pick.keyBlocked++;
+      if (!ev.repeat) window.dispatchEvent(new CustomEvent('wrlforge-scene-input-blocked', { detail: pick.input }));
+    }
+    if (!s || KEYS.indexOf(ev.type) < 0 || ev.type === 'keypress') {
+      if (ev.cancelable) ev.preventDefault();
+      return;
+    }
+    var copy = new KeyboardEvent(ev.type, {
+      key: ev.key, code: ev.code, location: ev.location, repeat: ev.repeat, isComposing: ev.isComposing,
+      ctrlKey: ev.ctrlKey, shiftKey: ev.shiftKey, altKey: ev.altKey, metaKey: ev.metaKey,
+      modifierAltGraph: !!(ev.getModifierState && ev.getModifierState('AltGraph')),
+      bubbles: true, cancelable: true, composed: true,
+    });
+    s.dispatchEvent(copy);
+    if (copy.defaultPrevented && ev.cancelable) ev.preventDefault();
+  }
+  KEYS.concat(TEXT).forEach(function (t) { window.addEventListener(t, guardSceneKeys, { capture: true }); });
+  // The focus never rests on the canvas while the gate is not verified.
+  // When the canvas takes the focus, a document selection left in a text
+  // field (the Source) is dropped: WebKitGTK inserts typed text at the
+  // document selection, so a key typed in the viewport edited the Source.
+  window.addEventListener('focusin', function (ev) {
+    var c = onCanvas(ev);
+    if (!c) return;
+    if (!inputSafe()) {
+      var s = stage(c);
+      if (s) s.focus({ preventScroll: true });
+    }
+    var sel = window.getSelection ? window.getSelection() : null;
+    if (sel && sel.rangeCount && !c.contains(sel.anchorNode)) sel.removeAllRanges();
+  }, { capture: true });
+  // Text input only goes to the control that has the keyboard focus: an
+  // insertion or deletion aimed at another text field (the stray document
+  // selection above) is refused. A drop is the user's own choice of field;
+  // composition text cannot be cancelled (the focusin rule covers it).
+  pick.strayInput = 0;
+  window.addEventListener('beforeinput', function (ev) {
+    var t = ev.target;
+    if (!t || t === document.activeElement || !ev.cancelable) return;
+    if (/Drop|Drag/.test(ev.inputType || '')) return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    pick.strayInput++;
+  }, { capture: true });
 
   // A retired generation can no longer be manipulated: any temporary
   // translation is put back and the binding dropped.
@@ -506,6 +591,10 @@
     },
     // Tests: presses the pointer block stopped.
     sceneInputBlocked: function () { return pick.blocked; },
+    // Tests: keys the keyboard block stopped at the canvas.
+    sceneKeysBlocked: function () { return pick.keyBlocked; },
+    // Tests: text input refused because it was aimed at an unfocused field.
+    strayInputBlocked: function () { return pick.strayInput; },
     sceneInput: function (interact) {
       if (interact !== undefined) pick.interact = interact === true;
       var c = canvas();
