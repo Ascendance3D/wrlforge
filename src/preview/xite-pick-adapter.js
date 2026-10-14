@@ -543,8 +543,12 @@
     // checks every enabled sensor, and the host verifies before each key
     // that would reach the canvas, so a sensor enabled since the last check
     // is wrapped before it can receive a key.
+    // PR #150 review: getKeyDeviceSensorNodes() lists only the ENABLED
+    // sensors, and a disabled sensor keeps its wrappers. The adapter keeps
+    // its own list of every node it wrapped (an iterable Map), so dispose()
+    // cleans a disabled sensor too; a later adapter then wraps it again.
     const KEY_TYPES = ['KeySensor', 'StringSensor'];
-    let keyWrappers = new WeakMap();
+    let keyWrappers = new Map();
     let keysDown = new WeakMap();
     let keyReason = null;
 
@@ -576,7 +580,11 @@
       if (!fn(n, 'keydown') || !fn(n, 'keyup')) { keyReason = 'key-sensor-entry-missing'; return false; }
       const down = n.keydown, up = n.keyup;
       const mine = {
+        // After dispose() a wrapper that other code still calls (it wrapped
+        // ours) passes the key on: this adapter no longer owns the keys.
+        retired: false,
         keydown: function (ev) {
+          if (mine.retired) return down.apply(this, arguments);
           if (!gate.open) return undefined;
           let held = keysDown.get(n);
           if (!held) keysDown.set(n, (held = new Set()));
@@ -587,16 +595,32 @@
           return down.apply(this, arguments); // its exceptions propagate unchanged
         },
         keyup: function (ev) {
+          if (mine.retired) return up.apply(this, arguments);
           if (!gate.open) return undefined;
           const held = keysDown.get(n);
           if (!held || !held.delete(keyId(ev))) return undefined;
           return up.apply(this, arguments);
         },
       };
-      n.keydown = mine.keydown;
-      n.keyup = mine.keyup;
+      // Recorded first, so a failed install (one method set, the other
+      // refused) is rolled back here and never left half wrapped.
       keyWrappers.set(n, mine);
+      try {
+        n.keydown = mine.keydown;
+        n.keyup = mine.keyup;
+      } catch (e) {
+        unwrapKeyNode(n, mine);
+        keyWrappers.delete(n);
+        throw e;
+      }
       return true;
+    }
+
+    // Removes only this adapter's own wrappers; a method that other code
+    // replaced since stays as it is.
+    function unwrapKeyNode(n, w) {
+      try { if (hasOwn(n, 'keydown') && n.keydown === w.keydown) delete n.keydown; } catch (e) { /* the node is gone */ }
+      try { if (hasOwn(n, 'keyup') && n.keyup === w.keyup) delete n.keyup; } catch (e) { /* the node is gone */ }
     }
 
     function installKeyGate(b) {
@@ -649,16 +673,13 @@
       const b = liveBrowser;
       closeGate();
       gate.reason = 'adapter-disposed';
-      try {
-        const nodes = b && fn(b, 'getKeyDeviceSensorNodes') ? b.getKeyDeviceSensorNodes() : [];
-        for (const n of nodes) {
-          const w = keyWrappers.get(n);
-          if (!w) continue;
-          if (n.keydown === w.keydown) delete n.keydown;
-          if (n.keyup === w.keyup) delete n.keyup;
-        }
-      } catch (e) { /* the browser is gone */ }
-      keyWrappers = new WeakMap();
+      // Every node this adapter wrapped, enabled or not; the browser's
+      // sensor list is not needed (it can be missing or partial).
+      for (const [n, w] of keyWrappers) {
+        w.retired = true;
+        unwrapKeyNode(n, w);
+      }
+      keyWrappers = new Map();
       if (!b || !gate.wrappers) return;
       for (const k of GATED) if (b[k] === gate.wrappers[k]) delete b[k];
       gate.wrappers = null;

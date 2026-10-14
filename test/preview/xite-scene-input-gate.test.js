@@ -321,3 +321,113 @@ test('keys: an install error is unavailable; dispose removes only its own key wr
   assert.equal(s2.keyup, later, 'a foreign wrapper stays');
   assert.equal(own(ks, 'keydown') && own(ss, 'keydown'), false);
 });
+
+// ---- PR #150 review: dispose() cleans DISABLED sensors too -----------------
+// X_ITE lists only the ENABLED keyboard sensors (a disabled or dead sensor
+// leaves getKeyDeviceSensorNodes()); the adapter keeps its own list of every
+// node it wrapped.
+
+const enable = (nodes, n, on) => (on ? nodes.add(n) : nodes.delete(n));
+const clean = (n) => !own(n, 'keydown') && !own(n, 'keyup') && n.keydown === KEY_PROTO.keydown && n.keyup === KEY_PROTO.keyup;
+
+test('keys (#150): a sensor disabled before dispose is cleaned; re-enabled, a new adapter gates it (no entry-already-wrapped)', () => {
+  const b = sensorBrowser();
+  const a = createXitePickAdapter({ X3D: b.X3D, browser: b.browser });
+  const nodes = loadKeyComponent(b, 'KS', 'SS');
+  const [ks, ss] = nodes;
+  assert.equal(a.sceneInput(true), 'interact');
+  b.press('KeyA'); // held in Interact
+  enable(nodes, ss, false);
+  a.dispose();
+  assert.equal(clean(ks) && clean(ss), true, 'both sensors are clean, the disabled one included');
+  enable(nodes, ss, true);
+  const a2 = createXitePickAdapter({ X3D: b.X3D, browser: b.browser });
+  assert.equal(a2.sceneInput(false), 'edit', 'no key-sensor-entry-already-wrapped');
+  b.log.length = 0;
+  b.press('KeyZ');
+  b.release('KeyA');
+  assert.deepEqual(b.log, [], 'edit: no key, and no release of the key held under the old adapter');
+  assert.equal(a2.sceneInput(true), 'interact');
+  b.press('KeyB');
+  b.release('KeyB');
+  assert.deepEqual(b.log, [['down', 'KS', 'KeyB'], ['down', 'SS', 'KeyB'], ['up', 'KS', 'KeyB'], ['up', 'SS', 'KeyB']]);
+  assert.equal(a2.sceneInput(false), 'edit');
+});
+
+test('keys (#150): after a scene replacement the old (dead) sensors are cleaned by dispose too', () => {
+  const b = sensorBrowser();
+  const a = createXitePickAdapter({ X3D: b.X3D, browser: b.browser });
+  const nodes = loadKeyComponent(b, 'KS', 'SS');
+  const old = [...nodes];
+  assert.equal(a.sceneInput(false), 'edit');
+  // replaceWorld: the old sensors leave the list, the new scene's arrive.
+  nodes.clear();
+  const ks2 = keyNode('KS2', b.log);
+  nodes.add(ks2);
+  assert.equal(a.sceneInput(false), 'edit');
+  enable(nodes, ks2, false);
+  a.dispose();
+  assert.equal(old.every(clean) && clean(ks2), true);
+  enable(nodes, ks2, true);
+  const a2 = createXitePickAdapter({ X3D: b.X3D, browser: b.browser });
+  assert.equal(a2.sceneInput(true), 'interact');
+  b.press('KeyC');
+  assert.deepEqual(b.log, [['down', 'KS2', 'KeyC']]);
+});
+
+test('keys (#150): dispose works with the sensor registry and list unavailable', () => {
+  const b = sensorBrowser();
+  const a = createXitePickAdapter({ X3D: b.X3D, browser: b.browser });
+  const nodes = loadKeyComponent(b, 'KS', 'SS');
+  assert.equal(a.sceneInput(false), 'edit');
+  delete b.proto.getConcreteNodes;
+  b.proto.getKeyDeviceSensorNodes = () => { throw new Error('gone'); };
+  a.dispose();
+  assert.equal([...nodes].every(clean), true);
+  assert.equal(a.sceneInput(true), 'unavailable:adapter-disposed');
+});
+
+test('keys (#150): a partial install is rolled back at once and dispose leaves nothing', () => {
+  const b = sensorBrowser();
+  const a = createXitePickAdapter({ X3D: b.X3D, browser: b.browser });
+  const nodes = loadKeyComponent(b, 'KS', 'SS');
+  const [ks, ss] = nodes;
+  // SS takes keydown, then refuses keyup (an inherited accessor): half wrapped.
+  const refusing = Object.create(KEY_PROTO);
+  Object.defineProperty(refusing, 'keyup', { get() { return KEY_PROTO.keyup; }, set() { throw new Error('refused'); } });
+  Object.setPrototypeOf(ss, refusing);
+  assert.equal(a.sceneInput(true), 'unavailable:key-sensor-gate-install-error');
+  assert.equal(own(ss, 'keydown'), false, 'the keydown half is rolled back');
+  assert.equal(own(ks, 'keydown'), true, 'KS (wrapped first) stays gated and closed');
+  b.press('KeyA');
+  assert.deepEqual(b.log.filter((e) => e[1] === 'KS'), [], 'closed: no key');
+  a.dispose();
+  assert.equal(clean(ks), true);
+  assert.equal(own(ss, 'keydown'), false);
+  Object.setPrototypeOf(ss, KEY_PROTO);
+  const a2 = createXitePickAdapter({ X3D: b.X3D, browser: b.browser });
+  assert.equal(a2.sceneInput(false), 'edit', 'a new adapter installs fully');
+});
+
+test('keys (#150): a wrapper replaced by other code is never removed; ours behind it passes keys after dispose', () => {
+  const b = sensorBrowser();
+  const a = createXitePickAdapter({ X3D: b.X3D, browser: b.browser });
+  const nodes = loadKeyComponent(b, 'KS', 'SS');
+  const [ks, ss] = nodes;
+  assert.equal(a.sceneInput(false), 'edit');
+  const ours = ks.keydown;
+  const foreign = function (ev) { b.log.push(['foreign', ev.code]); return ours.apply(this, arguments); };
+  ks.keydown = foreign;
+  enable(nodes, ks, false); // and disabled
+  a.dispose();
+  assert.equal(ks.keydown, foreign, 'the other component keeps its wrapper');
+  assert.equal(own(ks, 'keyup'), false, 'our keyup is removed');
+  assert.equal(clean(ss), true);
+  b.log.length = 0;
+  ks.keydown(keyEvent('KeyQ'));
+  assert.deepEqual(b.log, [['foreign', 'KeyQ'], ['down', 'KS', 'KeyQ']], 'the retired wrapper passes the key on');
+  enable(nodes, ks, true);
+  const a2 = createXitePickAdapter({ X3D: b.X3D, browser: b.browser });
+  assert.equal(a2.sceneInput(true), 'unavailable:key-sensor-entry-already-wrapped', 'a foreign wrapper fails closed');
+  assert.equal(ks.keydown, foreign);
+});
