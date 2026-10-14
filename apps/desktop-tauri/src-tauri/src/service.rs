@@ -207,6 +207,57 @@ fn preview_offset(text: &str) -> u64 {
     u64::from(text.starts_with('\u{FEFF}'))
 }
 
+/// B3 (LV2): the PROTO instance `instance` (a node item of `old`) in `new`,
+/// after `changes` (the exact changes that turned `old` into `new`) edited
+/// the shared body node `body` (a span of `old`). Proven, never searched:
+/// the instance must be a document-scene instance of the body's PROTO in
+/// `old`, its span must map through the changes (`map_span`), its bytes
+/// must be unchanged, and `new` must hold an instance of the same PROTO at
+/// exactly the mapped span. `Err` is the reason.
+fn carry_instance(
+    old: &str,
+    new: &str,
+    body: (u64, u64),
+    instance: &str,
+    changes: &[SpanChange],
+) -> Result<p::InstanceRef, &'static str> {
+    let (f, t) = node_span(instance).ok_or("instance-not-a-node")?;
+    let po = wrlforge_vrml::parse(old);
+    let proto = field_edit::shared_definition(&po, body.0, body.1)
+        .ok_or("edited-node-not-in-a-proto-body")?
+        .proto;
+    let is_instance = |p: &wrlforge_vrml::ParseResult, src: &str, f: u64, t: u64| {
+        let n = field_edit::inspect_node_fields(p, src, f, t);
+        n.shared.is_none() && n.node_type.as_deref() == Some(proto.as_str())
+    };
+    if !is_instance(&po, old, f, t) {
+        return Err("instance-not-proven-in-old-revision");
+    }
+    let (nf, nt) = map_span(f, t, changes).ok_or("change-touches-instance")?;
+    let slice = |s: &str, a: u64, b: u64| -> Option<String> {
+        let a = wrlforge_text::offsets::utf16_to_byte(s, a as usize).ok()?;
+        let b = wrlforge_text::offsets::utf16_to_byte(s, b as usize).ok()?;
+        s.get(a..b).map(str::to_string)
+    };
+    match (slice(old, f, t), slice(new, nf, nt)) {
+        (Some(a), Some(b)) if a == b => {}
+        _ => return Err("instance-bytes-changed"),
+    }
+    let pn = wrlforge_vrml::parse(new);
+    if !is_instance(&pn, new, nf, nt) {
+        return Err("instance-not-proven-in-new-revision");
+    }
+    let off = preview_offset(new);
+    if nf < off {
+        return Err("instance-before-preview-start");
+    }
+    Ok(p::InstanceRef {
+        item: format!("node-{nf}-{nt}"),
+        preview_from: nf - off,
+        preview_to: nt - off,
+    })
+}
+
 pub fn node_span(item: &str) -> Option<(u64, u64)> {
     let rest = item.strip_prefix("node-")?;
     let (a, b) = rest.split_once('-')?;
@@ -623,10 +674,10 @@ impl Service {
     }
 
     pub fn undo(&self, id: p::SessionId) -> Result<p::HistoryOutcome, String> {
-        self.history(id, true, None)
+        self.history(id, true, None, None)
     }
     pub fn redo(&self, id: p::SessionId) -> Result<p::HistoryOutcome, String> {
-        self.history(id, false, None)
+        self.history(id, false, None, None)
     }
     /// Undo/redo carrying the selected Scene Tree item across the change.
     /// The node span is mapped through the EXACT changes applied
@@ -638,23 +689,58 @@ impl Service {
         undo: bool,
         item: Option<&str>,
     ) -> Result<p::HistoryOutcome, String> {
-        self.history(id, undo, item)
+        self.history(id, undo, item, None)
+    }
+    /// LV2-C: [`Self::history_with_item`] that also carries the selected
+    /// PROTO body node's rendered instance (`instance`: its preview span in
+    /// the current revision) through the exact change, proven exactly like
+    /// a gizmo commit's (`carry_instance`). Never a search.
+    pub fn history_with_instance(
+        &self,
+        id: p::SessionId,
+        undo: bool,
+        item: Option<&str>,
+        instance: Option<(u64, u64)>,
+    ) -> Result<p::HistoryOutcome, String> {
+        self.history(id, undo, item, instance)
     }
     fn history(
         &self,
         id: p::SessionId,
         undo: bool,
         item: Option<&str>,
+        instance: Option<(u64, u64)>,
     ) -> Result<p::HistoryOutcome, String> {
         self.with(id, |s| {
+            let old = instance.map(|_| s.doc.text().to_string());
             let r = if undo { s.doc.undo() } else { s.doc.redo() };
             match r {
                 Ok(a) => {
-                    let item = Self::carry(item, s.doc.last_changes());
+                    let carried = Self::carry(item, s.doc.last_changes());
+                    let (instance, instance_lost) =
+                        match (instance, old, item.and_then(node_span)) {
+                            (Some((f, t)), Some(old), Some(body)) => {
+                                let off = preview_offset(&old);
+                                match carry_instance(
+                                    &old,
+                                    s.doc.text(),
+                                    body,
+                                    &format!("node-{}-{}", f + off, t + off),
+                                    s.doc.last_changes(),
+                                ) {
+                                    Ok(r) => (Some(r), None),
+                                    Err(why) => (None, Some(why.to_string())),
+                                }
+                            }
+                            (Some(_), _, _) => (None, Some("instance-without-a-node".into())),
+                            _ => (None, None),
+                        };
                     p::HistoryOutcome::Applied {
                         state: Self::state(s, a),
                         view: s.doc.view(),
-                        item,
+                        item: carried,
+                        instance,
+                        instance_lost,
                     }
                 }
                 Err(_) => p::HistoryOutcome::Nothing,
@@ -1127,13 +1213,44 @@ impl Service {
                 );
             };
             let plan = match r.op {
-                p::StructureOp::Delete => {
-                    structure_edit::plan_delete(s.doc.text(), from, to, r.confirm_shared)
-                }
-                p::StructureOp::Duplicate => {
-                    structure_edit::plan_duplicate(s.doc.text(), from, to, r.confirm_shared)
-                }
+                p::StructureOp::Delete => (
+                    structure_edit::plan_delete(s.doc.text(), from, to, r.confirm_shared),
+                    None,
+                ),
+                p::StructureOp::Duplicate => match r.offset {
+                    Some(o) if o.valid() => structure_edit::plan_duplicate_offset(
+                        s.doc.text(),
+                        from,
+                        to,
+                        r.confirm_shared,
+                        usize::from(o.axis),
+                        o.step,
+                    ),
+                    Some(_) => {
+                        return refused(
+                            field_edit::reason::INPUT_SHAPE,
+                            "The Duplicate offset is not a usable axis and distance.".into(),
+                        )
+                    }
+                    // LV2-C: no proven size, no guessed offset.
+                    None => {
+                        let plan = structure_edit::plan_duplicate(
+                            s.doc.text(),
+                            from,
+                            to,
+                            r.confirm_shared,
+                        );
+                        let ready = matches!(plan, structure_edit::Plan::Ready { .. });
+                        (
+                            plan,
+                            ready.then(|| structure_edit::Placement::InPlace {
+                                why: p::duplicate::NO_SIZE.into(),
+                            }),
+                        )
+                    }
+                },
             };
+            let (plan, placement) = plan;
             match plan {
                 structure_edit::Plan::Refused { reason, message } => refused(reason, message),
                 structure_edit::Plan::Ready {
@@ -1156,6 +1273,7 @@ impl Service {
                             view: s.doc.view(),
                             item: node.map(|(f, t)| format!("node-{f}-{t}")),
                             renamed,
+                            placement: placement.map(|p| p.describe()),
                         },
                         Err(e) => {
                             refused(field_edit::reason::TRANSACTION_REJECTED, e.to_string())
@@ -1447,36 +1565,90 @@ impl Service {
                     p::TranslateProveOutcome::Proven {
                         revision: current,
                         item: r.item.clone(),
+                        instance: None,
+                        parent_frame: None,
                     }
                 }
                 // B3: a PROTO body Transform. The runtime node is ONE
                 // instance's copy; its proven chain must be the Transform,
-                // frame-neutral body groups only, then a TOP-LEVEL instance
-                // of exactly that PROTO -- so its parent frame is the world,
-                // like a top-level Transform's.
-                Ok(chain)
-                    if target.shared.as_ref().is_some_and(|sh| {
-                        chain.len() >= 2
-                            && chain[0].node_type == "Transform"
-                            && chain[chain.len() - 1].node_type == sh.proto
-                            && chain[1..chain.len() - 1]
-                                .iter()
-                                .all(|n| manipulate::is_frame_neutral(&n.node_type))
-                    }) =>
-                {
-                    p::TranslateProveOutcome::Proven {
-                        revision: current,
-                        item: r.item.clone(),
-                    }
+                // frame-neutral body groups only, then a document instance
+                // of exactly that PROTO. LV2: the instance may sit under
+                // further document nodes; its parent frame is composed from
+                // their SOURCE frames (`instance_parent_frame`), each link
+                // proven by this same chain -- never guessed.
+                Ok(chain) if target.shared.is_some() => {
+                    let sh = target.shared.as_ref().expect("checked");
+                    Self::prove_body_chain(&text, &parsed, r, current, sh, &chain)
                 }
-                Ok(_) if target.shared.is_some() => refused(
-                    manipulate::reason::BODY_FRAME,
-                    "This PROTO instance is inside another node, so the handles cannot follow its frame. Use the Inspector.",
-                ),
                 Ok(_) => refused(manipulate::reason::NOT_TOP_LEVEL, unprovable),
                 Err(res) => refused(res.reason(), unprovable),
             },
         )
+    }
+
+    /// B3 (LV2): the shared-body half of `translate_prove`. `chain` is the
+    /// proven runtime chain of ONE instance's copy (the Transform first).
+    fn prove_body_chain(
+        text: &str,
+        parsed: &wrlforge_vrml::ParseResult,
+        r: &p::TranslateProveRequest,
+        current: u64,
+        sh: &field_edit::SharedDefinition,
+        chain: &[&wrlforge_vrml::ast::Node],
+    ) -> p::TranslateProveOutcome {
+        let refused = |reason: &str, message: String| p::TranslateProveOutcome::Refused {
+            reason: reason.into(),
+            message,
+        };
+        let span = |n: &wrlforge_vrml::ast::Node| {
+            (n.range.start.offset as u64, n.range.end.offset as u64)
+        };
+        let in_body = |n: &wrlforge_vrml::ast::Node| {
+            let (f, t) = span(n);
+            field_edit::shared_definition(parsed, f, t).is_some()
+        };
+        // The first link outside the PROTO body is the instance.
+        let k = chain.iter().position(|n| !in_body(n));
+        let Some(k) = k.filter(|&k| {
+            k >= 1
+                && chain[0].node_type == "Transform"
+                && chain[1..k]
+                    .iter()
+                    .all(|n| manipulate::is_frame_neutral(&n.node_type))
+                && chain[k].node_type == sh.proto
+        }) else {
+            return refused(
+                manipulate::reason::BODY_FRAME,
+                format!("The preview cannot prove that this rendered copy is inside an instance of PROTO {}. Use the Inspector.", sh.proto),
+            );
+        };
+        let inst = span(chain[k]);
+        let inst_item = format!("node-{}-{}", inst.0, inst.1);
+        if let Some(want) = &r.instance {
+            if *want != inst_item {
+                return refused(
+                    "proto-instance-changed",
+                    format!("The rendered copy belongs to another instance of PROTO {} than the one the handles were on; nothing is bound.", sh.proto),
+                );
+            }
+        }
+        let ancestors: Vec<(u64, u64)> = chain[k + 1..].iter().map(|n| span(n)).collect();
+        match manipulate::instance_parent_frame(text, &ancestors, manip_tool(r.tool)) {
+            Ok(m) => {
+                let off = preview_offset(text);
+                p::TranslateProveOutcome::Proven {
+                    revision: current,
+                    item: r.item.clone(),
+                    instance: Some(p::InstanceRef {
+                        item: inst_item,
+                        preview_from: inst.0 - off,
+                        preview_to: inst.1 - off,
+                    }),
+                    parent_frame: (m != manipulate::IDENTITY4).then_some(m),
+                }
+            }
+            Err(e) => refused(e.reason, e.message),
+        }
     }
 
     /// B2 selection highlight: the exact preview span the preview must
@@ -1491,15 +1663,28 @@ impl Service {
         }
         let off = preview_offset(&text);
         match node_span(&r.item) {
-            Some((from, to)) if from >= off => Ok(p::HighlightTargetOutcome::Ready {
-                revision: current,
-                item: r.item.clone(),
-                preview_from: from - off,
-                preview_to: to - off,
-                // B3: a PROTO body node has one runtime copy per instance.
-                body: field_edit::shared_definition(&wrlforge_vrml::parse(&text), from, to)
-                    .is_some(),
-            }),
+            Some((from, to)) if from >= off => {
+                let parsed = wrlforge_vrml::parse(&text);
+                // LV2: a node that is never drawn has nothing to outline;
+                // say so instead of failing later for another reason.
+                let ty = field_edit::inspect_node_fields(&parsed, &text, from, to).node_type;
+                if let Some(t) = ty.filter(|t| {
+                    p::highlight::node_role(t) == p::highlight::NodeRole::NotRendered
+                }) {
+                    return Ok(p::HighlightTargetOutcome::Refused {
+                        reason: p::highlight::refusal::NOT_RENDERED.into(),
+                        message: format!("A {t} is not drawn, so it has no shape to outline."),
+                    });
+                }
+                Ok(p::HighlightTargetOutcome::Ready {
+                    revision: current,
+                    item: r.item.clone(),
+                    preview_from: from - off,
+                    preview_to: to - off,
+                    // B3: a PROTO body node has one runtime copy per instance.
+                    body: field_edit::shared_definition(&parsed, from, to).is_some(),
+                })
+            }
             _ => Ok(p::HighlightTargetOutcome::Refused {
                 reason: field_edit::reason::NOT_A_NODE.into(),
                 message: "Only a node instance can be outlined.".into(),
@@ -1557,7 +1742,33 @@ impl Service {
                     let (f, t) = span(n);
                     field_edit::shared_definition(&parsed, f, t).is_some()
                 };
-                for (i, n) in chain.iter().enumerate().skip(1) {
+                // LV2: a non-geometry node (Appearance, Material, a texture,
+                // Coordinate, ...) has no bounds of its own. The outline is
+                // of the Shape that owns it -- the FIRST Shape of its proven
+                // chain -- labeled as the owner; the frame chain starts
+                // above that Shape.
+                let mut owner = None;
+                let mut first = 1;
+                if p::highlight::node_role(&chain[0].node_type) == p::highlight::NodeRole::Property {
+                    let Some(k) = chain.iter().position(|n| n.node_type == "Shape") else {
+                        return Ok(refused(
+                            p::highlight::refusal::NO_OWNER,
+                            "This node is not drawn by itself and no Shape that uses it was proven.",
+                        ));
+                    };
+                    let (f, t) = span(chain[k]);
+                    if f < off {
+                        return Ok(refused(pk::reason::SPAN_OUT_OF_RANGE, unprovable));
+                    }
+                    owner = Some(p::HighlightAncestor {
+                        preview_from: f - off,
+                        preview_to: t - off,
+                        node_type: "Shape".into(),
+                        proto_instance: false,
+                    });
+                    first = k + 1;
+                }
+                for (i, n) in chain.iter().enumerate().skip(first) {
                     // B3: the instance a PROTO body chain was proven through
                     // (the chain proof joined the body link to exactly this
                     // document instance): it renders as its body root, the
@@ -1568,7 +1779,10 @@ impl Service {
                     if !proto_instance && p::highlight::ancestor_kind(&n.node_type).is_none() {
                         return Ok(refused(
                             p::highlight::refusal::ANCESTOR,
-                            "It is inside a node whose placement the outline cannot follow.",
+                            &format!(
+                                "It is inside a {}, whose placement the outline cannot follow.",
+                                n.node_type
+                            ),
                         ));
                     }
                     let (f, t) = (n.range.start.offset as u64, n.range.end.offset as u64);
@@ -1587,6 +1801,7 @@ impl Service {
                     item: r.item.clone(),
                     node_type: chain[0].node_type.clone(),
                     ancestors,
+                    owner,
                 }
             }
             Err(res) => refused(res.reason(), unprovable),
@@ -1656,7 +1871,7 @@ impl Service {
                 r.decimals,
                 r.confirm_shared,
             );
-            Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text)
+            Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text, r.instance.as_deref())
         })
     }
 
@@ -1677,7 +1892,7 @@ impl Service {
                 r.delta,
                 r.confirm_shared,
             );
-            Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text)
+            Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text, r.instance.as_deref())
         })
     }
 
@@ -1696,7 +1911,7 @@ impl Service {
                 r.factor,
                 r.confirm_shared,
             );
-            Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text)
+            Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text, r.instance.as_deref())
         })
     }
 
@@ -1731,6 +1946,7 @@ impl Service {
         node_to: u64,
         plan: field_edit::Plan,
         text: Option<String>,
+        instance: Option<&str>,
     ) -> p::TranslateOutcome {
         let refused = |reason: &str, message: String| p::TranslateOutcome::Refused {
             reason: reason.into(),
@@ -1759,16 +1975,36 @@ impl Service {
                         insert: e.insert,
                     })
                     .collect();
+                let old = instance.map(|_| s.doc.text().to_string());
                 match s
                     .doc
                     .apply_source_transaction(base_revision, &edits, &new_text)
                 {
-                    Ok(a) => p::TranslateOutcome::Applied {
-                        state: Self::state(s, a),
-                        view: s.doc.view(),
-                        item,
-                        text: text.unwrap_or_default(),
-                    },
+                    Ok(a) => {
+                        // B3 (LV2): carry the gizmo's PROTO instance through
+                        // the EXACT changes just applied (Tier-1).
+                        let (instance, instance_lost) = match (instance, old) {
+                            (Some(i), Some(old)) => match carry_instance(
+                                &old,
+                                s.doc.text(),
+                                (node_from, node_to),
+                                i,
+                                s.doc.last_changes(),
+                            ) {
+                                Ok(r) => (Some(r), None),
+                                Err(why) => (None, Some(why.to_string())),
+                            },
+                            _ => (None, None),
+                        };
+                        p::TranslateOutcome::Applied {
+                            state: Self::state(s, a),
+                            view: s.doc.view(),
+                            item,
+                            text: text.unwrap_or_default(),
+                            instance,
+                            instance_lost,
+                        }
+                    }
                     Err(e) => refused(field_edit::reason::TRANSACTION_REJECTED, e.to_string()),
                 }
             }
@@ -2719,18 +2955,22 @@ mod tests {
             item,
             op,
             confirm_shared: false,
+            offset: Some(p::duplicate::Offset { axis: 0, step: 2.5 }),
         };
-        // Duplicate: the copy is selected, its DEF renamed.
+        // Duplicate: the copy is selected, its DEF renamed, and (P0-B) it
+        // is placed beside the original: a Shape is wrapped in a Transform
+        // moved by the requested offset.
         let o = svc
             .structure_edit(&req(0, span(text, "DEF A Shape {}"), p::StructureOp::Duplicate))
             .unwrap();
         let p::StructureEditOutcome::Applied { state, item, renamed, .. } = o else {
             panic!("{o:?}")
         };
-        let dup = text.replacen("DEF A Shape {}\r\n", "DEF A Shape {}\r\n    DEF A_2 Shape {}\r\n", 1);
+        let copy = "Transform { translation 2.5 0 0 children [ DEF A_2 Shape {} ] }";
+        let dup = text.replacen("DEF A Shape {}\r\n", &format!("DEF A Shape {{}}\r\n    {copy}\r\n"), 1);
         assert_eq!(svc.text(id).unwrap(), dup);
         assert_eq!((state.revision, state.can_undo), (1, true));
-        assert_eq!(item, Some(span(&dup, "DEF A_2 Shape {}")));
+        assert_eq!(item, Some(span(&dup, copy)));
         assert_eq!(renamed, vec![("A".to_string(), "A_2".to_string())]);
         // A stale revision is refused and changes nothing.
         let stale = svc
@@ -2767,6 +3007,7 @@ mod tests {
             item: span(proto, "Shape {}"),
             op: p::StructureOp::Delete,
             confirm_shared: false,
+            offset: None,
         };
         let o = svc.structure_edit(&r).unwrap();
         assert!(matches!(o, p::StructureEditOutcome::Refused { ref reason, .. }
@@ -2777,6 +3018,152 @@ mod tests {
             svc.text(id).unwrap(),
             "#VRML V2.0 utf8\nPROTO P [] { Group { children [ ] } }\nP {}\n"
         );
+    }
+
+    /// LV2-C: Undo / Redo keep a selected PROTO body node on the SAME
+    /// rendered instance only when Rust proves that instance through the
+    /// exact change; otherwise the instance is reported lost (the UI then
+    /// clears the selection). Never the nearest or another instance.
+    #[test]
+    fn undo_redo_carry_the_selected_proto_instance_or_lose_it() {
+        let svc = Service::new(clock);
+        let text = "#VRML V2.0 utf8\nPROTO P [] { Transform { translation 0 0 0 } }\nP {}\nP {}\n";
+        let id = svc.open_text_for_test(text);
+        let u16at = |t: &str, needle: &str, nth: usize| -> (u64, u64) {
+            let b = t.match_indices(needle).nth(nth).unwrap().0;
+            let f = t[..b].encode_utf16().count() as u64;
+            (f, f + needle.encode_utf16().count() as u64)
+        };
+        let edit = |rev: u64, (f, t): (u64, u64), insert: &str| {
+            svc.edit(&p::EditRequest {
+                session: id,
+                base_revision: rev,
+                from: f,
+                to: t,
+                insert: insert.into(),
+                item: None,
+            })
+            .unwrap()
+        };
+        // Revision 1: the shared body's translation changes.
+        edit(0, u16at(text, "0 0 0", 0), "1 0 0");
+        let v1 = svc.text(id).unwrap();
+        let body = u16at(&v1, "Transform { translation 1 0 0 }", 0);
+        let second = u16at(&v1, "P {}", 1);
+        let item = format!("node-{}-{}", body.0, body.1);
+        let o = svc.history_with_instance(id, true, Some(&item), Some(second)).unwrap();
+        let p::HistoryOutcome::Applied { item: carried, instance, instance_lost, .. } = o else {
+            panic!("{o:?}")
+        };
+        let v0 = svc.text(id).unwrap();
+        assert_eq!(v0, text);
+        let want = u16at(text, "P {}", 1);
+        assert_eq!(instance_lost, None);
+        let i = instance.expect("the second instance is carried");
+        assert_eq!(i.item, format!("node-{}-{}", want.0, want.1));
+        assert_eq!((i.preview_from, i.preview_to), want);
+        assert!(carried.is_some());
+        // Redo, then a change that rewrites the instance itself: undoing it
+        // cannot prove that instance, so it is reported lost.
+        let p::HistoryOutcome::Applied { state, .. } = svc.redo(id).unwrap() else {
+            panic!("redo")
+        };
+        let v1 = svc.text(id).unwrap();
+        edit(state.revision, u16at(&v1, "P {}", 1), "P { }");
+        let v2 = svc.text(id).unwrap();
+        let body = u16at(&v2, "Transform { translation 1 0 0 }", 0);
+        let item = format!("node-{}-{}", body.0, body.1);
+        let o = svc
+            .history_with_instance(id, true, Some(&item), Some(u16at(&v2, "P { }", 0)))
+            .unwrap();
+        let p::HistoryOutcome::Applied { instance, instance_lost, .. } = o else {
+            panic!("{o:?}")
+        };
+        assert_eq!(instance, None);
+        assert!(instance_lost.is_some());
+    }
+
+    /// LV2-C: without a proven size there is no guessed offset: the copy is
+    /// placed exactly over the original and the reason is reported. An
+    /// unusable offset is refused and changes nothing.
+    #[test]
+    fn duplicate_without_a_proven_size_is_not_moved() {
+        let svc = Service::new(clock);
+        let text = "#VRML V2.0 utf8\nShape { geometry Box {} }\n";
+        let id = svc.open_text_for_test(text);
+        let b = text.find("Shape").unwrap();
+        let item = format!("node-{b}-{}", text.len() - 1);
+        let req = |offset| p::StructureEditRequest {
+            session: id,
+            base_revision: 0,
+            item: item.clone(),
+            op: p::StructureOp::Duplicate,
+            confirm_shared: false,
+            offset,
+        };
+        let bad = svc
+            .structure_edit(&req(Some(p::duplicate::Offset { axis: 3, step: 1.0 })))
+            .unwrap();
+        assert!(matches!(bad, p::StructureEditOutcome::Refused { .. }), "{bad:?}");
+        assert_eq!(svc.text(id).unwrap(), text);
+        let o = svc.structure_edit(&req(None)).unwrap();
+        let p::StructureEditOutcome::Applied { placement, .. } = o else {
+            panic!("{o:?}")
+        };
+        assert_eq!(
+            placement.as_deref(),
+            Some("the copy was not moved: the preview has no proven size for the selected node")
+        );
+        assert_eq!(
+            svc.text(id).unwrap(),
+            "#VRML V2.0 utf8\nShape { geometry Box {} }\nShape { geometry Box {} }\n"
+        );
+    }
+
+    /// P0-B: Duplicate moves the COPY beside the original by about the
+    /// measured size, selects it, and is one undo step back to the exact
+    /// bytes (CRLF, number spelling, outside USE untouched).
+    #[test]
+    fn duplicate_places_the_copy_beside_the_original() {
+        let svc = Service::new(clock);
+        let text = "#VRML V2.0 utf8\r\nDEF Car Transform {\r\n  translation 1.50 0 -2\r\n  children [ Shape { geometry Box { size 2 1 4 } } ]\r\n}\r\nTransform { children [ USE Car ] }\r\n";
+        let id = svc.open_text_for_test(text);
+        let b = text.find("DEF Car").unwrap();
+        let e = text.find("}\r\nTransform").unwrap() + 1;
+        let item = format!("node-{b}-{e}");
+        let o = svc
+            .structure_edit(&p::StructureEditRequest {
+                session: id,
+                base_revision: 0,
+                item,
+                op: p::StructureOp::Duplicate,
+                confirm_shared: false,
+                // A 4-unit object: 1.2 x 4 = 4.8, rounded up to 5.
+                offset: Some(p::duplicate::Offset {
+                    axis: 0,
+                    step: p::duplicate::step(4.0).unwrap(),
+                }),
+            })
+            .unwrap();
+        let p::StructureEditOutcome::Applied { state, item, renamed, placement, .. } = o else {
+            panic!("{o:?}")
+        };
+        let copy = "DEF Car_2 Transform {\r\n  translation 6.5 0 -2\r\n  children [ Shape { geometry Box { size 2 1 4 } } ]\r\n}";
+        let want = text.replacen("}\r\nTransform", &format!("}}\r\n{copy}\r\nTransform"), 1);
+        assert_eq!(svc.text(id).unwrap(), want);
+        assert_eq!(renamed, vec![("Car".to_string(), "Car_2".to_string())]);
+        assert_eq!(placement.as_deref(), Some("the copy's translation X is now 6.5"));
+        let f = want.find(copy).unwrap();
+        assert_eq!(item, Some(format!("node-{f}-{}", f + copy.len())));
+        assert_eq!((state.revision, state.can_undo), (1, true));
+        // The original and the outside USE are byte-identical.
+        assert!(want.starts_with(&text[..e]));
+        assert!(want.ends_with("Transform { children [ USE Car ] }\r\n"));
+        // One undo step restores the exact bytes; redo re-applies them.
+        assert!(matches!(svc.undo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), text);
+        assert!(matches!(svc.redo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), want);
     }
 
     #[test]
@@ -4023,7 +4410,7 @@ mod tests {
         axis: p::gizmo::Axis,
         d: f64,
     ) -> p::TranslateOutcome {
-        svc.rotate(&p::RotateRequest {
+        svc.rotate(&p::RotateRequest { instance: None,
             confirm_shared: false,
             session: id,
             base_revision: rev,
@@ -4042,7 +4429,7 @@ mod tests {
         axis: Option<p::gizmo::Axis>,
         f: f64,
     ) -> p::TranslateOutcome {
-        svc.scale(&p::ScaleRequest {
+        svc.scale(&p::ScaleRequest { instance: None,
             confirm_shared: false,
             session: id,
             base_revision: rev,
@@ -4289,7 +4676,7 @@ mod tests {
         axis: p::gizmo::Axis,
         v: f64,
     ) -> p::TranslateOutcome {
-        svc.translate(&p::TranslateRequest {
+        svc.translate(&p::TranslateRequest { instance: None,
             confirm_shared: false,
             session: id,
             base_revision: rev,
@@ -4403,7 +4790,7 @@ mod tests {
         };
         let hash = p::preview_hash(&text);
         let prove = |snap: p::PickSnapshot| {
-            svc.translate_prove(&p::TranslateProveRequest {
+            svc.translate_prove(&p::TranslateProveRequest { instance: None,
                 session: id,
                 revision: rev0,
                 preview_hash: hash,
@@ -4414,11 +4801,23 @@ mod tests {
             })
             .unwrap()
         };
-        assert!(matches!(
-            prove(body_snap("SCENE", None)),
-            p::TranslateProveOutcome::Proven { .. }
-        ));
-        // The instance nested in a Transform: its frame is not the world.
+        match prove(body_snap("SCENE", None)) {
+            p::TranslateProveOutcome::Proven {
+                instance,
+                parent_frame,
+                ..
+            } => {
+                // The top-level instance: the world frame, the instance named.
+                assert_eq!(parent_frame, None);
+                assert_eq!(
+                    instance.map(|i| i.item),
+                    Some(format!("node-{}-{}", is.0, is.1))
+                );
+            }
+            o => panic!("{o:?}"),
+        }
+        // LV2: the instance nested in a Transform: proven through that
+        // Transform, whose SOURCE frame (translation 5 0 0) is the parent.
         let nested = text.rfind("Transform {").unwrap();
         let nested_end = text.rfind('}').unwrap() + 1;
         let ns = (u16at(nested), u16at(nested_end));
@@ -4430,9 +4829,37 @@ mod tests {
                 end: u16at(inner + inst.len()),
             }];
         }
-        match prove(snap) {
+        match prove(snap.clone()) {
+            p::TranslateProveOutcome::Proven {
+                instance,
+                parent_frame,
+                ..
+            } => {
+                let m = parent_frame.expect("a parent frame");
+                assert_eq!(&m[12..15], &[5.0, 0.0, 0.0]);
+                assert_eq!(
+                    instance.map(|i| (i.preview_from, i.preview_to)),
+                    Some((u16at(inner), u16at(inner + inst.len())))
+                );
+            }
+            o => panic!("{o:?}"),
+        }
+        // A continuation naming the OTHER instance is refused.
+        match svc
+            .translate_prove(&p::TranslateProveRequest {
+                instance: Some(format!("node-{}-{}", is.0, is.1)),
+                session: id,
+                revision: rev0,
+                preview_hash: hash,
+                generation: 1,
+                item: item.clone(),
+                snapshot: snap,
+                tool: p::gizmo::Tool::Move,
+            })
+            .unwrap()
+        {
             p::TranslateProveOutcome::Refused { reason, .. } => {
-                assert_eq!(reason, manipulate::reason::BODY_FRAME)
+                assert_eq!(reason, "proto-instance-changed")
             }
             o => panic!("{o:?}"),
         }
@@ -4486,7 +4913,7 @@ mod tests {
         assert_eq!(svc.text(id).unwrap(), text);
         // Consent: one token of the PROTO body, one undo step.
         let (st, it, written) = moved(
-            svc.translate(&p::TranslateRequest {
+            svc.translate(&p::TranslateRequest { instance: None,
                 session: id,
                 base_revision: rev0,
                 item: item.clone(),
@@ -4515,7 +4942,7 @@ mod tests {
             p::TranslateOutcome::Refused { .. }
         ));
         let r = svc
-            .rotate(&p::RotateRequest {
+            .rotate(&p::RotateRequest { instance: None,
                 session: id,
                 base_revision: rev,
                 item: it.clone(),
@@ -4527,7 +4954,7 @@ mod tests {
         let (st2, it2, _) = moved(r);
         assert!(svc.text(id).unwrap().contains("rotation 0 1 0 0.5 scale 1 1 1"));
         let r = svc
-            .scale(&p::ScaleRequest {
+            .scale(&p::ScaleRequest { instance: None,
                 session: id,
                 base_revision: st2.revision,
                 item: it2,
@@ -4539,6 +4966,97 @@ mod tests {
         moved(r);
         assert!(svc.text(id).unwrap().contains("scale 2 2 2 children"));
         let _ = st;
+    }
+
+    /// B3 (LV2): continuation. A commit naming the gizmo's PROTO instance
+    /// carries it into the new revision through the exact changes (Tier-1):
+    /// the same bytes, the same PROTO, at the mapped span (shifted by the
+    /// edit before it). A span that is not
+    /// an instance of that PROTO is reported lost, never re-targeted.
+    #[test]
+    fn a_shared_body_commit_carries_the_gizmo_instance_or_says_it_is_lost() {
+        use p::gizmo::Axis as A;
+        let dir = tmp("b3-proto-carry");
+        let path = dir.join("car.wrl");
+        let xf = "DEF CarXForm Transform { translation 0 0 0 rotation 0 1 0 0 scale 1 1 1 children [ DEF S Shape { geometry Box { } } USE S ] }";
+        let text = format!(
+            "#VRML V2.0 utf8\nPROTO Car [ ] {{\n\tGroup {{ children [ {xf} ] }}\n}}\nCar {{ }} # first\nTransform {{ translation 5 0 0 children Car {{ }} }}\n"
+        );
+        fs::write(&path, &text).unwrap();
+        let (o, svc) = svc_open(&path);
+        let doc = opened(o);
+        let id = doc.session;
+        let u16at = |t: &str, b: usize| t[..b].encode_utf16().count() as u64;
+        let xb = text.find(xf).unwrap();
+        let item = format!("node-{}-{}", u16at(&text, xb), u16at(&text, xb + xf.len()));
+        let ib = text.rfind("Car { }").unwrap();
+        let inst = format!("node-{}-{}", u16at(&text, ib), u16at(&text, ib + 7));
+        let commit = |rev: u64, item: &str, instance: Option<String>, value: f64| {
+            svc.translate(&p::TranslateRequest {
+                session: id,
+                base_revision: rev,
+                item: item.into(),
+                axis: A::X,
+                value,
+                decimals: 3,
+                confirm_shared: true,
+                instance,
+            })
+            .unwrap()
+        };
+        let (rev1, item1, carried, lost) = match commit(doc.revision, &item, Some(inst.clone()), 12.25) {
+            p::TranslateOutcome::Applied {
+                state,
+                item,
+                instance,
+                instance_lost,
+                ..
+            } => (state.revision, item, instance, instance_lost),
+            o => panic!("{o:?}"),
+        };
+        let after = svc.text(id).unwrap();
+        // "0" -> "12.25": the later instance shifts by 4 UTF-16 units.
+        let nb = after.rfind("Car { }").unwrap();
+        let want = format!("node-{}-{}", u16at(&after, nb), u16at(&after, nb + 7));
+        assert_eq!(lost, None);
+        let c = carried.expect("carried");
+        assert_eq!(c.item, want);
+        assert_ne!(c.item, inst);
+        assert_eq!((c.preview_from, c.preview_to), (u16at(&after, nb), u16at(&after, nb + 7)));
+        // The other instance is NOT what was carried.
+        let other = after.find("Car { } # first").unwrap();
+        assert_ne!(c.item, format!("node-{}-{}", u16at(&after, other), u16at(&after, other + 7)));
+        // Not an instance of the PROTO (the outer Transform): lost.
+        let tb = after.rfind("Transform {").unwrap();
+        let te = after.rfind('}').unwrap() + 1;
+        let outer = format!("node-{}-{}", u16at(&after, tb), u16at(&after, te));
+        match commit(rev1, &item1, Some(outer), 3.5) {
+            p::TranslateOutcome::Applied {
+                instance,
+                instance_lost,
+                ..
+            } => {
+                assert_eq!(instance, None);
+                assert_eq!(instance_lost.as_deref(), Some("instance-not-proven-in-old-revision"));
+            }
+            o => panic!("{o:?}"),
+        }
+        // No instance asked: none reported.
+        let rev2 = svc.text_at(id).unwrap().1;
+        let item2 = {
+            let t = svc.text(id).unwrap();
+            let b = t.find("DEF CarXForm").unwrap();
+            let e = b + t[b..].find(" USE S ] }").unwrap() + " USE S ] }".len();
+            format!("node-{}-{}", u16at(&t, b), u16at(&t, e))
+        };
+        match commit(rev2, &item2, None, 7.0) {
+            p::TranslateOutcome::Applied {
+                instance,
+                instance_lost,
+                ..
+            } => assert_eq!((instance, instance_lost), (None, None)),
+            o => panic!("{o:?}"),
+        }
     }
 
     /// VISUAL-3A1: twin anonymous Transforms with EQUAL translations and
@@ -4565,7 +5083,7 @@ mod tests {
         let preview = text.strip_prefix('\u{FEFF}').unwrap();
         let hash = p::preview_hash(preview);
         let prove = |rev: u64, hash: u64, (f, t): (u64, u64), snap: p::PickSnapshot| {
-            svc.translate_prove(&p::TranslateProveRequest {
+            svc.translate_prove(&p::TranslateProveRequest { instance: None,
                 session: id,
                 revision: rev,
                 preview_hash: hash,
@@ -4931,6 +5449,122 @@ mod tests {
         assert!(matches!(
             prove(rev, hash, &item(sh1), none),
             p::HighlightProveOutcome::Refused { reason, .. } if reason == "runtime-node-for-span-not-unique"
+        ));
+        assert_eq!(svc.text_at(id).unwrap(), (text.clone(), rev), "read-only");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// LV2: a non-geometry node (Material) proves through its chain and is
+    /// outlined as its OWNING Shape (the ancestors start above the Shape);
+    /// one with no Shape in its chain refuses with that reason, not as a
+    /// Billboard; a node that is never drawn refuses at the target with
+    /// its own reason. Nothing is written.
+    #[test]
+    fn highlight_outlines_the_owning_shape_of_a_material_and_names_true_reasons() {
+        let dir = tmp("lv2-highlight-owner");
+        let path = dir.join("owner.wrl");
+        let mat = "Material { diffuseColor 1 0 0 }";
+        let app = format!("Appearance {{ material {mat} }}");
+        let shape = format!("Shape {{ appearance {app} geometry Box {{ }} }}");
+        let t = format!("Transform {{ children [ {shape} ] }}");
+        let vp = "Viewpoint { position 0 0 10 }";
+        let lone = "Material { }";
+        let text = format!("#VRML V2.0 utf8\n{t}\n{vp}\n{lone}\n");
+        fs::write(&path, &text).unwrap();
+        let (o, svc) = svc_open(&path);
+        let doc = opened(o);
+        let (id, rev) = (doc.session, doc.revision);
+        let span = |b: usize, len: usize| (b as u64, (b + len) as u64);
+        let t0 = text.find(&t).unwrap();
+        let sh0 = t0 + t.find(&shape).unwrap();
+        let ap0 = sh0 + shape.find(&app).unwrap();
+        let m0 = ap0 + app.find(mat).unwrap();
+        let (tsp, shsp, apsp, msp) = (
+            span(t0, t.len()),
+            span(sh0, shape.len()),
+            span(ap0, app.len()),
+            span(m0, mat.len()),
+        );
+        let vpsp = span(text.find(vp).unwrap(), vp.len());
+        let lonesp = span(text.rfind(lone).unwrap(), lone.len());
+        let hash = p::preview_hash(&text);
+        let item = |(f, t): (u64, u64)| format!("node-{f}-{t}");
+        let node = |ty: &str, sp: (u64, u64), parents: &[&str]| p::PickGraphNode {
+            type_name: Some(ty.into()),
+            ctx_kind: "document".into(),
+            occurrences: vec![p::PickSpan { start: sp.0, end: sp.1 }],
+            parents: parents.iter().map(|s| s.to_string()).collect(),
+        };
+        let mut snap = located("Material", msp, &["n2"]);
+        snap.graph.insert("n2".into(), node("Appearance", apsp, &["n3"]));
+        snap.graph.insert("n3".into(), node("Shape", shsp, &["n4"]));
+        snap.graph.insert("n4".into(), node("Transform", tsp, &["SCENE"]));
+        let prove = |it: &str, snap: p::PickSnapshot| {
+            svc.highlight_prove(&p::HighlightProveRequest {
+                session: id,
+                revision: rev,
+                preview_hash: hash,
+                generation: 1,
+                item: it.into(),
+                snapshot: snap,
+            })
+            .unwrap()
+        };
+        let anc = |sp: (u64, u64), ty: &str| p::HighlightAncestor {
+            preview_from: sp.0,
+            preview_to: sp.1,
+            node_type: ty.into(),
+            proto_instance: false,
+        };
+        match prove(&item(msp), snap) {
+            p::HighlightProveOutcome::Proven {
+                node_type,
+                ancestors,
+                owner,
+                ..
+            } => {
+                assert_eq!(node_type, "Material");
+                assert_eq!(owner, Some(anc(shsp, "Shape")));
+                assert_eq!(ancestors, vec![anc(tsp, "Transform")]);
+            }
+            o => panic!("{o:?}"),
+        }
+        // A Material with no Shape in its proven chain.
+        match prove(&item(lonesp), located("Material", lonesp, &["SCENE"])) {
+            p::HighlightProveOutcome::Refused { reason, .. } => {
+                assert_eq!(reason, p::highlight::refusal::NO_OWNER)
+            }
+            o => panic!("{o:?}"),
+        }
+        // A rendered node keeps no owner.
+        assert!(matches!(
+            prove(&item(tsp), located("Transform", tsp, &["SCENE"])),
+            p::HighlightProveOutcome::Proven { owner: None, .. }
+        ));
+        // A Viewpoint is never drawn: refused at the target, by that reason.
+        match svc
+            .highlight_target(&p::HighlightTargetRequest {
+                session: id,
+                revision: rev,
+                item: item(vpsp),
+            })
+            .unwrap()
+        {
+            p::HighlightTargetOutcome::Refused { reason, message } => {
+                assert_eq!(reason, p::highlight::refusal::NOT_RENDERED);
+                assert!(message.contains("Viewpoint"), "{message}");
+            }
+            o => panic!("{o:?}"),
+        }
+        // The Material itself is a valid target (outlined through its owner).
+        assert!(matches!(
+            svc.highlight_target(&p::HighlightTargetRequest {
+                session: id,
+                revision: rev,
+                item: item(msp),
+            })
+            .unwrap(),
+            p::HighlightTargetOutcome::Ready { .. }
         ));
         assert_eq!(svc.text_at(id).unwrap(), (text.clone(), rev), "read-only");
         fs::remove_dir_all(&dir).unwrap();
@@ -5332,7 +5966,7 @@ mod recovery_tests {
         };
         check("create");
         let o = svc
-            .translate(&p::TranslateRequest {
+            .translate(&p::TranslateRequest { instance: None,
                 confirm_shared: false,
                 session: id,
                 base_revision: state.revision,
@@ -5350,7 +5984,7 @@ mod recovery_tests {
         for (what, o) in [
             (
                 "rotate",
-                svc.rotate(&p::RotateRequest { confirm_shared: false, session: id, base_revision: rev, item: item.clone(), axis: p::gizmo::Axis::Y, delta: 0.5 }),
+                svc.rotate(&p::RotateRequest { instance: None, confirm_shared: false, session: id, base_revision: rev, item: item.clone(), axis: p::gizmo::Axis::Y, delta: 0.5 }),
             ),
         ] {
             match o.unwrap() {

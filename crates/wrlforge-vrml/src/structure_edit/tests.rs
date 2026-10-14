@@ -366,3 +366,241 @@ fn unicode_offsets_are_utf16() {
     let (out, (f, t), _) = duplicate(&src, "WorldInfo", 0, false);
     assert_eq!(slice16(&out, f, t), "WorldInfo { title \"π 😀\" }");
 }
+
+// ---- P0-B: the duplicate is placed beside the original ----------------------
+
+/// `plan_duplicate_offset` of the nth node of `ty`: the new text, the copy's
+/// text and how it was placed. Asserts the edit is a pure insertion after
+/// the original (so the original's bytes and transform cannot change).
+fn dup_off(
+    src: &str,
+    ty: &str,
+    nth: usize,
+    axis: usize,
+    step: f64,
+    confirm: bool,
+) -> (String, String, Placement) {
+    let (f, t) = span(src, ty, nth);
+    match plan_duplicate_offset(src, f, t, confirm, axis, step) {
+        (
+            Plan::Ready {
+                edit,
+                new_text,
+                node: Some((nf, nt)),
+                ..
+            },
+            Some(place),
+        ) => {
+            assert_eq!((edit.from, edit.to), (t, t));
+            let at = byte_at(src, t);
+            assert_eq!(&new_text[..at], &src[..at]);
+            assert_eq!(&new_text[at + edit.insert.len()..], &src[at..]);
+            // Undo is the exact inverse: removing the insert restores the bytes.
+            let mut back = new_text.clone();
+            back.replace_range(at..at + edit.insert.len(), "");
+            assert_eq!(back, src);
+            (new_text.clone(), slice16(&new_text, nf, nt), place)
+        }
+        other => panic!("not ready: {other:?}"),
+    }
+}
+
+#[test]
+fn duplicate_offsets_a_transform_translation_in_the_copy_only() {
+    let src = format!(
+        "{H}DEF T Transform {{ translation 1.25 0.000 -3 rotation 0 1 0 1.5708 children [ Shape {{ geometry Box {{}} }} ] }}\nUSE T\n"
+    );
+    let (out, copy, place) = dup_off(&src, "Transform", 0, 0, 2.5, false);
+    assert_eq!(
+        copy,
+        "DEF T_2 Transform { translation 3.75 0.000 -3 rotation 0 1 0 1.5708 children [ Shape { geometry Box {} } ] }"
+    );
+    assert_eq!(
+        place,
+        Placement::Translated {
+            axis: 'X',
+            value: "3.75".into()
+        }
+    );
+    // The original (and the outside USE, still bound to it) is untouched.
+    assert!(out.starts_with(&format!(
+        "{H}DEF T Transform {{ translation 1.25 0.000 -3 rotation 0 1 0 1.5708 children"
+    )));
+    assert!(out.ends_with("] }\nUSE T\n"));
+    // Decimal places: the larger of the lexeme's and the step's.
+    let src = format!("{H}Transform {{ translation 0.1 2 3 }}\n");
+    let (_, copy, _) = dup_off(&src, "Transform", 0, 0, 2.5, false);
+    assert_eq!(copy, "Transform { translation 2.6 2 3 }");
+    let src = format!("{H}Transform {{ translation -2.5 0 0 }}\n");
+    let (_, copy, _) = dup_off(&src, "Transform", 0, 0, 2.5, false);
+    assert_eq!(copy, "Transform { translation 0 0 0 }");
+    let src = format!("{H}Transform {{ translation 1e-3 0 0 }}\n");
+    let (_, copy, _) = dup_off(&src, "Transform", 0, 0, 2.0, false);
+    assert_eq!(copy, "Transform { translation 2.001 0 0 }");
+}
+
+#[test]
+fn duplicate_adds_a_translation_to_a_transform_without_one() {
+    let src = "#VRML V2.0 utf8\r\nTransform {\r\n  scale 2 2 2\r\n  children [ Shape {} ]\r\n}\r\n";
+    let (out, copy, place) = dup_off(src, "Transform", 0, 0, 2.5, false);
+    assert_eq!(
+        copy,
+        "Transform {\r\n  translation 2.5 0 0\r\n  scale 2 2 2\r\n  children [ Shape {} ]\r\n}"
+    );
+    assert_eq!(
+        place,
+        Placement::TranslationAdded {
+            vector: "2.5 0 0".into()
+        }
+    );
+    assert!(!out.replace("\r\n", "").contains('\n'), "CRLF only");
+    let src = format!("{H}Transform {{ }}\n");
+    let (_, copy, _) = dup_off(&src, "Transform", 0, 0, 2.5, false);
+    assert_eq!(copy, "Transform { translation 2.5 0 0 }");
+    let src = format!("{H}Transform {{}}\n");
+    let (_, copy, _) = dup_off(&src, "Transform", 0, 0, 2.5, false);
+    assert_eq!(copy, "Transform { translation 2.5 0 0 }");
+    let src = format!("{H}Group {{ children [ Transform {{ children [ Shape {{}} ] }} ] }}\n");
+    let (out, copy, _) = dup_off(&src, "Transform", 0, 0, 0.5, false);
+    assert_eq!(
+        copy,
+        "Transform { translation 0.5 0 0 children [ Shape {} ] }"
+    );
+    assert_eq!(
+        out,
+        format!("{H}Group {{ children [ Transform {{ children [ Shape {{}} ] }} Transform {{ translation 0.5 0 0 children [ Shape {{}} ] }} ] }}\n")
+    );
+}
+
+#[test]
+fn duplicate_wraps_a_non_transform_and_keeps_outside_uses_on_the_original() {
+    let src = format!(
+        "{H}Group {{ children [ DEF Paint Shape {{ appearance Appearance {{ material Material {{ diffuseColor 0.8 0.1 0.1 }} }} geometry Sphere {{ radius 0.75 }} }} ] }}\nTransform {{ children [ USE Paint ] }}\n"
+    );
+    let (out, copy, place) = dup_off(&src, "Shape", 0, 0, 2.0, false);
+    assert_eq!(
+        copy,
+        "Transform { translation 2 0 0 children [ DEF Paint_2 Shape { appearance Appearance { material Material { diffuseColor 0.8 0.1 0.1 } } geometry Sphere { radius 0.75 } } ] }"
+    );
+    assert_eq!(
+        place,
+        Placement::Wrapped {
+            vector: "2 0 0".into()
+        }
+    );
+    assert!(out.ends_with("] }\nTransform { children [ USE Paint ] }\n"));
+    // The renamed DEF exists once; the outside USE still names the original.
+    assert_eq!(out.matches("DEF Paint ").count(), 1);
+    assert_eq!(out.matches("DEF Paint_2 ").count(), 1);
+    // A whole-line statement keeps its line and indent (CRLF).
+    let src = "#VRML V2.0 utf8\r\nGroup {\r\n  children [\r\n    Shape { geometry Box {} }\r\n  ]\r\n}\r\n";
+    let (out, copy, _) = dup_off(src, "Shape", 0, 0, 2.5, false);
+    assert_eq!(
+        copy,
+        "Transform { translation 2.5 0 0 children [ Shape { geometry Box {} } ] }"
+    );
+    assert_eq!(
+        out,
+        src.replacen(
+            "    Shape { geometry Box {} }\r\n",
+            "    Shape { geometry Box {} }\r\n    Transform { translation 2.5 0 0 children [ Shape { geometry Box {} } ] }\r\n",
+            1
+        )
+    );
+}
+
+#[test]
+fn duplicate_does_not_move_nodes_a_transform_would_change() {
+    for (node, ty) in [
+        ("DEF Clock TimeSensor { loop TRUE }", "TimeSensor"),
+        ("DirectionalLight { direction 0 -1 0 }", "DirectionalLight"),
+        ("Viewpoint { position 0 0 10 }", "Viewpoint"),
+    ] {
+        let src = format!("{H}{node}\n");
+        let (_, copy, place) = dup_off(&src, ty, 0, 0, 2.5, false);
+        assert!(
+            matches!(place, Placement::InPlace { .. }),
+            "{ty}: {place:?}"
+        );
+        // Verbatim (DEF renamed only).
+        assert_eq!(copy.replace("Clock_2", "Clock"), node);
+    }
+}
+
+#[test]
+fn duplicate_proto_instances_by_their_type_node() {
+    // A PROTO whose type node is a Transform: its instance is wrapped.
+    let src = format!("{H}PROTO Car [ field SFColor c 1 0 0 ] {{ Transform {{ children [ Shape {{}} ] }} }}\nCar {{ c 0 0 1 }}\n");
+    let (_, copy, place) = dup_off(&src, "Car", 0, 0, 2.5, false);
+    assert_eq!(
+        copy,
+        "Transform { translation 2.5 0 0 children [ Car { c 0 0 1 } ] }"
+    );
+    assert!(matches!(place, Placement::Wrapped { .. }));
+    // An EXTERNPROTO instance: its type is unknown here, so it is not moved.
+    let src = format!("{H}EXTERNPROTO Ext [ ] \"ext.wrl#Ext\"\nExt {{ }}\n");
+    let (_, copy, place) = dup_off(&src, "Ext", 0, 0, 2.5, false);
+    assert_eq!(copy, "Ext { }");
+    assert!(matches!(place, Placement::InPlace { .. }));
+    // A PROTO body Transform whose translation is IS-bound is wrapped, not
+    // rewritten (the binding is shared by every instance).
+    let src = format!(
+        "{H}PROTO P [ field SFVec3f pos 0 0 0 ] {{\n  Group {{ children [ Transform {{ translation IS pos children [ Shape {{}} ] }} ] }}\n}}\nP {{}}\n"
+    );
+    let (out, copy, place) = dup_off(&src, "Transform", 0, 0, 2.5, true);
+    assert_eq!(
+        copy,
+        "Transform { translation 2.5 0 0 children [ Transform { translation IS pos children [ Shape {} ] } ] }"
+    );
+    assert!(matches!(place, Placement::Wrapped { .. }));
+    assert_eq!(out.matches("translation IS pos").count(), 2);
+}
+
+#[test]
+fn duplicate_moves_along_the_chosen_axis_only() {
+    // LV2-C: Y and -Z. Only that component's lexeme changes.
+    let src = format!("{H}Transform {{ translation 1.25 0.000 -3 children [ Shape {{}} ] }}\n");
+    let (_, copy, place) = dup_off(&src, "Transform", 0, 1, 2.5, false);
+    assert_eq!(
+        copy,
+        "Transform { translation 1.25 2.5 -3 children [ Shape {} ] }"
+    );
+    assert_eq!(
+        place,
+        Placement::Translated {
+            axis: 'Y',
+            value: "2.5".into()
+        }
+    );
+    assert_eq!(place.describe(), "the copy's translation Y is now 2.5");
+    let (_, copy, _) = dup_off(&src, "Transform", 0, 2, -2.5, false);
+    assert_eq!(
+        copy,
+        "Transform { translation 1.25 0.000 -5.5 children [ Shape {} ] }"
+    );
+    let src = format!("{H}Transform {{ children [ Shape {{}} ] }}\n");
+    let (_, copy, place) = dup_off(&src, "Transform", 0, 2, -0.5, false);
+    assert_eq!(
+        copy,
+        "Transform { translation 0 0 -0.5 children [ Shape {} ] }"
+    );
+    assert_eq!(
+        place,
+        Placement::TranslationAdded {
+            vector: "0 0 -0.5".into()
+        }
+    );
+    let src = format!("{H}Shape {{ geometry Box {{}} }}\n");
+    let (_, copy, place) = dup_off(&src, "Shape", 0, 1, -5.0, false);
+    assert_eq!(
+        copy,
+        "Transform { translation 0 -5 0 children [ Shape { geometry Box {} } ] }"
+    );
+    assert_eq!(
+        place.describe(),
+        "the copy was wrapped in a Transform at 0 -5 0"
+    );
+    // Not an axis: copied in place, never guessed.
+    let (_, _, place) = dup_off(&src, "Shape", 0, 3, 1.0, false);
+    assert!(matches!(place, Placement::InPlace { .. }));
+}

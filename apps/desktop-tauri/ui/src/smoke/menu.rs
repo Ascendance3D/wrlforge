@@ -403,6 +403,32 @@ async fn keyboard(r: &mut R) -> Option<()> {
         alt == "menu-file" && alt_back == "source" && alt_v && active_id() == "source",
         format!("{alt} {alt_back} {alt_v} {}", active_id()),
     );
+    // LV2-C: a toolbar button reached with a REAL Tab shows its app-drawn
+    // tip (as hover does); moving focus on hides it.
+    let tip = || {
+        crate::element_by_id::<HtmlElement>(crate::tooltip::TIP_ID)
+            .filter(|t| !t.hidden())
+            .and_then(|t| t.text_content())
+    };
+    crate::element_by_id::<HtmlElement>("btn-new")?.focus().ok()?;
+    key("Tab").await?;
+    let focused = active_id();
+    let want = crate::element_by_id::<HtmlElement>(&focused)
+        .and_then(|e| e.get_attribute("data-tip"))
+        .unwrap_or_default();
+    let shown = wait_ms(2000, || tip()).await;
+    key("Tab").await?;
+    let moved = active_id();
+    let after = tip();
+    crate::element_by_id::<HtmlElement>("source")?.focus().ok()?;
+    r.step(
+        "keyboard: Tab to a toolbar button shows its tooltip; Tab on moves or hides it",
+        !want.is_empty()
+            && shown.as_deref() == Some(want.as_str())
+            && moved != focused
+            && after.as_deref() != Some(want.as_str()),
+        format!("{focused} {shown:?} → {moved} {after:?}"),
+    );
     Some(())
 }
 
@@ -1202,7 +1228,7 @@ async fn clipboard(r: &mut R) -> Option<()> {
     let _ = tree.focus();
     open_click("edit").await?;
     let paste_off = attr(&dom_id(CommandId::EditPaste), "aria-disabled");
-    let paste_title = attr(&dom_id(CommandId::EditPaste), "title").unwrap_or_default();
+    let paste_title = attr(&dom_id(CommandId::EditPaste), "data-tip").unwrap_or_default();
     let n = runs();
     real_click_id(&dom_id(CommandId::EditPaste)).await?;
     let still_open = list_open("edit");
@@ -1722,7 +1748,7 @@ async fn world_and_reserved(r: &mut R) -> Option<()> {
     let reasons_ok = items.len() == 6
         && items.iter().all(|i| {
             i.get_attribute("aria-disabled").as_deref() == Some("true")
-                && i.get_attribute("title")
+                && i.get_attribute("data-tip")
                     .is_some_and(|t| t.contains(NOT_MIGRATED))
         });
     let groups: Vec<String> = all("#menu-world-list .menu-group")
@@ -2103,8 +2129,12 @@ async fn viewport_keys(r: &mut R) -> Option<()> {
     let bar_ok = runs() == n && !ui().message.get_untracked().starts_with("View All");
     key("Escape").await?;
     ipc::sleep(150).await;
-    key("Escape").await?;
-    ipc::sleep(150).await;
+    // A second Escape only while the menu bar still has it: in the 3D
+    // Viewport Escape clears the scene selection (Stage 2).
+    if crate::menu::bar_has_focus() || crate::menu::is_open() {
+        key("Escape").await?;
+        ipc::sleep(150).await;
+    }
     let input: web_sys::HtmlInputElement = wait_ms(4000, || {
         el("#dock-panel-inspector input[type=text]").and_then(|e| e.dyn_into().ok())
     })

@@ -113,7 +113,7 @@ async fn on_event(e: p::NativeEvent) {
             if session.is_some() && session == CORE.with_borrow(|c| c.session) {
                 u.selected.set(None);
                 u.inspection.set(None);
-                u.pick_message.set(Some(("none".into(), "Selection cleared.".into())));
+                crate::pick::message("none", "Selection cleared.".into());
             }
         }
         p::NativeEvent::Pick { session, pick } => apply(session, pick).await,
@@ -124,26 +124,25 @@ async fn on_event(e: p::NativeEvent) {
 /// revision than the one on screen now is refused, never applied; a refusal
 /// never clears an existing selection.
 async fn apply(session: u64, out: p::PickOutcome) {
-    let u = ui();
     let shown = NATIVE.with_borrow(|n| n.shown);
     let moved = CORE.with_borrow(|c| c.session) != Some(session)
         || shown.is_none_or(|(s, _, g)| s != session || g != out.generation)
         || (out.is_proven() && ui::stale_reason(session, out.revision).is_some());
     if moved && out.status != "COMPATIBILITY_DISABLED" {
         NATIVE.with_borrow_mut(|n| n.late_refused += 1);
-        u.pick_message.set(Some(("refused".into(), "The viewport is out of date; select after it updates.".into())));
+        crate::pick::message("refused", "The viewport is out of date; select after it updates.".into());
         return;
     }
     if out.is_proven() {
         let item = out.item.clone().unwrap_or_default();
         match ui::pick_select(session, out.revision, item).await {
-            Ok(label) => u.pick_message.set(Some(("ok".into(), format!("Selected {label} from the viewport.")))),
-            Err(why) => u.pick_message.set(Some(("refused".into(), format!("Selection not changed: {why}.")))),
+            Ok(label) => crate::pick::message("ok", format!("Selected {label} from the viewport.")),
+            Err(why) => crate::pick::message("refused", format!("Selection not changed: {why}.")),
         }
     } else if out.status == "NO_HIT" {
-        u.pick_message.set(Some(("none".into(), "Nothing selectable under the pointer.".into())));
+        crate::pick::message("none", "Nothing selectable under the pointer.".into());
     } else {
-        u.pick_message.set(Some(("refused".into(), out.message.clone())));
+        crate::pick::message("refused", out.message.clone());
     }
 }
 

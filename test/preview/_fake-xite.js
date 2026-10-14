@@ -28,6 +28,11 @@ function createFakeX3D() {
     getTypeName() { return this.type; }
     getExecutionContext() { return this.ctx; }
     getParents() { return this.parents; }
+    // Like X3DShapeNode.prototype.traverse: in the POINTER pass a node puts
+    // ITSELF on the render object's pointing list (what touch() draws).
+    traverse(type, renderObject) {
+      if (type === 'POINTER' && renderObject) renderObject.addPointingShape(this);
+    }
   }
   // A field-like parent: not a node, not a context; climbs to its owner.
   class FakeField {
@@ -249,6 +254,7 @@ function createFakeBrowser(X3D, { version = '15.1.10', rect = { left: 0, top: 0,
     element: { getBoundingClientRect: () => ({ ...rect }) },
     viewerActive: false,
     gate: null,
+    pointingPasses: [],
     calls,
     async createX3DFromString(text) {
       calls.parse += 1;
@@ -280,10 +286,18 @@ function createFakeBrowser(X3D, { version = '15.1.10', rect = { left: 0, top: 0,
       browser.lastTouch = { x, y };
       if (browser.viewerActive) return false; // leaves the previous hit in place
       hit.sensors.clear();
-      if (!aimed) { hit.id = 0; hit.shapeNode = null; return false; }
+      // `aimed` may be ONE node or a front-to-back list of nodes under the
+      // pointer: like X_ITE's id pass, the nearest node that traverses into
+      // the pointing list is the hit.
+      const pointing = [];
+      const list = aimed ? (Array.isArray(aimed) ? aimed : [aimed]) : [];
+      for (const n of list) n.traverse('POINTER', { addPointingShape: (s) => pointing.push(s) });
+      browser.pointingPasses.push(pointing.slice());
+      const front = pointing[0] || null;
+      if (!front) { hit.id = 0; hit.shapeNode = null; return false; }
       hit.id = 1;
-      hit.shapeNode = aimed;
-      for (const s of sensorsAbove(aimed)) hit.sensors.set(s, { node: s });
+      hit.shapeNode = front;
+      for (const s of sensorsAbove(front)) hit.sensors.set(s, { node: s });
       return true;
     },
     getHit() { calls.getHit += 1; return hit; },

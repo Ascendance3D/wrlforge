@@ -34,6 +34,8 @@ pub fn startup_document(startup: State<'_, Startup>) -> Option<p::OpenOutcome> {
 #[tauri::command]
 pub async fn confirm_shared_edit(app: AppHandle, proto: String, instances: u32) -> bool {
     if let Some(answer) = app.state::<SmokeState>().shared_override() {
+        // Smoke runs only: what the dialog would have said, for the check.
+        crate::smoke::note_consent(&proto, instances);
         return answer;
     }
     app.dialog()
@@ -191,8 +193,9 @@ pub fn doc_undo(
     svc: State<'_, Service>,
     session: p::SessionId,
     item: Option<String>,
+    instance: Option<(u64, u64)>,
 ) -> Result<p::HistoryOutcome, String> {
-    svc.history_with_item(session, true, item.as_deref())
+    svc.history_with_instance(session, true, item.as_deref(), instance)
 }
 
 #[tauri::command]
@@ -200,8 +203,9 @@ pub fn doc_redo(
     svc: State<'_, Service>,
     session: p::SessionId,
     item: Option<String>,
+    instance: Option<(u64, u64)>,
 ) -> Result<p::HistoryOutcome, String> {
-    svc.history_with_item(session, false, item.as_deref())
+    svc.history_with_instance(session, false, item.as_deref(), instance)
 }
 
 #[tauri::command]
@@ -793,6 +797,12 @@ pub fn smoke_request_close(app: AppHandle) -> Result<(), String> {
 pub fn app_quit(app: AppHandle) -> Result<(), String> {
     let w = app.get_webview_window("main").ok_or("no main window")?;
     w.close().map_err(|e| e.to_string())
+}
+
+/// The viewport frame-timing smoke plan (`--smoke-perf` only).
+#[tauri::command]
+pub fn smoke_perf_plan() -> Option<crate::smoke_perf::Plan> {
+    crate::smoke_perf::plan()
 }
 
 /// UI-MENU-1: the menu smoke plan (`--smoke-menu` only).

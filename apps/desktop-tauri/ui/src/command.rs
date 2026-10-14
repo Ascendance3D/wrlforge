@@ -174,6 +174,10 @@ pub fn run(id: CommandId) {
         CommandId::ViewUpdatePreview => spawn_local(ui::preview(true)),
         // B2-CAMERA: the renderer's camera only (no source, dirty or undo).
         CommandId::ViewFitAll => crate::camera::fit(),
+        CommandId::ViewFrameSelection => crate::camera::frame_selection(),
+        CommandId::EditClearSelection => {
+            crate::ui::clear_selection();
+        }
         CommandId::ViewFront
         | CommandId::ViewBack
         | CommandId::ViewLeft
@@ -352,7 +356,7 @@ pub fn CommandButton(
     let text = text.unwrap_or_else(|| command.spec().label.to_string());
     view! {
         <button id=dom_id class:secondary=secondary data-command=command.key()
-            title=title(command)
+            data-tip=title(command)
             disabled=move || !enabled(command)
             on:click=move |_| run(command)>{text}</button>
     }

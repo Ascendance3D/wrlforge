@@ -44,6 +44,9 @@
 //   5. SELECTION HIGHLIGHT (B2). The rendered bounding box of a PROVEN
 //      runtime node and its proven ancestors' frames, read-only (PRIVATE:
 //      X3D.Box3, getInnerNode, getBBox; PUBLIC SAI for Transform fields).
+//      LV2: the shapes X_ITE draws for that same node, for the precise
+//      outline (PRIVATE: X3D.Matrix4, X3DNode.getShapes, Shape.getGeometry,
+//      X3DGeometryNode.getGeometryType / getVertices), read-only.
 //
 // Binding (VISUAL-3A1): the runtime node is NOT found here. The pick
 // adapter's provenance generation names the ONE runtime node X_ITE's parser
@@ -461,7 +464,15 @@
           viewport: [Number(rect[2]), Number(rect[3])],
         };
         var all = out.center.concat(out.size, out.position, out.orientation, out.centerOfRotation, out.viewport, [out.fieldOfView]);
-        return finiteAll(all) ? out : { reason: 'camera-unreadable' };
+        if (!finiteAll(all)) return { reason: 'camera-unreadable' };
+        // LV2-C Frame Selection: viewpoint -> world and the current user
+        // orientation offset (plain numbers; omitted when unreadable).
+        var model = m16(vp.getModelMatrix());
+        var oo = vp._orientationOffset;
+        var ooNums = oo ? [oo.x, oo.y, oo.z, oo.angle].map(Number) : null;
+        if (model) out.model = model;
+        if (ooNums && finiteAll(ooNums)) out.orientationOffset = ooNums;
+        return out;
       } catch (e) {
         return { reason: 'camera-unreadable' };
       }
@@ -584,6 +595,63 @@
       }
     }
 
+    // LV2 precise outline (read-only, plain data out): the shapes X_ITE
+    // itself draws for a PROVEN runtime node -- X3DNode.getShapes(list,
+    // matrix), the traversal X_ITE's StaticGroup uses: visible children
+    // only, each with its shape -> node-parent matrix -- and each shape's
+    // geometry type (0 points, 1 lines, 2/3 triangles) and rendered vertex
+    // count. `withVertices`: also the vertices (x y z per vertex, the
+    // shape's own coordinates; X_ITE stores x y z w). A geometry node
+    // itself is its own single shape. More than `maxVertices` in total,
+    // or any unreadable shape, refuses: a partial outline would not be the
+    // node's outline. Nothing is written.
+    function shapes(node, withVertices, maxVertices) {
+      if (!compatibility().ok || typeof X3D.Matrix4 !== 'function') return { ok: false, reason: 'geometry-unavailable' };
+      if (!node || typeof node !== 'object') return { ok: false, reason: 'runtime-node-not-proven' };
+      var max = Number(maxVertices) > 0 ? Number(maxVertices) : 300000;
+      try {
+        var inner = fn(node, 'getInnerNode') ? node.getInnerNode() : node;
+        var list;
+        if (inner && fn(inner, 'getShapes')) {
+          list = inner.getShapes([], new X3D.Matrix4());
+        } else if (inner && fn(inner, 'getVertices') && fn(inner, 'getGeometryType')) {
+          list = [{ modelMatrix: null, geometry: inner }];
+        } else {
+          return { ok: false, reason: 'node-has-no-rendered-geometry' };
+        }
+        if (!Array.isArray(list)) return { ok: false, reason: 'geometry-unavailable' };
+        var out = [], total = 0;
+        for (var i = 0; i < list.length; i++) {
+          var e = list[i] || {};
+          var g = e.geometry || (e.shapeNode && fn(e.shapeNode, 'getGeometry') ? e.shapeNode.getGeometry() : null);
+          if (!g || !fn(g, 'getVertices') || !fn(g, 'getGeometryType')) return { ok: false, reason: 'geometry-unavailable' };
+          var k = Number(g.getGeometryType());
+          var verts = g.getVertices();
+          if (!verts || typeof verts.length !== 'number' || verts.length % 4 || !(k >= 0 && k <= 3)) return { ok: false, reason: 'geometry-unavailable' };
+          var n = verts.length / 4;
+          total += n;
+          if (total > max) return { ok: false, reason: 'geometry-too-detailed' };
+          var m = e.modelMatrix ? m16(e.modelMatrix) : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+          if (!m) return { ok: false, reason: 'geometry-unavailable' };
+          if (!withVertices) {
+            out.push({ m: m, k: k, n: n });
+            continue;
+          }
+          var v = new Array(n * 3);
+          for (var j = 0; j < n; j++) {
+            v[3 * j] = Number(verts[4 * j]);
+            v[3 * j + 1] = Number(verts[4 * j + 1]);
+            v[3 * j + 2] = Number(verts[4 * j + 2]);
+          }
+          if (!finiteAll(v)) return { ok: false, reason: 'geometry-unavailable' };
+          out.push({ m: m, k: k, n: n, v: v });
+        }
+        return { ok: true, shapes: out };
+      } catch (e) {
+        return { ok: false, reason: 'geometry-unavailable' };
+      }
+    }
+
     // A proven ancestor's runtime type and, for a Transform, its rendered
     // fields (PUBLIC SAI only), or null when unreadable.
     function ancestor(node) {
@@ -629,7 +697,7 @@
       viewAll: viewAll, frameInput: frameInput, applyView: applyView, resetView: resetView, viewpoints: viewpoints, bindViewpoint: bindViewpoint,
       compatibility: compatibility, camera: camera, bind: bind, set: set, setField: setField, restore: restore, release: release, unbind: unbind, rendered: rendered, frame: frame,
       boundViewpoint: boundViewpoint, readCamera: readCamera, writeCamera: writeCamera, viewMatrix: viewMatrix, cameraState: cameraState,
-      bounds: bounds, ancestor: ancestor,
+      bounds: bounds, ancestor: ancestor, shapes: shapes,
     });
   }
 

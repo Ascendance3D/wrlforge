@@ -29,6 +29,15 @@
 //! by a factor (`doc_scale`). Both need their field authored: a missing one
 //! is refused, with an explicit "Write" action, never written silently.
 //! Shift snaps a rotation to 15 degree steps.
+//!
+//! B3 (LV2), shared PROTO body Transforms. The handles bind the copy of the
+//! PROTO instance Rust proved (`TranslateProveOutcome::Proven::instance`).
+//! That instance may sit under document Transforms: Rust composes their
+//! SOURCE frames into `parent_frame`, and the handles, rings and drags work
+//! in that frame (`Target::world`, `gz::ring_layout_in`). After a commit,
+//! Rust carries the instance through the edit's exact changes; the handles
+//! continue on it in the new revision (`pick::instance_hint`), or are
+//! dropped with the reason -- never re-bound to a guessed instance.
 
 use std::cell::RefCell;
 
@@ -64,6 +73,33 @@ pub struct Target {
     /// B3: the Transform is part of this shared PROTO definition: the
     /// preview shows the picked instance; a commit asks consent first.
     pub shared: Option<p::SharedProto>,
+    /// B3 (LV2): the PROTO instance the bound copy was proven through.
+    pub instance: Option<p::InstanceRef>,
+    /// B3 (LV2): that instance's parent frame (Rust composed it from the
+    /// proven ancestors' source frames). `None`: the world. `translation`,
+    /// `origin`, `pivot` and the tool axes are in THIS frame.
+    pub parent: Option<[f64; 16]>,
+}
+
+impl Target {
+    /// A point of the Transform's parent coordinates, in world coordinates.
+    pub fn world(&self, p: [f64; 3]) -> [f64; 3] {
+        gz::frame_point(self.parent.as_ref(), p)
+    }
+    /// Where the Move handles are drawn (world).
+    pub fn origin_w(&self) -> [f64; 3] {
+        self.world(self.origin)
+    }
+    /// The rotation / scale pivot (world).
+    pub fn pivot_w(&self) -> [f64; 3] {
+        self.world(self.pivot)
+    }
+    /// Move: each PARENT axis as (world unit direction, the parent frame's
+    /// stretch along it). The world axes for a top-level Transform.
+    pub fn move_axes(&self) -> Option<[([f64; 3], f64); 3]> {
+        let a = Axis::ALL.map(|a| gz::unit_len(gz::frame_dir(self.parent.as_ref(), a.unit())));
+        Some([a[0]?, a[1]?, a[2]?])
+    }
 }
 
 /// Which handle a drag holds.
@@ -167,6 +203,9 @@ pub struct GizmoState {
     ghost: Option<[f64; 3]>,
     drawn: String,
     loop_on: bool,
+    /// LV2-C: the pivot is outside the canvas, so no handles are drawn;
+    /// holds the status line it replaced, restored when the pivot returns.
+    offscreen: Option<Option<(String, String)>>,
     // ---- test / performance counters --------------------------------------
     pub commits: u64,
     pub cancels: u64,
@@ -191,6 +230,11 @@ pub struct GizmoState {
     pub last_commit: Option<CommitTiming>,
     /// Release time of the newest commit, until its preview is bound again.
     released_at: Option<(f64, u64)>,
+    /// B3 (LV2): why the last shared-body commit's instance could not be
+    /// carried into the new revision (the handles were dropped).
+    pub dropped: Option<String>,
+    /// B3 (LV2): binds that continued on a carried instance (no new pick).
+    pub continued: u64,
 }
 
 type FrameCallback = Closure<dyn FnMut(f64)>;
@@ -241,6 +285,8 @@ pub fn reset(reason: &str) {
         g.layout = None;
         g.rings = None;
         g.missing_field = None;
+        g.dropped = None;
+        g.offscreen = None;
         g.drawn.clear();
     });
     ui().gizmo_message.set(None);
@@ -252,6 +298,7 @@ pub fn repicked() {
     GIZMO.with_borrow_mut(|g| {
         if g.drag.is_none() && !g.committing {
             g.key = None;
+            g.dropped = None;
         }
     });
 }
@@ -367,7 +414,9 @@ fn request_target(key: Key) {
                 let def_name = def_name.clone().unwrap_or_else(|| "the Transform".into());
                 let span = (preview_from, preview_to);
                 let t0 = now();
-                let proof = prove(session, revision, gen_seq, &item, span, tool, body).await;
+                // LV2: after a commit, the instance Rust carried through it.
+                let hint = crate::pick::instance_hint(session, revision).filter(|_| body);
+                let proof = prove(session, revision, gen_seq, &item, span, tool, body, hint.clone()).await;
                 let prove_ms = now() - t0;
                 // The world may have moved on while Rust proved it.
                 let current =
@@ -376,9 +425,19 @@ fn request_target(key: Key) {
                     return;
                 }
                 let t1 = now();
+                // Bind exactly the copy of the instance Rust proved (its span),
+                // never whatever the newest pick says now.
                 let bound = match proof {
-                    Ok(()) => ipc::gizmo_bind(gen_seq, span, root_index, name, translation)
-                        .and_then(|()| frame_agrees(rotation, scale)),
+                    Ok((instance, parent)) => ipc::gizmo_bind(
+                        gen_seq,
+                        span,
+                        root_index,
+                        name,
+                        translation,
+                        instance.as_ref().map(|i| (i.preview_from, i.preview_to)),
+                    )
+                    .and_then(|()| frame_agrees(rotation, scale))
+                    .map(|()| (instance, parent)),
                     Err(why) => Err(why),
                 };
                 let bind_ms = now() - t1;
@@ -387,7 +446,9 @@ fn request_target(key: Key) {
                     g.bind_ms.push(bind_ms);
                 });
                 match bound {
-                    Ok(()) => {
+                    Ok((instance, parent)) => {
+                        let nested = parent.is_some();
+                        let carried = hint.is_some();
                         let t = Target {
                             session,
                             revision,
@@ -402,9 +463,15 @@ fn request_target(key: Key) {
                             scale_orientation,
                             pivot,
                             shared: shared.clone(),
+                            instance,
+                            parent,
                         };
                         let released = GIZMO.with_borrow_mut(|g| {
                             g.target = Some(t);
+                            g.dropped = None;
+                            if carried {
+                                g.continued += 1;
+                            }
                             g.ghost = None;
                             g.missing_field = None;
                             g.binds += 1;
@@ -422,13 +489,22 @@ fn request_target(key: Key) {
                         }
                         let in_proto = shared
                             .as_ref()
-                            .map(|sh| format!(" [shared PROTO {}: the drag previews the picked instance; a change edits all {}]", sh.proto, sh.instances))
+                            .map(|sh| {
+                                format!(
+                                    " [shared PROTO {}: the drag previews {}; a change edits all {} (the dashed outlines mark the others){}]",
+                                    sh.proto,
+                                    if carried { "the same instance as before" } else { "the picked instance" },
+                                    sh.instances,
+                                    if nested { "; handles follow the instance's parent frame" } else { "" }
+                                )
+                            })
                             .unwrap_or_default();
+                        let axes = if nested { "the instance's axes" } else { "world axes" };
                         msg(
                             "ok",
                             match tool {
                                 Tool::Move => format!("Move {def_name}: drag the X, Y or Z handle. Esc cancels; the Inspector takes exact values."),
-                                Tool::Rotate => format!("Rotate {def_name}: drag the X, Y or Z ring (world axes, about the center). Shift snaps to 15°. Esc cancels."),
+                                Tool::Rotate => format!("Rotate {def_name}: drag the X, Y or Z ring ({axes}, about the center). Shift snaps to 15°. Esc cancels."),
                                 Tool::Scale => format!("Scale {def_name}: drag an X, Y or Z handle (the object's scale axes), or the center square for uniform scale. Esc cancels."),
                             } + &in_proto,
                         );
@@ -443,6 +519,13 @@ fn request_target(key: Key) {
                         msg(
                             "refused",
                             match (&shared, why.as_str()) {
+                                // LV2: the continuation after a commit could
+                                // not be proven: dropped, never re-targeted.
+                                (Some(sh), _) if GIZMO.with_borrow(|g| g.dropped.is_some()) => format!(
+                                    "The handles were dropped: after the change, the instance of PROTO {} you were editing cannot be proven ({}). Click it again in the viewport (Select tool). Nothing else was changed. [{why}]",
+                                    sh.proto,
+                                    GIZMO.with_borrow(|g| g.dropped.clone()).unwrap_or_default()
+                                ),
                                 (Some(sh), "proto-instance-not-picked") => format!(
                                     "PROTO {} has several instances on screen: click the instance to change in the viewport first (Select tool), then use the handles. Nothing was changed. [{why}]",
                                     sh.proto
@@ -505,11 +588,12 @@ async fn prove(
     span: (u64, u64),
     tool: Tool,
     body: bool,
-) -> Result<(), String> {
+    hint: Option<crate::pick::InstanceHint>,
+) -> Result<(Option<p::InstanceRef>, Option<[f64; 16]>), String> {
     let Some(gen) = crate::pick::active().filter(|g| g.seq == gen_seq) else {
         return Err("preview-scene-replaced".into());
     };
-    let snapshot = ipc::gizmo_locate(gen_seq, span.0, span.1, body)?;
+    let snapshot = ipc::gizmo_locate(gen_seq, span.0, span.1, body, hint.as_ref().map(|h| h.span))?;
     #[derive(serde::Serialize)]
     struct A {
         request: p::TranslateProveRequest,
@@ -525,6 +609,7 @@ async fn prove(
                 item: item.to_string(),
                 snapshot,
                 tool,
+                instance: hint.as_ref().map(|h| h.item.clone()),
             },
         },
     )
@@ -533,7 +618,21 @@ async fn prove(
         p::TranslateProveOutcome::Proven {
             revision: rev,
             item: it,
-        } if rev == revision && it == item => Ok(()),
+            instance,
+            parent_frame,
+        } if rev == revision && it == item => {
+            // A body Transform must come with its instance; a carried one
+            // must be exactly the hint.
+            if body && instance.is_none() {
+                return Err("proto-instance-not-proven".into());
+            }
+            if let (Some(h), Some(i)) = (&hint, &instance) {
+                if h.item != i.item {
+                    return Err("proto-instance-changed".into());
+                }
+            }
+            Ok((instance, parent_frame))
+        }
         p::TranslateProveOutcome::Proven { .. } => Err("proof-for-another-node".into()),
         p::TranslateProveOutcome::Refused { reason, .. } => Err(reason),
         p::TranslateProveOutcome::Stale { .. } => Err("source-changed-since-preview".into()),
@@ -597,8 +696,11 @@ fn drag_to(x: f64, y: f64, shift: bool) {
         let r: Result<(&'static str, Vec<f64>), &'static str> = match d.grip {
             Grip::Axis(axis) => {
                 let i = axis.index();
-                gz::axis_param(&d.cam, t.origin, axis.unit(), x, y).and_then(|p| {
-                    let v = t.translation[i] + (p - d.t_start);
+                // LV2: along the PARENT axis; the world parameter divided by
+                // the frame's stretch is the parent-unit change.
+                let (dir, len) = t.move_axes().map_or((axis.unit(), 1.0), |a| a[i]);
+                gz::axis_param(&d.cam, t.origin_w(), dir, x, y).and_then(|p| {
+                    let v = t.translation[i] + (p - d.t_start) / len;
                     if !v.is_finite() {
                         return Err(gz::refusal::NOT_FINITE);
                     }
@@ -610,7 +712,7 @@ fn drag_to(x: f64, y: f64, shift: bool) {
                 })
             }
             Grip::Ring(axis) => {
-                gz::ring_angle(&d.cam, t.pivot, axis, d.radius, x, y).and_then(|a| {
+                gz::ring_angle_in(&d.cam, t.pivot_w(), t.parent.as_ref(), axis, d.radius, x, y).and_then(|a| {
                     d.raw += gz::angle_step(d.last_angle, a);
                     d.last_angle = a;
                     let v = if shift {
@@ -625,7 +727,7 @@ fn drag_to(x: f64, y: f64, shift: bool) {
                 })
             }
             Grip::Stretch(_) => {
-                gz::scale_factor(&d.cam, t.pivot, d.dir, d.t_start, x, y).map(|f| {
+                gz::scale_factor(&d.cam, t.pivot_w(), d.dir, d.t_start, x, y).map(|f| {
                     d.value = f;
                     ("scale", scaled(t.scale, d.grip, f).to_vec())
                 })
@@ -689,9 +791,9 @@ fn tick() {
             GIZMO.with_borrow_mut(|g| {
                 if let Some(t) = g.target.take() {
                     g.ghost = Some(if t.tool == Tool::Move {
-                        t.origin
+                        t.origin_w()
                     } else {
-                        t.pivot
+                        t.pivot_w()
                     });
                 }
                 g.key = key.clone();
@@ -730,9 +832,40 @@ fn tick() {
         (None, None, Some(cam)) => ghost.and_then(|o| ghost_view(&cam, tool, o)),
         _ => None,
     };
+    // LV2-C: handles are drawn only for a pivot inside the canvas. A pivot
+    // outside it would put handles over the toolbar or other panels; the
+    // overlays are also clipped to the canvas (style.css). A drag in
+    // progress keeps its handles (clipped) until it ends.
+    // A pivot behind the camera has no screen position: outside too.
+    let pivot = target
+        .as_ref()
+        .map(|t| if t.tool == Tool::Move { t.origin_w() } else { t.pivot_w() });
+    let outside = drag.is_none()
+        && pivot
+            .zip(cam)
+            .is_some_and(|(p, c)| !gz::project(&c, p).is_some_and(|q| c.contains(q)));
+    offscreen(outside);
+    let what = if outside { None } else { what };
     let drew = draw(what);
     if drew {
         GIZMO.with_borrow_mut(|g| g.frame_ms.push(now() - t0));
+    }
+}
+
+const OFFSCREEN_TEXT: &str = "The pivot is outside the view, so no handles are drawn. Use View → Frame Selection (or orbit) to bring it into view.";
+
+/// Enter or leave the "pivot outside the view" state (LV2-C). A newer
+/// status line written meanwhile (a new target) is kept to restore.
+fn offscreen(outside: bool) {
+    let u = ui();
+    if outside {
+        let current = u.gizmo_message.get_untracked();
+        if current.as_ref().map(|m| m.1.as_str()) != Some(OFFSCREEN_TEXT) {
+            GIZMO.with_borrow_mut(|g| g.offscreen = Some(current));
+            msg("none", OFFSCREEN_TEXT);
+        }
+    } else if let Some(before) = GIZMO.with_borrow_mut(|g| g.offscreen.take()) {
+        u.gizmo_message.set(before);
     }
 }
 
@@ -753,37 +886,48 @@ pub enum View {
     },
 }
 
+/// The world directions the scale components stretch: `R · SR · e_i`
+/// through the parent frame (LV2), unit length.
 fn scale_dirs(t: &Target) -> Option<[[f64; 3]; 3]> {
-    gz::scale_axes(t.rotation, t.scale_orientation)
+    let d = gz::scale_axes(t.rotation, t.scale_orientation)?;
+    let w = d.map(|v| gz::unit_len(gz::frame_dir(t.parent.as_ref(), v)).map(|(u, _)| u));
+    Some([w[0]?, w[1]?, w[2]?])
+}
+
+/// The Move handle directions (world, unit).
+fn move_dirs(t: &Target) -> Option<[[f64; 3]; 3]> {
+    t.move_axes().map(|a| a.map(|(u, _)| u))
 }
 
 fn view_of(cam: &Camera, t: &Target, d: Option<&Drag>, busy: bool) -> Option<View> {
     let active = d.map(|d| d.grip);
     match t.tool {
         Tool::Move => {
+            let axes = t.move_axes()?;
             let o = match d {
                 Some(d) => {
                     let axis = d.grip.axis()?;
                     let off = d.value - t.translation[axis.index()];
-                    gz::add_scaled(t.origin, axis.unit(), off)
+                    let (dir, len) = axes[axis.index()];
+                    gz::add_scaled(t.origin_w(), dir, off * len)
                 }
-                None => t.origin,
+                None => t.origin_w(),
             };
-            gz::layout(cam, o).map(|layout| View::Handles {
+            gz::layout_dirs(cam, o, axes.map(|(u, _)| u)).map(|layout| View::Handles {
                 layout,
                 tool: Tool::Move,
                 disabled: busy,
                 active,
             })
         }
-        Tool::Rotate => gz::ring_layout(cam, t.pivot).map(|rings| View::Rings {
+        Tool::Rotate => gz::ring_layout_in(cam, t.pivot_w(), t.parent.as_ref()).map(|rings| View::Rings {
             rings,
             disabled: busy,
             active,
         }),
         Tool::Scale => {
             let dirs = scale_dirs(t)?;
-            let mut layout = gz::layout_dirs(cam, t.pivot, dirs)?;
+            let mut layout = gz::layout_dirs(cam, t.pivot_w(), dirs)?;
             // The dragged handle (or all three) shows its factor.
             if let Some(d) = d {
                 for h in layout.handles.iter_mut() {
@@ -795,7 +939,7 @@ fn view_of(cam: &Camera, t: &Target, d: Option<&Drag>, busy: bool) -> Option<Vie
                     if stretched {
                         h.tip = gz::project(
                             cam,
-                            gz::add_scaled(t.pivot, dirs[h.axis.index()], layout.length * d.value),
+                            gz::add_scaled(t.pivot_w(), dirs[h.axis.index()], layout.length * d.value),
                         );
                     }
                 }
@@ -1111,7 +1255,10 @@ fn start_drag(grip: Grip, ev: &web_sys::PointerEvent) {
     }
     let started: Result<Drag, String> = match grip {
         Grip::Axis(axis) => {
-            let Some(lay) = gz::layout(&cam, t.origin) else {
+            let (Some(axes), Some(dirs)) = (t.move_axes(), move_dirs(&t)) else {
+                return;
+            };
+            let Some(lay) = gz::layout_dirs(&cam, t.origin_w(), dirs) else {
                 return;
             };
             let h = lay.handles[axis.index()];
@@ -1119,24 +1266,26 @@ fn start_drag(grip: Grip, ev: &web_sys::PointerEvent) {
             if gz::segment_distance((x, y), lay.origin, tip) > 12.0 || !h.enabled {
                 return;
             }
-            gz::axis_param(&cam, t.origin, axis.unit(), x, y)
+            let (dir, len) = axes[axis.index()];
+            gz::axis_param(&cam, t.origin_w(), dir, x, y)
                 .map(|t_start| Drag {
                     t_start,
                     value: t.translation[axis.index()],
-                    decimals: gz::decimals_for(lay.units_per_px),
+                    // Parent units per pixel along this axis.
+                    decimals: gz::decimals_for(lay.units_per_px / len),
                     ..probe.clone()
                 })
                 .map_err(String::from)
         }
         Grip::Ring(axis) => {
-            let Some(rings) = gz::ring_layout(&cam, t.pivot) else {
+            let Some(rings) = gz::ring_layout_in(&cam, t.pivot_w(), t.parent.as_ref()) else {
                 return;
             };
             let ring = &rings.rings[axis.index()];
             if !ring.enabled || gz::polyline_distance((x, y), &ring.points) > 12.0 {
                 return;
             }
-            gz::ring_angle(&cam, t.pivot, axis, rings.radius, x, y)
+            gz::ring_angle_in(&cam, t.pivot_w(), t.parent.as_ref(), axis, rings.radius, x, y)
                 .map(|a| Drag {
                     t_start: a,
                     last_angle: a,
@@ -1147,7 +1296,7 @@ fn start_drag(grip: Grip, ev: &web_sys::PointerEvent) {
         }
         Grip::Stretch(axis) => {
             let Some(dirs) = scale_dirs(&t) else { return };
-            let Some(lay) = gz::layout_dirs(&cam, t.pivot, dirs) else {
+            let Some(lay) = gz::layout_dirs(&cam, t.pivot_w(), dirs) else {
                 return;
             };
             let h = lay.handles[axis.index()];
@@ -1156,7 +1305,7 @@ fn start_drag(grip: Grip, ev: &web_sys::PointerEvent) {
                 return;
             }
             let dir = dirs[axis.index()];
-            match gz::axis_param(&cam, t.pivot, dir, x, y) {
+            match gz::axis_param(&cam, t.pivot_w(), dir, x, y) {
                 // The press must be clearly away from the pivot, or the
                 // factor (distance / press distance) is unstable.
                 Ok(p) if p >= gz::MIN_ARM * 2.0 * lay.length => Ok(Drag {
@@ -1170,7 +1319,7 @@ fn start_drag(grip: Grip, ev: &web_sys::PointerEvent) {
             }
         }
         Grip::Uniform => {
-            let o = gz::project(&cam, t.pivot);
+            let o = gz::project(&cam, t.pivot_w());
             match o {
                 Some(o) if (x - o.0).hypot(y - o.1) <= 16.0 => {
                     probe.t_start = y;
@@ -1282,10 +1431,13 @@ async fn commit(d: Drag) {
     struct A<R> {
         request: R,
     }
+    // LV2: the instance the handles are on, carried through the edit.
+    let inst = t.instance.as_ref().map(|i| i.item.clone());
     let r = match d.grip {
         Grip::Axis(axis) => {
             let request = p::TranslateRequest {
                 confirm_shared,
+                instance: inst.clone(),
                 session: t.session,
                 base_revision: t.revision,
                 item: t.item.clone(),
@@ -1298,6 +1450,7 @@ async fn commit(d: Drag) {
         Grip::Ring(axis) => {
             let request = p::RotateRequest {
                 confirm_shared,
+                instance: inst.clone(),
                 session: t.session,
                 base_revision: t.revision,
                 item: t.item.clone(),
@@ -1309,6 +1462,7 @@ async fn commit(d: Drag) {
         Grip::Stretch(_) | Grip::Uniform => {
             let request = p::ScaleRequest {
                 confirm_shared,
+                instance: inst.clone(),
                 session: t.session,
                 base_revision: t.revision,
                 item: t.item.clone(),
@@ -1327,6 +1481,8 @@ async fn commit(d: Drag) {
             view,
             item,
             text,
+            instance,
+            instance_lost,
         }) => {
             // A reply for a document that is no longer shown is not adopted
             // (Rust applied it to its own session; nothing here moves).
@@ -1345,14 +1501,46 @@ async fn commit(d: Drag) {
                 });
                 g.released_at = Some((released, state.revision));
                 g.target = None;
-                g.ghost = Some(match d.grip {
-                    Grip::Axis(a) => {
-                        gz::add_scaled(t.origin, a.unit(), d.value - t.translation[a.index()])
+                g.ghost = Some(match (d.grip, t.move_axes()) {
+                    (Grip::Axis(a), Some(axes)) => {
+                        let (dir, len) = axes[a.index()];
+                        gz::add_scaled(t.origin_w(), dir, (d.value - t.translation[a.index()]) * len)
                     }
-                    _ => t.pivot,
+                    _ => t.pivot_w(),
                 });
                 g.drawn.clear();
             });
+            // B3 (LV2): continue on the SAME instance only when Rust carried
+            // it through this edit; otherwise the handles drop (with the
+            // reason) until the user clicks an instance again.
+            let mut carried_note = String::new();
+            if let Some(sh) = &t.shared {
+                match instance {
+                    Some(i) => {
+                        crate::pick::set_instance_hint(Some(crate::pick::InstanceHint {
+                            session: t.session,
+                            revision: state.revision,
+                            item: i.item,
+                            span: (i.preview_from, i.preview_to),
+                        }));
+                        carried_note = format!(
+                            " Shared PROTO {}: all {} instances changed; the handles stay on the same instance.",
+                            sh.proto, sh.instances
+                        );
+                    }
+                    None => {
+                        crate::pick::set_instance_hint(None);
+                        let why = instance_lost.unwrap_or_else(|| "instance-not-known".into());
+                        carried_note = format!(
+                            " Shared PROTO {}: all {} instances changed.",
+                            sh.proto, sh.instances
+                        );
+                        if t.instance.is_some() {
+                            GIZMO.with_borrow_mut(|g| g.dropped = Some(why));
+                        }
+                    }
+                }
+            }
             u.field_error.set(None);
             editor::adopt_change(&state, view);
             let sel = ui::Selected {
@@ -1369,7 +1557,7 @@ async fn commit(d: Drag) {
             msg(
                 "ok",
                 format!(
-                    "{verb} {} {} to {text} (revision {}).",
+                    "{verb} {} {} to {text} (revision {}).{carried_note}",
                     t.def,
                     d.grip.label(),
                     state.revision

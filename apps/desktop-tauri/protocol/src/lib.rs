@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod camera;
 pub mod command;
+pub mod duplicate;
 pub mod gizmo;
 pub mod highlight;
 pub mod layout;
@@ -107,6 +108,13 @@ pub enum HistoryOutcome {
         /// The selected node's item id carried through the exact change, or
         /// `None` when it cannot be proven (or nothing was selected).
         item: Option<String>,
+        /// LV2-C: the selected PROTO body node's rendered instance, carried
+        /// through the exact change (proven like a gizmo commit's), or why
+        /// it could not be (`instance_lost`). Both `None` when none was sent.
+        #[serde(default)]
+        instance: Option<InstanceRef>,
+        #[serde(default)]
+        instance_lost: Option<String>,
     },
     Nothing,
 }
@@ -675,6 +683,13 @@ pub struct StructureEditRequest {
     /// The user confirmed editing a shared PROTO definition.
     #[serde(default)]
     pub confirm_shared: bool,
+    /// LV2-C Duplicate: where the copy goes -- a signed step along one
+    /// parent axis, chosen by the editor from the node's PROVEN rendered
+    /// size and the current view (`duplicate::choose`; VIEW data, never
+    /// identity). `None` (no proven size): the copy is placed exactly over
+    /// the original and the status line says why.
+    #[serde(default)]
+    pub offset: Option<duplicate::Offset>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -691,6 +706,10 @@ pub enum StructureEditOutcome {
         /// Duplicate: `[old, new]` DEF names renamed in the copy.
         #[serde(default)]
         renamed: Vec<(String, String)>,
+        /// P0-B Duplicate: how the copy was placed beside the original
+        /// (one sentence for the status line).
+        #[serde(default)]
+        placement: Option<String>,
     },
     /// Refused; the buffer and revision are unchanged.
     Refused { reason: String, message: String },
@@ -774,6 +793,22 @@ pub struct TranslateProveRequest {
     /// VISUAL-4B: the tool the binding is for (its target gate is re-run).
     #[serde(default)]
     pub tool: gizmo::Tool,
+    /// B3 (LV2): continuation after a commit -- the PROTO instance (node
+    /// item of THIS revision) the binding must be proven through. A chain
+    /// through any other instance is refused (`proto-instance-changed`).
+    #[serde(default)]
+    pub instance: Option<String>,
+}
+
+/// B3 (LV2): one PROTO instance in the document scene, the one a body
+/// Transform's runtime copy was proven through.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceRef {
+    /// `node-<from>-<to>` of the instance in its revision.
+    pub item: String,
+    pub preview_from: u64,
+    pub preview_to: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -783,6 +818,15 @@ pub enum TranslateProveOutcome {
     Proven {
         revision: u64,
         item: String,
+        /// B3 (LV2): a PROTO body Transform -- the instance its runtime
+        /// copy was proven through.
+        #[serde(default)]
+        instance: Option<InstanceRef>,
+        /// B3 (LV2): the instance's parent frame (column-major, maps the
+        /// body Transform's parent coordinates to world), composed by Rust
+        /// from the proven ancestors' SOURCE frames. `None`: the world.
+        #[serde(default)]
+        parent_frame: Option<[f64; 16]>,
     },
     Refused {
         reason: String,
@@ -866,6 +910,11 @@ pub enum HighlightProveOutcome {
         item: String,
         node_type: String,
         ancestors: Vec<HighlightAncestor>,
+        /// LV2: the node is not a rendered object of its own (Material,
+        /// Coordinate, ...): the outline is of THIS owning Shape (proven in
+        /// the same chain), and `ancestors` start above it.
+        #[serde(default)]
+        owner: Option<HighlightAncestor>,
     },
     Refused {
         reason: String,
@@ -913,6 +962,10 @@ pub struct TranslateRequest {
     /// B3: the user confirmed editing a shared PROTO definition.
     #[serde(default)]
     pub confirm_shared: bool,
+    /// B3 (LV2): the PROTO instance (node item of `base_revision`) the
+    /// gizmo was bound through; carried into the new revision in the reply.
+    #[serde(default)]
+    pub instance: Option<String>,
 }
 
 /// VISUAL-4B: one completed rotation drag. `delta` (radians) turns the
@@ -929,6 +982,10 @@ pub struct RotateRequest {
     /// B3: the user confirmed editing a shared PROTO definition.
     #[serde(default)]
     pub confirm_shared: bool,
+    /// B3 (LV2): the PROTO instance (node item of `base_revision`) the
+    /// gizmo was bound through; carried into the new revision in the reply.
+    #[serde(default)]
+    pub instance: Option<String>,
 }
 
 /// VISUAL-4B: one completed scale drag: `scale[axis] *= factor`, or every
@@ -944,6 +1001,10 @@ pub struct ScaleRequest {
     /// B3: the user confirmed editing a shared PROTO definition.
     #[serde(default)]
     pub confirm_shared: bool,
+    /// B3 (LV2): the PROTO instance (node item of `base_revision`) the
+    /// gizmo was bound through; carried into the new revision in the reply.
+    #[serde(default)]
+    pub instance: Option<String>,
 }
 
 /// The outcome of a Move, Rotate or Scale commit.
@@ -957,6 +1018,14 @@ pub enum TranslateOutcome {
         view: String,
         item: String,
         text: String,
+        /// B3 (LV2): the request's PROTO instance carried into the NEW
+        /// revision through the edit's exact changes (its bytes unchanged,
+        /// the same PROTO instance at the mapped span). `None` when there
+        /// was none, or it cannot be proven (`instance_lost` says why).
+        #[serde(default)]
+        instance: Option<InstanceRef>,
+        #[serde(default)]
+        instance_lost: Option<String>,
     },
     /// The value rounds to the current one: nothing changed.
     Unchanged,
@@ -1331,6 +1400,19 @@ pub struct PickClick {
     pub logical: Option<[u64; 2]>,
     #[serde(default)]
     pub oracle_status: Option<String>,
+    /// P0-A: the expected answers of clicking AGAIN at the same point, in
+    /// order (each selects the next Shape behind; the last wraps around).
+    #[serde(default)]
+    pub then: Vec<PickThen>,
+}
+
+/// P0-A: one repeated click's expected answer.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PickThen {
+    pub status: String,
+    #[serde(default)]
+    pub logical: Option<[u64; 2]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

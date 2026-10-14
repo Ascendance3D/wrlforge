@@ -585,7 +585,10 @@
       return { graph: Object.freeze(graph), label, ctxKind };
     }
 
-    function pick(clientX, clientY) {
+    // `layer` (P0-A): which Shape under the pointer, 0 = the nearest (the
+    // plain pick), 1 = the one behind it, ... modulo the number found. The
+    // snapshot reports `layer` (the one returned) and `layers` (how many).
+    function pick(clientX, clientY, layer) {
       const c = compatibility();
       if (!c.ok) return snap('disabled', c.reason, null);
       if (!active) return snap('stale', retiredReason, null);
@@ -618,7 +621,10 @@
         return snap('disabled', 'hit-shape-changed', null);
       }
       if (!(hit.id > 0) || !hit.shapeNode) return snap('no-hit', 'no-geometry-under-pointer', generation);
-      const shape = hit.shapeNode;
+      const want = Number.isInteger(layer) && layer > 0 ? layer : 0;
+      const layers = hitLayers(x, y, hit);
+      const chosen = layers[want % layers.length];
+      const shape = chosen.shape;
       if (!fn(shape, 'getParents') || !fn(shape, 'getExecutionContext')) {
         structuralDisable('runtime-parents-unavailable', false);
         return snap('unsupported', 'runtime-parents-unavailable', generation);
@@ -638,9 +644,69 @@
       return snap('hit', null, generation, {
         shape: label(shape),
         ctxKind: ctxKind(shape),
-        sensors: Object.freeze([...hit.sensors.keys()].map(typeOf)),
+        sensors: Object.freeze(chosen.sensors.map(typeOf)),
         graph,
+        layer: want % layers.length,
+        layers: layers.length,
       });
+    }
+
+    // ---- P0-A hit layers (depth peeling) ---------------------------------------
+    // X_ITE 16.5.0's touch() is a GPU id pass: getWorld().traverse(POINTER)
+    // makes every pointing Shape call renderObject.addPointingShape(this) from
+    // Shape.prototype.traverse, the shapes are drawn into a 1x1 id/depth
+    // buffer and getHit() reports the ONE nearest id -- a transparent coat
+    // over opaque paint always wins. There is no hit list to read. To reach
+    // the shapes BEHIND it, the hit Shape is taken out of the pointer pass by
+    // shadowing its `traverse` with an OWN no-op, touch() is repeated, and the
+    // next-nearest Shape answers; and so on. All of it runs synchronously
+    // (touch() renders and reads its pixel without yielding), so no frame is
+    // drawn and no event is processed with a Shape missing, and every shadow
+    // is deleted in `finally` -- after which the frontmost hit is re-touched
+    // so X_ITE's hit state is exactly what a plain touch() leaves.
+    const MAX_LAYERS = 8;
+    const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+    function quietTraverse() {}
+    function hideFromPointer(shape) {
+      if (!shape || typeof shape !== 'object' || hasOwn(shape, 'traverse') || !fn(shape, 'traverse')) return false;
+      try {
+        Object.defineProperty(shape, 'traverse', { value: quietTraverse, configurable: true, writable: true });
+      } catch (e) {
+        return false;
+      }
+      return shape.traverse === quietTraverse;
+    }
+    function unhide(shape) {
+      if (hasOwn(shape, 'traverse') && shape.traverse === quietTraverse) delete shape.traverse;
+    }
+    // The Shapes under (x, y), front to back, each with the sensors its own
+    // touch() reported. `hit` is the record getHit() returned for the plain
+    // touch: X_ITE keeps ONE hit record per browser (getHit() returns
+    // this[_hit]; touch(x, y, hit = this[_hit]) rewrites it), so it is read
+    // again after every strict-true touch() rather than calling getHit()
+    // twice. Were it ever a copy, the front Shape would "answer again" and
+    // the list would stop at one layer -- the plain pick, never a guess.
+    function hitLayers(x, y, hit) {
+      const layers = [{ shape: hit.shapeNode, sensors: [...hit.sensors.keys()] }];
+      const hidden = [];
+      try {
+        while (layers.length < MAX_LAYERS) {
+          const front = layers[layers.length - 1].shape;
+          if (!hideFromPointer(front)) break;
+          hidden.push(front);
+          if (liveBrowser.touch(x, y) !== true) break;
+          if (!(hit.id > 0) || !hit.shapeNode || !(hit.sensors instanceof Map)) break;
+          // A Shape already listed answering again means hiding did not
+          // work: stop rather than list it twice.
+          const next = hit.shapeNode;
+          if (layers.some((l) => l.shape === next)) break;
+          layers.push({ shape: next, sensors: [...hit.sensors.keys()] });
+        }
+      } finally {
+        for (const s of hidden) unhide(s);
+        if (hidden.length) liveBrowser.touch(x, y);
+      }
+      return layers;
     }
 
     // ---- VISUAL-3A1 runtime binding (span -> runtime node) ----------------------
@@ -734,16 +800,70 @@
       return false;
     }
 
+    // B3 (LV2): the DOCUMENT instance a body copy belongs to, as
+    // { node, start, end } (its ONE provenance occurrence), or null. Climbs
+    // the copy's runtime parents to its body execution context; the context
+    // must be the body of exactly ONE instance node that is itself a
+    // document node with exactly one recorded occurrence. Never a search by
+    // value, name or position.
+    function instanceOf(g, copy) {
+      const outers = new Set();
+      const seen = new Set();
+      const stack = [copy];
+      while (stack.length && seen.size < 4096) {
+        const n = stack.pop();
+        if (!n || seen.has(n)) continue;
+        seen.add(n);
+        if (n instanceof X3D.X3DExecutionContext) {
+          if (n === g.scene) return null; // not inside an instance body
+          let outer = null;
+          try { outer = fn(n, 'getOuterNode') ? n.getOuterNode() : null; } catch (e) { outer = null; }
+          if (outer instanceof X3D.X3DBaseNode && fn(outer, 'getBody') && outer.getBody() === n
+            && !(fn(outer, 'getProtoDeclaration') && outer.getProtoDeclaration() === outer)) outers.add(outer);
+          else return null;
+          continue;
+        }
+        if (fn(n, 'getParents')) for (const q of n.getParents()) stack.push(q);
+      }
+      if (outers.size !== 1) return null;
+      const inst = [...outers][0];
+      const occ = g.occ.get(inst) || [];
+      if (occ.length !== 1) return null;
+      return { node: inst, start: occ[0].start, end: occ[0].end };
+    }
+
+    // The span hint `inst` ({ start, end } of a document instance), or null.
+    function hintOf(inst) {
+      if (!inst || typeof inst !== 'object') return null;
+      const start = Number(inst.start), end = Number(inst.end);
+      return Number.isInteger(start) && Number.isInteger(end) && start >= 0 && end > start ? { start, end } : null;
+    }
+
     // { node } or { node: null, reason }. `keep`: a node bound earlier; it
     // stays the answer while it is still one of the candidates (a later pick
-    // elsewhere never re-targets a binding).
-    function bodyNode(g, start, end, keep) {
+    // elsewhere never re-targets a binding). LV2 `inst`: the exact source
+    // span of the instance whose copy is meant (a continuation after a
+    // commit, carried by Rust through the edit): the ONE copy whose
+    // instance has exactly that occurrence, else nothing -- it replaces the
+    // pick, never falls back to it.
+    function bodyNode(g, start, end, keep, inst) {
       if (!g.protoBySpan || !g.copiesOf) return { node: null, reason: 'proto-provenance-unavailable' };
       if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start) return { node: null, reason: 'runtime-node-for-span-not-unique' };
       const decl = g.protoBySpan.get(`${start}:${end}`);
       if (!decl || decl.size !== 1) return { node: null, reason: 'runtime-node-for-span-not-unique' };
       const copies = g.copiesOf.get([...decl][0]) || [];
       if (copies.length === 0) return { node: null, reason: 'proto-instance-not-rendered' };
+      const hint = hintOf(inst);
+      if (inst != null && !hint) return { node: null, reason: 'proto-instance-not-proven' };
+      if (hint) {
+        const at = copies.filter((c) => {
+          const i = instanceOf(g, c);
+          return !!i && i.start === hint.start && i.end === hint.end;
+        });
+        if (at.length !== 1) return { node: null, reason: 'proto-instance-not-proven' };
+        if (keep) return at[0] === keep ? { node: keep } : { node: null, reason: 'runtime-node-not-proven' };
+        return { node: at[0] };
+      }
       if (keep) return copies.includes(keep) ? { node: keep } : { node: null, reason: 'runtime-node-not-proven' };
       if (copies.length === 1) return { node: copies[0] };
       const hit = g.lastHit;
@@ -754,12 +874,12 @@
 
     // PLAIN DATA for Rust to prove: the chosen instance node's runtime chain
     // (through BODY: to its instance, up to the scene), like snapshotSpan.
-    function snapshotBodySpan(generation, start, end) {
+    function snapshotBodySpan(generation, start, end, inst) {
       const c = compatibility();
       if (!c.ok) return snap('disabled', c.reason, null);
       const g = usable(generation);
       if (!g) return snap('stale', 'preview-scene-replaced', generation);
-      const { node, reason } = bodyNode(g, start, end);
+      const { node, reason } = bodyNode(g, start, end, null, inst == null ? null : inst);
       if (!node) return snap('unsupported', reason, generation);
       if (!fn(node, 'getParents') || !fn(node, 'getExecutionContext')) return snap('unsupported', 'runtime-parents-unavailable', generation);
       const r = snapshotGraph(g, node);
@@ -776,10 +896,31 @@
     // The chosen instance's runtime node -- TRUSTED JavaScript layer only.
     // `keep` (optional): re-prove an earlier answer (same generation, same
     // span, still a copy of that one declaration node).
-    function bodyNodeAt(generation, start, end, keep) {
+    function bodyNodeAt(generation, start, end, keep, inst) {
       const g = usable(generation);
       if (!g) return null;
-      return bodyNode(g, start, end, keep && typeof keep === 'object' ? keep : null).node || null;
+      return bodyNode(g, start, end, keep && typeof keep === 'object' ? keep : null, inst == null ? null : inst).node || null;
+    }
+
+    // B3 (LV2): the instances that render a copy of the body statement at
+    // [start, end): PLAIN DATA, one frozen { start, end } per copy whose
+    // document instance is proven (instanceOf), in copy order, plus how
+    // many copies could not be attributed. For the secondary outline of the
+    // OTHER instances an edit of the shared definition changes; each one is
+    // then bound and proven like the picked one (by its span hint).
+    function bodyInstances(generation, start, end) {
+      const g = usable(generation);
+      if (!g || !g.protoBySpan || !g.copiesOf) return Object.freeze({ instances: Object.freeze([]), unproven: 0 });
+      const decl = g.protoBySpan.get(`${start}:${end}`);
+      if (!decl || decl.size !== 1) return Object.freeze({ instances: Object.freeze([]), unproven: 0 });
+      const out = [];
+      let unproven = 0;
+      for (const c of g.copiesOf.get([...decl][0]) || []) {
+        const i = instanceOf(g, c);
+        if (i && !out.some((o) => o.start === i.start && o.end === i.end)) out.push(Object.freeze({ start: i.start, end: i.end }));
+        else if (!i) unproven += 1;
+      }
+      return Object.freeze({ instances: Object.freeze(out), unproven });
     }
 
     // The runtime ancestors of a bound body copy, checked against the spans
@@ -848,8 +989,9 @@
 
     // The WHOLE public surface (contract §Private X_ITE adapter, plus the
     // VISUAL-3A1 binding amendment: snapshotSpan, nodeAt, spansOf, and the
-    // B3 PROTO body binding: snapshotBodySpan, bodyNodeAt, chainOf).
-    return Object.freeze({ compatibility, parseWithProvenance, activate, retire, pick, abort, dispose, snapshotSpan, nodeAt, spansOf, snapshotBodySpan, bodyNodeAt, chainOf });
+    // B3 PROTO body binding: snapshotBodySpan, bodyNodeAt, chainOf, and the
+    // LV2 instance listing bodyInstances).
+    return Object.freeze({ compatibility, parseWithProvenance, activate, retire, pick, abort, dispose, snapshotSpan, nodeAt, spansOf, snapshotBodySpan, bodyNodeAt, chainOf, bodyInstances });
   }
 
   const pickAdapterApi = Object.freeze({ createXitePickAdapter });

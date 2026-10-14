@@ -258,11 +258,16 @@ impl Camera {
             && self.rect[2] > 0.0
             && self.rect[3] > 0.0
     }
-    fn view_proj(&self) -> [f64; 16] {
+    /// Is the client point (CSS px) inside the rendered canvas rectangle?
+    pub fn contains(&self, p: (f64, f64)) -> bool {
+        let [l, t, w, h] = self.rect;
+        p.0 >= l && p.0 <= l + w && p.1 >= t && p.1 <= t + h
+    }
+    pub(crate) fn view_proj(&self) -> [f64; 16] {
         mat_mul(&self.proj, &self.view)
     }
     /// Normalized device coordinates → client CSS px.
-    fn ndc_to_client(&self, x: f64, y: f64) -> (f64, f64) {
+    pub(crate) fn ndc_to_client(&self, x: f64, y: f64) -> (f64, f64) {
         let [vx, vy, vw, vh] = self.viewport;
         let px = vx + (x + 1.0) / 2.0 * vw;
         let py = vy + (y + 1.0) / 2.0 * vh;
@@ -524,13 +529,69 @@ fn sight(cam: &Camera, p: V3) -> Option<V3> {
     norm(sub(p, [iv[12], iv[13], iv[14]]))
 }
 
+/// B3 (LV2): `p` through a parent frame `m` (column-major affine, as
+/// `mat_mul`); unchanged for `None` (the world).
+pub fn frame_point(m: Option<&[f64; 16]>, p: V3) -> V3 {
+    match m {
+        None => p,
+        Some(m) => {
+            let h = mul4(m, [p[0], p[1], p[2], 1.0]);
+            [h[0], h[1], h[2]]
+        }
+    }
+}
+
+/// B3 (LV2): the direction `v` through the LINEAR part of a parent frame
+/// (not normalized: its length is the frame's stretch along `v`).
+pub fn frame_dir(m: Option<&[f64; 16]>, v: V3) -> V3 {
+    match m {
+        None => v,
+        Some(m) => {
+            let h = mul4(m, [v[0], v[1], v[2], 0.0]);
+            [h[0], h[1], h[2]]
+        }
+    }
+}
+
+/// `v` as (unit vector, length); `None` for a zero or non-finite vector.
+pub fn unit_len(v: V3) -> Option<(V3, f64)> {
+    let l = dot(v, v).sqrt();
+    norm(v).map(|u| (u, l))
+}
+
+/// A ring's world (normal, u, v) in the parent frame `m`: the images of
+/// the parent axis and its in-plane basis. For a conformal frame with a
+/// positive determinant (Rust refuses Rotate otherwise) they stay
+/// orthonormal and right-handed, so a world angle IS the parent angle.
+fn ring_frame(axis: Axis, m: Option<&[f64; 16]>) -> Option<(V3, V3, V3)> {
+    let (u, v) = ring_basis(axis);
+    match m {
+        None => Some((axis.unit(), u, v)),
+        Some(_) => Some((
+            norm(frame_dir(m, axis.unit()))?,
+            norm(frame_dir(m, u))?,
+            norm(frame_dir(m, v))?,
+        )),
+    }
+}
+
 /// Place the three rotation rings around world `pivot`.
 pub fn ring_layout(cam: &Camera, pivot: V3) -> Option<RingLayout> {
+    ring_layout_in(cam, pivot, None)
+}
+
+/// `ring_layout` about the axes of a parent frame `m` (B3 LV2: a PROTO
+/// instance under Transforms); `None` is the world.
+pub fn ring_layout_in(cam: &Camera, pivot: V3, m: Option<&[f64; 16]>) -> Option<RingLayout> {
     let (o, px_per_unit) = px_per_unit(cam, pivot)?;
     let radius = RING_PX / px_per_unit;
     let look = sight(cam, pivot)?;
+    let frames = Axis::ALL.map(|a| ring_frame(a, m));
+    if frames.iter().any(Option::is_none) {
+        return None;
+    }
     let rings = Axis::ALL.map(|axis| {
-        let (u, v) = ring_basis(axis);
+        let (n, u, v) = frames[axis.index()].expect("checked");
         let points: Vec<_> = (0..=RING_SEGMENTS)
             .map(|k| {
                 let th = k as f64 / RING_SEGMENTS as f64 * std::f64::consts::TAU;
@@ -542,8 +603,7 @@ pub fn ring_layout(cam: &Camera, pivot: V3) -> Option<RingLayout> {
                 project(cam, p)
             })
             .collect();
-        let enabled =
-            dot(axis.unit(), look).abs() >= MIN_RING_COS && points.iter().all(Option::is_some);
+        let enabled = dot(n, look).abs() >= MIN_RING_COS && points.iter().all(Option::is_some);
         Ring {
             axis,
             points,
@@ -594,7 +654,21 @@ pub fn ring_angle(
     cx: f64,
     cy: f64,
 ) -> Result<f64, &'static str> {
-    let p = plane_point(cam, pivot, axis.unit(), cx, cy)?;
+    ring_angle_in(cam, pivot, None, axis, radius, cx, cy)
+}
+
+/// `ring_angle` about the parent frame `m`'s `axis` (B3 LV2).
+pub fn ring_angle_in(
+    cam: &Camera,
+    pivot: V3,
+    m: Option<&[f64; 16]>,
+    axis: Axis,
+    radius: f64,
+    cx: f64,
+    cy: f64,
+) -> Result<f64, &'static str> {
+    let (n, u, v) = ring_frame(axis, m).ok_or(refusal::NOT_FINITE)?;
+    let p = plane_point(cam, pivot, n, cx, cy)?;
     let a = sub(p, pivot);
     let l = dot(a, a).sqrt();
     if !l.is_finite() || !radius.is_finite() {
@@ -603,7 +677,6 @@ pub fn ring_angle(
     if l < MIN_ARM * radius {
         return Err(refusal::TOO_CLOSE);
     }
-    let (u, v) = ring_basis(axis);
     let th = dot(a, v).atan2(dot(a, u));
     if th.is_finite() {
         Ok(th)

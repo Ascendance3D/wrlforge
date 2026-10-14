@@ -96,6 +96,7 @@ pub enum CommandId {
     EditGoToLine,
     EditDeleteNode,
     EditDuplicateNode,
+    EditClearSelection,
     ViewThemeTokyoNight,
     ViewThemeTokyoNightStorm,
     ViewThemeTokyoNightLight,
@@ -106,6 +107,7 @@ pub enum CommandId {
     ViewZoomReset,
     // B2-CAMERA: viewport camera (editor state only, never the source).
     ViewFitAll,
+    ViewFrameSelection,
     ViewFront,
     ViewBack,
     ViewLeft,
@@ -675,6 +677,20 @@ pub const COMMANDS: &[CommandSpec] = &[
         native_keys: &[],
         check: Check::None,
     },
+    // Stage 2: the scene selection is view state; clearing it never edits.
+    CommandSpec {
+        id: CommandId::EditClearSelection,
+        key: "edit.clearSelection",
+        label: "Clear Selection",
+        menu: Menu::Edit,
+        shortcuts: &[],
+        requires: Requires::NodeSelected,
+        action: Action::UiOnly,
+        mutates_document: false,
+        hint: "Clear the scene selection: no outline, no handles (Esc in the 3D Viewport; the source is not changed)",
+        native_keys: &[],
+        check: Check::None,
+    },
     theme_cmd(CommandId::ViewThemeTokyoNight, "view.theme.tokyoNight", "Tokyo Night", "tokyo-night"),
     theme_cmd(CommandId::ViewThemeTokyoNightStorm, "view.theme.tokyoNightStorm", "Tokyo Night Storm", "tokyo-night-storm"),
     theme_cmd(CommandId::ViewThemeTokyoNightLight, "view.theme.tokyoNightLight", "Tokyo Night Light", "tokyo-night-light"),
@@ -709,6 +725,19 @@ pub const COMMANDS: &[CommandSpec] = &[
     planned(CommandId::ViewZoomReset, "view.zoomReset", "Actual Size", Menu::View, FUTURE_LANE),
     camera_cmd(CommandId::ViewFitAll, "view.camera.fit", "View All",
         "Fit: frame the whole scene in the 3D Viewport (camera only; the source is not changed)"),
+    CommandSpec {
+        id: CommandId::ViewFrameSelection,
+        key: "view.camera.frameSelection",
+        label: "Frame Selection",
+        menu: Menu::View,
+        shortcuts: &[],
+        requires: Requires::NodeSelected,
+        action: Action::UiOnly,
+        mutates_document: false,
+        hint: "Move the camera to show the selected object, looking the same way (camera only; the source is not changed)",
+        native_keys: &[],
+        check: Check::None,
+    },
     camera_cmd(CommandId::ViewFront, "view.camera.front", "Front", "Look at the whole scene from the front (along -Z)"),
     camera_cmd(CommandId::ViewBack, "view.camera.back", "Back", "Look at the whole scene from the back (along +Z)"),
     camera_cmd(CommandId::ViewLeft, "view.camera.left", "Left", "Look at the whole scene from the left (along +X)"),
@@ -717,11 +746,11 @@ pub const COMMANDS: &[CommandSpec] = &[
     camera_cmd(CommandId::ViewBottom, "view.camera.bottom", "Bottom", "Look up at the whole scene from below (along +Y)"),
     camera_cmd(CommandId::ViewResetCamera, "view.camera.reset", "Reset View",
         "Back to the bound viewpoint as authored (the default view is framed on the scene)"),
-    create_cmd(CommandId::CreateBox, "create.box", "Box", "Add a Box (2 × 2 × 2) inside a new Transform at the origin"),
-    create_cmd(CommandId::CreateSphere, "create.sphere", "Sphere", "Add a Sphere (radius 1) inside a new Transform at the origin"),
-    create_cmd(CommandId::CreateCylinder, "create.cylinder", "Cylinder", "Add a Cylinder (radius 1, height 2) inside a new Transform at the origin"),
-    create_cmd(CommandId::CreateCone, "create.cone", "Cone", "Add a Cone (bottom radius 1, height 2) inside a new Transform at the origin"),
-    create_cmd(CommandId::CreateExtrusion, "create.extrusion", "Extrusion", "Add an Extrusion (a closed hexagon outline swept along a 2-point spine, height 2) inside a new Transform at the origin"),
+    create_cmd(CommandId::CreateBox, "create.box", "Box", "Add a Box (2 × 2 × 2) inside a new Transform, placed in front of the camera (at 0 0 0 with Place at origin)"),
+    create_cmd(CommandId::CreateSphere, "create.sphere", "Sphere", "Add a Sphere (radius 1) inside a new Transform, placed in front of the camera (at 0 0 0 with Place at origin)"),
+    create_cmd(CommandId::CreateCylinder, "create.cylinder", "Cylinder", "Add a Cylinder (radius 1, height 2) inside a new Transform, placed in front of the camera (at 0 0 0 with Place at origin)"),
+    create_cmd(CommandId::CreateCone, "create.cone", "Cone", "Add a Cone (bottom radius 1, height 2) inside a new Transform, placed in front of the camera (at 0 0 0 with Place at origin)"),
+    create_cmd(CommandId::CreateExtrusion, "create.extrusion", "Extrusion", "Add an Extrusion (a closed hexagon outline swept along a 2-point spine, height 2) inside a new Transform, placed in front of the camera (at 0 0 0 with Place at origin)"),
     tool_cmd(CommandId::ToolSelect, "tool.select", "Select", Check::Pick,
         "Select: click an object in the viewport to select its exact source node (drag still moves the camera)"),
     tool_cmd(CommandId::ToolMove, "tool.move", "Move", Check::Gizmo(Tool::Move),
@@ -829,8 +858,11 @@ const fn camera_cmd(
 /// B2-CAMERA: unmodified keys that run a command only while the 3D Viewport
 /// (its tab or its canvas) has the focus. The one window shortcut handler
 /// reads this table after the primary-modifier one.
-pub const VIEWPORT_KEYS: &[(&str, CommandId)] =
-    &[("f", CommandId::ViewFitAll), ("home", CommandId::ViewFitAll)];
+pub const VIEWPORT_KEYS: &[(&str, CommandId)] = &[
+    ("f", CommandId::ViewFitAll),
+    ("home", CommandId::ViewFitAll),
+    ("escape", CommandId::EditClearSelection),
+];
 
 /// The viewport command for an unmodified key press, if any.
 pub fn from_viewport_key(key: &str, modified: bool) -> Option<CommandId> {
@@ -947,7 +979,7 @@ pub const ALLOWED_BACKEND: &[&str] = &[
 ];
 
 impl CommandId {
-    pub const ALL: [CommandId; 64] = [
+    pub const ALL: [CommandId; 66] = [
         CommandId::FileNewWorld,
         CommandId::FileOpen,
         CommandId::FileSave,
@@ -978,6 +1010,7 @@ impl CommandId {
         CommandId::EditGoToLine,
         CommandId::EditDeleteNode,
         CommandId::EditDuplicateNode,
+        CommandId::EditClearSelection,
         CommandId::ViewThemeTokyoNight,
         CommandId::ViewThemeTokyoNightStorm,
         CommandId::ViewThemeTokyoNightLight,
@@ -987,6 +1020,7 @@ impl CommandId {
         CommandId::ViewZoomOut,
         CommandId::ViewZoomReset,
         CommandId::ViewFitAll,
+        CommandId::ViewFrameSelection,
         CommandId::ViewFront,
         CommandId::ViewBack,
         CommandId::ViewLeft,
@@ -1280,6 +1314,7 @@ pub const MENUS: &[MenuDef] = {
                 Sep,
                 C(EditDeleteNode),
                 C(EditDuplicateNode),
+                C(EditClearSelection),
             ],
         },
         MenuDef {
@@ -1313,6 +1348,7 @@ pub const MENUS: &[MenuDef] = {
                 C(ViewTop),
                 C(ViewBottom),
                 C(ViewResetCamera),
+                C(ViewFrameSelection),
                 G("Zoom"),
                 C(ViewZoomIn),
                 C(ViewZoomOut),

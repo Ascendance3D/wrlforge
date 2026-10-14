@@ -20,6 +20,16 @@
 //! Only ancestors whose effect on the frame is known are accepted
 //! ([`ancestor_kind`]); a Billboard, a PROTO instance or anything else
 //! refuses rather than drawing a box in the wrong place.
+//!
+//! LV2 precise outline: where the renderer can report the node's rendered
+//! triangles and lines ([`ShapeReport`], X_ITE's own shape list of the SAME
+//! proven node), [`build_mesh`] turns them into an edge mesh once and
+//! [`display`] draws, every frame, its boundary, crease and silhouette
+//! edges -- the outline follows the geometry. The bounding box is only the
+//! fallback, and says why ([`Display::Box`]). Non-geometry nodes
+//! (Appearance, Material, a texture, Coordinate, ...) are not rendered
+//! objects of their own ([`node_role`]); the outline shows the Shape that
+//! owns them, labeled as the owner, and never claims bounds for them.
 
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +43,20 @@ pub mod refusal {
     pub const BEHIND_CAMERA: &str = super::gz::refusal::BEHIND_CAMERA;
     pub const CAMERA_INVALID: &str = super::gz::refusal::CAMERA_INVALID;
     pub const NOT_FINITE: &str = super::gz::refusal::NOT_FINITE;
+    /// LV2: the node is never drawn (a Viewpoint, a sensor, a light, ...).
+    pub const NOT_RENDERED: &str = "node-is-not-drawn";
+    /// LV2: a non-geometry node (Material, Coordinate, ...) whose owning
+    /// Shape is not in its proven chain.
+    pub const NO_OWNER: &str = "property-node-has-no-owning-shape";
+    // ---- LV2 precise-outline fallbacks (the bounding box is drawn) --------
+    /// The renderer cannot report the node's shapes.
+    pub const GEOMETRY_UNAVAILABLE: &str = "geometry-unavailable";
+    /// More triangles / lines than the outline draws per frame.
+    pub const TOO_DETAILED: &str = "geometry-too-detailed";
+    /// Only points (or nothing) to draw edges of.
+    pub const NO_EDGES: &str = "geometry-has-no-edges";
+    /// The shape report is malformed (counts, non-finite values).
+    pub const GEOMETRY_INVALID: &str = "geometry-report-invalid";
 }
 
 /// How a proven ancestor node changes the coordinate frame of its children.
@@ -42,6 +66,131 @@ pub enum AncestorKind {
     Transform,
     /// A grouping node that does not change the frame.
     Identity,
+}
+
+/// What a selected node is, for the selection display (LV2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeRole {
+    /// Geometry, a Shape, a grouping node or a PROTO instance: it may have
+    /// rendered geometry of its own; the renderer is asked.
+    Rendered,
+    /// A non-geometry node a Shape draws WITH (Appearance, Material, a
+    /// texture, Coordinate, ...): no bounds of its own; its owner is shown.
+    Property,
+    /// Never drawn (a Viewpoint, a sensor, a light, a Script, ...).
+    NotRendered,
+}
+
+/// The [`NodeRole`] of a node of type `node_type`. Unknown names (PROTO
+/// instances, X3D nodes) are `Rendered`: the renderer decides.
+pub fn node_role(node_type: &str) -> NodeRole {
+    match node_type {
+        "Appearance" | "Material" | "ImageTexture" | "PixelTexture" | "MovieTexture"
+        | "TextureTransform" | "Coordinate" | "Normal" | "Color" | "TextureCoordinate"
+        | "FontStyle" => NodeRole::Property,
+        "Viewpoint" | "NavigationInfo" | "Background" | "Fog" | "WorldInfo"
+        | "DirectionalLight" | "PointLight" | "SpotLight" | "Sound" | "AudioClip"
+        | "Script" | "TimeSensor" | "TouchSensor" | "PlaneSensor" | "CylinderSensor"
+        | "SphereSensor" | "ProximitySensor" | "VisibilitySensor" => NodeRole::NotRendered,
+        t if t.ends_with("Interpolator") => NodeRole::NotRendered,
+        _ => NodeRole::Rendered,
+    }
+}
+
+/// One sentence (no leading capital, no full stop) saying truthfully why no
+/// outline -- or only the bounding box -- is shown for refusal `reason`.
+/// Every reason code the highlight path can produce has its own entry;
+/// an unknown code says only that the preview cannot prove the object.
+pub fn refusal_message(reason: &str) -> &'static str {
+    use crate::highlight::refusal as r;
+    match reason {
+        r::NOT_RENDERED => "this node is not drawn, so it has no shape to outline",
+        r::NO_OWNER => "this node is not drawn by itself and no Shape that uses it was proven",
+        r::ANCESTOR => {
+            "it is inside a node whose placement the outline cannot follow (a Billboard or a node the preview does not model)"
+        }
+        r::ANCESTOR_DISAGREES | "runtime-ancestor-not-proven" | "proof-for-another-node" => {
+            "the preview's parent nodes no longer match the source"
+        }
+        r::NO_BOUNDS | "bounds-unavailable" | "node-has-no-rendered-geometry" => {
+            "it has no rendered geometry"
+        }
+        r::BEHIND_CAMERA => "part of it is behind the camera",
+        r::CAMERA_INVALID | "camera-unavailable" => "the viewport camera cannot be read",
+        r::NOT_FINITE => "its rendered size or placement is not a finite number",
+        r::GEOMETRY_UNAVAILABLE => "the preview cannot report its triangles",
+        r::TOO_DETAILED => "it has too many triangles to outline edge by edge",
+        r::NO_EDGES => "it has no edges to draw (points only)",
+        r::GEOMETRY_INVALID => "the preview reported its triangles inconsistently",
+        "proto-instance-not-picked" => {
+            "its PROTO has several instances on screen; click the instance in the viewport to outline it"
+        }
+        "proto-instance-not-rendered" => "no instance of its PROTO is drawn",
+        "proto-instance" | "proto-provenance-unavailable" => {
+            "it is part of a PROTO definition the preview cannot trace"
+        }
+        "runtime-node-for-span-not-unique" => {
+            "the preview has no single drawn object for this node (it is not drawn, or drawn more than once)"
+        }
+        "runtime-node-referenced-by-several-source-occurrences"
+        | "runtime-node-has-several-live-parents" => "it is shared (DEF/USE) by several places",
+        "document-has-syntax-errors" | "document-parse-capped" => {
+            "the document must parse cleanly first"
+        }
+        "not-a-node" => "only a node instance can be outlined",
+        "preview-scene-replaced" | "preview-shows-last-valid-scene" | "source-changed-since-preview" => {
+            "the preview is not showing the current text yet"
+        }
+        "adapter-unavailable" | "world-infrastructure-missing" => "the 3D preview is not available",
+        _ => "the preview cannot prove which rendered object this is",
+    }
+}
+
+/// LV2: the Inspector badge of a non-geometry node: what owns it, e.g.
+/// `Material of Shape at line 12` (or `of Shape Wheel` when the line is not
+/// known). `owner_label` is the owner's Scene Tree label (`Shape [DEF]`).
+pub fn owner_badge(node_type: &str, owner_label: &str, owner_line: Option<u32>) -> String {
+    match owner_line {
+        Some(l) => format!("{node_type} of {owner_label} at line {l}"),
+        None => format!("{node_type} of {owner_label}"),
+    }
+}
+
+/// LV2: the status-bar line for the selection: type, DEF, line, the owner
+/// of a non-geometry node and the PROTO context, e.g.
+/// `Selected: Material · line 40 · of Shape at line 37 · inside PROTO Car (shared, 2 instances)`.
+pub fn selection_summary(
+    node_type: &str,
+    def: Option<&str>,
+    line: Option<u32>,
+    owner: Option<(&str, Option<u32>)>,
+    context: Option<&str>,
+) -> String {
+    let mut parts = vec![match def {
+        Some(d) => format!("Selected: {node_type} {d}"),
+        None => format!("Selected: {node_type}"),
+    }];
+    if let Some(l) = line {
+        parts.push(format!("line {l}"));
+    }
+    if let Some((label, l)) = owner {
+        parts.push(match l {
+            Some(l) => format!("of {label} at line {l}"),
+            None => format!("of {label}"),
+        });
+    }
+    if let Some(c) = context {
+        parts.push(c.to_string());
+    }
+    parts.join(" · ")
+}
+
+/// LV2: `inside PROTO X (shared, N instance[s])`.
+pub fn proto_context(proto: &str, instances: u32) -> String {
+    format!(
+        "inside PROTO {proto} (shared, {instances} instance{})",
+        if instances == 1 { "" } else { "s" }
+    )
 }
 
 /// The frame effect of an ancestor of node type `node_type`, or `None` when
@@ -195,19 +344,11 @@ pub const EDGES: [(usize, usize); 12] = [
     (3, 7),
 ];
 
-/// The eight world corners of `bounds`. Refuses an empty box (X_ITE's
-/// zero matrix), an unknown ancestor, a Transform ancestor without a
-/// usable frame, or any non-finite value.
-pub fn world_corners(bounds: &Bounds) -> Result<[V3; 8], &'static str> {
-    let b = &bounds.r#box;
-    if !finite(b) {
-        return Err(refusal::NOT_FINITE);
-    }
-    if [0, 1, 2, 4, 5, 6, 8, 9, 10].iter().all(|&i| b[i] == 0.0) {
-        return Err(refusal::NO_BOUNDS);
-    }
-    let mut m = *b;
-    for a in &bounds.ancestors {
+/// The node-parent → world matrix of the proven `ancestors` (innermost
+/// first). Refuses an unknown ancestor or a Transform without a usable frame.
+pub fn ancestor_matrix(ancestors: &[RenderedAncestor]) -> Result<[f64; 16], &'static str> {
+    let mut m = identity();
+    for a in ancestors {
         if a.proto_instance {
             continue;
         }
@@ -221,6 +362,21 @@ pub fn world_corners(bounds: &Bounds) -> Result<[V3; 8], &'static str> {
             (None, _) => return Err(refusal::ANCESTOR),
         }
     }
+    Ok(m)
+}
+
+/// The eight world corners of `bounds`. Refuses an empty box (X_ITE's
+/// zero matrix), an unknown ancestor, a Transform ancestor without a
+/// usable frame, or any non-finite value.
+pub fn world_corners(bounds: &Bounds) -> Result<[V3; 8], &'static str> {
+    let b = &bounds.r#box;
+    if !finite(b) {
+        return Err(refusal::NOT_FINITE);
+    }
+    if [0, 1, 2, 4, 5, 6, 8, 9, 10].iter().all(|&i| b[i] == 0.0) {
+        return Err(refusal::NO_BOUNDS);
+    }
+    let m = gz::mat_mul(&ancestor_matrix(&bounds.ancestors)?, b);
     let mut out = [[0.0; 3]; 8];
     for (i, c) in out.iter_mut().enumerate() {
         let p = apply(&m, cube(i));
@@ -230,6 +386,21 @@ pub fn world_corners(bounds: &Bounds) -> Result<[V3; 8], &'static str> {
         *c = [p[0], p[1], p[2]];
     }
     Ok(out)
+}
+
+/// P0-B: the largest edge of the axis-aligned box that encloses `bounds`'
+/// box in the node's PARENT coordinates (no ancestor applied) -- the size a
+/// duplicate is moved by. `None` for an empty or non-finite box.
+pub fn parent_extent(bounds: &Bounds) -> Option<f64> {
+    let b = &bounds.r#box;
+    if !finite(b) {
+        return None;
+    }
+    // The cube [-1, 1]^3 maps onto the box: column i is a half-axis.
+    let e = (0..3)
+        .map(|r| 2.0 * (b[r].abs() + b[4 + r].abs() + b[8 + r].abs()))
+        .fold(0.0_f64, f64::max);
+    (e.is_finite() && e > 0.0).then_some(e)
 }
 
 /// One projected box edge in client CSS px.
@@ -253,7 +424,7 @@ pub fn outline(cam: &Camera, corners: &[V3; 8]) -> Result<[Edge; 12], &'static s
 
 /// The SVG path data (`M x y L x y` per edge) of `edges`, relative to the
 /// overlay origin (`ox`, `oy`) in client px.
-pub fn svg_path(edges: &[Edge; 12], ox: f64, oy: f64) -> String {
+pub fn svg_path(edges: &[Edge], ox: f64, oy: f64) -> String {
     edges
         .iter()
         .map(|((ax, ay), (bx, by))| {
@@ -268,6 +439,12 @@ pub fn svg_path(edges: &[Edge; 12], ox: f64, oy: f64) -> String {
         .collect::<Vec<_>>()
         .join("")
 }
+
+pub use mesh::{
+    build_mesh, display, fingerprint, mesh_edges, split_hidden, Display, EdgeSplit, Mesh, ShapeReport,
+};
+
+mod mesh;
 
 #[cfg(test)]
 mod tests;

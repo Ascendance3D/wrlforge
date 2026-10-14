@@ -475,12 +475,54 @@ fn free_name(used: &HashSet<&str>, taken: &HashSet<String>, name: &str) -> Optio
 }
 
 /// Plan the duplication of the node at `[node_from, node_to)`: a copy of its
-/// exact source text right after it, DEF names renamed in the copy.
+/// exact source text right after it, DEF names renamed in the copy. The copy
+/// sits exactly on the original; [`plan_duplicate_offset`] places it.
 pub fn plan_duplicate(src: &str, node_from: u64, node_to: u64, confirm_shared: bool) -> Plan {
+    duplicate_with(src, node_from, node_to, confirm_shared, None).0
+}
+
+/// P0-B: [`plan_duplicate`] with the copy moved `step` units (signed) along
+/// parent axis `axis` (0 = X, 1 = Y, 2 = Z), so the duplicate is visible
+/// next to the original. LV2-C: the editor chooses the axis from the view
+/// (see [`Placement`] for the rule). Only the COPY changes: the original's
+/// bytes are untouched (the edit is a pure insertion after it). Returns the
+/// plan and, when it is ready, how the copy was placed.
+pub fn plan_duplicate_offset(
+    src: &str,
+    node_from: u64,
+    node_to: u64,
+    confirm_shared: bool,
+    axis: usize,
+    step: f64,
+) -> (Plan, Option<Placement>) {
+    duplicate_with(src, node_from, node_to, confirm_shared, Some((axis, step)))
+}
+
+fn duplicate_with(
+    src: &str,
+    node_from: u64,
+    node_to: u64,
+    confirm_shared: bool,
+    step: Option<(usize, f64)>,
+) -> (Plan, Option<Placement>) {
+    let (plan, placement) = duplicate_inner(src, node_from, node_to, confirm_shared, step);
+    match plan {
+        Plan::Ready { .. } => (plan, placement),
+        r => (r, None),
+    }
+}
+
+fn duplicate_inner(
+    src: &str,
+    node_from: u64,
+    node_to: u64,
+    confirm_shared: bool,
+    step: Option<(usize, f64)>,
+) -> (Plan, Option<Placement>) {
     let p = parse(src);
     let (node, _slot) = match gate(&p, node_from, node_to, confirm_shared) {
         Ok(x) => x,
-        Err(r) => return r,
+        Err(r) => return (r, None),
     };
     // What the copy holds.
     let mut decl = false;
@@ -504,10 +546,10 @@ pub fn plan_duplicate(src: &str, node_from: u64, node_to: u64, confirm_shared: b
         }
     });
     if decl {
-        return refused(
+        return (refused(
             reason::CONTAINS_DECLARATION,
             "The node holds a PROTO or EXTERNPROTO declaration; a copy would declare it twice.",
-        );
+        ), None);
     }
     let defs = defs_inside(&p, node_from, node_to);
     let def_names: HashSet<&str> = defs.iter().map(|(n, _)| n.as_str()).collect();
@@ -516,13 +558,13 @@ pub fn plan_duplicate(src: &str, node_from: u64, node_to: u64, confirm_shared: b
             .iter()
             .any(|n| n.as_deref().is_some_and(|n| def_names.contains(n)))
     }) {
-        return refused(
+        return (refused(
             reason::RENAME_NOT_PROVABLE,
             format!(
                 "The ROUTE on line {line} inside the node names one of its DEFs; \
                  duplicating it would need an unproven rename."
             ),
-        );
+        ), None);
     }
     // Fresh names, one per DEF token.
     let used: HashSet<&str> = p
@@ -537,7 +579,7 @@ pub fn plan_duplicate(src: &str, node_from: u64, node_to: u64, confirm_shared: b
     let mut edits: Vec<(Range, String)> = Vec::new();
     for (name, r) in &defs {
         let Some(n) = free_name(&used, &taken, name) else {
-            return refused(reason::NO_FREE_NAME, "No free DEF name was found.");
+            return (refused(reason::NO_FREE_NAME, "No free DEF name was found."), None);
         };
         taken.insert(n.clone());
         new_name.insert(r.start.offset, n.clone());
@@ -557,13 +599,13 @@ pub fn plan_duplicate(src: &str, node_from: u64, node_to: u64, confirm_shared: b
                 .and_then(|r| g.edit_target(r))
                 .and_then(|d| new_name.get(&d.name_range.start.offset));
             let Some(t) = target else {
-                return refused(
+                return (refused(
                     reason::RENAME_NOT_PROVABLE,
                     format!(
                         "USE {n} on line {} does not provably name a DEF inside the node.",
                         nr.start.line
                     ),
-                );
+                ), None);
             };
             edits.push((*nr, t.clone()));
         }
@@ -576,13 +618,22 @@ pub fn plan_duplicate(src: &str, node_from: u64, node_to: u64, confirm_shared: b
     for (r, n) in &edits {
         let (f, t) = (r.start.byte as usize, r.end.byte as usize);
         if f < at || t > b {
-            return refused(reason::VERIFY_FAILED, "The rename spans overlap.");
+            return (refused(reason::VERIFY_FAILED, "The rename spans overlap."), None);
         }
         copy.push_str(&src[at..f]);
         copy.push_str(n);
         at = t;
     }
     copy.push_str(&src[at..b]);
+    // P0-B: move the copy (never the original) so it is visible.
+    let placement = match step {
+        Some((axis, s)) => {
+            let (placed, how) = place_copy(&p, &copy, axis, s);
+            copy = placed;
+            Some(how)
+        }
+        None => None,
+    };
 
     // Separated like its siblings: on its own line with the same indent, or
     // one space after it on a shared line.
@@ -600,7 +651,7 @@ pub fn plan_duplicate(src: &str, node_from: u64, node_to: u64, confirm_shared: b
         insert,
     };
     let Some(new_text) = splice(src, std::slice::from_ref(&edit)) else {
-        return refused(reason::VERIFY_FAILED, "The insertion point is not valid.");
+        return (refused(reason::VERIFY_FAILED, "The insertion point is not valid."), None);
     };
     let new_from = node_to + utf16_len(&sep);
     let new_to = new_from + utf16_len(&copy);
@@ -629,16 +680,236 @@ pub fn plan_duplicate(src: &str, node_from: u64, node_to: u64, confirm_shared: b
     let after = parse(&new_text);
     let proven = copy_ok && sound(&after) && same(expected, sigs(&after));
     if !proven {
-        return refused(
+        return (refused(
             reason::VERIFY_FAILED,
             "The copy could not be proven in the resulting document; nothing changed.",
-        );
+        ), None);
     }
-    Plan::Ready {
-        edit,
-        new_text,
-        node: Some((new_from, new_to)),
-        renamed,
+    (
+        Plan::Ready {
+            edit,
+            new_text,
+            node: Some((new_from, new_to)),
+            renamed,
+        },
+        placement,
+    )
+}
+
+/// P0-B: how a duplicate was placed next to its original.
+///
+/// THE RULE. The copy is moved `step` units (signed) along ONE axis of its
+/// parent's coordinate system (the original's own frame for the
+/// Transform's translation), so it sits beside the original:
+///
+/// * a `Transform` whose `translation` is three plain numbers: only the
+///   copy's lexeme on that axis is rewritten (`v + step`, rounded to the
+///   larger of the two decimal counts); the other two keep their exact
+///   lexemes;
+/// * a `Transform` without a `translation` field: the translation (`step`
+///   on the axis, `0` on the others) is written as the copy's first field;
+/// * a node that may be a Transform child -- `Shape`, `Group`, `Transform`
+///   (with a `translation IS ...` or otherwise non-literal value),
+///   `Billboard`, `Collision`, `LOD`, `Switch`, `Anchor`, `Inline`, or an
+///   instance of a PROTO declared once in this document whose type node is
+///   one of those -- is wrapped:
+///   `Transform { translation <offset> children [ <copy> ] }`;
+/// * anything else (sensors, interpolators, Script, lights whose scope
+///   would change, bindable nodes, EXTERNPROTO instances, ...) is copied in
+///   place, as before, and the reason is reported.
+///
+/// The editor derives `step` and the axis from the node's proven rendered
+/// size and the current view (`wrlforge_desktop_protocol::duplicate`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Placement {
+    /// The copy is a Transform; its translation on `axis` became `value`.
+    Translated { axis: char, value: String },
+    /// The copy is a Transform that had no translation; `vector` was written.
+    TranslationAdded { vector: String },
+    /// The copy was wrapped in a new Transform translated by `vector`.
+    Wrapped { vector: String },
+    /// The copy was not moved.
+    InPlace { why: String },
+}
+
+impl Placement {
+    /// One short sentence for the status line.
+    pub fn describe(&self) -> String {
+        match self {
+            Placement::Translated { axis, value } => {
+                format!("the copy's translation {axis} is now {value}")
+            }
+            Placement::TranslationAdded { vector } => {
+                format!("the copy was given translation {vector}")
+            }
+            Placement::Wrapped { vector } => {
+                format!("the copy was wrapped in a Transform at {vector}")
+            }
+            Placement::InPlace { why } => format!("the copy was not moved: {why}"),
+        }
+    }
+}
+
+/// The translation text: `step` on `axis`, `0` on the others.
+fn axis_vector(axis: usize, step: &str) -> String {
+    (0..3)
+        .map(|i| if i == axis { step } else { "0" })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Decimal places a number lexeme spells (an exponent counts as many).
+fn decimals_of(lexeme: &str) -> usize {
+    if lexeme.contains(['e', 'E']) {
+        return 6;
+    }
+    lexeme.split_once('.').map_or(0, |(_, f)| f.len()).min(6)
+}
+
+const WRAPPABLE: [&str; 9] = [
+    "Shape", "Group", "Transform", "Billboard", "Collision", "LOD", "Switch", "Anchor", "Inline",
+];
+
+/// May a copy of node type `ty` be wrapped in a Transform without changing
+/// what it means? A built-in grouping / geometry node, or an instance of a
+/// PROTO declared exactly once at the top of this document whose type node
+/// (the first body node) is one.
+fn wrappable(p: &ParseResult, ty: &str) -> bool {
+    if WRAPPABLE.contains(&ty) {
+        return true;
+    }
+    let decls: Vec<&crate::ast::Proto> = p
+        .tree
+        .statements
+        .iter()
+        .filter_map(|a| match a {
+            Ast::Proto(d) if d.name.as_deref() == Some(ty) => Some(d),
+            _ => None,
+        })
+        .collect();
+    let externs = p
+        .tree
+        .statements
+        .iter()
+        .any(|a| matches!(a, Ast::ExternProto(e) if e.name.as_deref() == Some(ty)));
+    if decls.len() != 1 || externs {
+        return false;
+    }
+    match decls[0].body.iter().find(|a| matches!(a, Ast::Node(_) | Ast::Use { .. })) {
+        Some(Ast::Node(n)) => WRAPPABLE.contains(&n.node_type.as_str()),
+        _ => false,
+    }
+}
+
+/// Place the copy `copy` (a lone node statement) `step` units along `axis`.
+/// Every rewrite is re-proven by the caller (the copy is re-parsed alone and
+/// in the document); anything unexpected here leaves the copy in place.
+fn place_copy(p: &ParseResult, copy: &str, axis: usize, step: f64) -> (String, Placement) {
+    let in_place = |why: &str| (copy.to_string(), Placement::InPlace { why: why.into() });
+    if axis > 2 {
+        return in_place("the offset axis is not X, Y or Z");
+    }
+    let Some(step_text) = crate::manipulate::format_component(step, 6) else {
+        return in_place("the offset is not a finite number");
+    };
+    let vector = axis_vector(axis, &step_text);
+    let alone = parse(copy);
+    let n = match alone.tree.statements.as_slice() {
+        [Ast::Node(n)] if sound(&alone) => n,
+        _ => return in_place("the copy could not be read on its own"),
+    };
+    let wrap = || {
+        (
+            format!("Transform {{ translation {vector} children [ {copy} ] }}"),
+            Placement::Wrapped {
+                vector: vector.clone(),
+            },
+        )
+    };
+    if n.node_type == "Transform" {
+        let fields: Vec<&crate::ast::Field> = n
+            .fields
+            .iter()
+            .filter_map(|a| match a {
+                Ast::Field(f) if f.name == "translation" => Some(f),
+                _ => None,
+            })
+            .collect();
+        match fields.as_slice() {
+            [] => {
+                // Before the first body statement, on its line; or into an
+                // empty body.
+                let at = match n.fields.first() {
+                    Some(first) => first.range().start.byte as usize,
+                    None => {
+                        let close = n.range.end.byte as usize - 1;
+                        let open = copy[..close].rfind('{');
+                        match open {
+                            Some(o) if copy[o + 1..close].trim().is_empty() => {
+                                let out = format!(
+                                    "{} translation {vector} }}{}",
+                                    &copy[..o + 1],
+                                    &copy[close + 1..]
+                                );
+                                return (
+                                    out,
+                                    Placement::TranslationAdded { vector },
+                                );
+                            }
+                            _ => return wrap(),
+                        }
+                    }
+                };
+                let line_start = copy[..at]
+                    .rfind(['\n', '\r'])
+                    .map_or(0, |i| i + 1);
+                let own_line = copy[line_start..at].bytes().all(is_hspace);
+                let sep = if own_line {
+                    format!("{}{}", dominant_eol(copy), &copy[line_start..at])
+                } else {
+                    " ".to_string()
+                };
+                let out = format!(
+                    "{}translation {vector}{sep}{}",
+                    &copy[..at],
+                    &copy[at..]
+                );
+                (out, Placement::TranslationAdded { vector })
+            }
+            [f] if !f.is_binding => match f.value.as_deref() {
+                Some(Ast::Numbers { values, .. })
+                    if values.len() == 3 && values.iter().all(|v| v.valid) =>
+                {
+                    let x = &values[axis];
+                    let (a, b) = (x.range.start.byte as usize, x.range.end.byte as usize);
+                    let d = decimals_of(&copy[a..b]).max(decimals_of(&step_text));
+                    let Some(nx) = crate::manipulate::format_component(x.value + step, d as u8)
+                    else {
+                        return in_place("the new translation is not a finite number");
+                    };
+                    if nx.parse::<f64>().ok() == Some(x.value) {
+                        return in_place("the translation is too large to move by this step");
+                    }
+                    let out = format!("{}{nx}{}", &copy[..a], &copy[b..]);
+                    (
+                        out,
+                        Placement::Translated {
+                            axis: ['X', 'Y', 'Z'][axis],
+                            value: nx,
+                        },
+                    )
+                }
+                _ => wrap(),
+            },
+            _ => wrap(),
+        }
+    } else if wrappable(p, &n.node_type) {
+        wrap()
+    } else {
+        in_place(&format!(
+            "a {} is not moved by a Transform (or wrapping it would change what it means)",
+            n.node_type
+        ))
     }
 }
 

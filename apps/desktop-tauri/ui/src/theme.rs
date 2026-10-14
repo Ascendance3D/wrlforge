@@ -134,7 +134,7 @@ pub fn ThemePicker() -> impl IntoView {
     view! {
         <label class="theme-picker" for="theme-select">
             "Theme"
-            <select id="theme-select" title="Application color theme (saved for next launch)"
+            <select id="theme-select" data-tip="Application color theme (saved for next launch)"
                 prop:value=move || t.id.get()
                 on:change=move |ev| {
                     // UI-MENU-1: the same registry command as View → Theme.
@@ -150,7 +150,7 @@ pub fn ThemePicker() -> impl IntoView {
             </select>
         </label>
         {move || t.error.get().map(|e| view! {
-            <span class="theme-error" id="theme-error" role="alert" title=e.clone()>{e.clone()}</span>
+            <span class="theme-error" id="theme-error" role="alert" data-tip=e.clone()>{e.clone()}</span>
         })}
     }
 }

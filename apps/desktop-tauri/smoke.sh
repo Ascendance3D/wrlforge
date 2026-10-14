@@ -46,12 +46,19 @@ while [[ "${1:-}" == --* ]]; do
 done
 work="$(mktemp -d /tmp/wrlforge-tauri-smoke.XXXXXX)"
 case "${cfg:-/tmp/}" in /tmp/*) ;; *) echo "refusing non-/tmp --config-dir: $cfg" >&2; exit 2;; esac
+# Every app start runs in a disposable profile (HOME, XDG config / data /
+# cache / state / runtime under $work/profile; Tauri settings, WebKitGTK
+# storage and recovery all resolve there) and is refused before it starts
+# otherwise; see isolated-run.sh. A run that changes the real profile fails.
+iso=("$here/isolated-run.sh" --root "$work/profile")
+[[ ${#xvfb[@]} -eq 0 ]] && iso+=(--owner-display)
+iso+=(--)
 fail=0
 if [[ $create -eq 1 ]]; then
   # No input file: the run starts from New World and saves into its own
   # disposable directory, which Rust verifies afterwards.
   d="$work/create.d"; mkdir -p "$d/config"
-  timeout 240 "${xvfb[@]}" "$bin" --smoke-create "$d" --smoke-report "$d/report.json" --config-dir "$d/config" >"$d/stdout.txt" 2>"$d/stderr.txt"
+  timeout 240 "${xvfb[@]}" "${iso[@]}" "$bin" --smoke-create "$d" --smoke-report "$d/report.json" --config-dir "$d/config" >"$d/stdout.txt" 2>"$d/stderr.txt"
   code=$?
   pass=$(sed -n 's/.*"pass": *\(true\|false\).*/\1/p' "$d/report.json" 2>/dev/null | head -1)
   echo "create: exit=$code pass=${pass:-none} report=$d/report.json"
@@ -64,7 +71,7 @@ if [[ $pick -eq 1 ]]; then
   node "$here/smoke-pick-plan.cjs" "$d/plan" || exit 2
   # Real X pointer input only inside this run's own Xvfb (see smoke.rs).
   marker=(); [[ ${#xvfb[@]} -gt 0 ]] && marker=(env WRLFORGE_SMOKE_XVFB=1)
-  timeout 300 "${xvfb[@]}" "${marker[@]}" "$bin" --smoke-pick "$d/plan" --smoke-report "$d/report.json" --config-dir "$d/config" >"$d/stdout.txt" 2>"$d/stderr.txt"
+  timeout 300 "${xvfb[@]}" "${marker[@]}" "${iso[@]}" "$bin" --smoke-pick "$d/plan" --smoke-report "$d/report.json" --config-dir "$d/config" >"$d/stdout.txt" 2>"$d/stderr.txt"
   code=$?
   pass=$(sed -n 's/.*"pass": *\(true\|false\).*/\1/p' "$d/report.json" 2>/dev/null | head -1)
   echo "pick: exit=$code pass=${pass:-none} report=$d/report.json"
@@ -74,7 +81,7 @@ if [[ $move -eq 1 ]]; then
   # Rust writes the source-format fixtures into this disposable directory.
   d="$work/move.d"; mkdir -p "$d/run" "$d/config"
   marker=(); [[ ${#xvfb[@]} -gt 0 ]] && marker=(env WRLFORGE_SMOKE_XVFB=1)
-  timeout 400 "${xvfb[@]}" "${marker[@]}" "$bin" --smoke-move "$d/run" --smoke-report "$d/report.json" --config-dir "$d/config" >"$d/stdout.txt" 2>"$d/stderr.txt"
+  timeout 400 "${xvfb[@]}" "${marker[@]}" "${iso[@]}" "$bin" --smoke-move "$d/run" --smoke-report "$d/report.json" --config-dir "$d/config" >"$d/stdout.txt" 2>"$d/stderr.txt"
   code=$?
   pass=$(sed -n 's/.*"pass": *\(true\|false\).*/\1/p' "$d/report.json" 2>/dev/null | head -1)
   echo "move: exit=$code pass=${pass:-none} report=$d/report.json"
@@ -91,7 +98,7 @@ if [[ $extrusion -eq 1 ]]; then
     done
   fi
   marker=(); [[ ${#xvfb[@]} -gt 0 ]] && marker=(env WRLFORGE_SMOKE_XVFB=1)
-  timeout 400 "${xvfb[@]}" "${marker[@]}" "$bin" --smoke-extrusion "$d/run" --smoke-report "$d/report.json" --config-dir "$d/config" >"$d/stdout.txt" 2>"$d/stderr.txt"
+  timeout 400 "${xvfb[@]}" "${marker[@]}" "${iso[@]}" "$bin" --smoke-extrusion "$d/run" --smoke-report "$d/report.json" --config-dir "$d/config" >"$d/stdout.txt" 2>"$d/stderr.txt"
   code=$?
   pass=$(sed -n 's/.*"pass": *\(true\|false\).*/\1/p' "$d/report.json" 2>/dev/null | head -1)
   echo "extrusion: exit=$code pass=${pass:-none} report=$d/report.json"
@@ -101,7 +108,7 @@ if [[ $rotscale -eq 1 ]]; then
   # Rust writes the source-format fixtures into this disposable directory.
   d="$work/rotscale.d"; mkdir -p "$d/run" "$d/config"
   marker=(); [[ ${#xvfb[@]} -gt 0 ]] && marker=(env WRLFORGE_SMOKE_XVFB=1)
-  timeout 400 "${xvfb[@]}" "${marker[@]}" "$bin" --smoke-rotscale "$d/run" --smoke-report "$d/report.json" --config-dir "$d/config" >"$d/stdout.txt" 2>"$d/stderr.txt"
+  timeout 400 "${xvfb[@]}" "${marker[@]}" "${iso[@]}" "$bin" --smoke-rotscale "$d/run" --smoke-report "$d/report.json" --config-dir "$d/config" >"$d/stdout.txt" 2>"$d/stderr.txt"
   code=$?
   pass=$(sed -n 's/.*"pass": *\(true\|false\).*/\1/p' "$d/report.json" 2>/dev/null | head -1)
   echo "rotscale: exit=$code pass=${pass:-none} report=$d/report.json"
@@ -112,7 +119,7 @@ if [[ $recovery -eq 1 ]]; then
   # processes, so the second and third start see what the first left.
   d="$work/recovery.d"; mkdir -p "$d/config"
   # (1) Edit, wait for the background recovery writes, then die by SIGKILL.
-  "${xvfb[@]}" "$bin" --smoke-recovery-crash "$d" --config-dir "$d/config" >"$d/crash-stdout.txt" 2>"$d/crash-stderr.txt" &
+  "${xvfb[@]}" "${iso[@]}" "$bin" --smoke-recovery-crash "$d" --config-dir "$d/config" >"$d/crash-stdout.txt" 2>"$d/crash-stderr.txt" &
   wrapper=$!
   for _ in $(seq 1 600); do [[ -f "$d/ready.json" ]] && break; sleep 0.1; done
   pid=$(sed -n 's/.*"pid": *\([0-9]*\).*/\1/p' "$d/ready.json" 2>/dev/null | head -1)
@@ -136,7 +143,7 @@ if [[ $recovery -eq 1 ]]; then
   # (2) Restore / edit + Undo / Save As / Discard / canceled close / Later.
   # (3) A third start: what Later and the canceled close kept is offered again.
   for phase in restore later; do
-    timeout 180 "${xvfb[@]}" "$bin" --smoke-recovery-$phase "$d" --smoke-report "$d/$phase.json" --config-dir "$d/config" >"$d/$phase-stdout.txt" 2>"$d/$phase-stderr.txt"
+    timeout 180 "${xvfb[@]}" "${iso[@]}" "$bin" --smoke-recovery-$phase "$d" --smoke-report "$d/$phase.json" --config-dir "$d/config" >"$d/$phase-stdout.txt" 2>"$d/$phase-stderr.txt"
     code=$?
     pass=$(sed -n 's/.*"pass": *\(true\|false\).*/\1/p' "$d/$phase.json" 2>/dev/null | head -1)
     echo "recovery $phase: exit=$code pass=${pass:-none} report=$d/$phase.json"
@@ -156,7 +163,7 @@ if [[ $dock -eq 1 ]]; then
 {"schemaVersion":1,"themeId":"tokyo-night-storm","layout":{"version":1,"preset":"preset.source","root":{"type":"split","axis":"row","sizes":[1.5,-0.5],"children":[{"type":"tabs","panels":["panel.source"],"active":"panel.source"},{"type":"tabs","panels":["panel.viewport"],"active":"panel.viewport"}]}}}
 JSON
     fi
-    timeout 400 "${xvfb[@]}" "${marker[@]}" "$bin" $flag "$d/run" --smoke-report "$d/$phase.json" --config-dir "$d/config" >"$d/$phase-stdout.txt" 2>"$d/$phase-stderr.txt"
+    timeout 400 "${xvfb[@]}" "${marker[@]}" "${iso[@]}" "$bin" $flag "$d/run" --smoke-report "$d/$phase.json" --config-dir "$d/config" >"$d/$phase-stdout.txt" 2>"$d/$phase-stderr.txt"
     code=$?
     pass=$(sed -n 's/.*"pass": *\(true\|false\).*/\1/p' "$d/$phase.json" 2>/dev/null | head -1)
     echo "dock $phase: exit=$code pass=${pass:-none} report=$d/$phase.json"
@@ -171,7 +178,7 @@ if [[ $menu -eq 1 ]]; then
   # canceled Quit must keep live there).
   d="$work/menu.d"; mkdir -p "$d/run" "$d/config"
   marker=(); [[ ${#xvfb[@]} -gt 0 ]] && marker=(env WRLFORGE_SMOKE_XVFB=1)
-  timeout 400 "${xvfb[@]}" "${marker[@]}" "$bin" --smoke-menu "$d/run" --smoke-report "$d/report.json" --config-dir "$d/config" >"$d/stdout.txt" 2>"$d/stderr.txt"
+  timeout 400 "${xvfb[@]}" "${marker[@]}" "${iso[@]}" "$bin" --smoke-menu "$d/run" --smoke-report "$d/report.json" --config-dir "$d/config" >"$d/stdout.txt" 2>"$d/stderr.txt"
   code=$?
   pass=$(sed -n 's/.*"pass": *\(true\|false\).*/\1/p' "$d/report.json" 2>/dev/null | head -1)
   echo "menu: exit=$code pass=${pass:-none} report=$d/report.json"
@@ -181,7 +188,7 @@ for src in "$@"; do
   d="$work/$(basename "$src").d"; mkdir -p "$d"; cp "$src" "$d/"
   f="$d/$(basename "$src")"
   c="${cfg:-$d/config}"; mkdir -p "$c"
-  timeout 120 "${xvfb[@]}" "$bin" --smoke "$f" --smoke-report "$d/report.json" --config-dir "$c" "${extra[@]}" >"$d/stdout.txt" 2>"$d/stderr.txt"
+  timeout 120 "${xvfb[@]}" "${iso[@]}" "$bin" --smoke "$f" --smoke-report "$d/report.json" --config-dir "$c" "${extra[@]}" >"$d/stdout.txt" 2>"$d/stderr.txt"
   code=$?
   pass=$(sed -n 's/.*"pass": *\(true\|false\).*/\1/p' "$d/report.json" 2>/dev/null | head -1)
   echo "$(basename "$src"): exit=$code pass=${pass:-none} report=$d/report.json"

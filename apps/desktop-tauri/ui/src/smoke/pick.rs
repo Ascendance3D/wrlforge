@@ -785,59 +785,77 @@ async fn matrix(c: &p::PickSmoke, s: &mut Stats, r: &mut R) -> Option<()> {
         .await;
         let loaded = ready(20_000).await;
         let (mut ok, mut wrong, mut skipped, mut detail) = (0u32, 0u32, 0u32, Vec::new());
+        let mut run = 0u32;
+        let layered = fx.clicks.iter().any(|c| !c.then.is_empty());
+        if layered {
+            capture(c, &format!("{}-loaded", slug(&fx.id))).await;
+        }
         for ck in &fx.clicks {
             if let Some(why) = &ck.skip {
                 skipped += 1;
                 detail.push(format!("{}:SKIP({why})", ck.id));
                 continue;
             }
-            let keep = selected_id();
-            let before = untouched().await?;
             let (x, y) = project(ck.world, fx.camera)?;
-            let Some(out) = gesture(x, y).await else {
-                detail.push(format!("{}:no-result", ck.id));
-                continue;
-            };
-            s.record(&out);
-            let span = out.logical.as_ref().map(|l| [l.from, l.to]);
-            let is_wrong = out.is_proven() && (ck.status != "PROVEN" || span != ck.logical);
-            let after = untouched().await?;
-            // B3: a PROVEN pick reveals its node in the Source (the caret
-            // moves to that node's span); anything else leaves all untouched.
-            let doc_ok = if out.is_proven() {
-                after.same_doc(&before)
-                    && out.item.as_deref().and_then(item_span) == Some(after.caret)
-            } else {
-                after == before
-            };
-            let good = !is_wrong
-                && out.status == ck.status
-                && doc_ok
-                && (out.is_proven() || selected_id() == keep)
-                && (!out.is_proven() || selected_id() == out.item);
-            if is_wrong {
-                wrong += 1;
-            }
-            if good {
-                ok += 1;
-            } else {
-                s.mismatched += 1;
-            }
-            detail.push(format!(
-                "{}:{}{}{}",
-                ck.id,
-                out.status,
-                if good { "" } else { "≠" },
-                if good {
-                    String::new()
+            // P0-A: the first click, then every repeated click at the same
+            // point with ITS expected answer (the next Shape behind).
+            let expects = std::iter::once((ck.status.clone(), ck.logical))
+                .chain(ck.then.iter().map(|t| (t.status.clone(), t.logical)));
+            for (n, (status, logical)) in expects.enumerate() {
+                run += 1;
+                let id = if n == 0 { ck.id.clone() } else { format!("{}#{}", ck.id, n + 1) };
+                let keep = selected_id();
+                let before = untouched().await?;
+                let Some(out) = gesture(x, y).await else {
+                    detail.push(format!("{id}:no-result"));
+                    continue;
+                };
+                s.record(&out);
+                let span = out.logical.as_ref().map(|l| [l.from, l.to]);
+                let is_wrong = out.is_proven() && (status != "PROVEN" || span != logical);
+                let after = untouched().await?;
+                // B3: a PROVEN pick reveals its node in the Source (the caret
+                // moves to that node's span); anything else leaves all untouched.
+                let doc_ok = if out.is_proven() {
+                    after.same_doc(&before)
+                        && out.item.as_deref().and_then(item_span) == Some(after.caret)
                 } else {
-                    format!("{}({})", ck.status, out.reason)
+                    after == before
+                };
+                let good = !is_wrong
+                    && out.status == status
+                    && doc_ok
+                    && (out.is_proven() || selected_id() == keep)
+                    && (!out.is_proven() || selected_id() == out.item);
+                if is_wrong {
+                    wrong += 1;
                 }
-            ));
+                if good {
+                    ok += 1;
+                } else {
+                    s.mismatched += 1;
+                }
+                let layer = PICK.with_borrow(|p| {
+                    p.cycle.as_ref().map(|c| format!("[{}/{}]", c.layer + 1, c.layers))
+                });
+                detail.push(format!(
+                    "{id}:{}{}{}{}",
+                    out.status,
+                    if layered { layer.unwrap_or_default() } else { String::new() },
+                    if good { "" } else { "≠" },
+                    if good {
+                        String::new()
+                    } else {
+                        format!("{status}({}) span {span:?} want {logical:?}", out.reason)
+                    }
+                ));
+                if layered {
+                    capture(c, &format!("{}-click{}", slug(&fx.id), n + 1)).await;
+                }
+            }
         }
         s.wrong += wrong;
         s.skipped += skipped;
-        let run = fx.clicks.len() as u32 - skipped;
         r.step(
             &format!(
                 "matrix {}: {ok}/{run} clicks as the oracle expects, WRONG {wrong}",
@@ -846,7 +864,324 @@ async fn matrix(c: &p::PickSmoke, s: &mut Stats, r: &mut R) -> Option<()> {
             opened.is_some() && loaded.is_some() && ok == run && wrong == 0,
             detail.join(" "),
         );
+        if layered {
+            stale_status(fx, r).await?;
+            escape(fx, r).await?;
+        }
+        if fx.id == "L1-coat-over-paint" {
+            duplicate_offset(c, fx, s, r).await?;
+        }
     }
+    Some(())
+}
+
+/// LV2-C: the pick status line ("Shape 2 of 2 under the pointer") belongs to
+/// the selection, revision and tool it was written for. Each other way of
+/// changing those clears it (and the hit cycle): a Scene Tree click, a
+/// breadcrumb, Parent and a tool switch here; Undo in `duplicate_offset`.
+async fn stale_status(fx: &p::PickFixture, r: &mut R) -> Option<()> {
+    let ck = fx.clicks.iter().find(|k| !k.then.is_empty())?;
+    let (x, y) = project(ck.world, fx.camera)?;
+    let el = |q: &str| -> Option<HtmlElement> {
+        doc_el()?.query_selector(q).ok()??.dyn_into::<HtmlElement>().ok()
+    };
+    let usable = |q: &str| {
+        el(q).filter(|b| !b.dyn_ref::<web_sys::HtmlButtonElement>().is_some_and(|b| b.disabled()))
+    };
+    let cleared = || {
+        pick_text().trim_matches(|c: char| c.is_whitespace() || c == '\u{a0}').is_empty()
+            && PICK.with_borrow(|p| p.cycle.is_none())
+    };
+    let mut done = Vec::new();
+    for action in ["tree", "same", "crumb", "parent", "tool"] {
+        // Two clicks at one place: the second names the Shape behind.
+        let _ = gesture(x, y).await;
+        let _ = gesture(x, y).await;
+        let shown = pick_text();
+        let cycled = shown.contains(" of ") && PICK.with_borrow(|p| p.cycle.is_some());
+        let before = selected_id();
+        let acted = match action {
+            "tree" => {
+                let other = ui().analysis.with_untracked(|a| {
+                    a.as_ref()?
+                        .items
+                        .iter()
+                        .find(|i| Some(&i.id) != before.as_ref())
+                        .map(|i| i.id.clone())
+                });
+                other
+                    .and_then(|id| el(&format!(".tree-item[data-id=\"{id}\"]")))
+                    .map(|li| li.click())
+                    .is_some()
+            }
+            // The item that is ALREADY selected (Copilot #147): still a
+            // non-pick selection, so the status and the cycle reset.
+            "same" => before
+                .as_ref()
+                .and_then(|id| el(&format!(".tree-item[data-id=\"{id}\"]")))
+                .map(|li| li.click())
+                .is_some(),
+            "crumb" => usable("#inspector-path button.crumb").map(|b| b.click()).is_some(),
+            "parent" => usable("#inspector-up").map(|b| b.click()).is_some(),
+            _ => click("btn-move").is_some(),
+        };
+        if !acted {
+            done.push(format!("{action}:n/a"));
+            continue;
+        }
+        let changed = wait_ms(3000, || {
+            match action {
+                "tool" => true,
+                "same" => selected_id() == before,
+                _ => selected_id() != before,
+            }
+            .then_some(())
+        })
+        .await
+        .is_some();
+        let ok = wait_ms(3000, || cleared().then_some(())).await.is_some();
+        r.step(
+            &format!("{}: pick status cleared after {action}", fx.id),
+            cycled && changed && ok,
+            format!(
+                "before {:?} · cycled {cycled} · selection changed {changed} · after {:?}",
+                shown.chars().take(80).collect::<String>(),
+                pick_text()
+            ),
+        );
+        done.push(format!("{action}:{}", cycled && changed && ok));
+        if action == "tool" {
+            click("btn-select")?;
+        }
+    }
+    // Leave the front Shape selected, as the matrix did (Duplicate next).
+    let _ = gesture(x, y).await;
+    r.step(
+        &format!("{}: stale pick status actions covered", fx.id),
+        done.iter().any(|d| d.starts_with("tree:")),
+        done.join(" "),
+    );
+    Some(())
+}
+
+/// Stage 2: a REAL Escape key with the 3D Viewport focused clears the
+/// scene selection through the selection authority: no outline, no
+/// Inspector fields, no Scene Tree highlight, no hit cycle, no pick status,
+/// and the document is untouched. The next click starts at the FRONT layer
+/// again and proves exactly the oracle's node (WRONG_SOURCE_SELECTIONS).
+/// Escape in the Source editor or in a dialog keeps the selection.
+async fn escape(fx: &p::PickFixture, r: &mut R) -> Option<()> {
+    let ck = fx.clicks.iter().find(|k| !k.then.is_empty())?;
+    let (x, y) = project(ck.world, fx.camera)?;
+    let el = |q: &str| -> Option<HtmlElement> {
+        doc_el()?.query_selector(q).ok()??.dyn_into::<HtmlElement>().ok()
+    };
+    let active = || {
+        doc_el()
+            .and_then(|d| d.active_element())
+            .map(|e| format!("{}#{}", e.tag_name().to_lowercase(), e.id()))
+            .unwrap_or_default()
+    };
+    let span = |o: &Option<p::PickOutcome>| {
+        o.as_ref().and_then(|o| o.logical.as_ref().map(|l| [l.from, l.to]))
+    };
+    // (1) Cycle to the Shape behind, then Escape in the viewport.
+    let _ = gesture(x, y).await;
+    let _ = gesture(x, y).await;
+    let cycled = PICK.with_borrow(|p| p.cycle.is_some()) && selected_id().is_some();
+    let focus = active();
+    let before = untouched().await?;
+    // A real X key press (xdotool) into our focused window.
+    super::gizmo::real("escape", x, y).await.ok()?;
+    let gone = wait_ms(3000, || ui().selected.get_untracked().is_none().then_some(())).await;
+    ipc::sleep(300).await;
+    let after = untouched().await?;
+    let outline = crate::highlight::HIGHLIGHT.with_borrow(|h| h.path.clone());
+    let tree_sel = all(".tree-item.selected").len();
+    let inspector_empty = el("section.inspector p.empty").is_some();
+    let status = pick_text();
+    let quiet = status.trim_matches(|c: char| c.is_whitespace() || c == '\u{a0}').is_empty();
+    let state = PICK.with_borrow(|p| (p.cycle.is_none(), p.last.is_none()));
+    r.step(
+        &format!("{}: real Escape in the viewport clears the selection: no outline, Inspector and Scene Tree empty, no hit cycle or pick status, the source untouched", fx.id),
+        cycled
+            && gone.is_some()
+            && outline.is_empty()
+            && tree_sel == 0
+            && inspector_empty
+            && quiet
+            && state == (true, true)
+            && before == after,
+        format!(
+            "cycled {cycled} · focus {focus} · cleared {} · outline {} · tree {tree_sel} · inspector-empty {inspector_empty} · status {status:?} · cycle/last none {state:?} · doc same {}",
+            gone.is_some(),
+            outline.len(),
+            before == after
+        ),
+    );
+    // (2) The next click is the FRONT layer again, proven exactly.
+    let out = gesture(x, y).await;
+    let front = ck.status == "PROVEN" && span(&out) == ck.logical && out.as_ref().is_some_and(|o| o.is_proven());
+    let wrong = usize::from(out.as_ref().is_some_and(|o| o.is_proven()) && !front);
+    r.step(
+        &format!("{}: WRONG_SOURCE_SELECTIONS after Escape: the next click selects the front Shape", fx.id),
+        front && wrong == 0,
+        format!("wrong {wrong} · span {:?} want {:?}", span(&out), ck.logical),
+    );
+    // (3) Escape in the Source editor keeps the scene selection.
+    let sel = ui().selected.get_untracked();
+    crate::command::run(p::command::CommandId::ViewFocusSource);
+    let in_source = wait_ms(2000, || (active() == "textarea#source").then_some(())).await.is_some();
+    super::gizmo::real("escape", x, y).await.ok()?;
+    ipc::sleep(300).await;
+    let kept_source = in_source && sel.is_some() && ui().selected.get_untracked() == sel;
+    // (4) Escape in a dialog (About) closes the dialog only.
+    click("btn-about")?;
+    let open = wait_ms(2000, || el("#about-dialog").filter(|d| !d.hidden()).map(|_| ())).await;
+    super::gizmo::real("escape", x, y).await.ok()?;
+    let closed = wait_ms(2000, || el("#about-dialog").is_none_or(|d| d.hidden()).then_some(())).await;
+    ipc::sleep(200).await;
+    let kept_dialog = ui().selected.get_untracked() == sel;
+    r.step(
+        &format!("{}: Escape in the Source editor or in a dialog keeps the scene selection (the dialog closes)", fx.id),
+        kept_source && open.is_some() && closed.is_some() && kept_dialog,
+        format!("focus {} · source {kept_source} · dialog open {} closed {} kept {kept_dialog}", active(), open.is_some(), closed.is_some()),
+    );
+    // Back to the viewport; the front Shape (step 2) is still selected
+    // (Duplicate next). Another click here would cycle to the one behind.
+    crate::command::run(p::command::CommandId::ViewFocusViewport);
+    ipc::sleep(300).await;
+    Some(())
+}
+
+fn slug(id: &str) -> String {
+    id.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
+}
+
+/// Evidence only (the harness Xvfb): a whole-screen capture into the run's
+/// `captures/` folder. Never a step; a failure is noted in the log.
+async fn capture(c: &p::PickSmoke, id: &str) {
+    if !c.real_pointer {
+        return;
+    }
+    ipc::sleep(250).await;
+    #[derive(serde::Serialize)]
+    struct A<'a> {
+        id: &'a str,
+    }
+    if let Err(e) = call::<String>("smoke_window_capture", A { id }).await {
+        web_sys::console::warn_1(&format!("capture {id}: {e}").into());
+    }
+}
+
+/// P0-B in the real window: the coat (selected by the layer clicks) is
+/// duplicated with the production command (Edit > Duplicate / Ctrl+D). The
+/// copy must be inserted after the original as ONE undo step, be SELECTED,
+/// and render beside it: a click at the copy's offset position must pick
+/// exactly the copy. Undo restores the exact bytes.
+async fn duplicate_offset(
+    c: &p::PickSmoke,
+    fx: &p::PickFixture,
+    s: &mut Stats,
+    r: &mut R,
+) -> Option<()> {
+    let coat = fx.clicks.first()?.logical?;
+    let before_text = text();
+    let rev = CORE.with_borrow(|c| c.revision);
+    // The outline must be proven for the selection, so Duplicate measures
+    // the coat's rendered size (4 x 4 x 0.2: step 1.2 x 4 -> 5).
+    let proven = wait_ms(5000, || {
+        crate::highlight::selection_extent().filter(|e| (e - 4.0).abs() < 1e-3)
+    })
+    .await;
+    capture(c, "dup-before").await;
+    crate::command::run(p::command::CommandId::EditDuplicateNode);
+    let applied = wait_ms(5000, || {
+        CORE.with_borrow(|c| (c.revision == rev + 1 && !c.busy).then_some(()))
+    })
+    .await;
+    let after_text = text();
+    let to = coat[1] as usize;
+    let b16: Vec<u16> = before_text.encode_utf16().collect();
+    let a16: Vec<u16> = after_text.encode_utf16().collect();
+    let inserted = a16.len().saturating_sub(b16.len());
+    let pure_insert = a16.len() > b16.len()
+        && a16[..to] == b16[..to]
+        && a16[to + inserted..] == b16[to..];
+    let copy = String::from_utf16_lossy(&a16[to..to + inserted]);
+    let want = "\nTransform { translation 5 0 2 children [ ";
+    // The selection is set from the edit result; the scene-tree analysis of
+    // the new revision can arrive a little later (a loaded machine), so the
+    // copy's span is read once that analysis lists it.
+    let sel = selected_id();
+    let sel_span = match sel.as_deref() {
+        Some(id) => wait_ms(5000, || item_span(id)).await,
+        None => None,
+    };
+    let expect_span = (to as u32 + 1, (to + inserted) as u32);
+    let ok = proven.is_some()
+        && applied.is_some()
+        && pure_insert
+        && copy.starts_with(want)
+        && sel_span == Some(expect_span);
+    r.step(
+        "Duplicate (Ctrl+D): the copy is inserted after the original, moved by about its size (+X 5), and selected",
+        ok,
+        format!(
+            "extent {proven:?} · revision {rev} -> {} · pure insert {pure_insert} · copy {:?} · selected {sel:?} span {sel_span:?} want {expect_span:?}",
+            CORE.with_borrow(|c| c.revision),
+            copy.chars().take(70).collect::<String>()
+        ),
+    );
+    let _ = ready(20_000).await;
+    capture(c, "dup-after").await;
+    // The copy renders beside the original: a click at its offset place
+    // picks exactly the copy (a fresh point: no layer cycling).
+    let (x, y) = project([5.0, 0.0, 2.1], fx.camera)?;
+    let out = gesture(x, y).await;
+    if let Some(o) = &out {
+        s.record(o);
+    }
+    let span = out.as_ref().and_then(|o| o.logical.as_ref().map(|l| [l.from, l.to]));
+    let want_span = [expect_span.0 as u64, expect_span.1 as u64];
+    let picked = out.as_ref().is_some_and(|o| o.is_proven()) && span == Some(want_span);
+    if out.as_ref().is_some_and(|o| o.is_proven()) && !picked {
+        s.wrong += 1;
+    }
+    r.step(
+        "the copy is visibly offset: clicking its place in the viewport selects the copy",
+        picked,
+        format!("{:?} span {span:?} want {want_span:?}", out.as_ref().map(|o| &o.status)),
+    );
+    capture(c, "dup-copy-picked").await;
+    // One undo step restores the exact bytes.
+    crate::command::run(p::command::CommandId::EditUndo);
+    let undone = wait_ms(5000, || {
+        (text() == before_text && !CORE.with_borrow(|c| c.busy)).then_some(())
+    })
+    .await;
+    r.step(
+        "Undo after Duplicate restores the exact source bytes (one step)",
+        undone.is_some(),
+        format!("revision {}", CORE.with_borrow(|c| c.revision)),
+    );
+    // LV2-C: the copy's pick message does not outlive the Undo.
+    let stale = pick_text();
+    let cleared = wait_ms(3000, || {
+        pick_text()
+            .trim_matches(|c: char| c.is_whitespace() || c == '\u{a0}')
+            .is_empty()
+            .then_some(())
+    })
+    .await;
+    r.step(
+        "Undo clears the pick status of the undone selection",
+        cleared.is_some(),
+        format!("before {stale:?} · after {:?}", pick_text()),
+    );
+    let _ = ready(20_000).await;
     Some(())
 }
 

@@ -62,6 +62,8 @@ pub struct Ui {
     /// B1 (PR #146 review): shared-PROTO confirmations asked so far. Every
     /// shared-definition mutation asks again; nothing is remembered.
     pub shared_asked: RwSignal<u64>,
+    /// LV2: a neutral note about what the outline shows (an owner Shape).
+    pub highlight_info: RwSignal<Option<String>>,
     /// D4: Create places new objects at the origin (else in view).
     pub place_origin: RwSignal<bool>,
     /// NATIVE-RENDER-1: the hidden native viewport's state (default off).
@@ -137,6 +139,7 @@ pub fn tree_select(session: u64, revision: u64, id: String, from: u64, to: u64) 
         flash("Scene Tree is updating (a newer analysis is being shown); selection not changed.");
         return false;
     }
+    crate::pick::non_pick_selection();
     if !select_from("Scene Tree", session, revision, from, to) {
         // Catch the tree up now instead of after the debounce.
         spawn_local(analyze());
@@ -166,6 +169,33 @@ pub fn adopt_selection(sel: Selected) {
     // B2: the viewport outline follows the selection (view state only).
     crate::highlight::start();
     spawn_local(inspect(sel));
+}
+
+/// The same authority clears it (Edit → Clear Selection, Escape in the 3D
+/// Viewport). View state only: the source text, the editor's own text
+/// selection, the revision and the history are untouched. The outline, the
+/// handles, the Inspector, the Scene Tree highlight, the pick cycle and the
+/// pick status all follow from `selected`. Returns whether anything was
+/// selected.
+pub fn clear_selection() -> bool {
+    let u = ui();
+    if u.selected.get_untracked().is_none() {
+        return false;
+    }
+    crate::gizmo::cancel("the selection was cleared");
+    crate::pick::forget_selection();
+    u.field_error.set(None);
+    u.inspection.set(None);
+    u.selected.set(None);
+    true
+}
+
+/// Inspector navigation (breadcrumb, Parent, "Open" buttons): the same
+/// exact-item path as a pick, but not a pick -- the pick status and the hit
+/// cycle are reset first.
+pub async fn navigate_select(session: u64, revision: u64, id: String) -> Result<String, String> {
+    crate::pick::non_pick_selection();
+    pick_select(session, revision, id).await
 }
 
 /// Select the Scene Tree item a PROVEN viewport pick named, in exactly the
@@ -245,6 +275,7 @@ pub fn ui() -> Ui {
             gizmo_message: RwSignal::new(None),
             highlight_message: RwSignal::new(None),
             shared_asked: RwSignal::new(0),
+            highlight_info: RwSignal::new(None),
             place_origin: RwSignal::new(false),
             native: RwSignal::new(p::NativeState::default()),
         })
@@ -1057,6 +1088,15 @@ pub async fn structure_edit(op: p::StructureOp) {
         }
         None => false,
     };
+    // LV2-C: where the copy goes, from the node's proven rendered bounds
+    // and the camera on screen. Without them the copy is not moved (Rust
+    // reports why); nothing is guessed.
+    let choice = match op {
+        p::StructureOp::Duplicate => crate::highlight::selection_bounds()
+            .zip(ipc::gizmo_camera())
+            .and_then(|(b, cam)| p::duplicate::choose(&cam, &b).ok()),
+        p::StructureOp::Delete => None,
+    };
     #[derive(serde::Serialize)]
     struct A {
         request: p::StructureEditRequest,
@@ -1067,6 +1107,7 @@ pub async fn structure_edit(op: p::StructureOp) {
         item: sel.id.clone(),
         op,
         confirm_shared: confirm,
+        offset: choice.as_ref().map(|c| c.offset),
     };
     match call::<p::StructureEditOutcome>("doc_structure_edit", A { request }).await {
         Ok(p::StructureEditOutcome::Applied {
@@ -1074,6 +1115,7 @@ pub async fn structure_edit(op: p::StructureOp) {
             view,
             item,
             renamed,
+            placement,
         }) => {
             crate::gizmo::cancel("the selected node changed");
             u.field_error.set(None);
@@ -1093,14 +1135,16 @@ pub async fn structure_edit(op: p::StructureOp) {
                 p::StructureOp::Delete => "Deleted the node",
                 p::StructureOp::Duplicate => "Duplicated the node",
             };
-            if names.is_empty() {
-                flash(&format!("{done} (revision {}).", state.revision));
+            let placed = placement.map(|p| format!("; {p}")).unwrap_or_default();
+            let done = if names.is_empty() {
+                format!("{done} (revision {}){placed}", state.revision)
             } else {
-                flash(&format!(
-                    "{done} (revision {}); DEF names in the copy: {names}.",
+                format!(
+                    "{done} (revision {}){placed}; DEF names in the copy: {names}",
                     state.revision
-                ));
-            }
+                )
+            };
+            flash(&format!("{done}."));
             // One discrete command: show it everywhere now.
             analyze().await;
             let span = u.analysis.with_untracked(|a| {
@@ -1116,6 +1160,19 @@ pub async fn structure_edit(op: p::StructureOp) {
                 select_from(verb, s, r, from, to);
             }
             preview(false).await;
+            // LV2-C: no axis kept the copy in view: show the original and
+            // the copy together (camera only; never the authored Viewpoint).
+            if let Some(c) = choice.filter(|c| !c.in_view) {
+                let both: Vec<[f64; 3]> = c.original.iter().chain(&c.copy).copied().collect();
+                flash(&match crate::camera::frame_points(&both) {
+                    Ok(()) => format!(
+                        "{done}; the copy did not fit in the view, so the camera moved to show it (camera only)."
+                    ),
+                    Err(why) => format!(
+                        "{done}; the copy is outside the view ({why}): use View → Frame Selection."
+                    ),
+                });
+            }
         }
         Ok(p::StructureEditOutcome::Refused { reason, message }) => {
             let m = format!("Not changed — {verb}: {message}");
