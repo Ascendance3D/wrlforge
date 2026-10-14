@@ -647,7 +647,7 @@ pub fn app_info(app: AppHandle) -> p::command::AppInfo {
 }
 
 /// Title the main window from the session's own state:
-/// `● name — WRL Forge 1.4.5 (Beta)`.
+/// `● name — WRL Forge 1.4.51 (Beta)`.
 #[tauri::command]
 pub fn window_title(app: AppHandle, session: p::SessionId) -> Result<(), String> {
     let doc = app.state::<Service>().snapshot(session)?;

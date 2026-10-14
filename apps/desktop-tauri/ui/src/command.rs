@@ -41,6 +41,7 @@ pub fn context() -> CommandContext {
         native_viewport: u.native.with(|s| s.native_shown()),
         outline_ready: outline_button().is_some(),
         node_selected: u.selected.with(|s| s.as_ref().is_some_and(|s| s.id.starts_with("node-"))),
+        interact: u.interact_mode.get(),
     }
 }
 
@@ -59,6 +60,7 @@ fn context_untracked() -> CommandContext {
         node_selected: u
             .selected
             .with_untracked(|s| s.as_ref().is_some_and(|s| s.id.starts_with("node-"))),
+        interact: u.interact_mode.get_untracked(),
     }
 }
 
@@ -87,6 +89,7 @@ pub fn checked(id: CommandId) -> Option<bool> {
         }),
         c::Check::Theme(t) => Some(theme::current() == t),
         c::Check::LivePreview => Some(u.preview_enabled.get()),
+        c::Check::Interact => Some(u.interact_mode.get()),
     }
 }
 
@@ -198,6 +201,7 @@ pub fn run(id: CommandId) {
         CommandId::ToolMove => panels::toggle_gizmo(Tool::Move),
         CommandId::ToolRotate => panels::toggle_gizmo(Tool::Rotate),
         CommandId::ToolScale => panels::toggle_gizmo(Tool::Scale),
+        CommandId::ToolInteract => panels::toggle_interact(),
         // The Inspector's own button holds the outline data: run its handler.
         CommandId::ToolExtrusionOutline => {
             if let Some(b) = outline_button() {
@@ -313,6 +317,11 @@ pub fn on_window_keydown(ev: web_sys::KeyboardEvent) {
         if let Some(id) = c::from_viewport_key(&ev.key(), primary || ev.shift_key()) {
             if !menu::bar_has_focus() && !menu::is_open() && viewport_focused() {
                 ev.prevent_default();
+                // Escape with nothing selected has nothing to clear: no
+                // "not available" notice, no command run.
+                if id == CommandId::EditClearSelection && id.refusal(context_untracked()).is_some() {
+                    return;
+                }
                 run(id);
             }
         }

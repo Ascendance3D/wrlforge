@@ -141,6 +141,56 @@ function layerFixture(id, proto) {
 layerFixture('L1-coat-over-paint', false);
 layerFixture('L2-proto-coat-over-paint', true);
 
+// ---- LINUX-EDIT-INPUT-SAFETY: authored sensors while editing ---------------
+// One world with every interactive kind the editor must keep quiet: a
+// TouchSensor door (ROUTE -> TimeSensor -> interpolator -> rotation), an
+// Anchor to an in-file Viewpoint, a PlaneSensor slider, a TouchSensor inside
+// a PROTO body nested in two Transforms (internal ROUTEs -> the instance's
+// `color`), next to a looping TimeSensor animation, a static Shape and a
+// transparent Shape. Sensor objects must refuse (and stay quiet); the others
+// prove to their own top-level Transform. The smoke reads the runtime fields
+// by DEF name (public SAI) to see whether any sensor fired.
+function sensorFixture(id) {
+  let text = `${HEADER}Viewpoint { position 0 0 20 description "front" }\nDEF Far Viewpoint { position 0 40 60 description "far" }\nNavigationInfo { type [ "EXAMINE" "ANY" ] }\n`;
+  text += 'PROTO Lamp [ exposedField SFColor color 0.2 0.2 0.2 ] {\n  Group { children [\n    DEF LT TouchSensor { }\n'
+    + '    Shape { appearance Appearance { material DEF LM Material { diffuseColor IS color } } geometry Box { size 1.6 1.6 1.6 } }\n'
+    + '    DEF LC TimeSensor { cycleInterval 0.2 }\n    DEF LI ColorInterpolator { key [ 0 1 ] keyValue [ 0.2 0.2 0.2, 1 1 0 ] }\n  ] }\n'
+    + '  ROUTE LT.touchTime TO LC.set_startTime\n  ROUTE LC.fraction_changed TO LI.set_fraction\n  ROUTE LI.value_changed TO LM.set_diffuseColor\n}\n';
+  const spans = {};
+  const at = (label, t) => { const start = text.length; text += t; spans[label] = { start, end: text.length }; text += '\n'; };
+  const box = (c) => `Shape { appearance Appearance { material Material { diffuseColor ${c} } } geometry Box { size 1.6 1.6 1.6 } }`;
+  at('static', `Transform { translation -6 3 0 children [ ${box('0.6 0.6 0.6')} ] }`);
+  at('door', `DEF Door Transform { translation -2 3 0 children [ DEF DoorTouch TouchSensor { } ${box('0 0.6 0')} ] }`);
+  text += 'DEF Clock TimeSensor { cycleInterval 0.3 }\nDEF Swing OrientationInterpolator { key [ 0 1 ] keyValue [ 0 1 0 0, 0 1 0 1.2 ] }\n'
+    + 'ROUTE DoorTouch.touchTime TO Clock.set_startTime\nROUTE Clock.fraction_changed TO Swing.set_fraction\nROUTE Swing.value_changed TO Door.set_rotation\n';
+  at('anchor', `Anchor { url "#Far" description "far" children [ Transform { translation 2 3 0 children [ ${box('0 0 0.8')} ] } ] }`);
+  at('plane', `Transform { translation 6 3 0 children [ DEF Drag PlaneSensor { } DEF Slider Transform { children [ ${box('0.8 0.4 0')} ] } ] }`);
+  text += 'ROUTE Drag.translation_changed TO Slider.set_translation\n';
+  at('lamp', 'Transform { translation -6 -3 0 children [ Transform { children [ DEF L1 Lamp { } ] } ] }');
+  at('spin', `DEF Spin Transform { translation -2 -3 0 children [ ${box('0.8 0 0.8')} ] }`);
+  text += 'DEF SpinClock TimeSensor { cycleInterval 2 loop TRUE }\nDEF SpinPath OrientationInterpolator { key [ 0 0.5 1 ] keyValue [ 0 0 1 0, 0 0 1 3.14, 0 0 1 6.28 ] }\n'
+    + 'ROUTE SpinClock.fraction_changed TO SpinPath.set_fraction\nROUTE SpinPath.value_changed TO Spin.set_rotation\n';
+  at('glass', 'Transform { translation 2 -3 0 children [ Shape { appearance Appearance { material Material { diffuseColor 0.7 0.9 1 transparency 0.6 } } geometry Box { size 1.6 1.6 1.6 } } ] }');
+  const file = `${id}.wrl`;
+  write(file, text);
+  const sp = (l) => [spans[l].start, spans[l].end];
+  const proven = (cid, label, world) => ({ id: cid, world, skip: null, status: 'PROVEN', note: 'edit-input-safety', logical: sp(label), oracleStatus: 'PROVEN' });
+  const refused = (cid, world) => ({ id: cid, world, skip: null, status: 'REFUSED_SENSOR_CONFLICT', note: 'edit-input-safety', logical: null, oracleStatus: 'REFUSED_SENSOR_CONFLICT' });
+  fixtures.push({
+    id, file, camera: [0, 0, 20],
+    clicks: [
+      proven('static', 'static', [-6, 3, 0.8]),
+      refused('door', [-2, 3, 0.8]),
+      refused('anchor', [2, 3, 0.8]),
+      refused('plane', [6, 3, 0.8]),
+      refused('lamp-in-proto', [-6, -3, 0.8]),
+      proven('time-driven', 'spin', [-2, -3, 0.8]),
+      proven('transparent', 'glass', [2, -3, 0.8]),
+    ],
+  });
+}
+sensorFixture('S1-edit-input-safety');
+
 // ---- optional: the real Chevy (WRLFORGE_PICK_CHEVY=<a /tmp copy>) -----------
 // Not part of the gate (the model is not in the repository). The oracle is a
 // CPU ray cast written HERE: every Shape's IndexedFaceSet (PROTO `point`

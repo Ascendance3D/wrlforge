@@ -5724,7 +5724,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "wrl-forge-desktop"
-version = "1.4.5"
+version = "1.4.51"
 dependencies = [
  "flate2",
  "gdk",
@@ -5758,7 +5758,7 @@ dependencies = [
 
 [[package]]
 name = "wrlforge-desktop-protocol"
-version = "1.4.5"
+version = "1.4.51"
 dependencies = [
  "serde",
 ]
@@ -5772,7 +5772,7 @@ dependencies = [
 
 [[package]]
 name = "wrlforge-render"
-version = "1.4.5"
+version = "1.4.51"
 dependencies = [
  "bytemuck",
  "glam",
@@ -5783,7 +5783,7 @@ dependencies = [
 
 [[package]]
 name = "wrlforge-scene"
-version = "1.4.5"
+version = "1.4.51"
 dependencies = [
  "glam",
  "wrlforge-vrml",
@@ -5795,7 +5795,7 @@ version = "0.0.0"
 
 [[package]]
 name = "wrlforge-ui"
-version = "1.4.5"
+version = "1.4.51"
 dependencies = [
  "js-sys",
  "leptos",

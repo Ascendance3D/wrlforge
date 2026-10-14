@@ -202,7 +202,7 @@ async fn app_shell_steps(r: &mut R) -> Option<()> {
     let identity = crate::element_by_id::<HtmlElement>("app-identity")?.inner_text();
     r.step(
         "APP-SHELL-0: toolbar shows the application identity",
-        identity == "WRL Forge 1.4.5 (Beta)" && identity == c::app_display_name(),
+        identity == "WRL Forge 1.4.51 (Beta)" && identity == c::app_display_name(),
         identity.clone(),
     );
     let wired = [
@@ -232,9 +232,9 @@ async fn app_shell_steps(r: &mut R) -> Option<()> {
     );
     let info = call::<c::AppInfo>("app_info", ipc::NoArgs {}).await.ok()?;
     r.step(
-        "APP-SHELL-0: backend reports 1.4.5 Beta, package 1.4.5, X_ITE 16.5.0 default renderer",
-        info.version == "1.4.5"
-            && info.config_version == "1.4.5"
+        "APP-SHELL-0: backend reports 1.4.51 Beta, package 1.4.51, X_ITE 16.5.0 default renderer",
+        info.version == "1.4.51"
+            && info.config_version == "1.4.51"
             && info.channel == "Beta"
             && info.display == identity
             && info.renderer == "X_ITE 16.5.0"
@@ -250,8 +250,8 @@ async fn app_shell_steps(r: &mut R) -> Option<()> {
         .map(|e| e.inner_text())
         .unwrap_or_default();
     r.step(
-        "APP-SHELL-0: About shows WRL Forge 1.4.5 (Beta) and X_ITE 16.5.0, no mismatch",
-        shown.as_deref() == Some("WRL Forge 1.4.5 (Beta)")
+        "APP-SHELL-0: About shows WRL Forge 1.4.51 (Beta) and X_ITE 16.5.0, no mismatch",
+        shown.as_deref() == Some("WRL Forge 1.4.51 (Beta)")
             && facts.contains("X_ITE 16.5.0")
             && !facts.contains("mismatch"),
         facts.replace('\n', " · "),

@@ -93,6 +93,11 @@
     capture: null, camera: null, trace: null,
     // B2-CAMERA: the newest load's automatic-Fit result.
     autoFit: null,
+    // LINUX-EDIT-INPUT-SAFETY: authored pointing sensors get the pointer only
+    // in the explicit Interact mode (`interact`); every browser's adapter
+    // gets the gate closed (edit) unless Interact is on. `input` is the
+    // adapter's answer: 'edit' | 'interact' | 'unavailable:<why>'.
+    interact: false, input: 'unavailable:no-adapter', fault: null,
   };
 
   function adapterFor(browser) {
@@ -120,9 +125,57 @@
           pick.adapter = null;
         }
       }
+      applyInput();
     }
     return pick.adapter;
   }
+
+  function applyInput() {
+    try {
+      if (pick.fault) {
+        // Tests only (sceneInputFault): the WORST case -- X_ITE's sensor
+        // entry points are live -- so only the pointer block below protects.
+        if (pick.adapter) pick.adapter.sceneInput(true);
+        pick.input = 'unavailable:' + pick.fault;
+      } else {
+        pick.input = pick.adapter ? String(pick.adapter.sceneInput(pick.interact === true)) : 'unavailable:no-adapter';
+      }
+    } catch (e) {
+      pick.input = 'unavailable:gate-error';
+    }
+    // An unavailable gate ends Interact here too: when the gate recovers it
+    // comes back closed (edit), never in Interact by itself.
+    if (pick.input !== 'edit' && pick.input !== 'interact') pick.interact = false;
+    return pick.input;
+  }
+
+  // PR #149 review: the sensor gate FAILS CLOSED. Until the adapter reports
+  // a verified gate ('edit' or 'interact') -- before the first scene, with
+  // no adapter, with a missing or foreign-wrapped entry point, after an
+  // install error -- no pointer, mouse or touch event reaches the X_ITE
+  // canvas: not X_ITE's PointingDevice (TouchSensor, drag sensors, Anchor)
+  // and not the editor's own pick / tool listeners. Window capture runs
+  // before every listener on the canvas and inside its shadow tree. Each
+  // press re-verifies the gate first, so a gate broken since the last load
+  // is caught at the click. The wheel (view only) is not blocked.
+  function inputSafe() { return pick.input === 'edit' || pick.input === 'interact'; }
+  var BLOCKED = ['pointerdown', 'pointerup', 'pointermove', 'mousedown', 'mouseup', 'mousemove', 'click',
+    'dblclick', 'contextmenu', 'touchstart', 'touchmove', 'touchend', 'touchcancel'];
+  var PRESS = { pointerdown: true, mousedown: true, touchstart: true };
+  pick.blocked = 0;
+  function guardSceneInput(ev) {
+    var c = canvas();
+    if (!c || !(ev.composedPath ? ev.composedPath().indexOf(c) >= 0 : c.contains(ev.target))) return;
+    if (PRESS[ev.type] && pick.adapter) applyInput();
+    if (inputSafe()) return;
+    ev.stopImmediatePropagation();
+    if (ev.cancelable) ev.preventDefault();
+    if (ev.type === 'pointerdown') {
+      pick.blocked++;
+      window.dispatchEvent(new CustomEvent('wrlforge-scene-input-blocked', { detail: pick.input }));
+    }
+  }
+  BLOCKED.forEach(function (t) { window.addEventListener(t, guardSceneInput, { capture: true }); });
 
   // A retired generation can no longer be manipulated: any temporary
   // translation is put back and the binding dropped.
@@ -400,6 +453,8 @@
         } finally {
           carry.done();
         }
+        // PR #149 review: verify the gate again for the scene now on screen.
+        applyInput();
         // Only the newest load may become the picking generation.
         if (mine === pick.loadSeq && a && generation && a.activate(generation, scene)) {
           pick.active = { session: meta.session, revision: meta.revision, hash: meta.hash, seq: meta.seq };
@@ -424,6 +479,39 @@
     },
     // Retire the generation on screen (document changed / closed / replaced).
     retire: function (reason) { retire(reason); },
+    // LINUX-EDIT-INPUT-SAFETY: true only for the explicit Interact mode. A
+    // canvas that has no adapter yet gets the mode when its first scene
+    // loads (before replaceWorld). Returns the gate state ('edit' |
+    // 'interact' | 'unavailable:<why>'); no argument only reads it.
+    // Tests (LINUX-EDIT-INPUT-SAFETY): one field of a DEF-named node in the
+    // scene on screen, as text, through the public SAI (read only); '' when
+    // there is no such node or field. Shows whether an authored sensor fired.
+    sceneField: function (def, field) {
+      try {
+        var c = canvas();
+        var s = c && c.browser ? c.browser.currentScene : null;
+        var n = s ? s.getNamedNode(String(def)) : null;
+        var v = n ? n[String(field)] : undefined;
+        return v === undefined || v === null ? '' : String(v);
+      } catch (e) {
+        return '';
+      }
+    },
+    // Tests (PR #149 review): make the gate report 'unavailable:<why>' with
+    // X_ITE's own sensor entry points LIVE (worst case); '' ends the fault,
+    // and the gate must then pass its check again (it comes back closed).
+    sceneInputFault: function (why) {
+      pick.fault = why ? String(why) : null;
+      return applyInput();
+    },
+    // Tests: presses the pointer block stopped.
+    sceneInputBlocked: function () { return pick.blocked; },
+    sceneInput: function (interact) {
+      if (interact !== undefined) pick.interact = interact === true;
+      var c = canvas();
+      if (c && c.browser) adapterFor(c.browser);
+      return applyInput();
+    },
     // The adapter's plain-data snapshot of one click, as JSON, plus the
     // generation the hit belongs to and the active one at this instant.
     // P0-A: `layer` names which Shape under the pointer (0 = the nearest);

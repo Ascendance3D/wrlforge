@@ -29,6 +29,14 @@ extern "C" {
     fn preview_pick_js(client_x: f64, client_y: f64, layer: u32) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = retire, catch)]
     fn preview_retire_js(reason: &str) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = sceneInput, catch)]
+    fn preview_scene_input_js(interact: JsValue) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = sceneInputFault, catch)]
+    fn preview_scene_input_fault_js(why: &str) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = sceneInputBlocked, catch)]
+    fn preview_scene_input_blocked_js() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = sceneField, catch)]
+    fn preview_scene_field_js(def: &str, field: &str) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = pixel, catch)]
     async fn preview_pixel_js(client_x: f64, client_y: f64) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = pickStatus, catch)]
@@ -344,11 +352,52 @@ fn js_err(e: JsValue) -> String {
         .unwrap_or_else(|| "unknown IPC error".into())
 }
 
+/// PR #149 review: the backend commands that change the source text. While
+/// Interact is on every one is refused HERE, before it is sent, whatever
+/// started it (a command, the Inspector, a gizmo release, the Source pane, an
+/// action begun before Interact and still pending). The File commands are not
+/// edits: they never read the runtime scene.
+pub const SOURCE_EDITS: &[&str] = &[
+    "doc_edit",
+    "doc_edit_field",
+    "doc_edit_list",
+    "doc_edit_strings",
+    "doc_add_field",
+    "doc_add_texture",
+    "doc_create",
+    "doc_structure_edit",
+    "doc_translate",
+    "doc_rotate",
+    "doc_scale",
+    "doc_undo",
+    "doc_redo",
+];
+
+/// The refusal text of a source edit attempted while Interact is on.
+pub const INTERACT_REFUSAL: &str =
+    "Not changed — Interact is on. Leave Interact to edit the source; the world's runtime state is never written.";
+
 pub async fn call<T: DeserializeOwned>(cmd: &str, args: impl Serialize) -> Result<T, String> {
+    if SOURCE_EDITS.contains(&cmd)
+        && leptos::prelude::GetUntracked::get_untracked(&crate::ui::ui().interact_mode)
+    {
+        INTERACT_REFUSALS.with(|n| n.set(n.get() + 1));
+        crate::ui::flash(INTERACT_REFUSAL);
+        return Err(INTERACT_REFUSAL.into());
+    }
     let ser = serde_wasm_bindgen::Serializer::json_compatible();
     let a = args.serialize(&ser).map_err(|e| e.to_string())?;
     let v = tauri_invoke(cmd, a).await.map_err(js_err)?;
     serde_wasm_bindgen::from_value(v).map_err(|e| format!("{cmd}: bad reply: {e}"))
+}
+
+thread_local! {
+    static INTERACT_REFUSALS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Tests: how many source edits the Interact guard refused.
+pub fn interact_refusals() -> u64 {
+    INTERACT_REFUSALS.with(|n| n.get())
 }
 
 #[derive(Serialize)]
@@ -642,6 +691,42 @@ pub async fn preview_capture() -> Option<Vec<u8>> {
 /// Retire the generation on screen: it can no longer be picked.
 pub fn preview_retire(reason: &str) {
     let _ = preview_retire_js(reason);
+}
+
+/// Tests: one runtime field of a DEF-named node on screen, as text.
+pub fn preview_scene_field(def: &str, field: &str) -> String {
+    preview_scene_field_js(def, field)
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_default()
+}
+
+/// Tests (PR #149 review): force the gate unavailable (`why`), or end the
+/// fault (""). Returns the gate state after it.
+pub fn preview_scene_input_fault(why: &str) -> String {
+    preview_scene_input_fault_js(why)
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_else(|| "unavailable:bridge-missing".into())
+}
+
+/// Tests: how many presses the adapter's pointer block stopped.
+pub fn preview_scene_input_blocked() -> u64 {
+    preview_scene_input_blocked_js()
+        .ok()
+        .and_then(|v| v.as_f64())
+        .map_or(0, |n| n as u64)
+}
+
+/// LINUX-EDIT-INPUT-SAFETY: give authored pointing sensors the pointer
+/// (`Some(true)`, Interact only) or not (`Some(false)`); `None` only reads.
+/// Returns `edit`, `interact` or `unavailable:<why>`.
+pub fn preview_scene_input(interact: Option<bool>) -> String {
+    let arg = interact.map_or(JsValue::UNDEFINED, JsValue::from_bool);
+    preview_scene_input_js(arg)
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_else(|| "unavailable:bridge-missing".into())
 }
 
 /// `{"ok":bool,"reason":..}`: whether viewport picking is available.

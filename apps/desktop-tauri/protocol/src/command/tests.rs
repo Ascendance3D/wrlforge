@@ -324,6 +324,7 @@ fn planned_commands_never_run_in_any_state() {
         native_viewport: false,
         outline_ready: true,
         node_selected: true,
+        interact: false,
     };
     let planned: Vec<_> = COMMANDS
         .iter()
@@ -590,6 +591,7 @@ fn every_disabled_state_has_a_reason() {
                 native_viewport: bits & 32 != 0,
                 outline_ready: bits & 16 != 0,
                 node_selected: bits & 64 != 0,
+                interact: bits & 128 != 0,
             };
             for c in COMMANDS {
                 if let Availability::Disabled(why) = c.id.availability(ctx) {
@@ -727,4 +729,94 @@ fn viewport_keys_fit_only_unmodified_and_never_shadow_a_shortcut() {
         assert_eq!(from_viewport_key(k, true), None, "{k}");
     }
     assert_eq!(from_shortcut("f", true, false), Some(EditFind));
+}
+
+#[test]
+fn interact_is_the_one_explicit_sensor_mode_and_never_edits() {
+    use CommandId::*;
+    let s = ToolInteract.spec();
+    assert_eq!(s.key, "tool.interact");
+    assert_eq!(s.label, "Interact");
+    assert_eq!(
+        (s.menu, s.requires, s.action, s.mutates_document, s.check),
+        (Menu::Tools, Requires::ViewportTool, Action::UiOnly, false, Check::Interact)
+    );
+    assert!(s.shortcuts.is_empty());
+    assert!(s.hint.contains("Leaving Interact reloads the preview from the source"));
+    assert_eq!(CommandId::from_key("tool.interact"), Some(ToolInteract));
+    // Needs a document and the X_ITE viewport, like the other tools.
+    let mut ctx = CommandContext { has_document: true, ..Default::default() };
+    assert_eq!(ToolInteract.refusal(ctx), None);
+    ctx.native_viewport = true;
+    assert!(ToolInteract.refusal(ctx).is_some());
+    assert!(ToolInteract.refusal(CommandContext::default()).is_some());
+    // No viewport key fires it.
+    assert!(VIEWPORT_KEYS.iter().all(|(_, id)| *id != ToolInteract));
+}
+
+#[test]
+fn interact_refuses_every_source_edit_and_nothing_else() {
+    use CommandId::*;
+    let edit = CommandContext {
+        has_document: true,
+        can_undo: true,
+        can_redo: true,
+        focus: FocusKind::Source,
+        text_selected: true,
+        node_selected: true,
+        ..Default::default()
+    };
+    let interact = CommandContext {
+        interact: true,
+        ..edit
+    };
+    let edits: Vec<CommandId> = CommandId::ALL
+        .into_iter()
+        .filter(|c| c.edits_source())
+        .collect();
+    for id in [
+        EditUndo,
+        EditRedo,
+        EditCut,
+        EditPaste,
+        EditDeleteNode,
+        EditDuplicateNode,
+        CreateBox,
+        CreateExtrusion,
+    ] {
+        assert!(edits.contains(&id), "{id:?} edits the source");
+        assert_eq!(id.refusal(interact), Some(INTERACT_ON), "{id:?}");
+        assert_eq!(
+            id.availability(interact),
+            Availability::Disabled(INTERACT_ON),
+            "{id:?}"
+        );
+    }
+    for id in &edits {
+        assert!(
+            id.spec().mutates_document && id.spec().menu != Menu::File,
+            "{id:?}"
+        );
+        assert_eq!(id.refusal(interact), Some(INTERACT_ON), "{id:?}");
+    }
+    // Not edits: File, view, selection and the tools that leave Interact.
+    for id in [
+        FileSave,
+        FileOpen,
+        FileClose,
+        FileReload,
+        EditCopy,
+        EditClearSelection,
+        ViewFitAll,
+        ToolSelect,
+        ToolMove,
+        ToolInteract,
+    ] {
+        assert!(!id.edits_source(), "{id:?}");
+        assert_eq!(id.refusal(interact), id.refusal(edit), "{id:?}");
+    }
+    // Outside Interact nothing changes.
+    for id in edits {
+        assert_ne!(id.refusal(edit), Some(INTERACT_ON), "{id:?}");
+    }
 }
