@@ -197,18 +197,18 @@ sensorFixture('S1-edit-input-safety');
 // X3D nodes (X_ITE drops them from a '#VRML V2.0' scene), so these worlds use
 // the X3D classic header; X_ITE loads its KeyDeviceSensor component for them
 // AFTER the pick adapter exists. Only one keyboard sensor may be enabled at a
-// time (X_ITE disables the others), so each world has one. A TouchSensor
-// door (pointer + keyboard sensors in one world) and a looping TimeSensor
-// spin are in both. The keyboard sensor drives a light by ROUTE.
+// time (X_ITE disables the others), so S2 and S3 have one each (S5 has
+// both). A TouchSensor door (pointer + keyboard sensors in one world) and a
+// looping TimeSensor spin are in each. A keyboard sensor drives a light by
+// ROUTE.
 function keyFixture(id, sensor) {
   let text = '#X3D V3.3 utf8\nViewpoint { position 0 0 20 description "front" }\nNavigationInfo { type [ "EXAMINE" "ANY" ] }\n'
     + 'DEF KeyLight DirectionalLight { on FALSE color 1 0.2 0.2 direction 0 0 -1 }\n';
   const spans = {};
   const at = (label, t) => { const start = text.length; text += t; spans[label] = { start, end: text.length }; text += '\n'; };
   const box = (c) => `Shape { appearance Appearance { material Material { diffuseColor ${c} } } geometry Box { size 1.6 1.6 1.6 } }`;
-  text += sensor === 'key'
-    ? 'DEF KS KeySensor { }\nROUTE KS.isActive TO KeyLight.set_on\n'
-    : 'DEF SS StringSensor { deletionAllowed TRUE }\nROUTE SS.isActive TO KeyLight.set_on\n';
+  if (sensor !== 'string') text += 'DEF KS KeySensor { }\nROUTE KS.isActive TO KeyLight.set_on\n';
+  if (sensor !== 'key') text += 'DEF SS StringSensor { deletionAllowed TRUE }\nROUTE SS.isActive TO KeyLight.set_on\n';
   at('static', `Transform { translation -4 0 0 children [ ${box('0.6 0.6 0.6')} ] }`);
   at('door', `DEF Door Transform { translation 0 0 0 children [ DEF DoorTouch TouchSensor { } ${box('0 0.6 0')} ] }`);
   text += 'DEF Clock TimeSensor { cycleInterval 0.3 }\nDEF Swing OrientationInterpolator { key [ 0 1 ] keyValue [ 0 1 0 0, 0 1 0 1.2 ] }\n'
@@ -232,6 +232,9 @@ function keyFixture(id, sensor) {
 }
 keyFixture('S2-key-sensor', 'key');
 keyFixture('S3-string-sensor', 'string');
+// PR #150 review: both keyboard sensors in one world. X_ITE keeps one
+// enabled, so the other is a DISABLED sensor the gate may have wrapped.
+keyFixture('S5-key-and-string', 'both');
 
 // LINUX-KEY-INPUT-SAFETY: a plain VRML97 world (no keyboard sensor). After
 // the Source had the focus, a viewport click must not let typed keys edit
@@ -377,7 +380,7 @@ function chevyFixture(src) {
 }
 
 const keysOnly = process.argv[3] === '--keys';
-const isKey = (f) => ['S2-key-sensor', 'S3-string-sensor', 'S4-viewport-typing'].includes(f.id);
+const isKey = (f) => ['S2-key-sensor', 'S3-string-sensor', 'S4-viewport-typing', 'S5-key-and-string'].includes(f.id);
 const planned = fixtures.filter((f) => isKey(f) === keysOnly);
 fs.writeFileSync(path.join(real, 'plan.json'), JSON.stringify(keysOnly ? { fixtures: planned, keysOnly } : { fixtures: planned }, null, 1));
 console.log(`${planned.length} fixtures, ${planned.reduce((n, f) => n + f.clicks.length, 0)} clicks -> ${real}`);

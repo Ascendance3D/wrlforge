@@ -889,6 +889,9 @@ async fn matrix(c: &p::PickSmoke, s: &mut Stats, r: &mut R) -> Option<()> {
         if fx.id == "S4-viewport-typing" {
             viewport_typing(c, fx, r).await?;
         }
+        if fx.id == "S5-key-and-string" {
+            s.wrong += key_review(c, fx, r).await?;
+        }
     }
     Some(())
 }
@@ -1931,7 +1934,19 @@ pub(super) async fn run(c: &p::PickSmoke, r: &mut R) -> Option<()> {
 /// The runtime fields that show whether the S2 KeySensor / S3 StringSensor
 /// (or anything behind them) received a key.
 fn key_watch(fx: &p::PickFixture) -> &'static [(&'static str, &'static str)] {
-    if fx.id.starts_with("S2") {
+    if fx.id.starts_with("S5") {
+        &[
+            ("KS", "isActive"),
+            ("KS", "keyPress"),
+            ("KS", "keyRelease"),
+            ("KS", "actionKeyPress"),
+            ("SS", "isActive"),
+            ("SS", "enteredText"),
+            ("SS", "finalText"),
+            ("KeyLight", "on"),
+            ("DoorTouch", "touchTime"),
+        ]
+    } else if fx.id.starts_with("S2") {
         &[
             ("KS", "isActive"),
             ("KS", "keyPress"),
@@ -2339,6 +2354,242 @@ async fn key_gate(c: &p::PickSmoke, fx: &p::PickFixture, r: &mut R) -> Option<u3
     // The key checks select nothing from a pick (an X3D world refuses every
     // pick); the matrix above counts WRONG_SOURCE_SELECTIONS.
     Some(0)
+}
+
+/// PR #150 review on `S5-key-and-string` (a KeySensor AND a StringSensor;
+/// X_ITE keeps one enabled), REAL X keys.
+/// (R1) Finding 1: the gate wraps both sensors (enabling one disables the
+/// other), the adapter is disposed while one is DISABLED and replaced; the
+/// disabled one, enabled again, is gated by the new adapter (a wrapper left
+/// behind makes it `entry-already-wrapped`). Keys in edit reach neither
+/// sensor and shortcuts run; Interact delivers keys. Once on the loaded
+/// scene and once after a scene replacement.
+/// (R2) Finding 2: in Interact the gate fails AT a keyup, a keypress, a
+/// composition, an input or a beforeinput event: Rust is told once, leaves
+/// Interact and reloads the preview from the source; the Source is editable;
+/// the document is unchanged; no late or held key reaches a sensor; ending
+/// the fault, the gate comes back in edit, never Interact.
+/// Returns the WRONG count.
+async fn key_review(c: &p::PickSmoke, fx: &p::PickFixture, r: &mut R) -> Option<u32> {
+    use p::command::CommandId as C;
+    let u = ui();
+    let (sx, sy) = fx
+        .clicks
+        .iter()
+        .find(|k| k.id == "static")
+        .and_then(|k| project(k.world, fx.camera))?;
+    let real = REAL.get().is_some();
+    click("btn-select")?;
+    ready(8000).await?;
+    ipc::sleep(300).await;
+    let start = untouched().await?;
+    let en = || {
+        (
+            ipc::preview_scene_field("KS", "enabled"),
+            ipc::preview_scene_field("SS", "enabled"),
+        )
+    };
+    let reload = || async {
+        let loads = u.preview_loads.get_untracked();
+        spawn_preview();
+        let ok = wait_ms(8000, || (u.preview_loads.get_untracked() > loads).then_some(()))
+            .await
+            .is_some();
+        ready(8000).await;
+        ipc::sleep(300).await;
+        ok
+    };
+
+    // (R1) Finding 1, twice.
+    for round in ["the loaded scene", "after a scene replacement"] {
+        let replaced = round.starts_with("after") && reload().await;
+        let authored = key_fields(fx);
+        let en0 = en();
+        let (first, other) = if en0.0 == "true" { ("KS", "SS") } else { ("SS", "KS") };
+        let g0 = ipc::preview_scene_input(None); // `first` is wrapped
+        let set1 = ipc::preview_scene_sensor_enable(other, true);
+        ipc::sleep(400).await;
+        let g1 = ipc::preview_scene_input(None); // `other` is wrapped; `first` is now disabled
+        let en1 = en();
+        let g2 = ipc::preview_scene_adapter_replace(); // disposed with `first` disabled
+        let set2 = ipc::preview_scene_sensor_enable(first, true);
+        ipc::sleep(400).await;
+        let g3 = ipc::preview_scene_input(None); // `first` must be clean to be gated again
+        let en3 = en();
+        crate::panels::check_scene_input();
+        gesture(sx, sy).await;
+        let focus = focus_desc();
+        keys(&["key-a", "key-2", "key-F2", "key-space"], sx, sy).await?;
+        let edit = key_fields(fx);
+        keys(&["key-ctrl+f"], sx, sy).await?;
+        let find = focus_desc() == "#find-query";
+        keys(&["key-Escape"], sx, sy).await?;
+        click("btn-interact")?;
+        ipc::sleep(500).await;
+        super::gizmo::real("click", sx, sy).await.ok()?;
+        ipc::sleep(REAL_CLICK_GAP_MS).await;
+        let gi = ipc::preview_scene_input(None);
+        keys(&["key-a", "key-b"], sx, sy).await?;
+        let int = key_fields(fx);
+        let delivered = key_diff(&int, &authored);
+        let to_first = delivered
+            .iter()
+            .any(|f| f.starts_with(&format!("{first}.keyPress=")) || f.starts_with(&format!("{first}.enteredText=")));
+        capture(c, &format!("s5-r1-{}", if replaced { "replaced" } else { "loaded" })).await;
+        let loads = u.preview_loads.get_untracked();
+        click("btn-select")?;
+        let left = reload_seen(loads).await;
+        let doc = untouched().await?;
+        let same = (doc.revision, doc.dirty, doc.textarea_hash) == (start.revision, start.dirty, start.textarea_hash);
+        r.step(
+            &format!("S5 (#150 finding 1) on {round}: both sensors wrapped, the adapter disposed while {first} is DISABLED and replaced; {first} enabled again is gated by the new adapter (no entry-already-wrapped); edit keys reach neither sensor and Ctrl+F runs; Interact delivers keys to {first}; the source is unchanged"),
+            real && (round.starts_with("the") || replaced) && set1 && set2
+                && g0 == "edit" && g1 == "edit" && en1 == (if other == "KS" { ("true".into(), "false".into()) } else { ("false".into(), "true".into()) })
+                && g2 == "edit" && g3 == "edit" && en3 == en0
+                && focus == "#viewport" && edit == authored && find
+                && gi == "interact" && to_first && left && same,
+            format!("enabled {en0:?} -> {en1:?} -> {en3:?} · gate {g0} / {g1} / replaced {g2} / re-enabled {g3} · focus {focus} · edit changed {:?} · find {find} · interact {gi} delivered {delivered:?} · left {left} · source same {same}", key_diff(&edit, &authored)),
+        );
+    }
+
+    // (R2) Finding 2: the gate fails at each event type during Interact.
+    let input_ev = |vp: &HtmlElement, t: &str| -> Option<()> {
+        let init = web_sys::InputEventInit::new();
+        init.set_data(Some("x"));
+        init.set_input_type("insertText");
+        init.set_bubbles(true);
+        init.set_cancelable(t == "beforeinput");
+        init.set_composed(true);
+        let ev = web_sys::InputEvent::new_with_event_init_dict(t, &init).ok()?;
+        let _ = vp.dispatch_event(&ev);
+        Some(())
+    };
+    let compose_ev = |vp: &HtmlElement, t: &str| -> Option<()> {
+        let ci = web_sys::CompositionEventInit::new();
+        ci.set_data("\u{3042}");
+        ci.set_bubbles(true);
+        ci.set_composed(true);
+        let ev = web_sys::CompositionEvent::new_with_event_init_dict(t, &ci).ok()?;
+        let _ = vp.dispatch_event(&ev);
+        Some(())
+    };
+    for at in ["keyup", "keypress", "compositionstart", "compositionend", "input", "beforeinput"] {
+        reload().await;
+        let authored = key_fields(fx);
+        click("btn-interact")?;
+        ipc::sleep(500).await;
+        super::gizmo::real("click", sx, sy).await.ok()?;
+        ipc::sleep(REAL_CLICK_GAP_MS).await;
+        let gi = ipc::preview_scene_input(None);
+        let in_interact = u.interact_mode.get_untracked();
+        let ro = textarea().is_some_and(|t| t.read_only());
+        // A key pressed (and seen) in Interact: the world's runtime state
+        // changes, so the reload is visible.
+        super::gizmo::real("keydown-a", sx, sy).await.ok()?;
+        ipc::sleep(300).await;
+        let pressed = key_diff(&key_fields(fx), &authored);
+        let lost0 = ipc::preview_scene_gate_lost();
+        let loads = u.preview_loads.get_untracked();
+        let before = untouched().await?;
+        u.message.set(String::new());
+        ipc::preview_scene_input_fault_on(at, &format!("smoke-fault-at-{at}"));
+        let vp = viewport()?;
+        match at {
+            "keyup" => {
+                super::gizmo::real("keyup-a", sx, sy).await.ok()?;
+            }
+            // A real keypress never follows a sensor's keydown (it calls
+            // preventDefault), so this one is dispatched at the canvas.
+            "keypress" => {
+                super::gizmo::real("keyup-a", sx, sy).await.ok()?;
+                let init = web_sys::KeyboardEventInit::new();
+                init.set_key("c");
+                init.set_code("KeyC");
+                init.set_bubbles(true);
+                init.set_cancelable(true);
+                init.set_composed(true);
+                let ev = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict("keypress", &init).ok()?;
+                let _ = vp.dispatch_event(&ev);
+            }
+            "compositionstart" | "compositionend" => {
+                if at == "compositionend" {
+                    compose_ev(&vp, "compositionstart")?;
+                    compose_ev(&vp, "compositionupdate")?;
+                }
+                compose_ev(&vp, at)?;
+            }
+            _ => input_ev(&vp, at)?,
+        }
+        let left = wait_ms(3000, || (!u.interact_mode.get_untracked()).then_some(())).await.is_some();
+        let reloaded = wait_ms(8000, || (u.preview_loads.get_untracked() > loads).then_some(())).await.is_some();
+        ipc::preview_scene_input_fault_on("", "");
+        ready(8000).await;
+        ipc::sleep(300).await;
+        let gate = ipc::preview_scene_input(None);
+        let note = u.message.get_untracked();
+        let fresh = key_fields(fx) == authored;
+        let tools_off = !u.pick_mode.get_untracked() && !u.move_mode.get_untracked()
+            && !u.rotate_mode.get_untracked() && !u.scale_mode.get_untracked();
+        let editable = textarea().is_some_and(|t| !t.read_only());
+        // Late keys while the gate is still failed (and the held key's
+        // release for the keyup case): nothing reaches a sensor.
+        if at != "keyup" && at != "keypress" {
+            super::gizmo::real("keyup-a", sx, sy).await.ok()?;
+        }
+        super::gizmo::real("click", sx, sy).await.ok()?;
+        ipc::sleep(REAL_CLICK_GAP_MS).await;
+        keys(&["key-b", "key-F2", "key-Return"], sx, sy).await?;
+        let late = key_diff(&key_fields(fx), &authored);
+        let once = ipc::preview_scene_gate_lost() - lost0;
+        let after = untouched().await?;
+        let same = (after.revision, after.dirty, after.textarea_hash) == (before.revision, before.dirty, before.textarea_hash);
+        // Recovery: edit, never Interact; Source typing and Ctrl+Z work.
+        let cleared = ipc::preview_scene_input_fault("");
+        crate::panels::check_scene_input();
+        let interact_after = u.interact_mode.get_untracked();
+        crate::command::run(C::ViewFocusSource);
+        ipc::sleep(200).await;
+        keys(&["key-z"], sx, sy).await?;
+        let typed = src_hash() != start.textarea_hash;
+        keys(&["key-ctrl+z"], sx, sy).await?;
+        let undone = wait_ms(3000, || (src_hash() == start.textarea_hash).then_some(())).await.is_some()
+            || undo_to(start.textarea_hash, 3).await;
+        gesture(sx, sy).await;
+        keys(&["key-a", "key-F2"], sx, sy).await?;
+        let late_edit = key_diff(&key_fields(fx), &authored);
+        capture(c, &format!("s5-r2-gate-lost-at-{at}")).await;
+        // A failed case never leaves the next one in Interact or faulted.
+        ipc::preview_scene_input_fault("");
+        crate::panels::leave_interact();
+        r.step(
+            &format!("S5 (#150 finding 2): the gate fails at {at} during Interact: Rust is told once, leaves Interact, the tools are off and the preview reloads from the source (runtime state gone); the Source is editable; no late or held key reaches a sensor; the document is unchanged; the gate recovers in edit (not Interact); Source typing and Ctrl+Z work"),
+            gi == "interact" && in_interact && ro && !pressed.is_empty()
+                && left && reloaded && once == 1 && gate.starts_with("unavailable:smoke-fault-at-")
+                && note.contains("Interact ended") && fresh && tools_off && editable
+                && late.is_empty() && same
+                && cleared == "edit" && !interact_after && typed && undone && late_edit.is_empty(),
+            format!("interact {gi}/{in_interact} source read-only {ro} · pressed {pressed:?} · left {left} reloaded {reloaded} notices {once} gate {gate} · note {:?} · fresh {fresh} tools off {tools_off} editable {editable} · late {late:?} · doc same {same} · recovered {cleared} interact {interact_after} · typed {typed} undone {undone} · late in edit {late_edit:?}", note.chars().take(60).collect::<String>()),
+        );
+    }
+    // The matrix keeps Select on from fixture to fixture; a lost gate
+    // turned it off.
+    if !u.pick_mode.get_untracked() {
+        click("btn-select")?;
+    }
+    // X3D worlds refuse every pick: nothing can be selected wrongly here.
+    Some(0)
+}
+
+/// After a mode switch that reloads the preview: true once a load newer
+/// than `loads` has finished.
+async fn reload_seen(loads: u64) -> bool {
+    let u = ui();
+    let ok = wait_ms(8000, || (u.preview_loads.get_untracked() > loads).then_some(()))
+        .await
+        .is_some();
+    ready(8000).await;
+    ipc::sleep(300).await;
+    ok
 }
 
 /// Where the Source differs from `base`: (offset, removed, inserted).
