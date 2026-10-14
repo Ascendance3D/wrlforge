@@ -15,7 +15,8 @@
 //     refused by Gatekeeper outright, which is what blocked 1.4.0 before PR #16;
 //   * the draft release needs all three platform jobs, so a partial asset set
 //     can never be assembled;
-//   * the release stays --draft --prerelease and nothing publishes it.
+//   * the release stays --draft --prerelease and nothing publishes it;
+//   * no tag push starts it, and a Rust-line tag never reaches a build job.
 //
 // js-yaml is a DIRECT devDependency for exactly this file. It used to be picked
 // up transitively through electron-builder, which meant a hoisting change could
@@ -53,10 +54,10 @@ const setupNode = (name) => {
 };
 const runs = (name) => job(name).steps.map((s) => s.run || '').join('\n');
 
-test('the workflow is valid YAML with the four expected jobs', () => {
+test('the workflow is valid YAML with the five expected jobs', () => {
   assert.deepStrictEqual(
     Object.keys(doc.jobs).sort(),
-    ['build-linux', 'build-macos', 'build-windows', 'draft-release']
+    ['build-linux', 'build-macos', 'build-windows', 'draft-release', 'legacy-guard']
   );
 });
 
@@ -229,7 +230,7 @@ test('no Apple credential leaks into the Linux or Windows job', () => {
 
 test('the draft release requires all three platform builds', () => {
   assert.deepStrictEqual(job('draft-release').needs,
-    ['build-linux', 'build-windows', 'build-macos']);
+    ['legacy-guard', 'build-linux', 'build-windows', 'build-macos']);
 });
 
 test('all eight platform artifacts are guarded', () => {
@@ -390,9 +391,62 @@ test('the release stays a draft prerelease and is never published', () => {
   assert.ok(!/gh release publish/.test(source), 'no step may publish the release');
 });
 
-test('the tag trigger contract is preserved', () => {
-  assert.deepStrictEqual(triggers.push.tags, ['v*']);
+// --- POST-ALPHA: legacy Electron workflow only --------------------------------
+// The v1.4.51-alpha.1 push started this workflow through `push: tags: ['v*']`:
+// it built Electron artifacts named 1.4.0 (package.json) for Linux, Windows and
+// macOS and failed at assembly. The Rust/Tauri line is Linux x64 only and is
+// not built here, so a tag push must start nothing and a manual run of a
+// Rust-line tag must stop in legacy-guard before any build job.
+
+test('only a manual dispatch starts the workflow; no tag or branch push does', () => {
+  assert.deepStrictEqual(Object.keys(triggers), ['workflow_dispatch']);
   assert.ok(triggers.workflow_dispatch.inputs.tag, 'the workflow_dispatch tag input is preserved');
+  assert.strictEqual(triggers.push, undefined, 'no push trigger (tags or branches)');
+});
+
+test('every build and release job needs legacy-guard and runs only on dispatch', () => {
+  for (const name of ['build-linux', 'build-windows', 'build-macos', 'draft-release']) {
+    const needs = [].concat(job(name).needs || []);
+    assert.ok(needs.includes('legacy-guard'), `${name} must need legacy-guard`);
+    assert.strictEqual(job(name).if, "github.event_name == 'workflow_dispatch'", `${name} job guard`);
+  }
+  assert.strictEqual(job('legacy-guard').needs, undefined, 'legacy-guard runs first');
+});
+
+// Runs the real legacy-guard step with TAG set as the dispatch input would.
+function runLegacyGuard(tag) {
+  const step = job('legacy-guard').steps[0];
+  assert.strictEqual(step.env.TAG, '${{ github.event.inputs.tag }}', 'the tag reaches the step only through env');
+  const res = require('child_process').spawnSync('bash', ['-c', step.run], {
+    encoding: 'utf8',
+    env: { ...process.env, TAG: tag },
+  });
+  return { status: res.status, out: `${res.stdout || ''}${res.stderr || ''}` };
+}
+
+test('legacy-guard refuses every Rust-line tag before any build job', () => {
+  for (const tag of ['v1.4.51-alpha.1', 'v1.4.52-alpha.1', 'v1.4.60-alpha.1', 'v1.5.0',
+    'v1.4.51', 'v2.0.0', 'v1.4.0-alpha.1']) {
+    const r = runLegacyGuard(tag);
+    assert.notStrictEqual(r.status, 0, `${tag} must be refused`);
+    assert.match(r.out, /REFUSED/, `${tag}: ${r.out}`);
+  }
+});
+
+test('legacy-guard refuses a malformed tag input', () => {
+  for (const tag of ['', '1.4.0', 'v1.4', 'main', 'v1.4.0; echo pwned', 'v1.4.0\nv1.5.0']) {
+    const r = runLegacyGuard(tag);
+    assert.notStrictEqual(r.status, 0, `${JSON.stringify(tag)} must be refused`);
+    assert.match(r.out, /REFUSED/);
+  }
+});
+
+test('legacy-guard still accepts the historical Electron tags', () => {
+  for (const tag of ['v1.4.0', 'v1.3.0-beta.5', 'v1.3.0-beta.2', 'v1.4.50']) {
+    const r = runLegacyGuard(tag);
+    assert.strictEqual(r.status, 0, `${tag}: ${r.out}`);
+    assert.match(r.out, /legacy Electron tag accepted/);
+  }
 });
 
 test('no automatic retry is wired into the macOS build', () => {

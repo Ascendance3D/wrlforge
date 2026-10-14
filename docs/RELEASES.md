@@ -25,6 +25,21 @@ All releases are published on GitHub:
   keep their own licenses. Releases through `v1.3.0-beta.3` were distributed under the
   MIT License and those copies keep the permissions granted with them.
 
+## Release lines
+
+- **Legacy Electron line (through 1.4.0).** Built by the GitHub Actions
+  workflow `.github/workflows/release.yml` for Linux x64, Windows x64 and macOS
+  Apple Silicon. Since `v1.4.51-alpha.1` this workflow starts **only by manual
+  dispatch**; a tag push does not start it. Its `legacy-guard` job refuses any
+  Rust-line tag (an `-alpha` tag, or a version at or above 1.4.51) before a
+  build job runs.
+- **Rust/Tauri line (1.4.51 and later, Alpha).** Built from
+  `apps/desktop-tauri` for **Linux x64 only** by the owner with
+  `apps/desktop-tauri/packaging/package-linux.sh`, after the Linux gate
+  (`apps/desktop-tauri/gate-linux.sh`). There is no Windows, macOS or mobile
+  package for this line, and no workflow builds or publishes it. Pushing a
+  Rust-line tag starts no release job.
+
 ---
 
 ## 1.4.0 (Beta)

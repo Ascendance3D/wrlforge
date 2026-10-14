@@ -18,14 +18,20 @@ name: Release
 #              by Gatekeeper outright. Credentials come from repository secrets
 #              into an EPHEMERAL keychain and a temporary API-key file, both
 #              destroyed in an always-run cleanup step.
-
+#
+# LEGACY (Electron) ONLY. Since v1.4.51-alpha.1 WRL Forge releases are built
+# from the Rust/Tauri app (apps/desktop-tauri), Linux x64 only, by the owner's
+# documented local packaging (docs/RELEASES.md, "Release lines"). A tag push
+# no longer starts this workflow: the `v1.4.51-alpha.1` push did, built
+# Electron artifacts named 1.4.0 (package.json) for three platforms, and
+# failed at assembly. A manual run is refused by the legacy-guard job for any
+# Rust-line tag (an -alpha tag, or a version at or above 1.4.51), so no
+# Windows, macOS or Electron Linux package is built for it.
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to build (e.g. v1.4.0)'
+        description: 'LEGACY Electron tag to rebuild (e.g. v1.4.0); Rust-line tags are refused'
         required: true
         default: 'v1.4.0'
 
@@ -37,10 +43,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Every build job needs this job, so a refused tag builds nothing.
+  legacy-guard:
+    name: Refuse Rust-line tags (legacy Electron release only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a legacy Electron tag below 1.4.51
+        env:
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "REFUSED: '$TAG' is not a vMAJOR.MINOR.PATCH[-PRE] tag" >&2; exit 1
+          fi
+          major="${BASH_REMATCH[1]}"; minor="${BASH_REMATCH[2]}"; patch="${BASH_REMATCH[3]}"; pre="${BASH_REMATCH[4]}"
+          if [[ "$pre" == *alpha* ]]; then
+            echo "REFUSED: $TAG is a Rust/Tauri Alpha tag (Linux x64 only; not built here)" >&2; exit 1
+          fi
+          if (( major > 1 || (major == 1 && (minor > 4 || (minor == 4 && patch >= 51))) )); then
+            echo "REFUSED: $TAG is on the Rust/Tauri release line (1.4.51 and later; not built here)" >&2; exit 1
+          fi
+          echo "legacy Electron tag accepted: $TAG"
+
   # Linux and Windows build on the self-hosted Proxmox runners. This workflow
-  # only runs on owner-pushed tags and manual dispatch, never on pull requests.
+  # only runs on owner manual dispatch of a legacy tag, never on pull requests.
   build-linux:
     name: Build Linux artifacts
+    needs: legacy-guard
+    if: github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, linux-proxmox]
     steps:
       - uses: actions/checkout@v4
@@ -67,6 +97,8 @@ jobs:
 
   build-windows:
     name: Build Windows artifacts
+    needs: legacy-guard
+    if: github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, windows-proxmox]
     steps:
       - uses: actions/checkout@v4
@@ -110,6 +142,8 @@ jobs:
 
   build-macos:
     name: Build macOS artifacts (signed + notarized, Apple Silicon)
+    needs: legacy-guard
+    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -322,7 +356,8 @@ jobs:
 
   draft-release:
     name: Assemble draft prerelease
-    needs: [build-linux, build-windows, build-macos]
+    needs: [legacy-guard, build-linux, build-windows, build-macos]
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
