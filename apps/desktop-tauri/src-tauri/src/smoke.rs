@@ -699,14 +699,13 @@ impl SmokeState {
         let d = dir.join("captures");
         std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
         let out = d.join(format!("{id}.png"));
-        let st = std::process::Command::new("timeout")
-            .args(["10", "import", "-window", "root"])
-            .arg(&out)
-            .status()
-            .map_err(|e| format!("import: {e}"))?;
-        if !st.success() {
-            return Err(format!("import failed: {st}"));
-        }
+        guarded(
+            &GuardEnv::from_process(),
+            10,
+            "import",
+            &["-window".as_ref(), "root".as_ref(), out.as_os_str()],
+        )
+        .map_err(|e| format!("import failed: {e}"))?;
         Ok(format!("captures/{id}.png"))
     }
 
@@ -998,35 +997,116 @@ impl SmokeState {
 const XVFB_GEOMETRY: &str = "1600 1000";
 
 /// Real pointer input is allowed ONLY when `smoke.sh` launched this process
-/// inside its own Xvfb server (`WRLFORGE_SMOKE_XVFB=1`) with a DISPLAY set.
+/// inside its own Xvfb server (`WRLFORGE_SMOKE_XVFB=1`) and `display-guard.sh`
+/// accepts the display.
 /// UI-DOCK-1: whether real X input may be used (the same rule).
 pub fn real_pointer_available() -> bool {
     real_pointer_env().is_ok()
 }
 
+/// POST-ALPHA: `display-guard.sh --check` (path in `WRLFORGE_DISPLAY_GUARD`,
+/// set by `smoke.sh` and `gate-linux.sh`) accepts the display: a private Xvfb
+/// of this user reached with its own cookie from a test profile, never `:0`
+/// or the owner's session. Nothing is cached: an earlier verdict says nothing
+/// about the display now, and each real input or capture is checked again
+/// where it runs ([`guarded`]).
 fn real_pointer_env() -> Result<String, String> {
-    if std::env::var("WRLFORGE_SMOKE_XVFB").as_deref() != Ok("1") {
-        return Err("not inside the harness's Xvfb (WRLFORGE_SMOKE_XVFB unset)".into());
+    display_guard(&GuardEnv::from_process())
+}
+
+/// The inputs of one display check, read when the operation runs. `vars`
+/// replaces the inherited environment of the guard and of the tool (tests
+/// only); `None` inherits this process's current environment.
+struct GuardEnv {
+    marker: Option<String>,
+    guard: Option<String>,
+    vars: Option<Vec<(String, String)>>,
+}
+
+impl GuardEnv {
+    fn from_process() -> Self {
+        GuardEnv {
+            marker: std::env::var("WRLFORGE_SMOKE_XVFB").ok(),
+            guard: std::env::var("WRLFORGE_DISPLAY_GUARD").ok(),
+            vars: None,
+        }
     }
-    std::env::var("DISPLAY").map_err(|_| "no DISPLAY".to_string())
+
+    /// The harness marker and the guard script path, or a refusal.
+    fn script(&self) -> Result<&Path, String> {
+        if self.marker.as_deref() != Some("1") {
+            return Err("not inside the harness's Xvfb (WRLFORGE_SMOKE_XVFB unset)".into());
+        }
+        let guard = Path::new(self.guard.as_deref().ok_or("WRLFORGE_DISPLAY_GUARD is not set")?);
+        if !guard.is_absolute() || guard.file_name() != Some("display-guard.sh".as_ref()) {
+            return Err(format!("{} is not the display guard", guard.display()));
+        }
+        Ok(guard)
+    }
+
+    /// `timeout SECS bash display-guard.sh ARGS...` in this environment.
+    fn command(&self, secs: u32, args: &[&std::ffi::OsStr]) -> Result<std::process::Command, String> {
+        let guard = self.script()?;
+        let mut c = std::process::Command::new("timeout");
+        c.arg(secs.to_string()).arg("bash").arg(guard).args(args);
+        if let Some(vars) = &self.vars {
+            c.env_clear().envs(vars.iter().map(|(k, v)| (k, v)));
+        }
+        Ok(c)
+    }
+}
+
+/// The guard's verdict: `Ok((":N", rest))` only when it exited 0 AND its
+/// FIRST stdout line is `display-guard: OK :N`; `rest` is the guarded
+/// tool's output.
+fn guard_verdict(out: &std::process::Output) -> Result<(String, String), String> {
+    let said = String::from_utf8_lossy(&out.stdout);
+    let (first, rest) = said.split_once('\n').unwrap_or((&said, ""));
+    match first.strip_prefix("display-guard: OK ") {
+        Some(d) if out.status.success() => Ok((d.to_string(), rest.trim().to_string())),
+        _ => Err(format!(
+            "display guard refused: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )),
+    }
+}
+
+/// The check alone (no tool runs): which display is approved now.
+fn display_guard(env: &GuardEnv) -> Result<String, String> {
+    let out = env
+        .command(20, &["--check".as_ref()])?
+        .output()
+        .map_err(|e| format!("display guard: {e}"))?;
+    guard_verdict(&out).map(|(d, _)| d)
+}
+
+/// QA HOLD: ONE real input or capture command (`tool` = `xdotool` or
+/// `import`). `display-guard.sh --exec` checks the display, cookie and
+/// profile and then `exec`s the tool in the same process and environment, so
+/// no earlier check approves it and nothing changes between the check and the
+/// command. Refused: the tool never starts.
+fn guarded(env: &GuardEnv, secs: u32, tool: &str, args: &[&std::ffi::OsStr]) -> Result<String, String> {
+    let s = secs.to_string();
+    let mut a: Vec<&std::ffi::OsStr> = vec!["--exec".as_ref(), "--".as_ref(), "timeout".as_ref(), s.as_ref(), tool.as_ref()];
+    a.extend_from_slice(args);
+    // The guard's own checks take up to 2 x 5 s (xauth, xdpyinfo).
+    let out = env
+        .command(secs + 15, &a)?
+        .output()
+        .map_err(|e| format!("display guard: {e}"))?;
+    let approved = String::from_utf8_lossy(&out.stdout).starts_with("display-guard: OK ");
+    match guard_verdict(&out) {
+        Ok((_, said)) => Ok(said),
+        // The guard approved, so the tool ran and failed.
+        Err(_) if approved => Err(format!("{tool}: {}", String::from_utf8_lossy(&out.stderr).trim())),
+        Err(e) => Err(e),
+    }
 }
 
 fn xdotool(args: &[&str]) -> Result<String, String> {
     eprintln!("smoke-pick: xdotool {}", args.join(" "));
-    let out = std::process::Command::new("timeout")
-        .arg("5")
-        .arg("xdotool")
-        .args(args)
-        .output()
-        .map_err(|e| format!("xdotool: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "xdotool {}: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    let a: Vec<&std::ffi::OsStr> = args.iter().map(|s| s.as_ref()).collect();
+    guarded(&GuardEnv::from_process(), 5, "xdotool", &a).map_err(|e| format!("xdotool {}: {e}", args.join(" ")))
 }
 
 impl SmokeState {
@@ -1834,6 +1914,422 @@ pub fn inspector_change_ok(before: &str, after: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// POST-ALPHA: input and capture are refused without the harness marker,
+    /// without the guard, with a stand-in for it, or when it refuses; the
+    /// guard here sees an unset DISPLAY, so it must refuse.
+    #[test]
+    fn real_input_needs_the_display_guard() {
+        let real = concat!(env!("CARGO_MANIFEST_DIR"), "/../display-guard.sh");
+        let real = std::fs::canonicalize(real).unwrap();
+        let real = real.to_str().unwrap();
+        let env = |marker: Option<&str>, guard: Option<&str>| GuardEnv {
+            marker: marker.map(str::to_string),
+            guard: guard.map(str::to_string),
+            vars: None,
+        };
+        assert!(display_guard(&env(None, Some(real))).is_err());
+        assert!(display_guard(&env(Some("1"), None)).is_err());
+        assert!(display_guard(&env(Some("1"), Some("display-guard.sh"))).is_err());
+        assert!(display_guard(&env(Some("1"), Some("/bin/true"))).is_err());
+        let t = std::env::temp_dir().join(format!("wrlforge-guard-unit-{}", std::process::id()));
+        std::fs::create_dir_all(&t).unwrap();
+        let fake = t.join("display-guard.sh");
+        std::fs::write(&fake, "echo 'display-guard: OK :0'; exit 3\n").unwrap();
+        assert!(
+            display_guard(&env(Some("1"), fake.to_str())).is_err(),
+            "a failing exit is a refusal"
+        );
+        // An OK that is not the first line is not the guard's verdict.
+        std::fs::write(&fake, "echo hi; echo 'display-guard: OK :5'\n").unwrap();
+        assert!(display_guard(&env(Some("1"), fake.to_str())).is_err());
+        // A marker refusal starts no process at all.
+        let ran = t.join("ran");
+        std::fs::write(&fake, format!("touch '{}'\n", ran.display())).unwrap();
+        assert!(guarded(
+            &env(None, fake.to_str()),
+            5,
+            "xdotool",
+            &["key".as_ref(), "a".as_ref()]
+        )
+        .is_err());
+        assert!(!ran.exists());
+        std::fs::remove_dir_all(&t).unwrap();
+        let out = std::process::Command::new("env")
+            .args(["-u", "DISPLAY", "bash", real, "--check"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(3));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("REFUSED: DISPLAY is not set"));
+    }
+
+    /// QA HOLD: private Xvfb servers and cookie files of this test only; the
+    /// servers are stopped and the directory removed even when a case fails.
+    struct GuardLab {
+        t: PathBuf,
+        servers: Vec<(u32, std::process::Child)>,
+    }
+
+    impl GuardLab {
+        fn new() -> Self {
+            let t = std::env::temp_dir().join(format!("wrlforge-guard-seq-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&t);
+            for d in ["bin", "home", "config", "data", "cache", "state", "run"] {
+                std::fs::create_dir_all(t.join(d)).unwrap();
+            }
+            // Stand-ins for the real tools: they only count that they ran.
+            use std::os::unix::fs::PermissionsExt;
+            for tool in ["xdotool", "import"] {
+                let p = t.join("bin").join(tool);
+                std::fs::write(
+                    &p,
+                    format!(
+                        "#!/bin/sh\necho ran >>'{}'\n",
+                        t.join(format!("ran-{tool}")).display()
+                    ),
+                )
+                .unwrap();
+                std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            GuardLab {
+                t,
+                servers: Vec::new(),
+            }
+        }
+
+        /// A display number with no server, socket or lock (never `:0`).
+        fn free(&self) -> u32 {
+            (200..260)
+                .find(|n| {
+                    !Path::new(&format!("/tmp/.X11-unix/X{n}")).exists()
+                        && !Path::new(&format!("/tmp/.X{n}-lock")).exists()
+                        && !self.servers.iter().any(|(m, _)| m == n)
+                })
+                .expect("a free display number")
+        }
+
+        /// A new cookie file `name` for `:n`.
+        fn cookie(&self, name: &str, n: u32) -> PathBuf {
+            let p = self.t.join(name);
+            let _ = std::fs::remove_file(&p);
+            let mut b = [0u8; 16];
+            use std::io::Read;
+            std::fs::File::open("/dev/urandom")
+                .unwrap()
+                .read_exact(&mut b)
+                .unwrap();
+            let hex: String = b.iter().map(|x| format!("{x:02x}")).collect();
+            let st = std::process::Command::new("xauth")
+                .arg("-f")
+                .arg(&p)
+                .args(["add", &format!(":{n}"), "MIT-MAGIC-COOKIE-1", &hex])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap();
+            assert!(st.success(), "xauth add");
+            p
+        }
+
+        /// Our own Xvfb on `:n` with access control by `auth`.
+        fn start(&mut self, n: u32, auth: &Path) {
+            let c = std::process::Command::new("Xvfb")
+                .arg(format!(":{n}"))
+                .args([
+                    "-screen",
+                    "0",
+                    "640x480x24",
+                    "-nolisten",
+                    "tcp",
+                    "-noreset",
+                    "-auth",
+                ])
+                .arg(auth)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("Xvfb");
+            self.servers.push((n, c));
+            let sock = PathBuf::from(format!("/tmp/.X11-unix/X{n}"));
+            for _ in 0..200 {
+                if sock.exists() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            panic!("Xvfb :{n} did not start");
+        }
+
+        fn signal(&self, n: u32, sig: &str) {
+            let (_, c) = self.servers.iter().find(|(m, _)| *m == n).unwrap();
+            std::process::Command::new("kill")
+                .args([sig, &c.id().to_string()])
+                .status()
+                .unwrap();
+        }
+
+        /// Stop OUR server on `:n` (SIGTERM: it removes its socket and lock).
+        fn stop(&mut self, n: u32) {
+            if let Some(i) = self.servers.iter().position(|(m, _)| *m == n) {
+                let (_, mut c) = self.servers.remove(i);
+                let _ = std::process::Command::new("kill")
+                    .args(["-CONT", &c.id().to_string()])
+                    .status();
+                let _ = std::process::Command::new("kill")
+                    .arg(c.id().to_string())
+                    .status();
+                let _ = c.wait();
+            }
+        }
+
+        /// A clean test profile on `:n` with cookie file `auth`.
+        fn env(&self, n: u32, auth: &Path) -> GuardEnv {
+            let p = |d: &str| self.t.join(d).display().to_string();
+            let path = format!("{}:{}", p("bin"), std::env::var("PATH").unwrap_or_default());
+            let vars = vec![
+                ("PATH".into(), path),
+                ("HOME".into(), p("home")),
+                ("XDG_CONFIG_HOME".into(), p("config")),
+                ("XDG_DATA_HOME".into(), p("data")),
+                ("XDG_CACHE_HOME".into(), p("cache")),
+                ("XDG_STATE_HOME".into(), p("state")),
+                ("XDG_RUNTIME_DIR".into(), p("run")),
+                ("DISPLAY".into(), format!(":{n}")),
+                ("XAUTHORITY".into(), auth.display().to_string()),
+            ];
+            GuardEnv {
+                marker: Some("1".into()),
+                guard: Some(
+                    std::fs::canonicalize(concat!(
+                        env!("CARGO_MANIFEST_DIR"),
+                        "/../display-guard.sh"
+                    ))
+                    .unwrap()
+                    .display()
+                    .to_string(),
+                ),
+                vars: Some(vars),
+            }
+        }
+
+        fn ran(&self, tool: &str) -> usize {
+            std::fs::read_to_string(self.t.join(format!("ran-{tool}")))
+                .map(|s| s.lines().count())
+                .unwrap_or(0)
+        }
+
+        /// One input (`xdotool`) or capture (`import`) through [`guarded`].
+        fn act(&self, env: &GuardEnv, tool: &str) -> Result<String, String> {
+            let shot = self.t.join("shot.png");
+            let args: Vec<&std::ffi::OsStr> = if tool == "import" {
+                vec!["-window".as_ref(), "root".as_ref(), shot.as_os_str()]
+            } else {
+                vec!["key".as_ref(), "a".as_ref()]
+            };
+            guarded(env, 5, tool, &args)
+        }
+    }
+
+    impl Drop for GuardLab {
+        fn drop(&mut self) {
+            let ns: Vec<u32> = self.servers.iter().map(|(n, _)| *n).collect();
+            for n in ns {
+                self.stop(n);
+            }
+            let _ = std::fs::remove_dir_all(&self.t);
+        }
+    }
+
+    /// QA HOLD: an earlier approval never approves a later input or capture.
+    /// Each case approves a private Xvfb, changes one thing, and requires a
+    /// refusal before the (stand-in) tool runs; real tools never run and
+    /// `:0` is never named. Needs Xvfb, xauth and xdpyinfo, so
+    /// `gate-linux.sh` runs it with `--ignored --nocapture`.
+    #[test]
+    #[ignore = "needs Xvfb; gate-linux.sh runs it"]
+    fn every_input_and_capture_checks_the_display_again() {
+        let mut lab = GuardLab::new();
+        let mut fails: Vec<String> = Vec::new();
+        let mut cases = 0;
+        let ok =
+            |lab: &GuardLab, env: &GuardEnv, tool: &str, case: &str, fails: &mut Vec<String>| {
+                let before = lab.ran(tool);
+                match lab.act(env, tool) {
+                    Ok(_) if lab.ran(tool) == before + 1 => {}
+                    r => fails.push(format!("{case}: {tool} not approved: {r:?}")),
+                }
+            };
+        let refused =
+            |lab: &GuardLab, env: &GuardEnv, tool: &str, case: &str, fails: &mut Vec<String>| {
+                let before = lab.ran(tool);
+                match lab.act(env, tool) {
+                    Err(e) if e.contains("REFUSED") && lab.ran(tool) == before => {
+                        println!("ok   {case} ({tool}): {}", e.lines().last().unwrap_or(""))
+                    }
+                    r => fails.push(format!("{case}: {tool} not refused or it ran: {r:?}")),
+                }
+            };
+
+        // 1. The approved display becomes unavailable (server stopped).
+        cases += 1;
+        let n = lab.free();
+        let a = lab.cookie("c1", n);
+        lab.start(n, &a);
+        let e = lab.env(n, &a);
+        ok(&lab, &e, "xdotool", "1 unavailable", &mut fails);
+        lab.signal(n, "-STOP");
+        refused(&lab, &e, "xdotool", "1 unavailable", &mut fails);
+        refused(&lab, &e, "import", "1 unavailable", &mut fails);
+        lab.stop(n);
+
+        // 2. DISPLAY changes after approval (to a display with no server).
+        cases += 1;
+        let n = lab.free();
+        let a = lab.cookie("c2", n);
+        lab.start(n, &a);
+        ok(
+            &lab,
+            &lab.env(n, &a),
+            "import",
+            "2 DISPLAY changed",
+            &mut fails,
+        );
+        let other = lab.free();
+        refused(
+            &lab,
+            &lab.env(other, &a),
+            "xdotool",
+            "2 DISPLAY changed",
+            &mut fails,
+        );
+        refused(
+            &lab,
+            &lab.env(other, &a),
+            "import",
+            "2 DISPLAY changed",
+            &mut fails,
+        );
+
+        // 3. XAUTHORITY changes after approval (another cookie file).
+        cases += 1;
+        ok(
+            &lab,
+            &lab.env(n, &a),
+            "xdotool",
+            "3 XAUTHORITY changed",
+            &mut fails,
+        );
+        let b = lab.cookie("c3-other", n);
+        refused(
+            &lab,
+            &lab.env(n, &b),
+            "xdotool",
+            "3 XAUTHORITY changed",
+            &mut fails,
+        );
+        refused(
+            &lab,
+            &lab.env(n, &b),
+            "import",
+            "3 XAUTHORITY changed",
+            &mut fails,
+        );
+        lab.stop(n);
+
+        // 4. The authorization file becomes invalid.
+        cases += 1;
+        let n = lab.free();
+        let a = lab.cookie("c4", n);
+        lab.start(n, &a);
+        let e = lab.env(n, &a);
+        ok(&lab, &e, "import", "4 cookie file invalid", &mut fails);
+        std::fs::write(&a, "not an Xauthority file\n").unwrap();
+        refused(&lab, &e, "xdotool", "4 cookie file invalid", &mut fails);
+        refused(&lab, &e, "import", "4 cookie file invalid", &mut fails);
+        lab.stop(n);
+
+        // 5. The Xvfb process exits.
+        cases += 1;
+        let n = lab.free();
+        let a = lab.cookie("c5", n);
+        lab.start(n, &a);
+        let e = lab.env(n, &a);
+        ok(&lab, &e, "xdotool", "5 Xvfb exited", &mut fails);
+        lab.stop(n);
+        refused(&lab, &e, "xdotool", "5 Xvfb exited", &mut fails);
+        refused(&lab, &e, "import", "5 Xvfb exited", &mut fails);
+
+        // 6. A new process replaces the old display server on the same :N.
+        cases += 1;
+        let n = lab.free();
+        let a = lab.cookie("c6", n);
+        lab.start(n, &a);
+        let e = lab.env(n, &a);
+        ok(&lab, &e, "xdotool", "6 server replaced", &mut fails);
+        lab.stop(n);
+        let r = lab.cookie("c6-replacement", n);
+        lab.start(n, &r);
+        refused(&lab, &e, "xdotool", "6 server replaced", &mut fails);
+        refused(&lab, &e, "import", "6 server replaced", &mut fails);
+        lab.stop(n);
+
+        // 7. Valid checks, then a failed one: no earlier success approves it.
+        cases += 1;
+        let n = lab.free();
+        let a = lab.cookie("c7", n);
+        lab.start(n, &a);
+        let e = lab.env(n, &a);
+        ok(&lab, &e, "xdotool", "7 valid then failed", &mut fails);
+        ok(&lab, &e, "import", "7 valid then failed", &mut fails);
+        ok(&lab, &e, "xdotool", "7 valid then failed", &mut fails);
+        let gone = lab.t.join("missing");
+        refused(
+            &lab,
+            &lab.env(n, &gone),
+            "xdotool",
+            "7 valid then failed",
+            &mut fails,
+        );
+        refused(
+            &lab,
+            &lab.env(n, &gone),
+            "import",
+            "7 valid then failed",
+            &mut fails,
+        );
+
+        // 8. A failed check, then recovery: the refusal is not sticky and the
+        //    recovered display is checked again, not trusted.
+        cases += 1;
+        refused(
+            &lab,
+            &lab.env(n, &gone),
+            "xdotool",
+            "8 failed then recovered",
+            &mut fails,
+        );
+        ok(&lab, &e, "xdotool", "8 failed then recovered", &mut fails);
+        ok(&lab, &e, "import", "8 failed then recovered", &mut fails);
+
+        // The cost of one guarded command (check + stand-in tool).
+        let reps = 20;
+        let t0 = std::time::Instant::now();
+        for _ in 0..reps {
+            ok(&lab, &e, "xdotool", "cost", &mut fails);
+        }
+        let per = t0.elapsed() / reps;
+        lab.stop(n);
+        println!(
+            "DISPLAY-GUARD-COST guarded command = {:.1} ms (mean of {reps})",
+            per.as_secs_f64() * 1000.0
+        );
+
+        drop(lab);
+        for f in &fails {
+            println!("FAIL {f}");
+        }
+        println!("DISPLAY GUARD SEQUENCE cases={cases} fail={}", fails.len());
+        assert!(fails.is_empty(), "{fails:#?}");
+    }
 
     #[test]
     fn gizmo_fixtures_are_movable_and_the_disk_check_is_one_token_exact() {

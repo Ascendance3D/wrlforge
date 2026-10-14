@@ -1510,8 +1510,10 @@ async fn clipboard_races(r: &mut R) -> Option<()> {
             && paste_msg.contains("Paste is not available"),
         format!("{cut_msg} | {paste_msg}"),
     );
-    // 6. Rapid Cut, Cut, Paste: the first applies, the rest are stale.
-    hold(1800, false);
+    // 6. Rapid Cut, Cut, Paste: the first applies, the rest are stale. The
+    // three choices are real clicks (each one display-checked), and all of
+    // them must land while the first Cut is still held.
+    hold(4000, false);
     select_source(a, b)?;
     let k = cstats();
     choose("edit", CommandId::EditCut).await?;

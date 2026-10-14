@@ -25,6 +25,25 @@ All releases are published on GitHub:
   keep their own licenses. Releases through `v1.3.0-beta.3` were distributed under the
   MIT License and those copies keep the permissions granted with them.
 
+## Release lines
+
+- **Legacy Electron line (ends at 1.4.0).** Published tags: `v1.3.0-beta.2`,
+  `v1.3.0-beta.3`, `v1.3.0-beta.5` and `v1.4.0`. Built by the GitHub Actions
+  workflow `.github/workflows/release.yml` for Linux x64, Windows x64 and macOS
+  Apple Silicon. Since `v1.4.51-alpha.1` this workflow starts **only by manual
+  dispatch**; a tag push does not start it. Its `legacy-guard` job accepts only
+  the four published Electron tags. It refuses Rust-line tags (1.4.5 and
+  later), unpublished gaps such as `v1.4.1`, and malformed input before a build
+  job runs.
+- **Rust/Tauri line (1.4.5 and later).** WRL Forge 1.4.5 was the first Rust
+  version. The app version is 1.4.51 (Beta); its published release is the
+  `v1.4.51-alpha.1` Linux Alpha Preview. Built from `apps/desktop-tauri` for
+  **Linux x64 only** by the owner with
+  `apps/desktop-tauri/packaging/package-linux.sh`, after the Linux gate
+  (`apps/desktop-tauri/gate-linux.sh`). There is no Windows, macOS or mobile
+  package for this line, and no workflow builds or publishes it. Pushing a
+  Rust-line tag starts no release job.
+
 ---
 
 ## 1.4.0 (Beta)

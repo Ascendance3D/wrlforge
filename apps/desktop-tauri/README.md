@@ -81,6 +81,23 @@ from the current revision only, registration with the textarea at four scroll
 positions, typing / paste / undo / redo / reload, stale-reply rejection,
 diagnostic underlines and theme recoloring.
 
+Real X input (xdotool) and screen captures (`import`) in the smoke modes run
+only after `display-guard.sh --check` accepts the display: a private Xvfb of
+this user (never `:0`), reached with that Xvfb's own `-auth` cookie, with no
+inherited Wayland or D-Bus session and with HOME and the XDG directories
+outside the real profile. `smoke.sh` and `gate-linux.sh` pass its path in
+`WRLFORGE_DISPLAY_GUARD`; without it, input and capture are refused. No
+approval is cached: every `xdotool` and `import` command runs through
+`display-guard.sh --exec`, which checks the display at that moment and then
+starts the command (about 25 ms per command). A manual capture or input
+command goes through the same check, and there is no bypass:
+
+```sh
+./display-guard.sh --exec -- import -window root /tmp/shot.png   # refused unless the display is a private Xvfb
+./display-guard.sh --self-test                                   # refusal cases + one approved private Xvfb
+./display-guard.sh --cleanup-test                                # an interrupted self-test removes only its own Xvfb and files
+```
+
 `smoke.sh` always copies its inputs to a fresh `/tmp` directory first. It never
 touches the original files. Settings go to a temporary `--config-dir` per file,
 never to the user's real preferences (`<app config dir>/settings.json`).

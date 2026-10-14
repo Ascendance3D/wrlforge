@@ -24,6 +24,9 @@
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 bin="${WRLFORGE_BIN:-$here/target/debug/wrl-forge}"
+# Real X input and screen captures run only after the shared display guard
+# accepts this run's private Xvfb (smoke.rs calls it; see display-guard.sh).
+export WRLFORGE_DISPLAY_GUARD="$here/display-guard.sh"
 xvfb=(); extra=(); cfg=""; create=0; pick=0; keys=0; move=0; extrusion=0; rotscale=0; recovery=0; dock=0; menu=0; research=""
 while [[ "${1:-}" == --* ]]; do
   case "$1" in
@@ -74,7 +77,9 @@ if [[ $pick -eq 1 ]]; then
   node "$here/smoke-pick-plan.cjs" "$d/plan" || exit 2
   # Real X pointer input only inside this run's own Xvfb (see smoke.rs).
   marker=(); [[ ${#xvfb[@]} -gt 0 ]] && marker=(env WRLFORGE_SMOKE_XVFB=1)
-  timeout 300 "${xvfb[@]}" "${marker[@]}" "${iso[@]}" "$bin" --smoke-pick "$d/plan" --smoke-report "$d/report.json" --config-dir "$d/config" >"$d/stdout.txt" 2>"$d/stderr.txt"
+  # About 1,560 real X commands, each display-checked first: about 270 s
+  # before the per-command check, so 420 s and not 300 s.
+  timeout 420 "${xvfb[@]}" "${marker[@]}" "${iso[@]}" "$bin" --smoke-pick "$d/plan" --smoke-report "$d/report.json" --config-dir "$d/config" >"$d/stdout.txt" 2>"$d/stderr.txt"
   code=$?
   pass=$(sed -n 's/.*"pass": *\(true\|false\).*/\1/p' "$d/report.json" 2>/dev/null | head -1)
   echo "pick: exit=$code pass=${pass:-none} report=$d/report.json"
