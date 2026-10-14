@@ -33,7 +33,7 @@ res() { if [[ "$2" == 1 ]]; then log "PASS $1 :: $3"; else log "FAIL $1 :: $3"; 
 # ---- the complete inventory at this commit --------------------------------
 # cargo: "<binary>|passed|ignored" per test target, doc-tests included. Each
 # must run, with exactly these counts, 0 failed and 0 filtered out.
-inv_app='unittests:wrl_forge_desktop|98|1
+inv_app='unittests:wrl_forge_desktop|98|2
 unittests:wrl_forge|0|0
 tests:app_shell|5|0
 tests:flux_regression|6|0
@@ -73,10 +73,22 @@ theme:report|82
 texture:report|46
 native:report|46'
 guards_want=151; node_want=109; route_want=2; fx_want=58; iso_want=9; dguard_want=16
+dguard_cleanup_want=3; dguard_seq_want=8
 
 # ---- 0. the checkout -------------------------------------------------------
 head="$(git -C "$wt" rev-parse HEAD)"; dirty="$(git -C "$wt" status --porcelain | wc -l)"
 res checkout "$([[ $dirty -eq 0 ]] && echo 1)" "HEAD=$head dirty=$dirty"
+# The exact test environment (names and versions; no secrets, no paths of
+# the real profile): what a GUI or renderer failure must be read against.
+{ echo "kernel: $(uname -srm)"; echo "cpus: $(nproc) load: $(cut -d' ' -f1-3 /proc/loadavg)"
+  echo "webkit: $(dpkg-query -W -f '${Version}' libwebkit2gtk-4.1-0 2>/dev/null || echo unknown)"
+  echo "xvfb: $(dpkg-query -W -f '${Version}' xvfb 2>/dev/null || echo unknown)"
+  echo "mesa: $(dpkg-query -W -f '${Version}' libgl1-mesa-dri 2>/dev/null || echo unknown)"
+  echo "node: $(node --version 2>/dev/null) rustc: $(rustc --version 2>/dev/null)"
+  echo "ulimit -v: $(ulimit -v) -n: $(ulimit -n) -u: $(ulimit -u)"
+  echo "renderer env set: $(env | cut -d= -f1 | rg '^(WEBKIT|LIBGL|MESA|GALLIUM|__EGL|__GLX|EGL|JSC|GDK|GSK|WAYLAND_DISPLAY|DBUS_SESSION_BUS_ADDRESS)' | sort | tr '\n' ' ')"
+} >"$out/environment.txt" 2>&1
+log "INFO environment :: $(tr '\n' ';' <"$out/environment.txt")"
 if [[ -n "$tools" ]]; then
   mkdir -p "$app/target/tools/bin" "$app/target/xite"
   cp "$tools/target/tools/bin/wasm-bindgen" "$app/target/tools/bin/"
@@ -146,7 +158,30 @@ res isolation-self-test "$([[ $rc -eq 0 && "$s" == "ISOLATION SELF-TEST pass=$is
 (cd "$app" && timeout 60 ./display-guard.sh --self-test) >"$out/display-guard-self-test.txt" 2>&1; rc=$?
 s="$(tail -1 "$out/display-guard-self-test.txt")"
 res display-guard-self-test "$([[ $rc -eq 0 && "$s" == "DISPLAY GUARD SELF-TEST pass=$dguard_want fail=0 (want $dguard_want)" ]] && echo 1)" "exit=$rc $s"
+# Interrupted, the self-test still stops its own Xvfb and removes its own
+# files, and leaves an Xvfb and a file it does not own.
+(cd "$app" && timeout 200 ./display-guard.sh --cleanup-test) >"$out/display-guard-cleanup-test.txt" 2>&1; rc=$?
+s="$(tail -1 "$out/display-guard-cleanup-test.txt")"
+res display-guard-cleanup-test "$([[ $rc -eq 0 && "$s" == "DISPLAY GUARD CLEANUP TEST pass=$dguard_cleanup_want fail=0 (want $dguard_cleanup_want)" ]] && echo 1)" "exit=$rc $s"
+# No approval is cached: smoke.rs checks the display again at every input and
+# capture; 8 cases change the display, cookie or server after an approval.
+(cd "$app/src-tauri" && timeout 300 cargo test -p wrl-forge-desktop --lib every_input_and_capture_checks_the_display_again -j 16 -- --ignored --nocapture) >"$out/display-guard-sequence.txt" 2>&1; rc=$?
+s="$(rg -o 'DISPLAY GUARD SEQUENCE .*' "$out/display-guard-sequence.txt" | tail -1)"
+res display-guard-sequence "$([[ $rc -eq 0 && "$s" == "DISPLAY GUARD SEQUENCE cases=$dguard_seq_want fail=0" ]] && echo 1)" "exit=$rc $s; $(rg -o 'DISPLAY-GUARD-COST .*' "$out/display-guard-sequence.txt" | tail -1)"
 export WRLFORGE_DISPLAY_GUARD="$app/display-guard.sh"
+# X_ITE must start in the WebView before any GUI or fixture result means
+# anything: one fixture per build, whose WebGL probe must say
+# "X_ITE loaded" and "canvas ready".
+probe_of() { python3 -I -c 'import json,sys
+try: r=json.load(open(sys.argv[1]))
+except Exception: print("no report"); sys.exit()
+print(next((s.get("detail","") for s in r.get("steps",[]) if s.get("name")=="WebView WebGL probe"),"no probe step"))' "$1"; }
+for label in new base; do
+  b=$bin; [[ $label == base ]] && b=$base_bin
+  o="$(cd "$app" && WRLFORGE_BIN="$b" timeout 200 ./smoke.sh --headless "$wt/test/fixtures/valid-plain.wrl" 2>&1)"
+  p="$(probe_of "$(echo "$o" | rg ': exit=' | tail -1 | sed -n 's/.*report=\(.*\)/\1/p')")"
+  res "xite-renderer-$label" "$([[ "$p" == *"X_ITE loaded"* && "$p" == *"canvas ready"* ]] && echo 1)" "$p"
+done
 profile_before="$(cd "$app" && bash -c 'source ./isolated-run.sh --source-only; snapshot')"
 gui() { local name=$1; shift; (cd "$app" && timeout 600 "$@") >"$out/gui-$name.txt" 2>&1; echo $? >"$out/gui-$name.rc"; }
 gui menu ./smoke.sh --headless --menu &
@@ -219,11 +254,14 @@ one() { # mode label bin file -> name verdict failing-steps
   local rep; rep=$(echo "$line" | sed -n 's/.*report=\(.*\)/\1/p')
   local v=FAIL
   if [[ "$ex" == 0 && "$pass" == true ]]; then v=PASS; elif [[ "$ex" == 124 || "$code" == 124 || "$pass" == none || -z "$pass" ]]; then v=TIMEOUT; fi
-  local failing=""
+  local failing="" xite=none
   [[ -f "$rep" ]] && failing=$(python3 -I -c "import json,sys;r=json.load(open(sys.argv[1]));print(';'.join(s['name'] for s in r.get('steps',[]) if not s.get('ok')))" "$rep" 2>/dev/null)
-  printf '%s\t%s\t%s\n' "$name" "$v" "$failing" >>"$out/$mode-$label.tsv"
+  # X_ITE in this run: ready, or not ready (the result then proves nothing).
+  local p; p="$(probe_of "$rep")"
+  if [[ "$p" == *"X_ITE loaded"*"canvas ready"* ]]; then xite=ready; elif [[ "$p" == *X_ITE* ]]; then xite=not-ready; fi
+  printf '%s\t%s\t%s\t%s\n' "$name" "$v" "$failing" "$xite" >>"$out/$mode-$label.tsv"
 }
-export -f one; export wt app out
+export -f one probe_of; export wt app out
 for mode in files inspector; do
   j=8; [[ $mode == inspector ]] && j=6
   for label in new base; do
@@ -238,6 +276,13 @@ for mode in files inspector; do
   sd="$(diff <(cut -f1,3 "$out/$mode-new.tsv") <(cut -f1,3 "$out/$mode-base.tsv") | rg -c '^[<>]' || true)"
   n="$(wc -l <"$out/$mode-new.tsv")"
   res "fixtures-$mode-vs-base" "$([[ $n -eq $fx_want && ${names:-0} -eq 0 && $vd -eq 0 && ${sd:-0} -eq 0 ]] && echo 1)" "$n files, name diffs=${names:-0} verdict diffs=$vd failing-step diffs=${sd:-0}"
+  # Equal results prove nothing when X_ITE did not start: no run of either
+  # build may report X_ITE not ready, and each build must report it ready
+  # (a run that fails before its probe step, such as a known Inspector
+  # baseline FAIL, reports none).
+  xr="$(for label in new base; do awk -F'\t' '$4 == "ready" { r++ } $4 == "not-ready" { x++ } $4 == "none" { u++ } END { printf "%d %d %d ", r, x, u }' "$out/$mode-$label.tsv"; done)"
+  read -r nr nx nu br bx bu <<<"$xr"
+  res "fixtures-$mode-xite-ready" "$([[ $nx -eq 0 && $bx -eq 0 && $nr -gt 0 && $br -gt 0 ]] && echo 1)" "X_ITE ready/not-ready/no-probe: new $nr/$nx/$nu base $br/$bx/$bu"
 done
 
 # ---- 6. The owner's real profile: unchanged by every app start above -------
