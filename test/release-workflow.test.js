@@ -424,29 +424,47 @@ function runLegacyGuard(tag) {
   return { status: res.status, out: `${res.stdout || ''}${res.stderr || ''}` };
 }
 
+// The Electron line ends at 1.4.0; WRL Forge 1.4.5 was the first Rust version.
+// Only the published Electron tags may be rebuilt here.
+const ELECTRON_TAGS = ['v1.3.0-beta.2', 'v1.3.0-beta.3', 'v1.3.0-beta.5', 'v1.4.0'];
+
 test('legacy-guard refuses every Rust-line tag before any build job', () => {
-  for (const tag of ['v1.4.51-alpha.1', 'v1.4.52-alpha.1', 'v1.4.60-alpha.1', 'v1.5.0',
-    'v1.4.51', 'v2.0.0', 'v1.4.0-alpha.1']) {
+  for (const tag of ['v1.4.5', 'v1.4.10', 'v1.4.50', 'v1.4.51', 'v1.4.51-alpha.1',
+    'v1.4.52-alpha.1', 'v1.4.60-alpha.1', 'v1.5.0', 'v2.0.0']) {
     const r = runLegacyGuard(tag);
     assert.notStrictEqual(r.status, 0, `${tag} must be refused`);
-    assert.match(r.out, /REFUSED/, `${tag}: ${r.out}`);
+    assert.match(r.out, /REFUSED: .* Rust\/Tauri release line/, `${tag}: ${r.out}`);
+    assert.doesNotMatch(r.out, /accepted/, tag);
+  }
+});
+
+test('legacy-guard refuses unpublished gaps in the Electron line', () => {
+  for (const tag of ['v1.4.1', 'v1.4.4', 'v1.4.0-alpha.1', 'v1.4.0-beta.1', 'v1.3.0',
+    'v1.3.0-beta.1', 'v1.3.0-beta.4', 'v1.3.0-beta.6', 'v1.0.0']) {
+    const r = runLegacyGuard(tag);
+    assert.notStrictEqual(r.status, 0, `${tag} must be refused`);
+    assert.match(r.out, /REFUSED: .* not a published legacy Electron tag/, `${tag}: ${r.out}`);
   }
 });
 
 test('legacy-guard refuses a malformed tag input', () => {
-  for (const tag of ['', '1.4.0', 'v1.4', 'main', 'v1.4.0; echo pwned', 'v1.4.0\nv1.5.0']) {
+  for (const tag of ['', '1.4.0', 'v1.4', 'main', 'v1.4.0; echo pwned', 'v1.4.0\nv1.5.0',
+    ' v1.4.0', 'v1.4.0 ', 'V1.4.0', 'v01.4.0x', 'refs/tags/v1.4.0']) {
     const r = runLegacyGuard(tag);
     assert.notStrictEqual(r.status, 0, `${JSON.stringify(tag)} must be refused`);
     assert.match(r.out, /REFUSED/);
+    assert.doesNotMatch(r.out, /pwned\n|accepted/);
   }
 });
 
-test('legacy-guard still accepts the historical Electron tags', () => {
-  for (const tag of ['v1.4.0', 'v1.3.0-beta.5', 'v1.3.0-beta.2', 'v1.4.50']) {
+test('legacy-guard accepts exactly the published Electron tags', () => {
+  for (const tag of ELECTRON_TAGS) {
     const r = runLegacyGuard(tag);
     assert.strictEqual(r.status, 0, `${tag}: ${r.out}`);
     assert.match(r.out, /legacy Electron tag accepted/);
   }
+  assert.ok(ELECTRON_TAGS.includes(triggers.workflow_dispatch.inputs.tag.default),
+    'the dispatch default is an accepted Electron tag');
 });
 
 test('no automatic retry is wired into the macOS build', () => {

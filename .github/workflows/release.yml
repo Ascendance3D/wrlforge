@@ -19,14 +19,17 @@ name: Release
 #              into an EPHEMERAL keychain and a temporary API-key file, both
 #              destroyed in an always-run cleanup step.
 #
-# LEGACY (Electron) ONLY. Since v1.4.51-alpha.1 WRL Forge releases are built
-# from the Rust/Tauri app (apps/desktop-tauri), Linux x64 only, by the owner's
-# documented local packaging (docs/RELEASES.md, "Release lines"). A tag push
-# no longer starts this workflow: the `v1.4.51-alpha.1` push did, built
-# Electron artifacts named 1.4.0 (package.json) for three platforms, and
-# failed at assembly. A manual run is refused by the legacy-guard job for any
-# Rust-line tag (an -alpha tag, or a version at or above 1.4.51), so no
-# Windows, macOS or Electron Linux package is built for it.
+# LEGACY (Electron) ONLY. The Electron release line ends at 1.4.0. WRL Forge
+# 1.4.5 and later are built from the Rust/Tauri app (apps/desktop-tauri),
+# Linux x64 only, by the owner's documented local packaging (docs/RELEASES.md,
+# "Release lines"). A tag push no longer starts this workflow: the
+# `v1.4.51-alpha.1` push did, built Electron artifacts named 1.4.0
+# (package.json) for three platforms, and failed at assembly. A manual run is
+# accepted by the legacy-guard job only for a published Electron tag
+# (v1.3.0-beta.2, v1.3.0-beta.3, v1.3.0-beta.5, v1.4.0). It refuses every other
+# tag: Rust-line tags (1.4.5 and later), unpublished gaps such as v1.4.1, and
+# malformed input. So no Windows, macOS or Electron Linux package is built for
+# a Rust-line tag.
 on:
   workflow_dispatch:
     inputs:
@@ -48,7 +51,7 @@ jobs:
     name: Refuse Rust-line tags (legacy Electron release only)
     runs-on: ubuntu-latest
     steps:
-      - name: Require a legacy Electron tag below 1.4.51
+      - name: Require a published legacy Electron tag
         env:
           TAG: ${{ github.event.inputs.tag }}
         run: |
@@ -56,13 +59,15 @@ jobs:
           if [[ ! "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "REFUSED: '$TAG' is not a vMAJOR.MINOR.PATCH[-PRE] tag" >&2; exit 1
           fi
-          major="${BASH_REMATCH[1]}"; minor="${BASH_REMATCH[2]}"; patch="${BASH_REMATCH[3]}"; pre="${BASH_REMATCH[4]}"
-          if [[ "$pre" == *alpha* ]]; then
-            echo "REFUSED: $TAG is a Rust/Tauri Alpha tag (Linux x64 only; not built here)" >&2; exit 1
+          major="${BASH_REMATCH[1]}"; minor="${BASH_REMATCH[2]}"; patch="${BASH_REMATCH[3]}"
+          if (( major > 1 || (major == 1 && (minor > 4 || (minor == 4 && patch >= 5))) )); then
+            echo "REFUSED: $TAG is on the Rust/Tauri release line (1.4.5 and later, Linux x64 only; not built here)" >&2; exit 1
           fi
-          if (( major > 1 || (major == 1 && (minor > 4 || (minor == 4 && patch >= 51))) )); then
-            echo "REFUSED: $TAG is on the Rust/Tauri release line (1.4.51 and later; not built here)" >&2; exit 1
-          fi
+          # The Electron line ends at 1.4.0. Only its published tags may be rebuilt.
+          case "$TAG" in
+            v1.3.0-beta.2|v1.3.0-beta.3|v1.3.0-beta.5|v1.4.0) ;;
+            *) echo "REFUSED: $TAG is not a published legacy Electron tag (v1.3.0-beta.2, v1.3.0-beta.3, v1.3.0-beta.5, v1.4.0)" >&2; exit 1 ;;
+          esac
           echo "legacy Electron tag accepted: $TAG"
 
   # Linux and Windows build on the self-hosted Proxmox runners. This workflow
