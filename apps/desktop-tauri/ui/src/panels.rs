@@ -1593,12 +1593,31 @@ const BLOCKED_NOTE: &str = "Viewport input blocked";
 
 /// PR #149 review: the adapter blocked a press on the canvas because the
 /// gate is not verified: say so (once per press) and end the tools.
+/// PR #150 review: the adapter also sends this event ONCE when a verified
+/// gate becomes unavailable at any event (key, text, composition, press),
+/// a scene reload or a new adapter; `detail` is the failed state. The
+/// adapter has already dropped its Interact then, so Rust ends Interact
+/// and the tools even if the gate passes its check again by now: recovery
+/// is always the safe edit mode, and Interact needs a new choice.
 pub fn install_scene_input_warning() {
     use wasm_bindgen::{closure::Closure, JsCast};
     let Some(w) = web_sys::window() else { return };
-    let f = Closure::<dyn Fn(web_sys::Event)>::new(|_| {
+    let f = Closure::<dyn Fn(web_sys::Event)>::new(|ev: web_sys::Event| {
+        let lost = js_sys::Reflect::get(&ev, &"detail".into())
+            .ok()
+            .and_then(|d| d.as_string())
+            .filter(|s| !gate_safe(s));
+        let ended = lost.is_some() && ui().interact_mode.get_untracked();
+        if let Some(lost) = &lost {
+            gate_unavailable(lost);
+        }
         let state = check_scene_input();
-        if !gate_safe(&state) {
+        if ended {
+            crate::ui::flash(&format!(
+                "Interact ended: the scene input gate became {}. The preview is reloaded from the source; choose Interact again when the gate passes its check.",
+                lost.unwrap_or_default()
+            ));
+        } else if !gate_safe(&state) {
             crate::ui::flash(&format!(
                 "Viewport input blocked: the scene input gate is {state}."
             ));

@@ -131,6 +131,7 @@
   }
 
   function applyInput() {
+    var was = inputSafe();
     try {
       if (pick.fault) {
         // Tests only (sceneInputFault): the WORST case -- X_ITE's sensor
@@ -153,8 +154,25 @@
         if (!c.parentElement.hasAttribute('tabindex')) c.parentElement.setAttribute('tabindex', '-1');
         c.parentElement.focus({ preventScroll: true });
       }
+      if (was) notifyGateLost(pick.input);
     }
     return pick.input;
+  }
+
+  // PR #150 review: Rust learns of EVERY change from a verified gate to an
+  // unavailable one -- found at any key, text or composition event, a press,
+  // a scene reload, a new adapter or a Rust call -- once per change; it ends
+  // Interact and reloads the preview from the source. Not again while the
+  // same failure lasts: only a passing check (edit) re-arms it. Sent after
+  // the current task's script returns (a microtask), so a call made from
+  // Rust never re-enters Rust; the reply only reads the gate, so it cannot
+  // cause another change (no loop).
+  pick.gateLost = 0;
+  function notifyGateLost(state) {
+    pick.gateLost++;
+    queueMicrotask(function () {
+      window.dispatchEvent(new CustomEvent('wrlforge-scene-input-blocked', { detail: state }));
+    });
   }
 
   // PR #149 review: the sensor gate FAILS CLOSED. Until the adapter reports
@@ -211,15 +229,16 @@
   function guardSceneKeys(ev) {
     var c = onCanvas(ev);
     if (!c) return;
+    // Tests (sceneInputFaultOn): the gate fails AT this event.
+    if (pick.armed && pick.armed.type === ev.type) { pick.fault = pick.armed.why; pick.armed = null; }
     if (pick.adapter) applyInput();
     if (inputSafe()) return;
     ev.stopImmediatePropagation();
     var s = stage(c);
     if (s) s.focus({ preventScroll: true });
-    if (ev.type === 'keydown') {
-      pick.keyBlocked++;
-      if (!ev.repeat) window.dispatchEvent(new CustomEvent('wrlforge-scene-input-blocked', { detail: pick.input }));
-    }
+    // Rust was told when the gate was lost (applyInput); each blocked key
+    // is only counted, so a held or repeated key sends nothing more.
+    if (ev.type === 'keydown') pick.keyBlocked++;
     if (!s || KEYS.indexOf(ev.type) < 0 || ev.type === 'keypress') {
       if (ev.cancelable) ev.preventDefault();
       return;
@@ -588,6 +607,41 @@
     sceneInputFault: function (why) {
       pick.fault = why ? String(why) : null;
       return applyInput();
+    },
+    // Tests (PR #150 review): the same fault, made by the next `type` event
+    // (keyup, keypress, input, composition...) that reaches the canvas.
+    sceneInputFaultOn: function (type, why) {
+      pick.armed = type ? { type: String(type), why: String(why || 'armed-fault') } : null;
+      return pick.input;
+    },
+    // Tests: how many times the gate was lost (and Rust told).
+    sceneGateLost: function () { return pick.gateLost; },
+    // Tests (PR #150 review): enable / disable a DEF-named sensor of the
+    // scene on screen through the public SAI (runtime only, never the
+    // source). X_ITE keeps one keyboard sensor enabled: enabling one
+    // disables the others.
+    sceneSensorEnable: function (def, on) {
+      try {
+        var c = canvas();
+        var n = c && c.browser ? c.browser.currentScene.getNamedNode(String(def)) : null;
+        if (!n) return false;
+        n.enabled = on === true;
+        return true;
+      } catch (e) {
+        return false;
+      }
+    },
+    // Tests (PR #150 review): replace the pick adapter of the canvas browser
+    // (as a new X_ITE browser would): the old one is disposed, a new one is
+    // made and checked. Returns the new gate state; a wrapper the old one
+    // left on an enabled sensor makes it 'unavailable:key-sensor-entry-
+    // already-wrapped'.
+    sceneAdapterReplace: function () {
+      var c = canvas();
+      if (!c || !c.browser) return 'unavailable:no-canvas';
+      pick.browser = null;
+      adapterFor(c.browser);
+      return pick.input;
     },
     // Tests: presses the pointer block stopped.
     sceneInputBlocked: function () { return pick.blocked; },
