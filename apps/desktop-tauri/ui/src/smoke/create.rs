@@ -179,9 +179,9 @@ async fn create_one(
     })
     .await;
     let counts = (
-        all("tr[data-field=\"translation\"] input").len(),
-        all("tr[data-field=\"rotation\"] input").len(),
-        all("tr[data-field=\"scale\"] input").len(),
+        all("tr[data-field=\"translation\"] input[type=\"text\"]").len(),
+        all("tr[data-field=\"rotation\"] input[type=\"text\"]").len(),
+        all("tr[data-field=\"scale\"] input[type=\"text\"]").len(),
     );
     r.step(
         &format!("Create {label}: Inspector shows editable translation / rotation / scale"),
@@ -195,7 +195,7 @@ async fn create_one(
 /// Type `values` into the field's component boxes and press its Apply
 /// button; wait for the new revision.
 pub(super) async fn apply_field(field: &str, values: &[String]) -> Option<p::DocState> {
-    let inputs = all(&format!("tr[data-field=\"{field}\"] input"));
+    let inputs = all(&format!("tr[data-field=\"{field}\"] input[type=\"text\"]"));
     if inputs.len() != values.len() {
         return None;
     }
@@ -318,7 +318,7 @@ pub(super) async fn run(c: &p::CreateSmoke, r: &mut R) -> Option<()> {
     .await;
     r.step(
         "Scene Tree: the new Material is selectable; the Inspector shows diffuseColor",
-        insp.is_some() && all("tr[data-field=\"diffuseColor\"] input").len() == 3,
+        insp.is_some() && all("tr[data-field=\"diffuseColor\"] input[type=\"text\"]").len() == 3,
         "",
     );
     let col = apply_field("diffuseColor", &c.color).await;
@@ -410,7 +410,7 @@ pub(super) async fn run(c: &p::CreateSmoke, r: &mut R) -> Option<()> {
     let stale = call::<p::CreateOutcome>(
         "doc_create",
         A {
-            request: p::CreateRequest {
+            request: p::CreateRequest { at: None,
                 session: a.session,
                 base_revision: cur.saturating_sub(1),
                 primitive: p::Primitive::Cone,

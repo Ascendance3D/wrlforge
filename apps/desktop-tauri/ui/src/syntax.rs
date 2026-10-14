@@ -48,6 +48,9 @@ const MAX_MARKS: usize = 2_000;
 /// Must match `.source` line-height in style.css. Used only to pick the
 /// window; alignment never depends on it.
 const LINE_PX: f64 = 18.0;
+/// B2: line numbers painted above and below the visible lines (the panel
+/// can grow between scroll / resize events without a gap showing).
+const GUTTER_MARGIN: u32 = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
@@ -94,6 +97,15 @@ struct Hl {
     last_render_ms: f64,
     last_chunks_rebuilt: usize,
     last_set_text_ms: f64,
+    /// B2: the caret's 1-based line (the gutter marks it).
+    caret_line: u32,
+    /// B2: what the gutter shows: (first, last, total lines, caret line).
+    gutter: (u32, u32, u32, u32),
+    /// B3: the 1-based lines a selection covers ((0, 0) for none); the
+    /// gutter marks them, so a span selected while the Source does not have
+    /// the focus (a viewport pick) is still visible.
+    mark: (u32, u32),
+    gutter_mark: (u32, u32),
 }
 
 thread_local! {
@@ -336,6 +348,111 @@ fn sync_scroll(h: &Hl) {
     }
 }
 
+fn gutter_el() -> Option<web_sys::HtmlElement> {
+    doc()?.get_element_by_id("source-gutter")?.dyn_into().ok()
+}
+
+/// Lines in the layer's text, from the chunk line counts (no rescan): a
+/// final line break opens one more, empty, line.
+fn total_lines(h: &Hl) -> u32 {
+    if h.chunks.is_empty() && !h.text.is_empty() {
+        return crate::find::line_count(&h.text);
+    }
+    let n: u32 = h.chunks.iter().map(|c| c.lines).sum();
+    n + h.text.last().is_none_or(|&u| u == b'\n' as u16) as u32
+}
+
+/// B2: the line-number gutter. Only the lines near the viewport are
+/// written, and only when that window, the line count or the caret line
+/// changes; scrolling otherwise just moves it by transform.
+fn paint_gutter(h: &mut Hl) {
+    let Some(g) = gutter_el() else { return };
+    let total = total_lines(h).max(1);
+    let (top, bottom) = visible_lines(h);
+    let first = (top.saturating_sub(GUTTER_MARGIN) + 1).min(total);
+    let last = (bottom + GUTTER_MARGIN).min(total).max(first);
+    let caret = h.caret_line;
+    let key = (first, last, total, caret);
+    let mark = h.mark;
+    if key != h.gutter || mark != h.gutter_mark {
+        let width_changed = crate::find::digits(total) != crate::find::digits(h.gutter.2);
+        h.gutter = key;
+        h.gutter_mark = mark;
+        g.set_text_content(None);
+        if let Some(d) = doc() {
+            let text = |a: u32, z: u32| d.create_text_node(&crate::find::gutter_text(a, z));
+            let marked = |n: u32| mark.0 > 0 && (mark.0..=mark.1).contains(&n);
+            let special = |n: u32| n == caret || marked(n);
+            // The same text as before (numbers joined by newlines); the caret
+            // line and the marked lines are spans.
+            let mut n = first;
+            while n <= last {
+                if n > first {
+                    let _ = g.append_child(&d.create_text_node("\n"));
+                }
+                if special(n) {
+                    if let Ok(el) = d.create_element("span") {
+                        let class = match (n == caret, marked(n)) {
+                            (true, true) => "cur mark",
+                            (true, false) => "cur",
+                            _ => "mark",
+                        };
+                        el.set_class_name(class);
+                        el.set_text_content(Some(&n.to_string()));
+                        let _ = g.append_child(&el);
+                    }
+                    n += 1;
+                } else {
+                    let mut z = n;
+                    while z < last && !special(z + 1) {
+                        z += 1;
+                    }
+                    let _ = g.append_child(&text(n, z));
+                    n = z + 1;
+                }
+            }
+        }
+        // The column (the gutter's parent) takes the width of the widest
+        // number; the absolutely placed numbers give it none.
+        let col = g.parent_element().and_then(|p| p.dyn_into::<web_sys::HtmlElement>().ok());
+        if let Some(col) = col.filter(|_| width_changed) {
+            let _ = col.style().set_property(
+                "width",
+                &format!("calc({}ch + 1.1rem)", crate::find::digits(total).max(2)),
+            );
+        }
+    }
+    let _ = g.style().set_property(
+        "transform",
+        &format!("translateY({}px)", (first - 1) as f64 * LINE_PX - h.vp.0 as f64),
+    );
+}
+
+/// B2: the caret moved to 1-based `line` (the gutter marks it).
+pub fn set_caret_line(line: u32) {
+    HL.with_borrow_mut(|h| {
+        if h.caret_line != line {
+            h.caret_line = line;
+            paint_gutter(h);
+        }
+    });
+}
+
+/// B3: mark the lines a selection covers in the gutter ((0, 0) clears).
+pub fn set_mark_lines(first: u32, last: u32) {
+    HL.with_borrow_mut(|h| {
+        if h.mark != (first, last) {
+            h.mark = (first, last);
+            paint_gutter(h);
+        }
+    });
+}
+
+/// B2: lines in the text on screen.
+pub fn line_total() -> u32 {
+    HL.with_borrow(total_lines)
+}
+
 /// Lines that should carry color: the visible ones plus a margin.
 fn visible_lines(h: &Hl) -> (u32, u32) {
     let top = (h.vp.0 as f64 / LINE_PX).floor().max(0.0) as u32;
@@ -503,6 +620,7 @@ fn rebuild_all(h: &mut Hl) {
     }
     update(h, Force::All);
     sync_scroll(h);
+    paint_gutter(h);
 }
 
 /// The widget's text changed (typing, paste, IME, undo, redo, Inspector,
@@ -587,6 +705,7 @@ pub fn set_text(new: &str) {
             c.to = (c.to as i64 + delta) as u32;
         }
         update(h, Force::Range(a..a + count));
+        paint_gutter(h);
         false
     });
     HL.with_borrow_mut(|h| h.last_set_text_ms = now() - t0);
@@ -653,6 +772,7 @@ pub fn on_scroll() {
         read_viewport(h);
         sync_scroll(h);
         update(h, Force::None);
+        paint_gutter(h);
     });
 }
 

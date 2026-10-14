@@ -306,6 +306,8 @@ pub struct Request {
     /// The number of tuples the caller saw; any other count is refused.
     pub expected_count: usize,
     pub ops: Vec<Op>,
+    /// B1: the user confirmed editing a shared PROTO definition.
+    pub confirm_shared: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -373,7 +375,7 @@ fn reason_text(r: &'static str) -> String {
 }
 
 /// Is a gap between two tokens only whitespace and commas (no comment)?
-fn clean(gap: &str) -> bool {
+pub(crate) fn clean(gap: &str) -> bool {
     gap.chars()
         .all(|c| matches!(c, ' ' | '\t' | '\r' | '\n' | ','))
 }
@@ -647,7 +649,7 @@ fn extrusion_rule(
 }
 
 /// The exact differing region of `old` → `new` as one UTF-16 span edit.
-fn diff_edit(old: &str, new: &str) -> Option<SpanEdit> {
+pub(crate) fn diff_edit(old: &str, new: &str) -> Option<SpanEdit> {
     let o: Vec<u16> = old.encode_utf16().collect();
     let n: Vec<u16> = new.encode_utf16().collect();
     let mut pre = 0;
@@ -676,7 +678,7 @@ fn locate<'a>(
     to: u64,
     want: Option<(&str, Option<&str>)>,
 ) -> Result<(&'a Node, &'a Field, ListSpec, Option<Bounds>), &'static str> {
-    let node = node_gate(p, req.node_from, to)?;
+    let node = node_gate(p, req.node_from, to, req.confirm_shared)?;
     if let Some((ty, def)) = want {
         if node.node_type != ty || node.def.as_deref() != def {
             return Err(fr::ROUND_TRIP_FAILED);
@@ -816,7 +818,7 @@ pub fn plan_list_edit(src: &str, req: &Request) -> Plan {
             "The node could not be proven after the edit.",
         );
     };
-    if again.in_proto_scope || again.node.node_type != ty || again.node.def != def {
+    if again.other_proto_scope() || again.node.node_type != ty || again.node.def != def {
         return refused(fr::ROUND_TRIP_FAILED, "The node changed identity.");
     }
     let lexemes: Vec<Vec<String>> = model
@@ -863,6 +865,8 @@ pub struct AddRequest {
     pub node_to: u64,
     pub field_name: String,
     pub value: AddValue,
+    /// B1: the user confirmed editing a shared PROTO definition.
+    pub confirm_shared: bool,
 }
 
 /// Plan the insertion of `field_name value` as the LAST statement of the
@@ -872,7 +876,7 @@ pub struct AddRequest {
 /// what the user chose; nothing else is written.
 pub fn plan_add_field(src: &str, req: &AddRequest) -> Plan {
     let p = parse(src);
-    let node = match node_gate(&p, req.node_from, req.node_to) {
+    let node = match node_gate(&p, req.node_from, req.node_to, req.confirm_shared) {
         Ok(n) => n,
         Err(r) => return refused(r, reason_text(r)),
     };
@@ -946,57 +950,11 @@ pub fn plan_add_field(src: &str, req: &AddRequest) -> Plan {
         }
     };
 
-    // The body's `{` and `}` from the TOKENS (never a text search).
     let (nf, nt) = (req.node_from, req.node_to);
-    let toks: Vec<_> = p
-        .tokens
-        .iter()
-        .filter(|t| {
-            t.range.start.offset as u64 >= node.type_range.end.offset as u64
-                && (t.range.end.offset as u64) <= nt
-        })
-        .collect();
-    let open = toks.iter().find(|t| matches!(t.kind, TokKind::LBrace));
-    let close = toks.last().filter(|t| matches!(t.kind, TokKind::RBrace));
-    let (Some(open), Some(close)) = (open, close) else {
-        return refused(reason::NO_BODY, "The node's braces could not be proven.");
-    };
-    let open_to = open.range.end.offset as u64;
-    if close.range.end.offset as u64 != nt || open_to <= nf {
-        return refused(reason::NO_BODY, "The node's braces could not be proven.");
-    }
     let stmt = format!("{} {value_text}", req.field_name);
-    let (at, insert) = match node.fields.as_slice() {
-        [] => {
-            let interior = &src[open.range.end.byte as usize..close.range.start.byte as usize];
-            if interior.is_empty() {
-                (open_to, format!(" {stmt} "))
-            } else {
-                (open_to, format!(" {stmt}"))
-            }
-        }
-        fields => {
-            let last = fields[fields.len() - 1].range();
-            // Copy the clean gap between the last two statements (keeps the
-            // node's own indentation and line ending), else one space.
-            let gap = fields
-                .len()
-                .checked_sub(2)
-                .map(|i| &src[fields[i].range().end.byte as usize..last.start.byte as usize])
-                .filter(|g| clean(g) && !g.is_empty())
-                .or_else(|| {
-                    let g =
-                        &src[open.range.end.byte as usize..fields[0].range().start.byte as usize];
-                    (clean(g) && !g.is_empty()).then_some(g)
-                })
-                .unwrap_or(" ");
-            (last.end.offset as u64, format!("{gap}{stmt}"))
-        }
-    };
-    let edit = SpanEdit {
-        from: at,
-        to: at,
-        insert,
+    let edit = match body_append(&p, src, node, nf, nt, &stmt) {
+        Ok(e) => e,
+        Err((r, m)) => return refused(r, m),
     };
     let Some(new_text) = splice(src, std::slice::from_ref(&edit)) else {
         return refused(fr::TRANSACTION_REJECTED, "The edit span is invalid.");
@@ -1012,7 +970,7 @@ pub fn plan_add_field(src: &str, req: &AddRequest) -> Plan {
         && match found.as_slice() {
             [again] => {
                 let n = again.node;
-                !again.in_proto_scope
+                !again.other_proto_scope()
                     && n.node_type == node.node_type
                     && n.def == node.def
                     && n.fields.len() == node.fields.len() + 1
@@ -1055,6 +1013,70 @@ pub fn plan_add_field(src: &str, req: &AddRequest) -> Plan {
         node_to: to,
         lexemes,
     }
+}
+
+/// The insertion that appends `stmt` as the LAST statement of the body of
+/// `node` (the one node at `[nf, nt)` in `p`). The body's braces come from the
+/// TOKENS, never a text search; the separator copies the node's own clean gap
+/// (indentation and line ending), else one space. `Err` = (reason, message).
+pub(crate) fn body_append(
+    p: &ParseResult,
+    src: &str,
+    node: &Node,
+    nf: u64,
+    nt: u64,
+    stmt: &str,
+) -> Result<SpanEdit, (&'static str, &'static str)> {
+    let no_body = (reason::NO_BODY, "The node's braces could not be proven.");
+    let toks: Vec<_> = p
+        .tokens
+        .iter()
+        .filter(|t| {
+            t.range.start.offset as u64 >= node.type_range.end.offset as u64
+                && (t.range.end.offset as u64) <= nt
+        })
+        .collect();
+    let open = toks.iter().find(|t| matches!(t.kind, TokKind::LBrace));
+    let close = toks.last().filter(|t| matches!(t.kind, TokKind::RBrace));
+    let (Some(open), Some(close)) = (open, close) else {
+        return Err(no_body);
+    };
+    let open_to = open.range.end.offset as u64;
+    if close.range.end.offset as u64 != nt || open_to <= nf {
+        return Err(no_body);
+    }
+    let (at, insert) = match node.fields.as_slice() {
+        [] => {
+            let interior = &src[open.range.end.byte as usize..close.range.start.byte as usize];
+            if interior.is_empty() {
+                (open_to, format!(" {stmt} "))
+            } else {
+                (open_to, format!(" {stmt}"))
+            }
+        }
+        fields => {
+            let last = fields[fields.len() - 1].range();
+            // Copy the clean gap between the last two statements (keeps the
+            // node's own indentation and line ending), else one space.
+            let gap = fields
+                .len()
+                .checked_sub(2)
+                .map(|i| &src[fields[i].range().end.byte as usize..last.start.byte as usize])
+                .filter(|g| clean(g) && !g.is_empty())
+                .or_else(|| {
+                    let g =
+                        &src[open.range.end.byte as usize..fields[0].range().start.byte as usize];
+                    (clean(g) && !g.is_empty()).then_some(g)
+                })
+                .unwrap_or(" ");
+            (last.end.offset as u64, format!("{gap}{stmt}"))
+        }
+    };
+    Ok(SpanEdit {
+        from: at,
+        to: at,
+        insert,
+    })
 }
 
 #[cfg(test)]

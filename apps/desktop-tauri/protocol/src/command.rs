@@ -104,6 +104,15 @@ pub enum CommandId {
     ViewZoomIn,
     ViewZoomOut,
     ViewZoomReset,
+    // B2-CAMERA: viewport camera (editor state only, never the source).
+    ViewFitAll,
+    ViewFront,
+    ViewBack,
+    ViewLeft,
+    ViewRight,
+    ViewTop,
+    ViewBottom,
+    ViewResetCamera,
     CreateBox,
     CreateSphere,
     CreateCylinder,
@@ -198,6 +207,11 @@ pub enum Requires {
     ViewportTool,
     /// UI-MENU-1: the Inspector shows an editable Extrusion `crossSection`.
     ExtrusionOutline,
+    /// B2: a node is selected (Scene Tree or viewport) in an open document.
+    NodeSelected,
+    /// B2-CAMERA: an open document shown in the X_ITE viewport (the camera
+    /// commands; the native test viewport has its own Reset view).
+    ViewportCamera,
 }
 
 /// Where the work is done.
@@ -278,6 +292,8 @@ pub struct CommandContext {
     pub native_viewport: bool,
     /// UI-MENU-1: the Inspector offers the Extrusion outline editor.
     pub outline_ready: bool,
+    /// B2: a Scene Tree node item is selected.
+    pub node_selected: bool,
 }
 
 /// A set of [`PanelId`]s (UI-DOCK-1).
@@ -590,11 +606,75 @@ pub const COMMANDS: &[CommandSpec] = &[
         native_keys: &[Shortcut { key: "a", shift: S }],
         check: Check::None,
     },
-    planned(CommandId::EditFind, "edit.find", "Find…", Menu::Edit, FUTURE_LANE),
-    planned(CommandId::EditReplace, "edit.replace", "Replace…", Menu::Edit, FUTURE_LANE),
-    planned(CommandId::EditGoToLine, "edit.goToLine", "Go to Line…", Menu::Edit, FUTURE_LANE),
-    planned(CommandId::EditDeleteNode, "edit.deleteNode", "Delete Node", Menu::Edit, FUTURE_LANE),
-    planned(CommandId::EditDuplicateNode, "edit.duplicateNode", "Duplicate Node", Menu::Edit, FUTURE_LANE),
+    // B2: these open the Source panel's Find / Replace / Go to Line bar
+    // (UI only). Each replacement the bar makes is ONE revision-checked,
+    // hash-verified `doc_edit` sent by the editor (`editor::submit_edit`).
+    CommandSpec {
+        id: CommandId::EditFind,
+        key: "edit.find",
+        label: "Find…",
+        menu: Menu::Edit,
+        shortcuts: &[Shortcut { key: "f", shift: S }],
+        requires: Requires::Document,
+        action: Action::UiOnly,
+        mutates_document: false,
+        hint: "Find text in the Source editor",
+        native_keys: &[],
+        check: Check::None,
+    },
+    CommandSpec {
+        id: CommandId::EditReplace,
+        key: "edit.replace",
+        label: "Replace…",
+        menu: Menu::Edit,
+        shortcuts: &[Shortcut { key: "h", shift: S }],
+        requires: Requires::Document,
+        action: Action::UiOnly,
+        mutates_document: false,
+        hint: "Find and replace text in the Source editor (each replacement is one undo step)",
+        native_keys: &[],
+        check: Check::None,
+    },
+    CommandSpec {
+        id: CommandId::EditGoToLine,
+        key: "edit.goToLine",
+        label: "Go to Line…",
+        menu: Menu::Edit,
+        shortcuts: &[Shortcut { key: "g", shift: S }],
+        requires: Requires::Document,
+        action: Action::UiOnly,
+        mutates_document: false,
+        hint: "Move the caret to a line in the Source editor",
+        native_keys: &[],
+        check: Check::None,
+    },
+    // B2: Rust plans, proves and applies the structural edit as one undo step.
+    CommandSpec {
+        id: CommandId::EditDeleteNode,
+        key: "edit.deleteNode",
+        label: "Delete Node",
+        menu: Menu::Edit,
+        shortcuts: &[],
+        requires: Requires::NodeSelected,
+        action: Action::Backend(&["doc_structure_edit"]),
+        mutates_document: true,
+        hint: "Delete the selected node from the source (Delete in the Scene Tree)",
+        native_keys: &[],
+        check: Check::None,
+    },
+    CommandSpec {
+        id: CommandId::EditDuplicateNode,
+        key: "edit.duplicateNode",
+        label: "Duplicate Node",
+        menu: Menu::Edit,
+        shortcuts: &[Shortcut { key: "d", shift: S }],
+        requires: Requires::NodeSelected,
+        action: Action::Backend(&["doc_structure_edit"]),
+        mutates_document: true,
+        hint: "Insert a copy of the selected node right after it (DEF names in the copy are renamed)",
+        native_keys: &[],
+        check: Check::None,
+    },
     theme_cmd(CommandId::ViewThemeTokyoNight, "view.theme.tokyoNight", "Tokyo Night", "tokyo-night"),
     theme_cmd(CommandId::ViewThemeTokyoNightStorm, "view.theme.tokyoNightStorm", "Tokyo Night Storm", "tokyo-night-storm"),
     theme_cmd(CommandId::ViewThemeTokyoNightLight, "view.theme.tokyoNightLight", "Tokyo Night Light", "tokyo-night-light"),
@@ -627,6 +707,16 @@ pub const COMMANDS: &[CommandSpec] = &[
     planned(CommandId::ViewZoomIn, "view.zoomIn", "Zoom In", Menu::View, FUTURE_LANE),
     planned(CommandId::ViewZoomOut, "view.zoomOut", "Zoom Out", Menu::View, FUTURE_LANE),
     planned(CommandId::ViewZoomReset, "view.zoomReset", "Actual Size", Menu::View, FUTURE_LANE),
+    camera_cmd(CommandId::ViewFitAll, "view.camera.fit", "View All",
+        "Fit: frame the whole scene in the 3D Viewport (camera only; the source is not changed)"),
+    camera_cmd(CommandId::ViewFront, "view.camera.front", "Front", "Look at the whole scene from the front (along -Z)"),
+    camera_cmd(CommandId::ViewBack, "view.camera.back", "Back", "Look at the whole scene from the back (along +Z)"),
+    camera_cmd(CommandId::ViewLeft, "view.camera.left", "Left", "Look at the whole scene from the left (along +X)"),
+    camera_cmd(CommandId::ViewRight, "view.camera.right", "Right", "Look at the whole scene from the right (along -X)"),
+    camera_cmd(CommandId::ViewTop, "view.camera.top", "Top", "Look down at the whole scene from above (along -Y)"),
+    camera_cmd(CommandId::ViewBottom, "view.camera.bottom", "Bottom", "Look up at the whole scene from below (along +Y)"),
+    camera_cmd(CommandId::ViewResetCamera, "view.camera.reset", "Reset View",
+        "Back to the bound viewpoint as authored (the default view is framed on the scene)"),
     create_cmd(CommandId::CreateBox, "create.box", "Box", "Add a Box (2 × 2 × 2) inside a new Transform at the origin"),
     create_cmd(CommandId::CreateSphere, "create.sphere", "Sphere", "Add a Sphere (radius 1) inside a new Transform at the origin"),
     create_cmd(CommandId::CreateCylinder, "create.cylinder", "Cylinder", "Add a Cylinder (radius 1, height 2) inside a new Transform at the origin"),
@@ -711,6 +801,59 @@ const fn theme_cmd(
         native_keys: &[],
         check: Check::Theme(theme),
     }
+}
+
+/// B2-CAMERA: a viewport camera command. The camera is editor state: no
+/// source change, no dirty flag, no undo step.
+const fn camera_cmd(
+    id: CommandId,
+    key: &'static str,
+    label: &'static str,
+    hint: &'static str,
+) -> CommandSpec {
+    CommandSpec {
+        id,
+        key,
+        label,
+        menu: Menu::View,
+        shortcuts: &[],
+        requires: Requires::ViewportCamera,
+        action: Action::UiOnly,
+        mutates_document: false,
+        hint,
+        native_keys: &[],
+        check: Check::None,
+    }
+}
+
+/// B2-CAMERA: unmodified keys that run a command only while the 3D Viewport
+/// (its tab or its canvas) has the focus. The one window shortcut handler
+/// reads this table after the primary-modifier one.
+pub const VIEWPORT_KEYS: &[(&str, CommandId)] =
+    &[("f", CommandId::ViewFitAll), ("home", CommandId::ViewFitAll)];
+
+/// The viewport command for an unmodified key press, if any.
+pub fn from_viewport_key(key: &str, modified: bool) -> Option<CommandId> {
+    if modified {
+        return None;
+    }
+    let key = key.to_lowercase();
+    VIEWPORT_KEYS.iter().find(|(k, _)| *k == key).map(|(_, id)| *id)
+}
+
+/// The label of a command's viewport keys (`F / Home`), or "".
+pub fn viewport_key_label(id: CommandId) -> String {
+    VIEWPORT_KEYS
+        .iter()
+        .filter(|(_, c)| *c == id)
+        .map(|(k, _)| {
+            let mut c = k.chars();
+            c.next()
+                .map(|f| f.to_uppercase().chain(c).collect::<String>())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" / ")
 }
 
 /// Create: Rust generates and inserts the source (`doc_create`).
@@ -799,10 +942,12 @@ pub const ALLOWED_BACKEND: &[&str] = &[
     "theme_set",
     "doc_create",
     "doc_preview_source",
+    // B2.
+    "doc_structure_edit",
 ];
 
 impl CommandId {
-    pub const ALL: [CommandId; 56] = [
+    pub const ALL: [CommandId; 64] = [
         CommandId::FileNewWorld,
         CommandId::FileOpen,
         CommandId::FileSave,
@@ -841,6 +986,14 @@ impl CommandId {
         CommandId::ViewZoomIn,
         CommandId::ViewZoomOut,
         CommandId::ViewZoomReset,
+        CommandId::ViewFitAll,
+        CommandId::ViewFront,
+        CommandId::ViewBack,
+        CommandId::ViewLeft,
+        CommandId::ViewRight,
+        CommandId::ViewTop,
+        CommandId::ViewBottom,
+        CommandId::ViewResetCamera,
         CommandId::CreateBox,
         CommandId::CreateSphere,
         CommandId::CreateCylinder,
@@ -973,13 +1126,31 @@ impl CommandId {
         }
     }
 
-    /// The tooltip: hint plus the first shortcut, if any.
+    /// The tooltip: hint plus the first shortcut, if any (B2-CAMERA: or
+    /// the viewport keys).
     pub fn title(self, platform: Platform) -> String {
         let s = self.spec();
         match s.shortcuts.first() {
             Some(k) => format!("{} ({})", s.hint, k.label(platform)),
-            None => s.hint.to_string(),
+            None => match viewport_key_label(self) {
+                v if v.is_empty() => s.hint.to_string(),
+                v => format!("{} ({v} in the viewport)", s.hint),
+            },
         }
+    }
+
+    /// B2-CAMERA: the standard view a camera command shows.
+    pub fn standard_view(self) -> Option<crate::camera::StandardView> {
+        use crate::camera::StandardView as V;
+        Some(match self {
+            CommandId::ViewFront => V::Front,
+            CommandId::ViewBack => V::Back,
+            CommandId::ViewLeft => V::Left,
+            CommandId::ViewRight => V::Right,
+            CommandId::ViewTop => V::Top,
+            CommandId::ViewBottom => V::Bottom,
+            _ => return None,
+        })
     }
 }
 
@@ -992,6 +1163,9 @@ pub const NEEDS_TEXT_SELECTION: &str = "Select text first";
 pub const NEEDS_TEXT_FOCUS: &str = "Works in a text field or the Source editor";
 pub const NEEDS_XITE: &str = "The viewport tools need the X_ITE viewport";
 pub const NEEDS_OUTLINE: &str = "Select an Extrusion with an editable crossSection first";
+pub const NEEDS_XITE_CAMERA: &str =
+    "The camera commands need the X_ITE viewport (the native test view has Reset view)";
+pub const NEEDS_NODE: &str = "Select a node in the Scene Tree or the viewport first";
 
 /// The first requirement `ctx` does not meet, if any (history excluded:
 /// that is the backend's run-time decision).
@@ -1018,6 +1192,12 @@ fn unmet(r: Requires, ctx: CommandContext) -> Option<&'static str> {
         Requires::ViewportTool => None,
         Requires::ExtrusionOutline if !ctx.outline_ready => Some(NEEDS_OUTLINE),
         Requires::ExtrusionOutline => None,
+        Requires::NodeSelected if !ctx.has_document => Some(NO_DOCUMENT),
+        Requires::NodeSelected if !ctx.node_selected => Some(NEEDS_NODE),
+        Requires::NodeSelected => None,
+        Requires::ViewportCamera if !ctx.has_document => Some(NO_DOCUMENT),
+        Requires::ViewportCamera if ctx.native_viewport => Some(NEEDS_XITE_CAMERA),
+        Requires::ViewportCamera => None,
     }
 }
 
@@ -1124,6 +1304,15 @@ pub const MENUS: &[MenuDef] = {
                 G("Preview"),
                 C(ViewLivePreview),
                 C(ViewUpdatePreview),
+                G("Camera"),
+                C(ViewFitAll),
+                C(ViewFront),
+                C(ViewBack),
+                C(ViewLeft),
+                C(ViewRight),
+                C(ViewTop),
+                C(ViewBottom),
+                C(ViewResetCamera),
                 G("Zoom"),
                 C(ViewZoomIn),
                 C(ViewZoomOut),

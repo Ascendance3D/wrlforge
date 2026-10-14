@@ -51,6 +51,9 @@
       "../target/pkg-licenses/": "licenses/"
     },
     "linux": {
+      "appimage": {
+        "bundleMediaFramework": true
+      },
       "deb": {
         "section": "graphics",
         "recommends": ["libvulkan1", "mesa-vulkan-drivers"],

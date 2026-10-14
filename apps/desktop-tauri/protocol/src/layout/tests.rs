@@ -64,7 +64,7 @@ fn ids_are_stable_strings() {
     }
     assert_eq!(PanelId::from_key("panel.SceneTree"), None);
     assert_eq!(PresetId::from_key("preset.source"), Some(PresetId::Source));
-    assert_eq!(PresetId::DEFAULT, PresetId::Source);
+    assert_eq!(PresetId::DEFAULT, PresetId::Modeling);
     assert!(!Viewport.closable() && !Source.closable());
     assert!(SceneTree.closable() && Inspector.closable() && Diagnostics.closable());
 }

@@ -276,7 +276,7 @@ async fn xml_route(r: &mut R) {
     ];
     for (label, text, xml) in cases {
         let traced = ipc::console_trace_start();
-        let status = ipc::preview_load(&text, None, None, "").await;
+        let status = ipc::preview_load(&text, None, None, false, "").await;
         let trace = ipc::console_trace_stop().unwrap_or_default();
         let loaded = status.starts_with("loaded");
         let routed = if xml { trace.xml >= 1 } else { trace.xml == 0 };

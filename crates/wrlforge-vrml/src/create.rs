@@ -110,6 +110,7 @@ pub mod reason {
     pub const PARSE_CAPPED: &str = "document-too-large-to-prove";
     pub const NO_FREE_NAME: &str = "no-free-def-name";
     pub const VERIFY_FAILED: &str = "inserted-structure-not-proven";
+    pub const PLACEMENT_INVALID: &str = "placement-not-usable";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,9 +140,33 @@ fn refused(reason: &'static str, message: impl Into<String>) -> Plan {
 
 /// The object's source, indented two spaces per level, lines joined by `eol`.
 pub fn template(p: Primitive, def_name: &str, eol: &str) -> String {
+    template_at(p, def_name, eol, None)
+}
+
+/// D4: one translation component as a short VRML97 float (3 decimals, no
+/// trailing zeros, never `-0`).
+fn coord_text(v: f64) -> String {
+    let r = (v * 1000.0).round() / 1000.0;
+    let r = if r == 0.0 { 0.0 } else { r };
+    let t = format!("{r:.3}");
+    let t = t.trim_end_matches('0').trim_end_matches('.');
+    t.to_string()
+}
+
+/// [`template`] placed at `at` (`None`: the origin).
+pub fn template_at(p: Primitive, def_name: &str, eol: &str, at: Option<[f64; 3]>) -> String {
+    let translation = match at {
+        Some(a) => format!(
+            "  translation {} {} {}",
+            coord_text(a[0]),
+            coord_text(a[1]),
+            coord_text(a[2])
+        ),
+        None => "  translation 0 0 0".into(),
+    };
     let mut lines = vec![
         format!("DEF {def_name} Transform {{"),
-        "  translation 0 0 0".into(),
+        translation,
         "  rotation 0 1 0 0".into(),
         "  scale 1 1 1".into(),
         "  children [".into(),
@@ -164,7 +189,7 @@ fn utf16_len(s: &str) -> u64 {
 
 /// The line ending new text uses: the document's most frequent one (ties
 /// prefer LF, then CRLF), LF when it has none -- the same rule as typing.
-fn dominant_eol(text: &str) -> &'static str {
+pub(crate) fn dominant_eol(text: &str) -> &'static str {
     let b = text.as_bytes();
     let (mut lf, mut crlf, mut cr) = (0u64, 0u64, 0u64);
     let mut i = 0;
@@ -219,7 +244,7 @@ fn unprovable(p: &ParseResult) -> Option<Plan> {
 }
 
 /// Any parser-recovered node anywhere under `a`.
-fn incomplete(a: &Ast) -> bool {
+pub(crate) fn incomplete(a: &Ast) -> bool {
     match a {
         Ast::Node(n) => n.incomplete || n.fields.iter().any(incomplete),
         Ast::Field(f) => f.value.as_deref().is_some_and(incomplete),
@@ -284,6 +309,16 @@ fn structure_ok(n: &Node, p: Primitive, def_name: &str) -> bool {
 
 /// Plan the creation of one `p` object at the end of `src` (top level).
 pub fn plan_create(src: &str, p: Primitive) -> Plan {
+    plan_create_at(src, p, None)
+}
+
+/// D4: [`plan_create`] with the new Transform's translation at `at` (the
+/// caller's visible placement), or the origin for `None`. A non-finite or
+/// huge coordinate is refused, never clamped.
+pub fn plan_create_at(src: &str, p: Primitive, at: Option<[f64; 3]>) -> Plan {
+    if at.is_some_and(|a| a.iter().any(|v| !v.is_finite() || v.abs() > 1.0e6)) {
+        return refused(reason::PLACEMENT_INVALID, "The placement point is not usable.");
+    }
     let parsed = parse(src);
     if let Some(r) = unprovable(&parsed) {
         return r;
@@ -299,7 +334,7 @@ pub fn plan_create(src: &str, p: Primitive) -> Plan {
     } else {
         format!("{eol}{eol}")
     };
-    let body = template(p, &def_name, eol);
+    let body = template_at(p, &def_name, eol, at);
     let insert = format!("{prefix}{body}{eol}");
     let at = utf16_len(src);
     let new_text = format!("{src}{insert}");

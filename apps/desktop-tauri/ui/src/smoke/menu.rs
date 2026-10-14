@@ -205,6 +205,9 @@ fn st(d: &Option<DocState>) -> String {
 
 pub async fn run(plan: &Plan, r: &mut R) -> Option<()> {
     wait_ms(5000, || crate::element_by_id::<HtmlElement>("menubar")).await?;
+    // The focus-return checks below are about the Source panel: run them in
+    // the Source preset (the default is now Modeling, Source as a tab).
+    crate::dock::set_preset(p::layout::PresetId::Source);
     ipc::sleep(800).await;
     structure(r);
     if !r.step(
@@ -234,6 +237,7 @@ pub async fn run(plan: &Plan, r: &mut R) -> Option<()> {
     about_dialog(r).await?;
     tools_and_view(r).await?;
     world_and_reserved(r).await?;
+    find_bar(r).await?;
     quit(r).await?;
     pick_check("after the menu run", [0.0, 0.0, 0.0], "Transform Crate", r).await?;
     r.step(
@@ -520,6 +524,10 @@ async fn shortcuts(r: &mut R) -> Option<()> {
         runs() == n + 1 && s2.revision > rev && s2.view == s.view && s2.can_redo,
         format!("runs +{} rev {rev} -> {}", runs() - n, s2.revision),
     );
+    // PR #146 review: the unmodified viewport keys (F / Home = View All)
+    // never fire with Alt or AltGr held -- shortcut_blocked() drops those
+    // events before the viewport-key check.
+    viewport_keys(r).await?;
     // Inspector field: typing stays in the field; Ctrl+Z stays the field's own.
     type_edit("\n# menu edit 3").await?;
     let input: web_sys::HtmlInputElement = wait_ms(4000, || {
@@ -1736,15 +1744,14 @@ async fn world_and_reserved(r: &mut R) -> Option<()> {
         format!("{} items {groups:?} runs +{}", items.len(), runs() - n),
     );
     open_click("edit").await?;
+    // B2: Find / Replace / Go to Line are enabled with a document open.
     let reserved = [
         CommandId::EditFind,
         CommandId::EditReplace,
         CommandId::EditGoToLine,
-        CommandId::EditDeleteNode,
-        CommandId::EditDuplicateNode,
     ]
     .iter()
-    .all(|c| attr(&dom_id(*c), "aria-disabled").as_deref() == Some("true"));
+    .all(|c| attr(&dom_id(*c), "aria-disabled").as_deref() == Some("false"));
     real("escape", 0.0, 0.0).await.ok()?;
     real("escape", 0.0, 0.0).await.ok()?;
     open_click("help").await?;
@@ -1761,9 +1768,128 @@ async fn world_and_reserved(r: &mut R) -> Option<()> {
     real("escape", 0.0, 0.0).await.ok()?;
     ipc::sleep(200).await;
     r.step(
-        "Edit reserves Find / Replace / Go to Line / Delete Node / Duplicate Node (disabled); Help → About opens the About dialog with the app identity",
+        "Edit enables Find / Replace / Go to Line; Help → About opens the About dialog with the app identity",
         reserved && help && about.is_some(),
         format!("{about:?}"),
+    );
+    Some(())
+}
+
+fn bar_hidden() -> bool {
+    crate::element_by_id::<HtmlElement>("findbar").is_some_and(|b| b.hidden())
+}
+
+fn status_text() -> String {
+    el("#find-status")
+        .and_then(|e| e.text_content())
+        .unwrap_or_default()
+}
+
+fn sel_now() -> (u32, u32) {
+    textarea()
+        .map(|t| {
+            (
+                t.selection_start().ok().flatten().unwrap_or(u32::MAX),
+                t.selection_end().ok().flatten().unwrap_or(u32::MAX),
+            )
+        })
+        .unwrap_or((u32::MAX, u32::MAX))
+}
+
+/// B2: Go to Line, Find and Replace All with real keys and clicks.
+async fn find_bar(r: &mut R) -> Option<()> {
+    type_edit("\n# fz1 fz1 FZ1 b2").await?;
+    let units = |t: &str| t.encode_utf16().collect::<Vec<u16>>();
+    // Go to Line: an out-of-range number is refused, then line 2 is reached.
+    let ta = textarea()?;
+    let _ = ta.focus();
+    ta.set_selection_range(0, 0).ok()?;
+    let rev0 = in_sync().await?.0;
+    key("ctrl+g").await?;
+    let opened = wait_ms(2000, || (active_id() == "goto-line").then_some(())).await;
+    for k in ["9", "9", "9", "9", "9", "9", "Return"] {
+        key(k).await?;
+    }
+    let refused = status_text();
+    let stayed = sel_now() == (0, 0) && !bar_hidden();
+    key("ctrl+a").await?;
+    key("2").await?;
+    key("Return").await?;
+    let line2 = crate::find::line_start(&units(&ta.value()), 2)?;
+    let gutter = el("#source-gutter")
+        .and_then(|g| g.text_content())
+        .unwrap_or_default();
+    r.step(
+        "Go to Line (Ctrl+G): out-of-range input is refused with a message; line 2 puts the caret at its start, closes the bar and focuses Source; the gutter numbers the lines",
+        opened.is_some()
+            && stayed
+            && refused.contains("out of range")
+            && sel_now() == (line2, line2)
+            && bar_hidden()
+            && active_id() == "source"
+            && gutter.starts_with("1\n2\n3"),
+        format!("refused {refused:?} sel {:?} line2 {line2} gutter {:?}", sel_now(), gutter.get(..12)),
+    );
+    // Find: the selection prefills the query; Enter moves to the next match.
+    let (a, b) = find("fz1")?;
+    select_source(a, b)?;
+    key("ctrl+f").await?;
+    let opened = wait_ms(2000, || (active_id() == "find-query").then_some(())).await;
+    let first = wait_ms(2000, || {
+        let t = status_text();
+        (t == "1 of 3").then_some(t)
+    })
+    .await;
+    key("Return").await?;
+    let second = sel_now();
+    let two = status_text();
+    let (rev1, synced) = in_sync().await?;
+    r.step(
+        "Find (Ctrl+F): the Source selection prefills the query, matching ignores case by default (1 of 3), Enter selects the next match and changes no text",
+        opened.is_some()
+            && first.is_some()
+            && second == (b + 1, b + 4)
+            && two == "2 of 3"
+            && rev1 == rev0
+            && synced,
+        format!("first {first:?} then {two:?} sel {second:?} rev {rev0}->{rev1}"),
+    );
+    // Replace All: ONE doc_edit (one revision, one undo step).
+    key("Escape").await?;
+    key("ctrl+h").await?;
+    wait_ms(2000, || (active_id() == "find-query").then_some(())).await?;
+    let rep = crate::element_by_id::<web_sys::HtmlInputElement>("find-replacement")?;
+    let _ = rep.focus();
+    key("z").await?;
+    key("z").await?;
+    real_click_id("find-replace-all").await?;
+    let replaced = wait_ms(3000, || {
+        CORE.with_borrow(|c| c.revision == rev1 + 1 && !c.busy).then_some(())
+    })
+    .await;
+    settle().await;
+    let (rev2, synced2) = in_sync().await?;
+    let v = ta.value();
+    let all = !v.to_lowercase().contains("fz1") && v.contains("# zz zz zz b2");
+    // Escape from the focused bar button closes the bar.
+    key("Escape").await?;
+    let _ = wait_ms(2000, || bar_hidden().then_some(())).await;
+    let closed = bar_hidden() && active_id() == "source";
+    real_click_id("btn-undo").await?;
+    settle().await;
+    let (rev3, synced3) = in_sync().await?;
+    let undone = ta.value().contains("# fz1 fz1 FZ1 b2");
+    r.step(
+        "Replace All (Ctrl+H): every match replaced by ONE acknowledged doc_edit (one revision), the widget equals the Rust view, and ONE Undo restores all of them; Escape closes the bar",
+        replaced.is_some()
+            && rev2 == rev1 + 1
+            && synced2
+            && all
+            && rev3 == rev2 + 1
+            && synced3
+            && undone
+            && closed,
+        format!("rev {rev1}->{rev2}->{rev3} all {all} undone {undone} status {:?}", status_text()),
     );
     Some(())
 }
@@ -1878,6 +2004,124 @@ async fn quit(r: &mut R) -> Option<()> {
             && source_selection() == Some((a, b))
             && d4 == d1,
         format!("asked {asked3} -> {asked4} -> {asked5} runs +{} {}", runs() - n, st(&after)),
+    );
+    Some(())
+}
+
+/// Focus a control inside the 3D Viewport section (where F / Home apply):
+/// the first enabled, visible button of the viewport toolbar.
+fn focus_viewport() -> Option<()> {
+    for b in all("section.viewport button") {
+        let Ok(b) = b.dyn_into::<HtmlElement>() else { continue };
+        if b.has_attribute("disabled") || b.offset_width() == 0 {
+            continue;
+        }
+        let _ = b.focus();
+        let inside = web_sys::window()?
+            .document()?
+            .active_element()?
+            .closest("section.viewport")
+            .ok()
+            .flatten()
+            .is_some();
+        if inside {
+            return Some(());
+        }
+    }
+    None
+}
+
+/// View All runs (and shows its message) iff the run count rises by one
+/// and the newest message is View All's.
+fn view_all_ran(n: u64, m0: &str) -> bool {
+    let m = ui().message.get_untracked();
+    runs() == n + 1 && m != m0 && (m.starts_with("View All") || m.starts_with("View All is not available"))
+}
+
+async fn viewport_keys(r: &mut R) -> Option<()> {
+    // Alt+F (the File mnemonic), Alt+Home and Ctrl+Alt+F / Ctrl+Alt+Home
+    // with the viewport focused: no command runs from the viewport-key path.
+    if focus_viewport().is_none() {
+        r.step(
+            "PR #146 review: a control inside the 3D Viewport can take the keyboard focus",
+            false,
+            format!("buttons {} · active {:?}", all("section.viewport button").len(), active_id()),
+        );
+        return None;
+    }
+    ui().message.set(String::new());
+    let n = runs();
+    key("alt+Home").await?;
+    let after_home = (runs(), ui().message.get_untracked());
+    // Ctrl+Alt is how AltGr arrives on many Linux layouts.
+    focus_viewport()?;
+    key("ctrl+alt+f").await?;
+    key("ctrl+alt+Home").await?;
+    ipc::sleep(150).await;
+    let after_ctrl_alt = (runs(), ui().message.get_untracked());
+    focus_viewport()?;
+    key("alt+f").await?;
+    let file_open = list_open("file");
+    let after_alt_f = (runs(), ui().message.get_untracked());
+    key("Escape").await?;
+    ipc::sleep(150).await;
+    let closed = !any_open();
+    r.step(
+        "PR #146 review: real Alt+Home, Ctrl+Alt+F, Ctrl+Alt+Home and Alt+F with the 3D Viewport focused never run View All (Alt+F opens the File menu)",
+        after_home.0 == n
+            && after_ctrl_alt.0 == n
+            && after_alt_f.0 == n
+            && !after_alt_f.1.starts_with("View All")
+            && file_open
+            && closed,
+        format!("runs {n} · after Alt+Home {after_home:?} · Ctrl+Alt+F/Home {after_ctrl_alt:?} · Alt+F {after_alt_f:?} (File open {file_open}) · closed {closed}"),
+    );
+    // Plain F and plain Home with the viewport focused: View All, once each.
+    focus_viewport()?;
+    let (n, m0) = (runs(), String::from("-"));
+    ui().message.set(m0.clone());
+    key("f").await?;
+    let f = view_all_ran(n, &m0);
+    let f_msg = ui().message.get_untracked();
+    focus_viewport()?;
+    let n = runs();
+    ui().message.set(m0.clone());
+    key("Home").await?;
+    let home = view_all_ran(n, &m0);
+    let home_msg = ui().message.get_untracked();
+    r.step(
+        "Plain F and plain Home with the 3D Viewport focused each run View All exactly once",
+        f && home,
+        format!("F {f} {f_msg:?} · Home {home} {home_msg:?}"),
+    );
+    // The menu bar (keyboard focus via Alt) and a text field own F / Home.
+    key("alt").await?;
+    let in_bar = active_id().starts_with("menu-");
+    let n = runs();
+    ui().message.set(m0.clone());
+    key("Home").await?;
+    let bar_ok = runs() == n && !ui().message.get_untracked().starts_with("View All");
+    key("Escape").await?;
+    ipc::sleep(150).await;
+    key("Escape").await?;
+    ipc::sleep(150).await;
+    let input: web_sys::HtmlInputElement = wait_ms(4000, || {
+        el("#dock-panel-inspector input[type=text]").and_then(|e| e.dyn_into().ok())
+    })
+    .await?;
+    let _ = input.focus();
+    let v0 = input.value();
+    let n = runs();
+    key("End").await?;
+    key("f").await?;
+    let typed = input.value();
+    let field_ok = runs() == n && typed == format!("{v0}f");
+    input.set_value(&v0);
+    let _ = input.blur();
+    r.step(
+        "With the menu bar or an Inspector text field focused, Home / F never run View All (F types into the field)",
+        in_bar && bar_ok && field_ok,
+        format!("menu focus {in_bar} ok {bar_ok} · field {v0:?} -> {typed:?} ok {field_ok}"),
     );
     Some(())
 }

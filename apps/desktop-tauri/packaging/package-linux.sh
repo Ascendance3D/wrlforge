@@ -30,6 +30,19 @@ cp "$repo/LICENSE" "$repo/COPYRIGHT.md" "$repo/THIRD_PARTY_NOTICES.md" \
 cp "$here/dist/vendor/x_ite/LICENSE.md" "$lic/X_ITE-LICENSE.md"
 cp "$here/ui/static/LICENSE-tokyo-night.txt" "$lic/"
 python3 "$here/packaging/collect-rust-licenses.py" "$here/Cargo.toml" "$lic/RUST-CRATES-LICENSES.txt"
+# The AppImage bundles the GStreamer plugins (bundleMediaFramework): WebKit
+# needs appsink, and the AppImage's own libgstreamer cannot load the host's
+# plugins. Tauri's gstreamer plugin needs patchelf; when the host has none,
+# use the one inside Tauri's cached linuxdeploy.
+if ! command -v patchelf >/dev/null; then
+  ld="$(ls "$HOME"/.cache/tauri/linuxdeploy-*-x86_64.AppImage 2>/dev/null | head -1 || true)"
+  if [[ -n "$ld" ]]; then
+    pe="$here/target/linuxdeploy-tools"
+    [[ -x "$pe/squashfs-root/usr/bin/patchelf" ]] || (mkdir -p "$pe" && cd "$pe" && "$ld" --appimage-extract >/dev/null)
+    export PATH="$PATH:$pe/squashfs-root/usr/bin"
+  fi
+fi
+command -v patchelf >/dev/null || { echo "patchelf not found (needed to bundle GStreamer)" >&2; exit 6; }
 cargo tauri build --bundles deb,appimage
 # No private path may ship: fail the build if one does.
 if rg -l -a --fixed-strings -e "$HOME" -e "$repo" "$lic" "$here/dist" "$here/target/release/wrl-forge"; then

@@ -20,7 +20,10 @@ use std::time::SystemTime;
 use wrlforge_desktop_protocol as p;
 use wrlforge_document::{map_span, view_of, Applied, Document, SpanChange, ViewEdit};
 use wrlforge_text::Edit;
-use wrlforge_vrml::{create, extrusion, field_edit, highlight, manipulate, mf_edit, scene};
+use wrlforge_vrml::{
+    create, extrusion, field_edit, highlight, manipulate, mf_edit, scene, string_edit,
+    structure_edit,
+};
 
 use crate::files::{self, FileError, Format, SaveOptions, Stamp};
 use crate::recovery::{self, Recovery};
@@ -254,6 +257,11 @@ fn node_fields(
     extrusion: Option<extrusion::Info>,
 ) -> p::NodeFields {
     p::NodeFields {
+        shared: n.shared.as_ref().map(|s| p::SharedProto {
+            proto: s.proto.clone(),
+            instances: s.instances as u32,
+            name_ambiguous: s.name_ambiguous,
+        }),
         extrusion: extrusion.map(extrusion_info),
         editable: n.editable,
         reason: n.reason.into(),
@@ -262,6 +270,10 @@ fn node_fields(
             .fields
             .into_iter()
             .map(|f| p::EditableField {
+                // The value span of an SFNode field is its node statement;
+                // the UI only selects it if the Scene Tree holds that id.
+                node_item: (f.field_type == Some("SFNode") && !f.is_binding)
+                    .then(|| format!("node-{}-{}", f.from, f.to)),
                 index: f.index as u32,
                 name: f.name,
                 field_type: f.field_type.map(Into::into),
@@ -295,9 +307,101 @@ fn node_fields(
                     },
                     tuples: l.lexemes(),
                 }),
+                strings: f.strings.map(|l| p::StringListField {
+                    form: match l.form {
+                        string_edit::Form::Bracketed { .. } => "bracketed".into(),
+                        string_edit::Form::Bare => "bare".into(),
+                    },
+                    values: l.values(),
+                }),
             })
             .collect(),
     }
+}
+
+/// The MFString plan in the shape `apply_list_plan` applies (no lexemes).
+fn string_plan(plan: string_edit::Plan) -> mf_edit::Plan {
+    match plan {
+        string_edit::Plan::Unchanged => mf_edit::Plan::Unchanged,
+        string_edit::Plan::Refused {
+            reason,
+            message,
+            op_index,
+        } => mf_edit::Plan::Refused {
+            reason,
+            message,
+            op_index,
+            component_index: None,
+        },
+        string_edit::Plan::Ready {
+            edit,
+            new_text,
+            node_from,
+            node_to,
+            ..
+        } => mf_edit::Plan::Ready {
+            edit,
+            new_text,
+            node_from,
+            node_to,
+            lexemes: Vec::new(),
+        },
+    }
+}
+
+/// B2: the url to write for an image the user chose in the document's
+/// folder: relative, `/`-separated, with `%`, `#` and `?` percent-encoded
+/// (the preview decodes them; the WebView encodes the rest). Proven by
+/// resolving the url exactly as the preview does: it must name the chosen
+/// file (same real path) and carry an image signature. `Err` is the message
+/// for the user. A file outside the folder tree is refused, never copied.
+pub fn texture_url(folder: &Path, chosen: &Path) -> Result<String, String> {
+    let outside = || {
+        "The image is outside the document's folder. Put it in the folder (or a subfolder) of the .wrl and choose it again; files are not copied.".to_string()
+    };
+    let root = folder
+        .canonicalize()
+        .map_err(|e| format!("The document's folder cannot be read: {e}."))?;
+    let real = chosen
+        .canonicalize()
+        .map_err(|e| format!("The image cannot be read: {e}."))?;
+    let rel = real.strip_prefix(&root).map_err(|_| outside())?;
+    let mut segs = Vec::new();
+    for c in rel.components() {
+        let std::path::Component::Normal(c) = c else {
+            return Err(outside());
+        };
+        let c = c
+            .to_str()
+            .ok_or_else(|| "The image's name is not valid UTF-8.".to_string())?;
+        let mut seg = String::with_capacity(c.len());
+        for ch in c.chars() {
+            match ch {
+                '%' => seg.push_str("%25"),
+                '#' => seg.push_str("%23"),
+                '?' => seg.push_str("%3F"),
+                '\\' | '"' | '\n' | '\r' => {
+                    return Err("The image's name holds a character a texture url cannot carry; rename it.".into())
+                }
+                _ => seg.push(ch),
+            }
+        }
+        segs.push(seg);
+    }
+    if segs.is_empty() {
+        return Err(outside());
+    }
+    let url = segs.join("/");
+    let decoded = resources::decode_segments(&url)
+        .map_err(|e| format!("The image's name cannot be used as a url ({}).", e.as_str()))?;
+    let resolved = resources::resolve(&root, &decoded)
+        .map_err(|e| format!("The image cannot be served to the preview ({}).", e.as_str()))?;
+    if resolved != real {
+        return Err(outside());
+    }
+    resources::check_url(&url, Some(&root))
+        .map_err(|e| format!("The file is not a usable image ({}).", e.as_str()))?;
+    Ok(url)
 }
 
 fn refused_field(
@@ -477,6 +581,13 @@ impl Service {
     pub fn close(&self, id: p::SessionId) -> Result<(), String> {
         self.sessions.lock().map_err(err)?.remove(&id);
         Ok(())
+    }
+
+    /// D1: the folder of the session's file, if it has one on disk.
+    pub fn folder(&self, id: p::SessionId) -> Option<std::path::PathBuf> {
+        self.with(id, |s| s.path.as_deref().and_then(Path::parent).map(Path::to_path_buf))
+            .ok()
+            .flatten()
     }
 
     pub fn snapshot(&self, id: p::SessionId) -> Result<p::DocumentInfo, String> {
@@ -858,6 +969,7 @@ impl Service {
                 return refused(field_edit::reason::NOT_A_NODE, None);
             };
             let req = field_edit::Request {
+                confirm_shared: r.confirm_shared,
                 node_from,
                 node_to,
                 field_index: r.field_index as usize,
@@ -947,7 +1059,7 @@ impl Service {
                 p::Primitive::Cone => create::Primitive::Cone,
                 p::Primitive::Extrusion => create::Primitive::Extrusion,
             };
-            match create::plan_create(s.doc.text(), prim) {
+            match create::plan_create_at(s.doc.text(), prim, r.at) {
                 create::Plan::Refused { reason, message } => p::CreateOutcome::Refused {
                     reason: reason.into(),
                     message,
@@ -985,6 +1097,75 @@ impl Service {
         })
     }
 
+    /// B2: Delete / Duplicate the node at the item's span. Rust re-proves the
+    /// revision, the node (exactly one at that span), its place, its DEF
+    /// references and -- by re-parsing -- the whole result. Applied as ONE
+    /// transaction (one undo step) whose result must equal the planned text.
+    pub fn structure_edit(
+        &self,
+        r: &p::StructureEditRequest,
+    ) -> Result<p::StructureEditOutcome, String> {
+        self.with(r.session, |s| {
+            let refused = |reason: &str, message: String| p::StructureEditOutcome::Refused {
+                reason: reason.into(),
+                message,
+            };
+            if r.base_revision != s.doc.revision() {
+                return refused(
+                    "parse-session-is-stale",
+                    format!(
+                        "The document changed (revision {} → {}); re-select the node.",
+                        r.base_revision,
+                        s.doc.revision()
+                    ),
+                );
+            }
+            let Some((from, to)) = node_span(&r.item) else {
+                return refused(
+                    field_edit::reason::NOT_A_NODE,
+                    "The selection is not a node.".into(),
+                );
+            };
+            let plan = match r.op {
+                p::StructureOp::Delete => {
+                    structure_edit::plan_delete(s.doc.text(), from, to, r.confirm_shared)
+                }
+                p::StructureOp::Duplicate => {
+                    structure_edit::plan_duplicate(s.doc.text(), from, to, r.confirm_shared)
+                }
+            };
+            match plan {
+                structure_edit::Plan::Refused { reason, message } => refused(reason, message),
+                structure_edit::Plan::Ready {
+                    edit,
+                    new_text,
+                    node,
+                    renamed,
+                } => {
+                    let edit = Edit {
+                        from: edit.from,
+                        to: edit.to,
+                        insert: edit.insert,
+                    };
+                    match s
+                        .doc
+                        .apply_source_transaction(r.base_revision, &[edit], &new_text)
+                    {
+                        Ok(a) => p::StructureEditOutcome::Applied {
+                            state: Self::state(s, a),
+                            view: s.doc.view(),
+                            item: node.map(|(f, t)| format!("node-{f}-{t}")),
+                            renamed,
+                        },
+                        Err(e) => {
+                            refused(field_edit::reason::TRANSACTION_REJECTED, e.to_string())
+                        }
+                    }
+                }
+            }
+        })
+    }
+
     /// VISUAL-4A: a list-field edit (`MFVec2f` / `MFVec3f` / `MFRotation`).
     /// Rust re-proves the revision, the node at the item's span, the field and
     /// the tuple count; plans every operation on the text the previous one
@@ -999,6 +1180,7 @@ impl Service {
                 return refused_field(field_edit::reason::NOT_A_NODE, None, None);
             };
             let req = mf_edit::Request {
+                confirm_shared: r.confirm_shared,
                 node_from,
                 node_to,
                 field_index: r.field_index as usize,
@@ -1038,6 +1220,7 @@ impl Service {
                 return refused_field(field_edit::reason::NOT_A_NODE, None, None);
             };
             let req = mf_edit::AddRequest {
+                confirm_shared: r.confirm_shared,
                 node_from,
                 node_to,
                 field_name: r.field_name.clone(),
@@ -1050,6 +1233,70 @@ impl Service {
             };
             let plan = mf_edit::plan_add_field(s.doc.text(), &req);
             Self::apply_list_plan(s, r.base_revision, plan)
+        })
+    }
+
+    /// B2: an MFString edit (`url`, `info`, ...). Rust re-proves the
+    /// revision, the node, the field and the exact list shown, plans every
+    /// operation and applies the ONE resulting span edit as ONE transaction.
+    pub fn edit_strings(&self, r: &p::StringEditRequest) -> Result<p::FieldEditOutcome, String> {
+        self.with(r.session, |s| {
+            if r.base_revision != s.doc.revision() {
+                return stale_field(r.base_revision, s.doc.revision());
+            }
+            let Some((node_from, node_to)) = node_span(&r.item) else {
+                return refused_field(field_edit::reason::NOT_A_NODE, None, None);
+            };
+            let req = string_edit::Request {
+                confirm_shared: r.confirm_shared,
+                node_from,
+                node_to,
+                field_index: r.field_index as usize,
+                field_name: r.field_name.clone(),
+                expected: r.expected.clone(),
+                ops: r
+                    .ops
+                    .iter()
+                    .map(|o| match o {
+                        p::StringOp::Set { index, value } => string_edit::Op::Set {
+                            index: *index as usize,
+                            value: value.clone(),
+                        },
+                        p::StringOp::Insert { index, value } => string_edit::Op::Insert {
+                            index: *index as usize,
+                            value: value.clone(),
+                        },
+                        p::StringOp::Delete { index } => string_edit::Op::Delete {
+                            index: *index as usize,
+                        },
+                    })
+                    .collect(),
+            };
+            let plan = string_edit::plan_string_edit(s.doc.text(), &req);
+            Self::apply_list_plan(s, r.base_revision, string_plan(plan))
+        })
+    }
+
+    /// B2: add `texture ImageTexture { url "<url>" }` to an Appearance that
+    /// has none, because the user chose an image. One transaction.
+    pub fn add_texture(&self, r: &p::AddTextureRequest) -> Result<p::FieldEditOutcome, String> {
+        self.with(r.session, |s| {
+            if r.base_revision != s.doc.revision() {
+                return stale_field(r.base_revision, s.doc.revision());
+            }
+            let Some((node_from, node_to)) = node_span(&r.item) else {
+                return refused_field(field_edit::reason::NOT_A_NODE, None, None);
+            };
+            let plan = string_edit::plan_add_texture(
+                s.doc.text(),
+                &string_edit::AddTextureRequest {
+                    node_from,
+                    node_to,
+                    url: r.url.clone(),
+                    confirm_shared: r.confirm_shared,
+                },
+            );
+            Self::apply_list_plan(s, r.base_revision, string_plan(plan))
         })
     }
 
@@ -1121,7 +1368,7 @@ impl Service {
                     revision: current,
                     item: r.item.clone(),
                     def_name: t.def,
-                    root_index: t.root_index as u32,
+                    root_index: t.root_index.map(|i| i as u32),
                     preview_from: from - preview_offset(&text),
                     preview_to: to - preview_offset(&text),
                     translation: t.translation,
@@ -1131,6 +1378,11 @@ impl Service {
                     scale_orientation: t.scale_orientation,
                     center: t.center,
                     pivot: t.pivot,
+                    shared: t.shared.as_ref().map(|s| p::SharedProto {
+                        proto: s.proto.clone(),
+                        instances: s.instances as u32,
+                        name_ambiguous: s.name_ambiguous,
+                    }),
                 },
                 Err(e) => p::TranslateTargetOutcome::Refused {
                     reason: e.reason.into(),
@@ -1166,9 +1418,10 @@ impl Service {
         let Some((from, to)) = node_span(&r.item) else {
             return Ok(refused(field_edit::reason::NOT_A_NODE, "Not an object."));
         };
-        if let Err(e) = manipulate::manip_target(&text, from, to, manip_tool(r.tool)) {
-            return Ok(refused(e.reason, &e.message));
-        }
+        let target = match manipulate::manip_target(&text, from, to, manip_tool(r.tool)) {
+            Ok(t) => t,
+            Err(e) => return Ok(refused(e.reason, &e.message)),
+        };
         let unprovable = "The preview cannot prove which rendered object is this Transform, so it cannot be changed here. Use the Inspector.";
         let snap = &r.snapshot;
         let (Some(shape), "found", 1..=MAX_PICK_GRAPH) = (
@@ -1186,16 +1439,158 @@ impl Service {
         let hit = hit_of(shape, snap);
         Ok(
             match pk::resolve_node(&hit, &parsed, preview_offset(&text), from, to) {
-                Ok(chain) if chain.len() == 1 && chain[0].node_type == "Transform" => {
+                Ok(chain)
+                    if target.shared.is_none()
+                        && chain.len() == 1
+                        && chain[0].node_type == "Transform" =>
+                {
                     p::TranslateProveOutcome::Proven {
                         revision: current,
                         item: r.item.clone(),
                     }
                 }
+                // B3: a PROTO body Transform. The runtime node is ONE
+                // instance's copy; its proven chain must be the Transform,
+                // frame-neutral body groups only, then a TOP-LEVEL instance
+                // of exactly that PROTO -- so its parent frame is the world,
+                // like a top-level Transform's.
+                Ok(chain)
+                    if target.shared.as_ref().is_some_and(|sh| {
+                        chain.len() >= 2
+                            && chain[0].node_type == "Transform"
+                            && chain[chain.len() - 1].node_type == sh.proto
+                            && chain[1..chain.len() - 1]
+                                .iter()
+                                .all(|n| manipulate::is_frame_neutral(&n.node_type))
+                    }) =>
+                {
+                    p::TranslateProveOutcome::Proven {
+                        revision: current,
+                        item: r.item.clone(),
+                    }
+                }
+                Ok(_) if target.shared.is_some() => refused(
+                    manipulate::reason::BODY_FRAME,
+                    "This PROTO instance is inside another node, so the handles cannot follow its frame. Use the Inspector.",
+                ),
                 Ok(_) => refused(manipulate::reason::NOT_TOP_LEVEL, unprovable),
                 Err(res) => refused(res.reason(), unprovable),
             },
         )
+    }
+
+    /// B2 selection highlight: the exact preview span the preview must
+    /// locate `item` by. Read-only; any other revision is `Stale`.
+    pub fn highlight_target(
+        &self,
+        r: &p::HighlightTargetRequest,
+    ) -> Result<p::HighlightTargetOutcome, String> {
+        let (text, current) = self.text_at(r.session)?;
+        if r.revision != current {
+            return Ok(p::HighlightTargetOutcome::Stale { current });
+        }
+        let off = preview_offset(&text);
+        match node_span(&r.item) {
+            Some((from, to)) if from >= off => Ok(p::HighlightTargetOutcome::Ready {
+                revision: current,
+                item: r.item.clone(),
+                preview_from: from - off,
+                preview_to: to - off,
+                // B3: a PROTO body node has one runtime copy per instance.
+                body: field_edit::shared_definition(&wrlforge_vrml::parse(&text), from, to)
+                    .is_some(),
+            }),
+            _ => Ok(p::HighlightTargetOutcome::Refused {
+                reason: field_edit::reason::NOT_A_NODE.into(),
+                message: "Only a node instance can be outlined.".into(),
+            }),
+        }
+    }
+
+    /// B2 selection highlight: prove that the runtime node the preview
+    /// located for `item` IS that authored node (any depth), with the same
+    /// proof the gizmo binds through (`pick::resolve_node`: exact span join,
+    /// unique occurrences, runtime chain == source containment chain). The
+    /// proven ancestors are returned so the preview can compose the frame;
+    /// an ancestor whose frame effect is unknown (Billboard, a PROTO
+    /// instance, ...) refuses. Read-only.
+    pub fn highlight_prove(
+        &self,
+        r: &p::HighlightProveRequest,
+    ) -> Result<p::HighlightProveOutcome, String> {
+        use wrlforge_vrml::pick as pk;
+        let (text, current) = self.text_at(r.session)?;
+        let refused = |reason: &str, message: &str| p::HighlightProveOutcome::Refused {
+            reason: reason.into(),
+            message: message.into(),
+        };
+        let preview = text.strip_prefix('\u{FEFF}').unwrap_or(&text);
+        if r.revision != current || p::preview_hash(preview) != r.preview_hash {
+            return Ok(p::HighlightProveOutcome::Stale { current });
+        }
+        let Some((from, to)) = node_span(&r.item) else {
+            return Ok(refused(field_edit::reason::NOT_A_NODE, "Not an object."));
+        };
+        let unprovable = "The preview cannot prove which rendered object this is.";
+        let snap = &r.snapshot;
+        let (Some(shape), "found", 1..=MAX_PICK_GRAPH) = (
+            snap.shape.as_deref(),
+            snap.outcome.as_str(),
+            snap.graph.len(),
+        ) else {
+            let why = snap
+                .reason
+                .clone()
+                .unwrap_or_else(|| pk::reason::BIND_NOT_UNIQUE.to_string());
+            return Ok(refused(&why, unprovable));
+        };
+        let parsed = wrlforge_vrml::parse(&text);
+        let hit = hit_of(shape, snap);
+        let off = preview_offset(&text);
+        Ok(match pk::resolve_node(&hit, &parsed, off, from, to) {
+            Ok(chain) => {
+                let mut ancestors = Vec::with_capacity(chain.len().saturating_sub(1));
+                let span = |n: &wrlforge_vrml::ast::Node| {
+                    (n.range.start.offset as u64, n.range.end.offset as u64)
+                };
+                let in_body = |n: &wrlforge_vrml::ast::Node| {
+                    let (f, t) = span(n);
+                    field_edit::shared_definition(&parsed, f, t).is_some()
+                };
+                for (i, n) in chain.iter().enumerate().skip(1) {
+                    // B3: the instance a PROTO body chain was proven through
+                    // (the chain proof joined the body link to exactly this
+                    // document instance): it renders as its body root, the
+                    // previous link, and adds no frame.
+                    let proto_instance = !wrlforge_vrml::node_schema::is_vrml97_node(&n.node_type)
+                        && in_body(chain[i - 1])
+                        && !in_body(n);
+                    if !proto_instance && p::highlight::ancestor_kind(&n.node_type).is_none() {
+                        return Ok(refused(
+                            p::highlight::refusal::ANCESTOR,
+                            "It is inside a node whose placement the outline cannot follow.",
+                        ));
+                    }
+                    let (f, t) = (n.range.start.offset as u64, n.range.end.offset as u64);
+                    if f < off {
+                        return Ok(refused(pk::reason::SPAN_OUT_OF_RANGE, unprovable));
+                    }
+                    ancestors.push(p::HighlightAncestor {
+                        preview_from: f - off,
+                        preview_to: t - off,
+                        node_type: n.node_type.clone(),
+                        proto_instance,
+                    });
+                }
+                p::HighlightProveOutcome::Proven {
+                    revision: current,
+                    item: r.item.clone(),
+                    node_type: chain[0].node_type.clone(),
+                    ancestors,
+                }
+            }
+            Err(res) => refused(res.reason(), unprovable),
+        })
     }
 
     /// VISUAL-3A1 camera carry: the preview span `[from, to)` of
@@ -1252,13 +1647,14 @@ impl Service {
             let Some((node_from, node_to)) = node_span(&r.item) else {
                 return refused(field_edit::reason::NOT_A_NODE, "Not an object.".into());
             };
-            let (plan, text) = manipulate::plan_translate(
+            let (plan, text) = manipulate::plan_translate_with(
                 s.doc.text(),
                 node_from,
                 node_to,
                 manip_axis(r.axis),
                 r.value,
                 r.decimals,
+                r.confirm_shared,
             );
             Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text)
         })
@@ -1273,12 +1669,13 @@ impl Service {
                 Ok(span) => span,
                 Err(o) => return o,
             };
-            let (plan, text) = manipulate::plan_rotate(
+            let (plan, text) = manipulate::plan_rotate_with(
                 s.doc.text(),
                 node_from,
                 node_to,
                 manip_axis(r.axis),
                 r.delta,
+                r.confirm_shared,
             );
             Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text)
         })
@@ -1291,12 +1688,13 @@ impl Service {
                 Ok(span) => span,
                 Err(o) => return o,
             };
-            let (plan, text) = manipulate::plan_scale(
+            let (plan, text) = manipulate::plan_scale_with(
                 s.doc.text(),
                 node_from,
                 node_to,
                 r.axis.map(manip_axis),
                 r.factor,
+                r.confirm_shared,
             );
             Self::apply_manip(s, r.base_revision, node_from, node_to, plan, text)
         })
@@ -2162,6 +2560,225 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// B2 texture assignment: an MFString url edit and Add texture are one
+    /// undo step each, exact text both ways, revision- and list-checked.
+    #[test]
+    fn texture_url_edits_apply_undo_redo_exactly() {
+        let svc = Service::new(clock);
+        let text = "#VRML V2.0 utf8\r\nShape {\r\n  appearance Appearance {\r\n    texture ImageTexture { url [ \"a.png\" \"b.png\" ] }\r\n  }\r\n}\r\nShape { appearance Appearance { material Material {} } }\r\n";
+        let id = svc.open_text_for_test(text);
+        let span = |t: &str, needle: &str| {
+            let b = t.find(needle).unwrap();
+            let f = t[..b].encode_utf16().count();
+            format!("node-{f}-{}", f + needle.encode_utf16().count())
+        };
+        let tex = "ImageTexture { url [ \"a.png\" \"b.png\" ] }";
+        let p::InspectOutcome::Found { inspection } = svc.inspect(id, &span(text, tex), 0).unwrap()
+        else {
+            panic!()
+        };
+        let f = &inspection.node.unwrap().fields[0];
+        assert!(f.editable, "{}", f.reason);
+        let strings = f.strings.clone().expect("an MFString list");
+        assert_eq!((strings.form.as_str(), strings.values.clone()), ("bracketed", vec!["a.png".to_string(), "b.png".to_string()]));
+        let req = |rev: u64, expected: Vec<String>, ops| p::StringEditRequest {
+            session: id,
+            base_revision: rev,
+            item: span(text, tex),
+            field_index: 0,
+            field_name: "url".into(),
+            expected,
+            ops,
+            confirm_shared: false,
+        };
+        // A list other than the one shown is refused and changes nothing.
+        let o = svc
+            .edit_strings(&req(0, vec!["x".into()], vec![p::StringOp::Delete { index: 0 }]))
+            .unwrap();
+        assert!(matches!(o, p::FieldEditOutcome::Refused { ref reason, .. } if reason == "string-list-changed"), "{o:?}");
+        assert_eq!(svc.text(id).unwrap(), text);
+        // Set one entry and remove the other: ONE edit.
+        let o = svc
+            .edit_strings(&req(
+                0,
+                strings.values.clone(),
+                vec![
+                    p::StringOp::Set { index: 0, value: "tex/wood \"1\".png".into() },
+                    p::StringOp::Delete { index: 1 },
+                ],
+            ))
+            .unwrap();
+        let p::FieldEditOutcome::Applied { state, .. } = o else {
+            panic!("{o:?}")
+        };
+        let one = text.replacen("[ \"a.png\" \"b.png\" ]", "[ \"tex/wood \\\"1\\\".png\" ]", 1);
+        assert_eq!(svc.text(id).unwrap(), one);
+        assert_eq!(state.revision, 1);
+        // A stale revision is refused.
+        let o = svc
+            .edit_strings(&req(0, strings.values.clone(), vec![p::StringOp::Delete { index: 0 }]))
+            .unwrap();
+        assert!(matches!(o, p::FieldEditOutcome::Refused { ref reason, .. } if reason == "parse-session-is-stale"));
+        // Add texture to the second Appearance.
+        let app = "Appearance { material Material {} }";
+        let o = svc
+            .add_texture(&p::AddTextureRequest {
+                session: id,
+                base_revision: 1,
+                item: span(&one, app),
+                url: "img/brick.png".into(),
+                confirm_shared: false,
+            })
+            .unwrap();
+        assert!(matches!(o, p::FieldEditOutcome::Applied { .. }), "{o:?}");
+        let two = one.replacen(
+            app,
+            "Appearance { material Material {} texture ImageTexture { url \"img/brick.png\" } }",
+            1,
+        );
+        assert_eq!(svc.text(id).unwrap(), two);
+        // An Appearance that has a texture is refused.
+        let o = svc
+            .add_texture(&p::AddTextureRequest {
+                session: id,
+                base_revision: 2,
+                item: span(&two, "Appearance {\r\n    texture"),
+                url: "c.png".into(),
+                confirm_shared: false,
+            })
+            .unwrap();
+        assert!(matches!(o, p::FieldEditOutcome::Refused { .. }), "{o:?}");
+        // One undo step each, exact text both ways.
+        assert!(matches!(svc.undo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), one);
+        assert!(matches!(svc.undo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), text);
+        assert!(matches!(svc.redo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), one);
+        assert!(matches!(svc.redo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), two);
+    }
+
+    /// B2: the chosen image must be inside the document's folder tree; the
+    /// url is relative, `/`-separated and resolves to exactly that file.
+    #[test]
+    fn texture_url_is_relative_and_confined() {
+        let root = tmp("texurl");
+        let doc = root.join("world");
+        fs::create_dir_all(doc.join("tex/sub")).unwrap();
+        let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01\0\0\0\x01\x08\x02\0\0\0";
+        for f in ["a.png", "tex/sub/b c.png", "tex/50%#1.png"] {
+            fs::write(doc.join(f), png).unwrap();
+        }
+        fs::write(root.join("outside.png"), png).unwrap();
+        fs::write(doc.join("notes.txt"), "x").unwrap();
+        fs::write(doc.join("fake.png"), "not an image").unwrap();
+        assert_eq!(texture_url(&doc, &doc.join("a.png")).unwrap(), "a.png");
+        assert_eq!(
+            texture_url(&doc, &doc.join("tex/sub/b c.png")).unwrap(),
+            "tex/sub/b c.png"
+        );
+        assert_eq!(
+            texture_url(&doc, &doc.join("tex/50%#1.png")).unwrap(),
+            "tex/50%25%231.png"
+        );
+        // Through `..` back inside is fine (the real path decides).
+        assert_eq!(
+            texture_url(&doc, &doc.join("tex/../a.png")).unwrap(),
+            "a.png"
+        );
+        let e = texture_url(&doc, &root.join("outside.png")).unwrap_err();
+        assert!(e.contains("outside the document's folder"), "{e}");
+        assert!(texture_url(&doc, &doc.join("notes.txt")).is_err());
+        assert!(texture_url(&doc, &doc.join("fake.png")).is_err());
+        assert!(texture_url(&doc, &doc.join("missing.png")).is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("outside.png"), doc.join("link.png")).unwrap();
+            let e = texture_url(&doc, &doc.join("link.png")).unwrap_err();
+            assert!(e.contains("outside the document's folder"), "{e}");
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// B2: Delete and Duplicate are one undo step each, exact text both
+    /// ways, revision-checked, and refused without consent in a PROTO body.
+    #[test]
+    fn delete_and_duplicate_apply_undo_redo_exactly() {
+        let svc = Service::new(clock);
+        let text = "#VRML V2.0 utf8\r\nGroup {\r\n  children [\r\n    DEF A Shape {}\r\n    Transform {}\r\n  ]\r\n}\r\n";
+        let id = svc.open_text_for_test(text);
+        let span = |t: &str, needle: &str| {
+            let b = t.find(needle).unwrap();
+            let f = t[..b].encode_utf16().count();
+            format!("node-{f}-{}", f + needle.encode_utf16().count())
+        };
+        let req = |rev: u64, item: String, op| p::StructureEditRequest {
+            session: id,
+            base_revision: rev,
+            item,
+            op,
+            confirm_shared: false,
+        };
+        // Duplicate: the copy is selected, its DEF renamed.
+        let o = svc
+            .structure_edit(&req(0, span(text, "DEF A Shape {}"), p::StructureOp::Duplicate))
+            .unwrap();
+        let p::StructureEditOutcome::Applied { state, item, renamed, .. } = o else {
+            panic!("{o:?}")
+        };
+        let dup = text.replacen("DEF A Shape {}\r\n", "DEF A Shape {}\r\n    DEF A_2 Shape {}\r\n", 1);
+        assert_eq!(svc.text(id).unwrap(), dup);
+        assert_eq!((state.revision, state.can_undo), (1, true));
+        assert_eq!(item, Some(span(&dup, "DEF A_2 Shape {}")));
+        assert_eq!(renamed, vec![("A".to_string(), "A_2".to_string())]);
+        // A stale revision is refused and changes nothing.
+        let stale = svc
+            .structure_edit(&req(0, span(&dup, "Transform {}"), p::StructureOp::Delete))
+            .unwrap();
+        assert!(matches!(stale, p::StructureEditOutcome::Refused { ref reason, .. } if reason == "parse-session-is-stale"));
+        assert_eq!(svc.text(id).unwrap(), dup);
+        // Delete.
+        let o = svc
+            .structure_edit(&req(1, span(&dup, "Transform {}"), p::StructureOp::Delete))
+            .unwrap();
+        let p::StructureEditOutcome::Applied { state, item, .. } = o else {
+            panic!("{o:?}")
+        };
+        let del = dup.replacen("    Transform {}\r\n", "", 1);
+        assert_eq!(svc.text(id).unwrap(), del);
+        assert_eq!((state.revision, item), (2, None));
+        // One undo step each, exact text both ways.
+        assert!(matches!(svc.undo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), dup);
+        assert!(matches!(svc.undo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), text);
+        assert!(matches!(svc.redo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), dup);
+        assert!(matches!(svc.redo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), del);
+
+        // A PROTO body node needs consent.
+        let proto = "#VRML V2.0 utf8\nPROTO P [] { Group { children [ Shape {} ] } }\nP {}\n";
+        let id = svc.open_text_for_test(proto);
+        let mut r = p::StructureEditRequest {
+            session: id,
+            base_revision: 0,
+            item: span(proto, "Shape {}"),
+            op: p::StructureOp::Delete,
+            confirm_shared: false,
+        };
+        let o = svc.structure_edit(&r).unwrap();
+        assert!(matches!(o, p::StructureEditOutcome::Refused { ref reason, .. }
+            if reason == field_edit::reason::SHARED_DEFINITION_UNCONFIRMED));
+        r.confirm_shared = true;
+        assert!(matches!(svc.structure_edit(&r).unwrap(), p::StructureEditOutcome::Applied { .. }));
+        assert_eq!(
+            svc.text(id).unwrap(),
+            "#VRML V2.0 utf8\nPROTO P [] { Group { children [ ] } }\nP {}\n"
+        );
+    }
+
     #[test]
     fn undo_redo_through_the_service() {
         let dir = tmp("undo");
@@ -2300,6 +2917,7 @@ mod tests {
         values: &[&str],
     ) -> p::FieldEditOutcome {
         svc.edit_field(&p::FieldEditRequest {
+            confirm_shared: false,
             session: id,
             base_revision: rev,
             item: item.into(),
@@ -2313,6 +2931,142 @@ mod tests {
                 .collect(),
         })
         .unwrap()
+    }
+
+    /// B1: a node in a PROTO body (the Chevy shape: gzip, `IS`-bound
+    /// coordinates, two instances) is the shared definition. Without consent
+    /// nothing changes; with it, exactly the edited tokens change, and Undo,
+    /// Redo, Save and reopen are exact.
+    #[test]
+    fn b1_shared_proto_definition_edit_needs_consent_and_round_trips() {
+        let dir = tmp("b1-proto");
+        let src = "#VRML V2.0 utf8\nPROTO Car [ exposedField MFVec3f point [ 0 0 0, 1 0 0, 0 1 0 ] ]\n{ # PROTO body\n\tGroup { children [\n\t\tDEF Body Transform { children [\n\t\t\tShape {\n\t\t\t\tgeometry IndexedFaceSet { coord Coordinate { point IS point } coordIndex [ 0, 1, 2, -1 ] }\n\t\t\t\tappearance Appearance { material Material { diffuseColor 0.5490 0.3176 0.1765 } }\n\t\t\t}\n\t\t] }\n\t] }\n} # End PROTO body\nCar { }\nTransform { translation 3 0 0 children Car { } }\n";
+        let path = dir.join("car.wrl");
+        fs::write(&path, files::encode(src, Format::Gzip).unwrap()).unwrap();
+        let svc = Service::new(clock);
+        let doc = opened(svc.open_path(&path));
+        let a = svc.analyze(doc.session).unwrap();
+        let mat = a.items.iter().find(|i| i.label == "Material").unwrap();
+        let nf = found(svc.inspect(doc.session, &mat.id, a.revision)).node.unwrap();
+        assert!(nf.editable, "{}", nf.reason);
+        let shared = nf.shared.clone().expect("shared definition");
+        assert_eq!((shared.proto.as_str(), shared.instances), ("Car", 2));
+        // The IS-bound Coordinate is not editable from the body.
+        let coord = a.items.iter().find(|i| i.label == "Coordinate").unwrap();
+        let cf = found(svc.inspect(doc.session, &coord.id, a.revision)).node.unwrap();
+        assert!(cf.fields.iter().all(|f| !f.editable));
+        // No consent: refused, nothing changes.
+        let out = field_edit(&svc, doc.session, 0, &mat.id, (0, "diffuseColor"), &["0.1", "0.2", "0.9"]);
+        assert!(matches!(
+            &out,
+            p::FieldEditOutcome::Refused { reason, .. } if reason == "shared-proto-definition-not-confirmed"
+        ), "{out:?}");
+        assert_eq!(svc.text(doc.session).unwrap(), src);
+        // Consent: exactly the three tokens change.
+        let req = |rev: u64, item: &str| p::FieldEditRequest {
+            confirm_shared: true,
+            session: doc.session,
+            base_revision: rev,
+            item: item.into(),
+            field_index: 0,
+            field_name: "diffuseColor".into(),
+            components: ["0.1", "0.2", "0.9"]
+                .iter()
+                .map(|v| p::FieldInput::Text { value: v.to_string() })
+                .collect(),
+        };
+        let p::FieldEditOutcome::Applied { item, .. } = svc.edit_field(&req(0, &mat.id)).unwrap() else {
+            panic!("not applied")
+        };
+        let want = src.replace("diffuseColor 0.5490 0.3176 0.1765", "diffuseColor 0.1 0.2 0.9");
+        assert_eq!(svc.text(doc.session).unwrap(), want);
+        // A stale revision is refused even with consent.
+        assert!(matches!(
+            svc.edit_field(&req(0, &mat.id)).unwrap(),
+            p::FieldEditOutcome::Refused { .. }
+        ));
+        // Undo / Redo exact.
+        svc.history_with_item(doc.session, true, Some(&item)).unwrap();
+        assert_eq!(svc.text(doc.session).unwrap(), src);
+        svc.history_with_item(doc.session, false, Some(&mat.id)).unwrap();
+        assert_eq!(svc.text(doc.session).unwrap(), want);
+        // Save (gzip kept) and reopen.
+        assert!(matches!(svc.save(doc.session), p::SaveOutcome::Saved { .. }));
+        let bytes = fs::read(&path).unwrap();
+        assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
+        let again = opened(Service::new(clock).open_path(&path));
+        let svc2 = Service::new(clock);
+        let d2 = opened(svc2.open_path(&path));
+        assert_eq!(svc2.text(d2.session).unwrap(), want);
+        let _ = again;
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// PR #146 review: Rust keeps no consent. Every shared-definition
+    /// mutation needs `confirm_shared` in its OWN request: after an applied
+    /// consented edit, the next request without it is refused; after the
+    /// definition changed, still refused; a list edit is gated the same.
+    #[test]
+    fn shared_proto_consent_is_per_request_never_remembered() {
+        let dir = tmp("pr146-consent");
+        let src = "#VRML V2.0 utf8\nPROTO Car [ ]\n{\n  Transform { children [ Shape {\n    appearance Appearance { material Material { diffuseColor 0.5 0.5 0.5 } }\n    geometry Extrusion { crossSection [ 1 0, 0 1, -1 0, 1 0 ] spine [ 0 0 0, 0 1 0 ] }\n  } ] }\n}\nCar { }\nCar { }\n";
+        let path = dir.join("car.wrl");
+        fs::write(&path, src).unwrap();
+        let svc = Service::new(clock);
+        let doc = opened(svc.open_path(&path));
+        let req = |rev: u64, item: &str, yes: bool, v: [&str; 3]| p::FieldEditRequest {
+            confirm_shared: yes,
+            session: doc.session,
+            base_revision: rev,
+            item: item.into(),
+            field_index: 0,
+            field_name: "diffuseColor".into(),
+            components: v.iter().map(|v| p::FieldInput::Text { value: v.to_string() }).collect(),
+        };
+        let material = |svc: &Service| {
+            let a = svc.analyze(doc.session).unwrap();
+            (a.items.iter().find(|i| i.label == "Material").unwrap().id.clone(), a.revision)
+        };
+        let refused = |o: p::FieldEditOutcome| {
+            matches!(&o, p::FieldEditOutcome::Refused { reason, .. } if reason == "shared-proto-definition-not-confirmed")
+        };
+        // 1. A consented edit applies.
+        let (m, rev) = material(&svc);
+        assert!(matches!(svc.edit_field(&req(rev, &m, true, ["0.1", "0.1", "0.1"])).unwrap(), p::FieldEditOutcome::Applied { .. }));
+        let after1 = svc.text(doc.session).unwrap();
+        // 2. The NEXT edit of the same definition without consent: refused.
+        let (m, rev) = material(&svc);
+        assert!(refused(svc.edit_field(&req(rev, &m, false, ["0.2", "0.2", "0.2"])).unwrap()));
+        assert_eq!(svc.text(doc.session).unwrap(), after1);
+        // 3. The definition changes (Undo); still refused without consent.
+        svc.history_with_item(doc.session, true, None).unwrap();
+        assert_eq!(svc.text(doc.session).unwrap(), src);
+        let (m, rev) = material(&svc);
+        assert!(refused(svc.edit_field(&req(rev, &m, false, ["0.3", "0.3", "0.3"])).unwrap()));
+        assert_eq!(svc.text(doc.session).unwrap(), src);
+        // 4. A stale base revision with consent: refused, unchanged.
+        let o = svc.edit_field(&req(rev + 7, &m, true, ["0.4", "0.4", "0.4"])).unwrap();
+        assert!(matches!(o, p::FieldEditOutcome::Refused { .. }), "{o:?}");
+        assert_eq!(svc.text(doc.session).unwrap(), src);
+        // 5. A list edit of the shared Extrusion is gated the same way.
+        let a = svc.analyze(doc.session).unwrap();
+        let ex = a.items.iter().find(|i| i.label == "Extrusion").unwrap().id.clone();
+        let ins = found(svc.inspect(doc.session, &ex, a.revision)).node.unwrap();
+        let (fi, f) = ins.fields.iter().enumerate().find(|(_, f)| f.name == "spine").unwrap();
+        let list = |yes: bool| p::ListEditRequest {
+            confirm_shared: yes,
+            session: doc.session,
+            base_revision: a.revision,
+            item: ex.clone(),
+            field_index: fi as u32,
+            field_name: f.name.clone(),
+            expected_count: 2,
+            ops: vec![p::ListOp::Delete { index: 1 }],
+        };
+        let o = svc.edit_list(&list(false)).unwrap();
+        assert!(refused(o.clone()), "{o:?}");
+        assert_eq!(svc.text(doc.session).unwrap(), src);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -2428,7 +3182,7 @@ mod tests {
     }
 
     fn create(svc: &Service, id: u64, rev: u64, prim: p::Primitive) -> p::CreateOutcome {
-        svc.create(&p::CreateRequest {
+        svc.create(&p::CreateRequest { at: None,
             session: id,
             base_revision: rev,
             primitive: prim,
@@ -2616,6 +3370,7 @@ mod tests {
         ops: Vec<p::ListOp>,
     ) -> p::FieldEditOutcome {
         svc.edit_list(&p::ListEditRequest {
+            confirm_shared: false,
             session: id,
             base_revision: rev,
             item: item.into(),
@@ -2735,6 +3490,7 @@ mod tests {
             let before = svc.text(id).unwrap();
             let (_, item) = applied(
                 svc.add_field(&p::AddFieldRequest {
+            confirm_shared: false,
                     session: id,
                     base_revision: rev,
                     item: item.clone(),
@@ -2774,6 +3530,7 @@ mod tests {
             let (rev, _, _) = extrusion(&svc, id);
             let (_, item) = applied(
                 svc.add_field(&p::AddFieldRequest {
+            confirm_shared: false,
                     session: id,
                     base_revision: rev,
                     item: item.clone(),
@@ -3236,6 +3993,7 @@ mod tests {
                 scale_orientation,
                 center,
                 pivot,
+                shared,
                 ..
             } => p::TranslateTargetOutcome::Ready {
                 revision: 0,
@@ -3251,6 +4009,7 @@ mod tests {
                 scale_orientation,
                 center,
                 pivot,
+                shared,
             },
             other => other,
         }
@@ -3265,6 +4024,7 @@ mod tests {
         d: f64,
     ) -> p::TranslateOutcome {
         svc.rotate(&p::RotateRequest {
+            confirm_shared: false,
             session: id,
             base_revision: rev,
             item: item.into(),
@@ -3283,6 +4043,7 @@ mod tests {
         f: f64,
     ) -> p::TranslateOutcome {
         svc.scale(&p::ScaleRequest {
+            confirm_shared: false,
             session: id,
             base_revision: rev,
             item: item.into(),
@@ -3497,6 +4258,7 @@ mod tests {
         // The explicit authoring workflow: write rotation, then rotate.
         let (st, it) = applied(
             svc.add_field(&p::AddFieldRequest {
+            confirm_shared: false,
                 session: id,
                 base_revision: 0,
                 item: item("A"),
@@ -3528,6 +4290,7 @@ mod tests {
         v: f64,
     ) -> p::TranslateOutcome {
         svc.translate(&p::TranslateRequest {
+            confirm_shared: false,
             session: id,
             base_revision: rev,
             item: item.into(),
@@ -3569,6 +4332,213 @@ mod tests {
             graph,
             ..Default::default()
         }
+    }
+
+    /// B3: a Transform in a shared PROTO body. The target is Ready (no root
+    /// index, the shared definition named); the runtime proof accepts the
+    /// PICKED instance's copy only when its chain is the Transform, neutral
+    /// body groups and a TOP-LEVEL instance; a commit is refused without
+    /// consent and with it writes exactly one token of the body, as one
+    /// undo step.
+    #[test]
+    fn gizmo_on_a_shared_proto_body_transform_needs_consent_and_one_token() {
+        use p::gizmo::Axis as A;
+        let dir = tmp("b3-proto-gizmo");
+        let path = dir.join("car.wrl");
+        let xf = "DEF CarXForm Transform { translation 0 0 0 rotation 0 1 0 0 scale 1 1 1 children [ Shape { geometry Box { } } ] }";
+        let group = format!("Group {{\n\t\tbboxSize IS bboxSize\n\t\tchildren [\n\t\t\t{xf}\n\t\t]\n\t}}");
+        let inst = "Car { }";
+        let text = format!(
+            "#VRML V2.0 utf8\nPROTO Car [ field SFVec3f bboxSize 1 1 1 ] {{\n\t{group}\n}}\n{inst}\nTransform {{ translation 5 0 0 children Car {{ }} }}\n"
+        );
+        fs::write(&path, &text).unwrap();
+        let (o, svc) = svc_open(&path);
+        let doc = opened(o);
+        let id = doc.session;
+        let rev0 = doc.revision;
+        let u16at = |b: usize| text[..b].encode_utf16().count() as u64;
+        let span_of = |needle: &str| {
+            let b = text.find(needle).unwrap();
+            (u16at(b), u16at(b + needle.len()))
+        };
+        let (xs, gs, is) = (span_of(xf), span_of(&group), span_of(inst));
+        let item = format!("node-{}-{}", xs.0, xs.1);
+        match target(&svc, id, rev0, &item) {
+            p::TranslateTargetOutcome::Ready {
+                root_index,
+                shared,
+                def_name,
+                ..
+            } => {
+                assert_eq!(root_index, None);
+                assert_eq!(def_name.as_deref(), Some("CarXForm"));
+                let sh = shared.expect("shared definition");
+                assert_eq!((sh.proto.as_str(), sh.instances), ("Car", 2));
+            }
+            o => panic!("{o:?}"),
+        }
+        // The runtime chain of one instance's copy, as snapshotBodySpan
+        // reports it: Transform -> Group -> BODY:instance -> SCENE.
+        let node = |ty: &str, ctx: &str, sp: (u64, u64), parents: &[&str]| p::PickGraphNode {
+            type_name: Some(ty.into()),
+            ctx_kind: ctx.into(),
+            occurrences: vec![p::PickSpan { start: sp.0, end: sp.1 }],
+            parents: parents.iter().map(|s| s.to_string()).collect(),
+        };
+        let body_snap = |instance_parent: &str, extra: Option<p::PickGraphNode>| {
+            let mut graph = std::collections::BTreeMap::new();
+            graph.insert("n1".to_string(), node("Transform", "proto-body", xs, &["n2"]));
+            graph.insert("n2".to_string(), node("Group", "proto-body", gs, &["BODY:n3"]));
+            graph.insert("n3".to_string(), node("Car", "document", is, &[instance_parent]));
+            if let Some(e) = extra {
+                graph.insert("n4".to_string(), e);
+            }
+            p::PickSnapshot {
+                outcome: "found".into(),
+                shape: Some("n1".into()),
+                ctx_kind: Some("proto-body".into()),
+                graph,
+                ..Default::default()
+            }
+        };
+        let hash = p::preview_hash(&text);
+        let prove = |snap: p::PickSnapshot| {
+            svc.translate_prove(&p::TranslateProveRequest {
+                session: id,
+                revision: rev0,
+                preview_hash: hash,
+                generation: 1,
+                item: item.clone(),
+                snapshot: snap,
+                tool: p::gizmo::Tool::Move,
+            })
+            .unwrap()
+        };
+        assert!(matches!(
+            prove(body_snap("SCENE", None)),
+            p::TranslateProveOutcome::Proven { .. }
+        ));
+        // The instance nested in a Transform: its frame is not the world.
+        let nested = text.rfind("Transform {").unwrap();
+        let nested_end = text.rfind('}').unwrap() + 1;
+        let ns = (u16at(nested), u16at(nested_end));
+        let inner = text[..nested_end].rfind("Car { }").unwrap();
+        let mut snap = body_snap("n4", Some(node("Transform", "document", ns, &["SCENE"])));
+        if let Some(n3) = snap.graph.get_mut("n3") {
+            n3.occurrences = vec![p::PickSpan {
+                start: u16at(inner),
+                end: u16at(inner + inst.len()),
+            }];
+        }
+        match prove(snap) {
+            p::TranslateProveOutcome::Refused { reason, .. } => {
+                assert_eq!(reason, manipulate::reason::BODY_FRAME)
+            }
+            o => panic!("{o:?}"),
+        }
+        // The selection highlight of the body Shape: located as the picked
+        // instance's copy; the proven chain marks the instance link (no
+        // frame of its own), so the outline composes the body frames only.
+        let shp = span_of("Shape { geometry Box { } }");
+        let sitem = format!("node-{}-{}", shp.0, shp.1);
+        match svc
+            .highlight_target(&p::HighlightTargetRequest {
+                session: id,
+                revision: rev0,
+                item: sitem.clone(),
+            })
+            .unwrap()
+        {
+            p::HighlightTargetOutcome::Ready { body, .. } => assert!(body),
+            o => panic!("{o:?}"),
+        }
+        let mut hs = body_snap("SCENE", None);
+        hs.graph.insert("n0".to_string(), node("Shape", "proto-body", shp, &["n1"]));
+        hs.shape = Some("n0".into());
+        match svc
+            .highlight_prove(&p::HighlightProveRequest {
+                session: id,
+                revision: rev0,
+                preview_hash: hash,
+                generation: 1,
+                item: sitem,
+                snapshot: hs,
+            })
+            .unwrap()
+        {
+            p::HighlightProveOutcome::Proven { ancestors, .. } => {
+                let got: Vec<(&str, bool)> = ancestors
+                    .iter()
+                    .map(|a| (a.node_type.as_str(), a.proto_instance))
+                    .collect();
+                assert_eq!(got, [("Transform", false), ("Group", false), ("Car", true)]);
+            }
+            o => panic!("{o:?}"),
+        }
+        // No consent: nothing changes.
+        match mv(&svc, id, rev0, &item, A::X, 1.5) {
+            p::TranslateOutcome::Refused { reason, .. } => assert_eq!(
+                reason,
+                field_edit::reason::SHARED_DEFINITION_UNCONFIRMED
+            ),
+            o => panic!("{o:?}"),
+        }
+        assert_eq!(svc.text(id).unwrap(), text);
+        // Consent: one token of the PROTO body, one undo step.
+        let (st, it, written) = moved(
+            svc.translate(&p::TranslateRequest {
+                session: id,
+                base_revision: rev0,
+                item: item.clone(),
+                axis: A::X,
+                value: 1.5,
+                decimals: 3,
+                confirm_shared: true,
+            })
+            .unwrap(),
+        );
+        assert_eq!(written, "1.5");
+        let after = text.replacen(
+            "CarXForm Transform { translation 0 0 0",
+            "CarXForm Transform { translation 1.5 0 0",
+            1,
+        );
+        assert_eq!(svc.text(id).unwrap(), after);
+        assert!(matches!(svc.undo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), text);
+        assert!(matches!(svc.redo(id).unwrap(), p::HistoryOutcome::Applied { .. }));
+        assert_eq!(svc.text(id).unwrap(), after);
+        // Rotate and scale go the same way.
+        let rev = svc.text_at(id).unwrap().1;
+        assert!(matches!(
+            rot(&svc, id, rev, &it, A::Y, 0.5),
+            p::TranslateOutcome::Refused { .. }
+        ));
+        let r = svc
+            .rotate(&p::RotateRequest {
+                session: id,
+                base_revision: rev,
+                item: it.clone(),
+                axis: A::Y,
+                delta: 0.5,
+                confirm_shared: true,
+            })
+            .unwrap();
+        let (st2, it2, _) = moved(r);
+        assert!(svc.text(id).unwrap().contains("rotation 0 1 0 0.5 scale 1 1 1"));
+        let r = svc
+            .scale(&p::ScaleRequest {
+                session: id,
+                base_revision: st2.revision,
+                item: it2,
+                axis: None,
+                factor: 2.0,
+                confirm_shared: true,
+            })
+            .unwrap();
+        moved(r);
+        assert!(svc.text(id).unwrap().contains("scale 2 2 2 children"));
+        let _ = st;
     }
 
     /// VISUAL-3A1: twin anonymous Transforms with EQUAL translations and
@@ -3820,6 +4790,150 @@ mod tests {
     fn svc_open(path: &Path) -> (p::OpenOutcome, Service) {
         let svc = Service::new(clock);
         (svc.open_path(path), svc)
+    }
+
+    /// B2 selection highlight: a nested Shape proves through its exact
+    /// runtime chain and reports its ancestors (direct parent first, preview
+    /// spans); the twin's node, a stale text, a Billboard ancestor and a
+    /// non-node item all refuse. Nothing is written.
+    #[test]
+    fn highlight_proves_nested_nodes_and_refuses_everything_else() {
+        let dir = tmp("b2-highlight");
+        let path = dir.join("nested.wrl");
+        let shape = "Shape { geometry Box { } }";
+        let t = format!("Transform {{ translation 1 0 0 children [ {shape} ] }}");
+        let bb = format!("Billboard {{ children [ {shape} ] }}");
+        let text = format!("\u{FEFF}#VRML V2.0 utf8\n{t}\n{t}\n{bb}\n");
+        fs::write(&path, &text).unwrap();
+        let (o, svc) = svc_open(&path);
+        let doc = opened(o);
+        let (id, rev) = (doc.session, doc.revision);
+        let u16at = |b: usize| text[..b].encode_utf16().count() as u64;
+        let span = |b: usize, len: usize| (u16at(b), u16at(b + len));
+        let t1 = text.find(&t).unwrap();
+        let t2 = text.rfind(&t).unwrap();
+        let (tr1, tr2) = (span(t1, t.len()), span(t2, t.len()));
+        let sh1 = span(t1 + t.find(shape).unwrap(), shape.len());
+        let sh2 = span(t2 + t.find(shape).unwrap(), shape.len());
+        let b0 = text.find(&bb).unwrap();
+        let bspan = span(b0, bb.len());
+        let shb = span(b0 + bb.find(shape).unwrap(), shape.len());
+        let hash = p::preview_hash(text.strip_prefix('\u{FEFF}').unwrap());
+        let pv = |(f, t): (u64, u64)| (f - 1, t - 1);
+        // A located Shape under a located parent under the scene.
+        let chain = |me: (u64, u64), parent: (u64, u64), parent_ty: &str| {
+            let mut s = located("Shape", pv(me), &["n2"]);
+            s.graph.insert(
+                "n2".into(),
+                p::PickGraphNode {
+                    type_name: Some(parent_ty.into()),
+                    ctx_kind: "document".into(),
+                    occurrences: vec![p::PickSpan {
+                        start: pv(parent).0,
+                        end: pv(parent).1,
+                    }],
+                    parents: vec!["SCENE".into()],
+                },
+            );
+            s
+        };
+        let prove = |rev: u64, hash: u64, item: &str, snap: p::PickSnapshot| {
+            svc.highlight_prove(&p::HighlightProveRequest {
+                session: id,
+                revision: rev,
+                preview_hash: hash,
+                generation: 1,
+                item: item.into(),
+                snapshot: snap,
+            })
+            .unwrap()
+        };
+        let item = |(f, t): (u64, u64)| format!("node-{f}-{t}");
+        // The target is the exact preview span (BOM projected).
+        match svc
+            .highlight_target(&p::HighlightTargetRequest {
+                session: id,
+                revision: rev,
+                item: item(sh1),
+            })
+            .unwrap()
+        {
+            p::HighlightTargetOutcome::Ready {
+                preview_from,
+                preview_to,
+                ..
+            } => assert_eq!((preview_from, preview_to), pv(sh1)),
+            o => panic!("{o:?}"),
+        }
+        assert!(matches!(
+            svc.highlight_target(&p::HighlightTargetRequest {
+                session: id,
+                revision: rev + 1,
+                item: item(sh1),
+            })
+            .unwrap(),
+            p::HighlightTargetOutcome::Stale { .. }
+        ));
+        assert!(matches!(
+            svc.highlight_target(&p::HighlightTargetRequest {
+                session: id,
+                revision: rev,
+                item: "use-1-2".into(),
+            })
+            .unwrap(),
+            p::HighlightTargetOutcome::Refused { .. }
+        ));
+        for (me, parent) in [(sh1, tr1), (sh2, tr2)] {
+            match prove(rev, hash, &item(me), chain(me, parent, "Transform")) {
+                p::HighlightProveOutcome::Proven {
+                    node_type,
+                    ancestors,
+                    ..
+                } => {
+                    assert_eq!(node_type, "Shape");
+                    assert_eq!(
+                        ancestors,
+                        vec![p::HighlightAncestor {
+                            preview_from: pv(parent).0,
+                            preview_to: pv(parent).1,
+                            node_type: "Transform".into(),
+                            proto_instance: false,
+                        }]
+                    );
+                }
+                o => panic!("{o:?}"),
+            }
+        }
+        // The twin's runtime node offered for this item never proves.
+        assert!(matches!(
+            prove(rev, hash, &item(sh1), chain(sh2, tr2, "Transform")),
+            p::HighlightProveOutcome::Refused { .. }
+        ));
+        // A top-level node proves with no ancestors.
+        assert!(matches!(
+            prove(rev, hash, &item(tr1), located("Transform", pv(tr1), &["SCENE"])),
+            p::HighlightProveOutcome::Proven { ancestors, .. } if ancestors.is_empty()
+        ));
+        // Stale text.
+        assert!(matches!(
+            prove(rev, hash ^ 1, &item(sh1), chain(sh1, tr1, "Transform")),
+            p::HighlightProveOutcome::Stale { .. }
+        ));
+        // A Billboard ancestor: proven chain, unknown frame -> refused.
+        assert!(matches!(
+            prove(rev, hash, &item(shb), chain(shb, bspan, "Billboard")),
+            p::HighlightProveOutcome::Refused { reason, .. } if reason == p::highlight::refusal::ANCESTOR
+        ));
+        // No unique runtime node for the span (e.g. a PROTO body node).
+        let mut none = chain(sh1, tr1, "Transform");
+        none.outcome = "unsupported".into();
+        none.reason = Some("runtime-node-for-span-not-unique".into());
+        assert!(matches!(
+            prove(rev, hash, &item(sh1), none),
+            p::HighlightProveOutcome::Refused { reason, .. } if reason == "runtime-node-for-span-not-unique"
+        ));
+        assert_eq!(svc.text_at(id).unwrap(), (text.clone(), rev), "read-only");
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     /// New World → Box → X, Y, Z drags (positive and negative) → each is ONE
@@ -4115,7 +5229,7 @@ mod recovery_tests {
             // A new world, never saved, with a created object.
             let nw = opened(svc.new_world());
             let o = svc
-                .create(&p::CreateRequest {
+                .create(&p::CreateRequest { at: None,
                     session: nw.session,
                     base_revision: nw.revision,
                     primitive: p::Primitive::Box,
@@ -4206,7 +5320,7 @@ mod recovery_tests {
         let id = nw.session;
         assert_eq!(svc.recovery_pass(), 0, "an unchanged new world is clean");
         let (state, item) = match svc
-            .create(&p::CreateRequest { session: id, base_revision: 0, primitive: p::Primitive::Box })
+            .create(&p::CreateRequest { at: None, session: id, base_revision: 0, primitive: p::Primitive::Box })
             .unwrap()
         {
             p::CreateOutcome::Applied { state, item, .. } => (state, item),
@@ -4219,6 +5333,7 @@ mod recovery_tests {
         check("create");
         let o = svc
             .translate(&p::TranslateRequest {
+                confirm_shared: false,
                 session: id,
                 base_revision: state.revision,
                 item: item.clone(),
@@ -4235,7 +5350,7 @@ mod recovery_tests {
         for (what, o) in [
             (
                 "rotate",
-                svc.rotate(&p::RotateRequest { session: id, base_revision: rev, item: item.clone(), axis: p::gizmo::Axis::Y, delta: 0.5 }),
+                svc.rotate(&p::RotateRequest { confirm_shared: false, session: id, base_revision: rev, item: item.clone(), axis: p::gizmo::Axis::Y, delta: 0.5 }),
             ),
         ] {
             match o.unwrap() {

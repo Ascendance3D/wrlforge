@@ -10,7 +10,7 @@ use leptos::task::spawn_local;
 use wrlforge_desktop_protocol as p;
 
 use crate::editor::{self, CORE};
-use crate::ipc::{self, call, NoArgs, Session};
+use crate::ipc::{self, call, Session};
 
 #[derive(Clone, Copy)]
 pub struct Ui {
@@ -44,6 +44,9 @@ pub struct Ui {
     pub create_error: RwSignal<Option<String>>,
     /// VISUAL-2: the viewport Select mode (a click selects, a drag navigates).
     pub pick_mode: RwSignal<bool>,
+    /// B2-CAMERA: the authored viewpoints of the scene on screen (the
+    /// viewport's viewpoint list). View state only.
+    pub viewpoints: RwSignal<crate::ipc::ViewpointList>,
     /// The last viewport pick result: (`ok` | `none` | `refused`, text).
     pub pick_message: RwSignal<Option<(String, String)>>,
     /// VISUAL-3A: the viewport Move tool (translation gizmo). One viewport
@@ -54,6 +57,13 @@ pub struct Ui {
     pub scale_mode: RwSignal<bool>,
     /// The Move tool's status line: (`ok` | `none` | `refused`, text).
     pub gizmo_message: RwSignal<Option<(String, String)>>,
+    /// B2: why the selected node has no viewport outline, if it has none.
+    pub highlight_message: RwSignal<Option<String>>,
+    /// B1 (PR #146 review): shared-PROTO confirmations asked so far. Every
+    /// shared-definition mutation asks again; nothing is remembered.
+    pub shared_asked: RwSignal<u64>,
+    /// D4: Create places new objects at the origin (else in view).
+    pub place_origin: RwSignal<bool>,
     /// NATIVE-RENDER-1: the hidden native viewport's state (default off).
     pub native: RwSignal<p::NativeState>,
 }
@@ -153,11 +163,14 @@ pub fn adopt_selection(sel: Selected) {
         u.inspection.set(None);
     }
     u.selected.set(Some(sel.clone()));
+    // B2: the viewport outline follows the selection (view state only).
+    crate::highlight::start();
     spawn_local(inspect(sel));
 }
 
 /// Select the Scene Tree item a PROVEN viewport pick named, in exactly the
-/// revision Rust resolved it against. The source caret does NOT move. The
+/// revision Rust resolved it against. The node's source span is selected
+/// (revealed) without taking the keyboard focus. The
 /// Scene Tree must show that revision (it is brought up to date first) and
 /// must hold the item; otherwise nothing changes. Returns the item label.
 pub async fn pick_select(session: u64, revision: u64, id: String) -> Result<String, String> {
@@ -178,12 +191,12 @@ pub async fn pick_select(session: u64, revision: u64, id: String) -> Result<Stri
             return Err("the Scene Tree is updating".into());
         }
     }
-    let label = u.analysis.with_untracked(|a| {
+    let found = u.analysis.with_untracked(|a| {
         a.as_ref()
             .and_then(|a| a.items.iter().find(|i| i.id == id))
-            .map(|i| i.label.clone())
+            .map(|i| (i.label.clone(), i.view_from, i.view_to))
     });
-    let Some(label) = label else {
+    let Some((label, from, to)) = found else {
         return Err("the object is not in the Scene Tree".into());
     };
     adopt_selection(Selected {
@@ -191,7 +204,13 @@ pub async fn pick_select(session: u64, revision: u64, id: String) -> Result<Stri
         revision,
         id: id.clone(),
     });
-    crate::panels::reveal_tree_item(&id);
+    crate::panels::reveal_tree_item_soon(&id);
+    // B3: reveal the node in the Source as well: its span is selected and
+    // scrolled into view and Ln/Col follow it. A selection only -- no edit,
+    // no revision, no undo step -- and the keyboard focus stays where it is
+    // (the viewport keeps it after a pick). The span is of `revision`, which
+    // `stale_reason` just proved is the text the editor shows.
+    editor::select_quiet(from as u32, to as u32);
     Ok(label)
 }
 
@@ -218,14 +237,61 @@ pub fn ui() -> Ui {
             preview_loads: RwSignal::new(0),
             create_error: RwSignal::new(None),
             pick_mode: RwSignal::new(false),
+            viewpoints: RwSignal::new(Default::default()),
             pick_message: RwSignal::new(None),
             move_mode: RwSignal::new(false),
             rotate_mode: RwSignal::new(false),
             scale_mode: RwSignal::new(false),
             gizmo_message: RwSignal::new(None),
+            highlight_message: RwSignal::new(None),
+            shared_asked: RwSignal::new(0),
+            place_origin: RwSignal::new(false),
             native: RwSignal::new(p::NativeState::default()),
         })
     })
+}
+
+/// D4: where Create puts a new object. In front of the camera, at the
+/// point of its view axis nearest the world origin (at least 4 units out),
+/// shifted sideways by 2.5 units per object created from the same view so
+/// objects do not land inside each other. `None` (the origin) when the user
+/// chose "Place at origin" or the camera cannot be read -- never a guess.
+fn placement() -> Option<[f64; 3]> {
+    let u = ui();
+    if u.place_origin.get_untracked() {
+        return None;
+    }
+    let cam = crate::ipc::gizmo_camera()?;
+    let m = cam.view;
+    // Column-major world->eye: R[r][c] = m[c*4+r], t = m[12..15].
+    let r = |row: usize, col: usize| m[col * 4 + row];
+    let t = [m[12], m[13], m[14]];
+    let pos: Vec<f64> = (0..3)
+        .map(|c| -(0..3).map(|row| r(row, c) * t[row]).sum::<f64>())
+        .collect();
+    let fwd = [-r(2, 0), -r(2, 1), -r(2, 2)];
+    let right = [r(0, 0), r(0, 1), r(0, 2)];
+    if pos.iter().chain(&fwd).chain(&right).any(|v| !v.is_finite()) {
+        return None;
+    }
+    let along = -(pos[0] * fwd[0] + pos[1] * fwd[1] + pos[2] * fwd[2]);
+    let d = if along > 4.0 { along } else { 4.0 };
+    let key = (0..3).map(|i| (pos[i] * 1000.0).round() as i64).collect::<Vec<_>>();
+    let k = PLACED.with_borrow_mut(|p| {
+        if p.0 != key {
+            *p = (key, 0);
+        } else {
+            p.1 += 1;
+        }
+        p.1
+    });
+    let side = 2.5 * k as f64;
+    Some([0, 1, 2].map(|i| pos[i] + fwd[i] * d + right[i] * side))
+}
+
+thread_local! {
+    /// D4: (camera position key, objects created from it so far).
+    static PLACED: std::cell::RefCell<(Vec<i64>, u32)> = const { std::cell::RefCell::new((Vec::new(), 0)) };
 }
 
 pub fn flash(m: &str) {
@@ -424,6 +490,47 @@ pub fn apply_inspection(seq: u64, sel: &Selected, o: p::InspectOutcome) -> bool 
     true
 }
 
+/// B1: whether an edit of `insp` may go to Rust as a shared-definition
+/// edit. `None`: the node is not in a PROTO body (no consent needed).
+/// `Some(true)`: the user agreed in the native confirmation for THIS edit.
+/// `Some(false)`: declined -- nothing is sent. Rust refuses a shared edit
+/// without consent, and any request whose base revision is stale.
+async fn shared_consent(session: u64, insp: &p::Inspection) -> Option<bool> {
+    let shared = insp.node.as_ref()?.shared.clone()?;
+    Some(confirm_shared(session, shared).await)
+}
+
+/// The one consent path (Inspector fields, colors, lists, structure edits
+/// and gizmo commits). It asks EVERY time: an earlier answer, a session
+/// or a PROTO name never stands in for consent to a new mutation.
+pub async fn confirm_shared(_session: u64, shared: p::SharedProto) -> bool {
+    let u = ui();
+    u.shared_asked.update(|n| *n += 1);
+    #[derive(serde::Serialize)]
+    struct A {
+        proto: String,
+        instances: u32,
+    }
+    let yes = call::<bool>(
+        "confirm_shared_edit",
+        A {
+            proto: shared.proto.clone(),
+            instances: shared.instances,
+        },
+    )
+    .await
+    .unwrap_or(false);
+    if yes {
+        u.field_error.set(None);
+    } else {
+        u.field_error.set(Some(format!(
+            "Not changed: editing the shared definition PROTO {} was not confirmed.",
+            shared.proto
+        )));
+    }
+    yes
+}
+
 /// Send one Inspector field edit to Rust. The request names the node by the
 /// item id of the revision the Inspector was built from; Rust refuses it if
 /// the document moved on. The UI adopts nothing until Rust applies it.
@@ -435,7 +542,12 @@ pub async fn edit_field(field_index: u32, field_name: String, components: Vec<p:
     struct A {
         request: p::FieldEditRequest,
     }
+    let confirm_shared = match shared_consent(session, &insp).await {
+        Some(false) => return Default::default(),
+        c => c.is_some(),
+    };
     let request = p::FieldEditRequest {
+        confirm_shared,
         session,
         base_revision: insp.revision,
         item: insp.id.clone(),
@@ -463,7 +575,12 @@ pub async fn edit_list(
     struct A {
         request: p::ListEditRequest,
     }
+    let confirm_shared = match shared_consent(session, &insp).await {
+        Some(false) => return Default::default(),
+        c => c.is_some(),
+    };
     let request = p::ListEditRequest {
+        confirm_shared,
         session,
         base_revision: insp.revision,
         item: insp.id.clone(),
@@ -485,7 +602,12 @@ pub async fn add_field(field_name: String, value: p::AddFieldValue) -> bool {
     struct A {
         request: p::AddFieldRequest,
     }
+    let confirm_shared = match shared_consent(session, &insp).await {
+        Some(false) => return Default::default(),
+        c => c.is_some(),
+    };
     let request = p::AddFieldRequest {
+        confirm_shared,
         session,
         base_revision: insp.revision,
         item: insp.id.clone(),
@@ -494,6 +616,88 @@ pub async fn add_field(field_name: String, value: p::AddFieldValue) -> bool {
     };
     let o = call::<p::FieldEditOutcome>("doc_add_field", A { request }).await;
     field_outcome(session, &field_name, o).await
+}
+
+/// B2: one MFString change (`url`, `info`, ...). `expected` is the list the
+/// Inspector showed; Rust refuses any other. One undo step.
+pub async fn edit_strings(
+    field_index: u32,
+    field_name: String,
+    expected: Vec<String>,
+    ops: Vec<p::StringOp>,
+) -> bool {
+    let Some((session, insp)) = field_target(&field_name).await else {
+        return false;
+    };
+    #[derive(serde::Serialize)]
+    struct A {
+        request: p::StringEditRequest,
+    }
+    let confirm_shared = match shared_consent(session, &insp).await {
+        Some(false) => return Default::default(),
+        c => c.is_some(),
+    };
+    let request = p::StringEditRequest {
+        confirm_shared,
+        session,
+        base_revision: insp.revision,
+        item: insp.id.clone(),
+        field_index,
+        field_name: field_name.clone(),
+        expected,
+        ops,
+    };
+    let o = call::<p::FieldEditOutcome>("doc_edit_strings", A { request }).await;
+    field_outcome(session, &field_name, o).await
+}
+
+/// B2: "Choose image…" -- a native dialog run by Rust in the document's
+/// folder. Returns the RELATIVE url, or `None` (canceled, or refused with a
+/// visible reason).
+pub async fn choose_texture() -> Option<String> {
+    let session = CORE.with_borrow(|c| c.session)?;
+    match call::<p::TextureChoice>("doc_choose_texture", Session { session }).await {
+        Ok(p::TextureChoice::Chosen { url }) => Some(url),
+        Ok(p::TextureChoice::Canceled) => None,
+        Ok(p::TextureChoice::Refused { message }) => {
+            let m = format!("No texture chosen: {message}");
+            ui().field_error.set(Some(m.clone()));
+            flash(&m);
+            None
+        }
+        Err(e) => {
+            flash(&format!("Choose image failed: {e}"));
+            None
+        }
+    }
+}
+
+/// B2: "Add texture" on an Appearance with no texture field: choose an image,
+/// then write `texture ImageTexture { url "<url>" }` (one undo step).
+pub async fn add_texture() -> bool {
+    let Some(url) = choose_texture().await else {
+        return false;
+    };
+    let Some((session, insp)) = field_target("texture").await else {
+        return false;
+    };
+    #[derive(serde::Serialize)]
+    struct A {
+        request: p::AddTextureRequest,
+    }
+    let confirm_shared = match shared_consent(session, &insp).await {
+        Some(false) => return false,
+        c => c.is_some(),
+    };
+    let request = p::AddTextureRequest {
+        confirm_shared,
+        session,
+        base_revision: insp.revision,
+        item: insp.id.clone(),
+        url,
+    };
+    let o = call::<p::FieldEditOutcome>("doc_add_texture", A { request }).await;
+    field_outcome(session, "texture", o).await
 }
 
 /// The session and the Inspector a field change is sent against, or `None`
@@ -609,11 +813,20 @@ pub async fn preview(force: bool) {
             // VISUAL-3A1: keep the user's camera only onto a PROVEN same
             // viewpoint (crate::camera); otherwise X_ITE's own binding stands.
             let (camera, why) = crate::camera::want(session, src.revision).await;
+            // B2-CAMERA: a document's first shown scene is framed once when
+            // it has no authored Viewpoint bound.
+            let auto_fit = crate::camera::auto_fit_wanted(session);
             let t0 = crate::editor::now();
             let warnings = src.texture_warnings.clone();
             let routes = src.route_warnings.clone();
-            let status =
-                ipc::preview_load(&src.text, Some(&gen), camera, &src.resource_base).await;
+            let status = ipc::preview_load(
+                &src.text,
+                Some(&gen),
+                camera.clone(),
+                auto_fit,
+                &src.resource_base,
+            )
+            .await;
             let load_ms = crate::editor::now() - t0;
             crate::camera::LOAD_MS.with_borrow_mut(|v| v.push(load_ms));
             u.preview_loads.update(|n| *n += 1);
@@ -627,7 +840,10 @@ pub async fn preview(force: bool) {
                     u.route_warnings.set(routes);
                 }
                 u.texture_warnings.set(warnings);
-                let note = crate::camera::note(why);
+                let mut note = crate::camera::note(why);
+                if status.starts_with("loaded") {
+                    note = crate::camera::after_load(session, seq, auto_fit, camera, note);
+                }
                 u.preview_status
                     .set(format!("rev {} · {status}{note}", src.revision));
             }
@@ -640,8 +856,20 @@ pub async fn preview(force: bool) {
 pub fn open() {
     spawn_local(async {
         if confirm_discard().await {
-            match call::<p::OpenOutcome>("open_document", NoArgs {}).await {
-                Ok(o) => apply_open(o, "Opened").await,
+            #[derive(serde::Serialize)]
+            struct A {
+                session: Option<u64>,
+            }
+            // The active document's folder is where Open starts (Rust
+            // resolves it from the session).
+            let session = CORE.with_borrow(|c| c.session);
+            match call::<p::OpenOutcome>("open_document", A { session }).await {
+                Ok(o) => {
+                    // B2-CAMERA: an opened file is framed once (no authored
+                    // Viewpoint bound).
+                    crate::camera::arm_auto_fit();
+                    apply_open(o, "Opened").await
+                }
                 Err(e) => flash(&format!("Open failed: {e}")),
             }
         }
@@ -667,6 +895,7 @@ pub async fn apply_open(o: p::OpenOutcome, verb: &str) {
             {
                 let _ = call::<()>("close_document", Session { session: old }).await;
             }
+            crate::camera::opened(Some(doc.session));
             editor::adopt(&doc);
             flash(&format!(
                 "{verb} {} ({}, {}{}{})",
@@ -681,8 +910,14 @@ pub async fn apply_open(o: p::OpenOutcome, verb: &str) {
                 if doc.bom { ", BOM" } else { "" }
             ));
         }
-        p::OpenOutcome::Canceled => flash("Open canceled — nothing changed."),
-        p::OpenOutcome::Failed { message } => flash(&format!("Could not open: {message}")),
+        p::OpenOutcome::Canceled => {
+            crate::camera::opened(None);
+            flash("Open canceled — nothing changed.")
+        }
+        p::OpenOutcome::Failed { message } => {
+            crate::camera::opened(None);
+            flash(&format!("Could not open: {message}"))
+        }
     }
 }
 
@@ -733,6 +968,7 @@ pub async fn create(prim: p::Primitive) {
         session,
         base_revision: revision,
         primitive: prim,
+        at: placement(),
     };
     match call::<p::CreateOutcome>("doc_create", A { request }).await {
         Ok(p::CreateOutcome::Applied {
@@ -785,6 +1021,111 @@ pub async fn create(prim: p::Primitive) {
     }
 }
 
+/// B2: Delete / Duplicate the selected node through Rust
+/// (`doc_structure_edit`). The UI sends only the selection's item id and the
+/// revision it belongs to; Rust plans, proves and applies the edit as ONE
+/// undo step. After Delete nothing is selected; after Duplicate the copy is.
+pub async fn structure_edit(op: p::StructureOp) {
+    editor::idle().await;
+    let u = ui();
+    let verb = match op {
+        p::StructureOp::Delete => "Delete",
+        p::StructureOp::Duplicate => "Duplicate",
+    };
+    let Some(sel) = u.selected.get_untracked() else {
+        flash(&format!("Not changed — {verb}: no node is selected."));
+        return;
+    };
+    if let Some(why) = stale_reason(sel.session, sel.revision) {
+        flash(&format!("Not changed — {verb}: the selection is updating ({why})."));
+        return;
+    }
+    // A PROTO body node: the same consent path as an Inspector edit, read
+    // from the Inspector of exactly this selection. Rust refuses without it.
+    let shared = u.inspection.with_untracked(|i| {
+        i.as_ref()
+            .filter(|i| i.id == sel.id && i.revision == sel.revision)
+            .and_then(|i| i.node.as_ref()?.shared.clone())
+    });
+    let confirm = match shared {
+        Some(sh) => {
+            if !confirm_shared(sel.session, sh).await {
+                flash(&format!("Not changed — {verb}: the shared PROTO definition was not confirmed."));
+                return;
+            }
+            true
+        }
+        None => false,
+    };
+    #[derive(serde::Serialize)]
+    struct A {
+        request: p::StructureEditRequest,
+    }
+    let request = p::StructureEditRequest {
+        session: sel.session,
+        base_revision: sel.revision,
+        item: sel.id.clone(),
+        op,
+        confirm_shared: confirm,
+    };
+    match call::<p::StructureEditOutcome>("doc_structure_edit", A { request }).await {
+        Ok(p::StructureEditOutcome::Applied {
+            state,
+            view,
+            item,
+            renamed,
+        }) => {
+            crate::gizmo::cancel("the selected node changed");
+            u.field_error.set(None);
+            u.inspection.set(None);
+            u.selected.set(item.map(|id| Selected {
+                session: sel.session,
+                revision: state.revision,
+                id,
+            }));
+            editor::adopt_change(&state, view);
+            let names = renamed
+                .iter()
+                .map(|(a, b)| format!("{a} → {b}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let done = match op {
+                p::StructureOp::Delete => "Deleted the node",
+                p::StructureOp::Duplicate => "Duplicated the node",
+            };
+            if names.is_empty() {
+                flash(&format!("{done} (revision {}).", state.revision));
+            } else {
+                flash(&format!(
+                    "{done} (revision {}); DEF names in the copy: {names}.",
+                    state.revision
+                ));
+            }
+            // One discrete command: show it everywhere now.
+            analyze().await;
+            let span = u.analysis.with_untracked(|a| {
+                a.as_ref().and_then(|a| {
+                    let sel = u.selected.get_untracked()?;
+                    (a.revision == sel.revision)
+                        .then(|| a.items.iter().find(|i| sel.is(&i.id)))
+                        .flatten()
+                        .map(|i| (a.session, a.revision, i.view_from, i.view_to))
+                })
+            });
+            if let Some((s, r, from, to)) = span {
+                select_from(verb, s, r, from, to);
+            }
+            preview(false).await;
+        }
+        Ok(p::StructureEditOutcome::Refused { reason, message }) => {
+            let m = format!("Not changed — {verb}: {message}");
+            u.field_error.set(Some(format!("{m} [{reason}]")));
+            flash(&m);
+        }
+        Err(e) => flash(&format!("{verb} failed: {e}")),
+    }
+}
+
 /// File → Close. Like Open, a dirty document is never discarded silently.
 pub fn close() {
     spawn_local(async {
@@ -815,7 +1156,8 @@ pub fn close() {
         // No document: the viewport shows an empty world, not the old one.
         u.texture_warnings.set(Vec::new());
         u.route_warnings.set(Vec::new());
-        let status = ipc::preview_load("#VRML V2.0 utf8\n", None, None, "").await;
+        u.viewpoints.set(Default::default());
+        let status = ipc::preview_load("#VRML V2.0 utf8\n", None, None, false, "").await;
         u.preview_loads.update(|n| *n += 1);
         u.preview_status.set(format!("no document · {status}"));
         flash("Closed.");

@@ -250,6 +250,102 @@ async fn pump() {
     }
 }
 
+/// B2: send ONE view edit that the UI did not type (Find / Replace),
+/// against exactly revision `base` and the text Rust acknowledged. The
+/// widget is NOT touched first: it is updated only after Rust applies the
+/// edit AND its view hash matches the expected text. Typing still in flight,
+/// or a different revision, refuses instead of guessing. Returns the new
+/// revision.
+pub async fn submit_edit(base: u64, from: u32, to: u32, insert: Vec<u16>) -> Result<u64, String> {
+    idle().await;
+    let Some(ta) = textarea() else {
+        return Err("no Source editor".into());
+    };
+    let start = CORE.with_borrow_mut(|c| {
+        if c.busy || c.session.is_none() {
+            return Err("the editor is busy".to_string());
+        }
+        if c.revision != base {
+            return Err("the document changed; search again".to_string());
+        }
+        if (to as usize) > c.shown.len() || from > to {
+            return Err("the match is outside the document".to_string());
+        }
+        c.busy = true;
+        Ok((c.session.unwrap_or_default(), c.shown.clone()))
+    });
+    let (session, before) = start?;
+    // Typed text not yet sent: the widget is ahead of Rust. Let it go first.
+    let widget: Vec<u16> = ta.value().encode_utf16().collect();
+    if widget != before {
+        CORE.with_borrow_mut(|c| c.busy = false);
+        on_input();
+        return Err("unsent typing; search again".into());
+    }
+    let after = crate::find::apply(&before, &(from, to, insert.clone()));
+    let sel = ui::ui()
+        .selected
+        .get_untracked()
+        .filter(|s| s.session == session && s.revision == base);
+    let req = p::EditRequest {
+        session,
+        base_revision: base,
+        from: from as u64,
+        to: to as u64,
+        insert: String::from_utf16(&insert).map_err(|_| "invalid replacement text".to_string())?,
+        item: sel.as_ref().map(|s| s.id.clone()),
+    };
+    #[derive(serde::Serialize)]
+    struct A {
+        request: p::EditRequest,
+    }
+    let reply = call::<p::EditOutcome>("doc_edit", A { request: req }).await;
+    match reply {
+        Ok(p::EditOutcome::Applied { state, item }) => {
+            let hash_ok = state.view_len == after.len() as u64
+                && state.view_hash == p::view_hash_units(after.iter().copied());
+            if !hash_ok {
+                CORE.with_borrow_mut(|c| c.busy = false);
+                resync("view hash mismatch after a replace").await;
+                return Err("view hash mismatch; resynced".into());
+            }
+            // Keystrokes that arrived during the round trip were never sent:
+            // the widget would lose them silently. Rust's text wins, visibly.
+            let typed = ta.value().encode_utf16().ne(before.iter().copied());
+            let top = ta.scroll_top();
+            let left = ta.scroll_left();
+            let view = String::from_utf16_lossy(&after);
+            CORE.with_borrow_mut(|c| {
+                c.shown = after;
+                c.revision = state.revision;
+                c.generation += 1;
+                c.busy = false;
+            });
+            ta.set_value(&view);
+            ta.set_scroll_top(top);
+            ta.set_scroll_left(left);
+            syntax::set_text(&view);
+            carry_selection(sel, item, state.revision);
+            ui::state_changed(state.revision, state.dirty, state.can_undo, state.can_redo);
+            if typed {
+                resync("typing during a replace").await;
+                return Err("typing during a replace; resynced".into());
+            }
+            Ok(state.revision)
+        }
+        Ok(p::EditOutcome::Refused { message }) => {
+            CORE.with_borrow_mut(|c| c.busy = false);
+            resync(&format!("replace refused ({message})")).await;
+            Err(message)
+        }
+        Err(e) => {
+            CORE.with_borrow_mut(|c| c.busy = false);
+            resync(&format!("IPC error ({e})")).await;
+            Err(e)
+        }
+    }
+}
+
 /// Wait until no edit is in flight (bounded).
 pub async fn idle() {
     for _ in 0..400 {
@@ -280,6 +376,12 @@ pub async fn history(undo: bool) {
     match call::<p::HistoryOutcome>(cmd, A { session, item }).await {
         Ok(p::HistoryOutcome::Applied { state, view, item }) => {
             adopt_change(&state, view);
+            // D5: the status line names the revision now shown.
+            ui::flash(&format!(
+                "{} (revision {}).",
+                if undo { "Undone" } else { "Redone" },
+                state.revision
+            ));
             if let Some(sel) = carry_selection(sel, item, state.revision) {
                 ui::inspect(sel).await;
             }
@@ -347,6 +449,41 @@ pub fn select(from: u64, to: u64) {
     }
 }
 
+/// B2: select and scroll like [`select`], leaving the keyboard focus where
+/// it is (the Find bar keeps it between Find Next presses).
+pub fn select_quiet(from: u32, to: u32) {
+    if let Some(ta) = textarea() {
+        reveal(&ta, from, to);
+    }
+}
+
+fn reveal(ta: &HtmlTextAreaElement, from: u32, to: u32) {
+    let _ = ta.set_selection_range(from, to);
+    let (line, col) = line_col(ta, from);
+    let line = line as usize - 1;
+    let lh = 18.0_f64; // matches .source line-height in style.css (px)
+    let top = ta.scroll_top() as f64;
+    let h = ta.client_height() as f64;
+    let y = line as f64 * lh;
+    // Already fully visible: do not jump (Find Next through one screen).
+    if y < top || y + lh > top + h {
+        ta.set_scroll_top((y - h / 3.0).max(0.0) as i32);
+    }
+    // Horizontally: bring the start column into view (monospace estimate,
+    // clamped by the browser).
+    let col = col as f64 - 1.0;
+    let cw = 7.8_f64; // 13px monospace advance, approximate
+    let x = col * cw;
+    let left = ta.scroll_left() as f64;
+    let w = ta.client_width() as f64;
+    if x < left || x + cw * 4.0 > left + w {
+        ta.set_scroll_left((x - w / 3.0).max(0.0) as i32);
+    }
+    // Scrolling by script fires `scroll` asynchronously; paint now as well.
+    syntax::on_scroll();
+    update_cursor();
+}
+
 pub fn update_cursor() {
     let t0 = now();
     let Some(ta) = textarea() else { return };
@@ -354,6 +491,13 @@ pub fn update_cursor() {
     let end = ta.selection_end().ok().flatten().unwrap_or(0);
     let (line, col) = line_col(&ta, pos);
     ui::cursor(line, col, end.saturating_sub(pos));
+    syntax::set_caret_line(line);
+    // B3: a selection's lines are marked in the gutter (visible without focus).
+    if end > pos {
+        syntax::set_mark_lines(line, line_col(&ta, end).0);
+    } else {
+        syntax::set_mark_lines(0, 0);
+    }
     CORE.with_borrow_mut(|c| c.perf.cursor_ms = now() - t0);
 }
 

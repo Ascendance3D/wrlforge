@@ -479,18 +479,38 @@ pub(super) async fn open_fixture(r: &mut R) -> Option<()> {
 
 async fn main_phase(c: &Plan, r: &mut R) -> Option<()> {
     let d = dock::dock();
-    // 1. Fresh config: the Source preset, every panel on screen.
+    // 1. Fresh config: the default (Modeling: the 3D viewport first) preset
+    // with the Viewport, Scene Tree and Inspector on screen.
     let l0 = layout();
     r.step(
-        "startup: the default layout is the Source preset with all five panels",
-        l0 == Layout::preset(PresetId::Source)
+        "startup: the default layout is the Modeling preset (Viewport, Scene Tree, Inspector shown)",
+        l0 == Layout::preset(PresetId::Modeling)
             && el("#dock")
                 .and_then(|e| e.get_attribute("data-preset"))
                 .as_deref()
-                == Some("preset.source")
-            && PanelId::ALL.iter().all(|p| host_state(*p) == "active")
+                == Some("preset.modeling")
+            && [PanelId::Viewport, PanelId::SceneTree, PanelId::Inspector]
+                .iter()
+                .all(|p| host_state(*p) == "active")
             && d.notice.get_untracked().is_none(),
         format!("{:?}", d.notice.get_untracked()),
+    );
+    // The rest of this phase is written for the Source preset.
+    dock::set_preset(PresetId::Source);
+    let shown = wait_ms(5000, || {
+        (layout() == Layout::preset(PresetId::Source)
+            && PanelId::ALL.iter().all(|p| host_state(*p) == "active"))
+        .then_some(())
+    })
+    .await;
+    r.step(
+        "View → Source preset: all five panels on screen",
+        shown.is_some()
+            && el("#dock")
+                .and_then(|e| e.get_attribute("data-preset"))
+                .as_deref()
+                == Some("preset.source"),
+        format!("{:?}", layout().preset),
     );
     let (ok, detail) = minimums_ok();
     r.step("startup: every panel meets its minimum size", ok, detail);
@@ -966,7 +986,7 @@ async fn main_phase(c: &Plan, r: &mut R) -> Option<()> {
     super::settle().await;
     ipc::sleep(800).await;
     let insp0 = ui().inspection.get_untracked();
-    let input: web_sys::HtmlInputElement = el("tr[data-field=\"translation\"] input")?
+    let input: web_sys::HtmlInputElement = el("tr[data-field=\"translation\"] input[type=\"text\"]")?
         .dyn_into()
         .ok()?;
     input.set_value("7.25");
@@ -996,7 +1016,7 @@ async fn main_phase(c: &Plan, r: &mut R) -> Option<()> {
         format!("group {group:?} focus {now:?}"),
     );
     menu("layout-panel-inspector").await?;
-    let input2: web_sys::HtmlInputElement = el("tr[data-field=\"translation\"] input")?
+    let input2: web_sys::HtmlInputElement = el("tr[data-field=\"translation\"] input[type=\"text\"]")?
         .dyn_into()
         .ok()?;
     r.step(
@@ -1379,11 +1399,11 @@ async fn damaged_phase(r: &mut R) -> Option<()> {
         .document_element()?
         .get_attribute("data-theme");
     r.step(
-        "damaged layout: startup succeeds with the Source preset and a clear notice",
+        "damaged layout: startup succeeds with the default preset and a clear notice",
         layout() == Layout::default_layout()
             && notice
                 .as_deref()
-                .is_some_and(|n| n.contains("invalid") && n.contains("Source layout")),
+                .is_some_and(|n| n.contains("invalid") && n.contains(&format!("{} layout", p::layout::PresetId::DEFAULT.label()))),
         format!("{notice:?}"),
     );
     r.step(

@@ -23,6 +23,8 @@ pub mod parser;
 pub mod pick;
 pub mod scene;
 pub mod scope;
+pub mod string_edit;
+pub mod structure_edit;
 pub mod tokenizer;
 
 pub use parser::{parse, parse_with, Limits, ParseResult};

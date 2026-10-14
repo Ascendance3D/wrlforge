@@ -215,7 +215,7 @@ fn crash_steps(app: &AppHandle) -> Result<serde_json::Value, String> {
         p::OpenOutcome::Opened { doc } => doc,
         o => return Err(format!("new world: {o:?}")),
     };
-    let o = svc.create(&p::CreateRequest {
+    let o = svc.create(&p::CreateRequest { at: None,
         session: nw.session,
         base_revision: nw.revision,
         primitive: p::Primitive::Box,

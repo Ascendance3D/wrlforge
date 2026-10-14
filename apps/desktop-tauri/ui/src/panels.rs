@@ -50,9 +50,10 @@ pub fn SceneTree() -> impl IntoView {
                     let key = Some((rev, it.id.clone()));
                     let key2 = key.clone();
                     let (from, to) = (it.view_from, it.view_to);
-                    let pad = format!("padding-left: {}rem", 0.4 + (it.depth.saturating_sub(1)) as f32 * 0.9);
+                    // B3: a smaller step per level keeps deep names on screen.
+                    let pad = format!("padding-left: {}rem", 0.35 + (it.depth.saturating_sub(1)) as f32 * 0.7);
                     let class = format!("tree-item kind-{}{}", it.kind.to_lowercase(), ref_class(&it.refs, it.typed.as_ref()));
-                    let title = typed_title(ref_title(&it.refs, &a.items), it.typed.as_ref());
+                    let title = item_title(it, typed_title(ref_title(&it.refs, &a.items), it.typed.as_ref()));
                     // Offsets of THIS render's revision; tree_select refuses
                     // them unless that is still the document's revision.
                     let id2 = id.clone();
@@ -71,8 +72,8 @@ pub fn SceneTree() -> impl IntoView {
                                     act2();
                                 }
                             }>
-                            <span class="kind">{it.kind.clone()}</span>
-                            <span class="label">{it.label.clone()}</span>
+                            <span class="kind" aria-hidden="true">{kind_glyph(&it.kind)}</span>
+                            {label_view(it)}
                         </li>
                     }
                 }).collect_view()}))}
@@ -80,6 +81,162 @@ pub fn SceneTree() -> impl IntoView {
             {move || (u.doc.with(|d| d.is_none())).then(|| view! { <p class="empty">"Start a New World or open a file to see its scene."</p> })}
         </aside>
     }
+}
+
+/// B3: the kind column is one compact glyph; the label already names the
+/// kind (`PROTO …`, `USE …`, `ROUTE …`, the node type), and the full kind is
+/// in the item's hover text.
+fn kind_glyph(kind: &str) -> &'static str {
+    match kind {
+        "Node" => "•",
+        "Use" => "↪",
+        "Proto" => "◆",
+        "ExternProto" => "◇",
+        "Route" => "→",
+        _ => "·",
+    }
+}
+
+/// B3: the label, with a DEF name set apart from the node type. The text
+/// content is exactly `label` (`Type DEFNAME`), so nothing that reads it
+/// changes.
+fn label_view(it: &p::SceneItem) -> impl IntoView {
+    let def = (it.kind == "Node" && it.detail.as_deref() == Some("DEF"))
+        .then(|| it.label.split_once(' '))
+        .flatten();
+    match def {
+        Some((ty, name)) => view! {
+            <span class="label"><span class="ty">{ty.to_string()}</span>" "<span class="def">{name.to_string()}</span></span>
+        }
+        .into_any(),
+        None => view! { <span class="label">{it.label.clone()}</span> }.into_any(),
+    }
+}
+
+/// B3: hover text always starts with the full label and kind, so a name
+/// cut off by a narrow panel is still readable.
+fn item_title(it: &p::SceneItem, rest: String) -> String {
+    let head = match it.detail.as_deref() {
+        Some("DEF") => format!("{} · {} (DEF)", it.label, it.kind),
+        _ => format!("{} · {}", it.label, it.kind),
+    };
+    if rest.is_empty() {
+        head
+    } else {
+        format!("{head}\n{rest}")
+    }
+}
+
+/// B3: bring the Source panel to the front and select (reveal) the node's
+/// span there. A selection only: no edit, no revision, no undo step. Refused
+/// when the span is not of the text the editor shows.
+fn show_in_source(session: u64, rev: u64, (from, to): (u64, u64)) {
+    if ui::stale_reason(session, rev).is_some() {
+        ui::flash("The Inspector is updating; Show in Source did nothing.");
+        return;
+    }
+    crate::dock::show(p::layout::PanelId::Source);
+    spawn_local(async move {
+        // After the tab is shown (laid out) and focused.
+        crate::ipc::sleep(30).await;
+        if ui::stale_reason(session, rev).is_none() {
+            crate::editor::select_quiet(from as u32, to as u32);
+        }
+    });
+}
+
+/// B3: the outermost Scene Tree items (nodes and USEs) inside the view span
+/// [`from`, `to`] in the analysis of exactly (`session`, `rev`), as (id,
+/// label). Empty when the tree holds another revision.
+fn mf_children(session: u64, rev: u64, from: u64, to: u64) -> Vec<(String, String)> {
+    ui().analysis.with_untracked(|a| {
+        let Some(a) = a.as_ref().filter(|a| a.session == session && a.revision == rev) else {
+            return Vec::new();
+        };
+        let inside: Vec<&p::SceneItem> = a
+            .items
+            .iter()
+            .filter(|i| {
+                (i.kind == "Node" || i.kind == "Use") && i.view_from >= from && i.view_to <= to
+            })
+            .collect();
+        let Some(d) = inside.iter().map(|i| i.depth).min() else {
+            return Vec::new();
+        };
+        inside
+            .into_iter()
+            .filter(|i| i.depth == d)
+            .map(|i| (i.id.clone(), i.label.clone()))
+            .collect()
+    })
+}
+
+/// B3: a one-line summary of an SFNode value: `[DEF name] Type`, `USE name`
+/// or `NULL`. Display only; the value is never rewritten.
+pub(crate) fn node_summary(excerpt: &str) -> String {
+    let mut t = excerpt.split_whitespace();
+    match (t.next(), t.next(), t.next()) {
+        (Some("DEF"), Some(name), Some(ty)) => {
+            format!("{} {name}", ty.trim_end_matches('{'))
+        }
+        (Some("USE"), Some(name), _) => format!("USE {name}"),
+        (Some(ty), _, _) => ty.trim_end_matches('{').to_string(),
+        _ => String::new(),
+    }
+}
+
+/// B3: the first line of a value, shortened to 60 characters.
+pub(crate) fn first_line(excerpt: &str) -> String {
+    let line = excerpt.trim().lines().next().unwrap_or("");
+    if line.chars().count() > 60 {
+        format!("{}…", line.chars().take(60).collect::<String>())
+    } else {
+        line.to_string()
+    }
+}
+
+/// B3: plain words for a read-only reason id (the id stays in the tooltip).
+pub(crate) fn reason_words(id: &str) -> String {
+    match id {
+        "field-type-not-editable-in-wd2b" => "edit in Source".into(),
+        "field-is-is-bound" => "bound to the PROTO interface (IS)".into(),
+        "field-value-missing" => "no value".into(),
+        "field-value-shape-does-not-match-type" | "field-value-token-invalid" => {
+            "value not understood; edit in Source".into()
+        }
+        "field-not-in-schema" | "field-is-x3d-only" | "field-is-not-a-stored-field" => {
+            "not a VRML97 stored field".into()
+        }
+        "field-authored-more-than-once" => "written more than once".into(),
+        "node-type-is-a-proto-name" | "node-type-not-standard-vrml97" => {
+            "PROTO instance field; edit in Source".into()
+        }
+        "document-has-syntax-errors" | "document-parse-incomplete" => {
+            "fix the syntax errors first".into()
+        }
+        other => other.replace('-', " "),
+    }
+}
+
+/// B3: the ancestors of item `idx` in a depth-first item list, outermost
+/// first: each is the nearest earlier item one level shallower.
+pub(crate) fn ancestors(depths: &[u32], idx: usize) -> Vec<usize> {
+    let mut out = Vec::new();
+    let Some(&d0) = depths.get(idx) else {
+        return out;
+    };
+    let mut want = d0;
+    for j in (0..idx).rev() {
+        if want <= 1 {
+            break;
+        }
+        if depths[j] < want {
+            out.push(j);
+            want = depths[j];
+        }
+    }
+    out.reverse();
+    out
 }
 
 /// The weakest reference class on an item, typed answer included: "" when
@@ -169,9 +326,17 @@ fn ref_title(refs: &[p::SceneRef], items: &[p::SceneItem]) -> String {
 }
 
 /// Arrow keys move focus between items (no selection change); Enter/Space
-/// on an item selects it through the same revision check as a click.
+/// on an item selects it through the same revision check as a click; Delete
+/// deletes the selected node (B2).
 fn tree_keydown(ev: web_sys::KeyboardEvent) {
     use wasm_bindgen::JsCast;
+    // B2: Delete removes the SELECTED node (the registry command; Rust
+    // re-proves it). A modified Delete is not this command.
+    if ev.key() == "Delete" && !(ev.ctrl_key() || ev.meta_key() || ev.alt_key() || ev.shift_key()) {
+        ev.prevent_default();
+        crate::command::run(CommandId::EditDeleteNode);
+        return;
+    }
     let down = match ev.key().as_str() {
         "ArrowDown" => true,
         "ArrowUp" => false,
@@ -216,9 +381,9 @@ pub fn Inspector() -> impl IntoView {
             {move || match u.inspection.get() {
                 None => view! { <p class="empty">"Select a Scene Tree item."</p> }.into_any(),
                 Some(i) => {
-                    let title = i.title.clone();
                     let rev = i.revision;
                     let session = crate::editor::CORE.with_borrow(|c| c.session).unwrap_or(0);
+                    let head = inspector_head(&i, session);
                     let body = match i.node {
                         Some(n) => node_fields(n, session, rev).into_any(),
                         None => rows(i.rows, session, rev).into_any(),
@@ -230,13 +395,108 @@ pub fn Inspector() -> impl IntoView {
                                     {format!("Updating… these fields are of revision {rev}.")}
                                 </p>
                             })}
-                            <h3 id="inspector-title">{title}</h3>
+                            {head}
                             {body}
                         </div>
                     }.into_any()
                 }
             }}
         </section>
+    }
+}
+
+/// B3: what is selected, where it is, and how to get back up. The path is
+/// the Scene Tree's own ancestry of this item in the SAME revision; a crumb
+/// selects through `pick_select` (the Open-node path), so a stale tree
+/// refuses instead of selecting a different node. Display and navigation
+/// only: nothing here edits.
+fn inspector_head(i: &p::Inspection, session: u64) -> impl IntoView {
+    let u = ui();
+    let (id, rev) = (i.id.clone(), i.revision);
+    let node_type = i.node.as_ref().and_then(|n| n.node_type.clone());
+    let shared = i.node.as_ref().and_then(|n| n.shared.clone());
+    let title = i.title.clone();
+    // (DEF name, ancestors as (id, label)), from the analysis of `rev`.
+    let found = move || {
+        u.analysis.with(|a| {
+            let a = a
+                .as_ref()
+                .filter(|a| a.revision == rev && a.session == session)?;
+            let idx = a.items.iter().position(|it| it.id == id)?;
+            let it = &a.items[idx];
+            let def = (it.kind == "Node" && it.detail.as_deref() == Some("DEF"))
+                .then(|| it.label.split_once(' ').map(|(_, d)| d.to_string()))
+                .flatten();
+            let depths: Vec<u32> = a.items.iter().map(|x| x.depth).collect();
+            let path: Vec<(String, String)> = ancestors(&depths, idx)
+                .into_iter()
+                .map(|j| (a.items[j].id.clone(), a.items[j].label.clone()))
+                .collect();
+            Some((def, path, it.label.clone(), (it.view_from, it.view_to)))
+        })
+    };
+    let found2 = found.clone();
+    let go = move |target: String| {
+        spawn_local(async move {
+            if let Err(e) = ui::pick_select(session, rev, target).await {
+                ui::flash(&format!("Cannot open the node: {e}."));
+            }
+        });
+    };
+    let go2 = go.clone();
+    let kind = node_type.clone().unwrap_or(title);
+    let context = shared.map(|s| {
+        let n = s.instances;
+        format!(
+            "inside PROTO {} (shared, {} instance{})",
+            s.proto,
+            n,
+            if n == 1 { "" } else { "s" }
+        )
+    });
+    view! {
+        <div class="inspector-head" id="inspector-head">
+            {move || found().map(|(_, path, label, span)| {
+                let parent = path.last().cloned();
+                let none = parent.is_none();
+                let up_title = parent.as_ref().map(|(_, l)| format!("Select the parent node: {l}")).unwrap_or_else(|| "This node is at the top level".into());
+                let go = go.clone();
+                let go2 = go2.clone();
+                view! {
+                    <nav class="crumbs" id="inspector-path" aria-label="Node path">
+                        <button type="button" class="small secondary crumb-up" id="inspector-up"
+                            disabled=move || none || ui().revision.get() != rev
+                            title=up_title
+                            on:click={let parent = parent.clone(); move |_| if let Some((p, _)) = parent.clone() { go(p) }}>
+                            "↑ Parent"
+                        </button>
+                        <button type="button" class="small secondary" id="inspector-show-source"
+                            title="Show this node in the Source panel (selects its text; no edit)"
+                            disabled=move || ui().revision.get() != rev
+                            on:click=move |_| show_in_source(session, rev, span)>
+                            "Show in Source"
+                        </button>
+                        {path.into_iter().map(|(pid, l)| {
+                            let go = go2.clone();
+                            view! {
+                                <button type="button" class="crumb" data-item=pid.clone() title=format!("Select {l}")
+                                    disabled=move || ui().revision.get() != rev
+                                    on:click=move |_| go(pid.clone())>{l.clone()}</button>
+                                <span class="crumb-sep" aria-hidden="true">"›"</span>
+                            }
+                        }).collect_view()}
+                        <span class="visually-hidden" aria-current="true">{label}</span>
+                    </nav>
+                }
+            })}
+            <h3 id="inspector-title">
+                <span class="ty">{kind}</span>
+                {move || found2().and_then(|(def, _, _, _)| def).map(|d| view! {
+                    " "<span class="def" title="DEF name">{d}</span>
+                })}
+            </h3>
+            {context.map(|c| view! { <p class="inspector-context" id="inspector-context">{c}</p> })}
+        </div>
     }
 }
 
@@ -257,6 +517,54 @@ fn rows(rows: Vec<p::InspectorRow>, session: u64, rev: u64) -> impl IntoView {
             </tbody>
         </table>
     }
+}
+
+/// B1: the "Shared PROTO definition" indicator. Every change of a shared
+/// definition asks for confirmation (PR #146 review): there is no
+/// document-wide "allow" state.
+fn shared_banner(s: p::SharedProto, _session: u64) -> impl IntoView {
+    let proto = s.proto.clone();
+    let instances = s.instances;
+    let text = format!(
+        "Shared PROTO definition: this node is part of PROTO {}. It is used by {} instance(s) in this document; a change here changes every one of them.",
+        s.proto, instances
+    );
+    view! {
+        <div class="shared-proto" id="inspector-shared" role="note" data-proto=proto.clone()>
+            <p title=text><strong>"Shared definition"</strong>{format!(" · changes all {} instance{} of PROTO {}", instances, if instances == 1 { "" } else { "s" }, proto)}</p>
+            <p class="shared-ok" id="inspector-shared-ask">"Each change asks for confirmation."</p>
+        </div>
+    }
+}
+
+/// `#rrggbb` for three SFColor components (clamped for display only).
+fn color_hex(c: &[p::FieldComponent]) -> String {
+    let byte = |t: &str| -> u8 {
+        let v: f64 = t.trim().parse().unwrap_or(0.0);
+        (v.clamp(0.0, 1.0) * 255.0).round() as u8
+    };
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        byte(&c[0].text),
+        byte(&c[1].text),
+        byte(&c[2].text)
+    )
+}
+
+fn parse_hex(v: &str) -> Option<[f64; 3]> {
+    let h = v.strip_prefix('#')?;
+    if h.len() != 6 {
+        return None;
+    }
+    let b = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok().map(|x| x as f64 / 255.0);
+    Some([b(0)?, b(2)?, b(4)?])
+}
+
+/// A short VRML float for a 0..1 channel (3 decimals, no trailing zeros).
+fn color_text(x: f64) -> String {
+    let t = format!("{:.3}", (x * 1000.0).round() / 1000.0);
+    let t = t.trim_end_matches('0').trim_end_matches('.');
+    if t.is_empty() { "0".into() } else { t.to_string() }
 }
 
 fn input_id(field: u32, component: usize) -> String {
@@ -295,6 +603,7 @@ fn node_fields(n: p::NodeFields, session: u64, rev: u64) -> impl IntoView {
             </p>
         }
     });
+    let shared = n.shared.clone().map(|s| shared_banner(s, session));
     // VISUAL-4A: an Extrusion gets its own sections (authored values and
     // VRML97 defaults); the generic table lists only its other fields.
     let extrusion = n
@@ -307,22 +616,170 @@ fn node_fields(n: p::NodeFields, session: u64, rev: u64) -> impl IntoView {
         .into_iter()
         .filter(|f| !(is_x && crate::extrusion::is_extrusion_field(&f.name)))
         .collect();
+    // B2 (Spazz3D Texture page / Flux texture panel): an Appearance with
+    // no texture field offers "Add texture…" (choose an image, then ONE edit).
+    let node_type = n.node_type.clone().unwrap_or_default();
+    let add_texture = (node_type == "Appearance"
+        && n.editable
+        && !fields.iter().any(|f| f.name == "texture"))
+        .then(|| {
+            view! {
+                <p class="add-texture">
+                    <button type="button" class="small" id="inspector-add-texture"
+                        title="Choose an image in the document's folder and add texture ImageTexture { url \"…\" } (one edit, one undo step)"
+                        disabled=move || ui().revision.get() != rev
+                        on:click=move |_| {
+                            spawn_local(async move {
+                                if ui::add_texture().await {
+                                    ui::preview(false).await;
+                                }
+                            });
+                        }>"Add texture…"</button>
+                </p>
+            }
+        });
     let empty = (fields.is_empty() && !is_x).then(|| {
         view! { <p class="empty">"No explicitly authored fields (defaults are not listed)."</p> }
     });
     view! {
+        {shared}
         {banner}
         {extrusion}
         {empty}
+        {add_texture}
         <table class="fields editable">
             <tbody>
-            {fields.into_iter().map(|f| field_row(f, session, rev)).collect_view()}
+            {fields.into_iter().map(|f| field_row(f, &node_type, session, rev)).collect_view()}
             </tbody>
         </table>
     }
 }
 
-fn field_row(f: p::EditableField, session: u64, rev: u64) -> impl IntoView {
+fn string_id(field: u32, i: usize) -> String {
+    format!("fs-{field}-{i}")
+}
+
+/// B2: an MFString list editor. Each entry is edited, removed or (for an
+/// `ImageTexture.url`) replaced by a chosen image; a new entry is appended.
+/// Every action is ONE request naming the exact list shown; Rust encodes,
+/// proves and applies it as one undo step.
+fn string_list(
+    name: &str,
+    field: u32,
+    values: Vec<String>,
+    image: bool,
+    rev: u64,
+) -> impl IntoView {
+    let stale = move || ui().revision.get() != rev;
+    let send = {
+        let (name, values) = (name.to_string(), values.clone());
+        move |op: p::StringOp| {
+            let (name, values) = (name.clone(), values.clone());
+            spawn_local(async move {
+                if ui::edit_strings(field, name, values, vec![op]).await {
+                    ui::preview(false).await;
+                }
+            });
+        }
+    };
+    let choose = {
+        let send = send.clone();
+        move |op: fn(u32, String) -> p::StringOp, index: u32| {
+            let send = send.clone();
+            spawn_local(async move {
+                if let Some(url) = ui::choose_texture().await {
+                    send(op(index, url));
+                }
+            });
+        }
+    };
+    let n = values.len();
+    let rows = values
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let id = string_id(field, i);
+            let (s_enter, s_set, s_del) = (send.clone(), send.clone(), send.clone());
+            let (id_enter, id_set) = (id.clone(), id.clone());
+            let pick = image.then(|| {
+                let choose = choose.clone();
+                view! {
+                    <button type="button" class="small" id=format!("fs-{field}-{i}-choose")
+                        title="Choose an image in the document's folder (written as a relative url)"
+                        disabled=stale
+                        on:click=move |_| choose(|index, value| p::StringOp::Set { index, value }, i as u32)>
+                        "Choose image…"</button>
+                }
+            });
+            view! {
+                <li data-entry=i.to_string()>
+                    <input id=id class="text" type="text" spellcheck="false" prop:value=v.clone()
+                        aria-label=format!("{name} entry {}", i + 1)
+                        on:keydown=move |ev: web_sys::KeyboardEvent| {
+                            if ev.key() == "Enter" {
+                                ev.prevent_default();
+                                if let Some(inp) = crate::element_by_id::<web_sys::HtmlInputElement>(&id_enter) {
+                                    s_enter(p::StringOp::Set { index: i as u32, value: inp.value() });
+                                }
+                            }
+                        } />
+                    <button type="button" class="small" id=format!("fs-{field}-{i}-set") title="Apply this entry"
+                        disabled=stale
+                        on:click=move |_| {
+                            if let Some(inp) = crate::element_by_id::<web_sys::HtmlInputElement>(&id_set) {
+                                s_set(p::StringOp::Set { index: i as u32, value: inp.value() });
+                            }
+                        }>"Apply"</button>
+                    {pick}
+                    <button type="button" class="small" id=format!("fs-{field}-{i}-del") title="Remove this entry"
+                        disabled=stale
+                        on:click=move |_| s_del(p::StringOp::Delete { index: i as u32 })>"Remove"</button>
+                </li>
+            }
+        })
+        .collect_view();
+    let new_id = format!("fs-{field}-new");
+    let (s_add, s_enter, id_add, id_enter) = (send.clone(), send.clone(), new_id.clone(), new_id.clone());
+    let pick_new = image.then(|| {
+        let choose = choose.clone();
+        view! {
+            <button type="button" class="small" id=format!("fs-{field}-new-choose")
+                title="Choose an image in the document's folder and append it"
+                disabled=stale
+                on:click=move |_| choose(|index, value| p::StringOp::Insert { index, value }, n as u32)>
+                "Choose image…"</button>
+        }
+    });
+    view! {
+        <div class="strings" data-count=n.to_string()>
+            <ol class="string-list">{rows}</ol>
+            <div class="string-add">
+                <input id=new_id class="text" type="text" spellcheck="false" placeholder="new entry"
+                    aria-label=format!("{name}: new entry")
+                    on:keydown=move |ev: web_sys::KeyboardEvent| {
+                        if ev.key() == "Enter" {
+                            ev.prevent_default();
+                            if let Some(inp) = crate::element_by_id::<web_sys::HtmlInputElement>(&id_enter) {
+                                s_enter(p::StringOp::Insert { index: n as u32, value: inp.value() });
+                                inp.set_value("");
+                            }
+                        }
+                    } />
+                <button type="button" class="small" id=format!("fs-{field}-add") title="Append this entry"
+                    disabled=stale
+                    on:click=move |_| {
+                        if let Some(inp) = crate::element_by_id::<web_sys::HtmlInputElement>(&id_add) {
+                            s_add(p::StringOp::Insert { index: n as u32, value: inp.value() });
+                            inp.set_value("");
+                        }
+                    }>"Add"</button>
+                {pick_new}
+            </div>
+        </div>
+    }
+}
+
+fn field_row(f: p::EditableField, node_type: &str, session: u64, rev: u64) -> impl IntoView {
     let (from, to) = (f.view_from, f.view_to);
     let ty = f.field_type.clone().unwrap_or_else(|| "?".into());
     let title = [
@@ -337,6 +794,10 @@ fn field_row(f: p::EditableField, session: u64, rev: u64) -> impl IntoView {
     let value = if let (true, Some(list)) = (f.editable, f.list.clone()) {
         // VISUAL-4A: an editable MFVec2f / MFVec3f / MFRotation list.
         crate::extrusion::list_table(&f.name, f.index, &list, rev).into_any()
+    } else if let (true, Some(strings)) = (f.editable, f.strings.clone()) {
+        // B2: an editable MFString list (url, info, ...).
+        let image = node_type == "ImageTexture" && f.name == "url";
+        string_list(&f.name, f.index, strings.values, image, rev).into_any()
     } else if f.editable {
         let idx = f.index;
         let kind = f.kind.clone().unwrap_or_default();
@@ -378,8 +839,32 @@ fn field_row(f: p::EditableField, session: u64, rev: u64) -> impl IntoView {
             })
             .collect_view();
         let (name, kind2) = (f.name.clone(), kind.clone());
+        // B2 (Spazz3D/Flux material editing): an SFColor gets a color
+        // swatch. Picking a color fills the three components and applies
+        // them as ONE edit; Rust still validates every value.
+        let swatch = (f.field_type.as_deref() == Some("SFColor") && arity == 3).then(|| {
+            let hex = color_hex(&f.components);
+            let (name, kind) = (f.name.clone(), kind.clone());
+            view! {
+                <input type="color" class="swatch" id=format!("fe-color-{idx}")
+                    title="Pick a color (applies as one edit, one undo step)"
+                    prop:value=hex
+                    disabled=move || ui().revision.get() != rev
+                    on:change=move |ev| {
+                        let v = event_target_value(&ev);
+                        let Some(rgb) = parse_hex(&v) else { return };
+                        for (c, x) in rgb.iter().enumerate() {
+                            if let Some(inp) = crate::element_by_id::<web_sys::HtmlInputElement>(&input_id(idx, c)) {
+                                inp.set_value(&color_text(*x));
+                            }
+                        }
+                        submit(idx, name.clone(), kind.clone(), 3);
+                    }/>
+            }
+        });
         view! {
             <div class="controls">
+                {swatch}
                 {controls}
                 <button class="small" id=format!("fe-apply-{idx}")
                     disabled=move || ui().revision.get() != rev
@@ -388,10 +873,75 @@ fn field_row(f: p::EditableField, session: u64, rev: u64) -> impl IntoView {
         }
         .into_any()
     } else {
+        let open = f.node_item.clone().map(|id| {
+            let label = format!("Open {} ›", f.name);
+            view! {
+                <button class="small node-open" data-item=id.clone()
+                    title="Select this node in the Scene Tree and show its fields"
+                    on:click=move |_| {
+                        let id = id.clone();
+                        spawn_local(async move {
+                            if let Err(e) = ui::pick_select(session, rev, id).await {
+                                ui::flash(&format!("Cannot open the node: {e}."));
+                            }
+                        });
+                    }>{label}</button>
+            }
+        });
+        // B3: an MFNode value gets one "Open <Type> ›" per child node. The
+        // children are the Scene Tree items of THIS revision lying inside
+        // the field's value span, outermost only; each opens through the
+        // same `pick_select` path as an SFNode's button (exact item id).
+        let kids = if f.field_type.as_deref() == Some("MFNode") {
+            mf_children(session, rev, f.view_from, f.view_to)
+        } else {
+            Vec::new()
+        };
+        let kid_buttons = (!kids.is_empty()).then(|| {
+            view! {
+                <span class="mf-open">
+                {kids.into_iter().map(|(id, label)| {
+                    view! {
+                        <button class="small node-open" data-item=id.clone()
+                            on:click=move |_| {
+                                let id = id.clone();
+                                spawn_local(async move {
+                                    if let Err(e) = ui::pick_select(session, rev, id).await {
+                                        ui::flash(&format!("Cannot open the node: {e}."));
+                                    }
+                                });
+                            }>{format!("Open {label} ›")}</button>
+                    }
+                }).collect_view()}
+                </span>
+            }
+        });
+        // B3: one line per field. An SFNode value shows its node type (and
+        // DEF name); any long or multi-line value shows its first line, with
+        // the full text one click away. The reason id is shown in words; the
+        // id itself stays in the hover text.
+        let excerpt = f.value_excerpt.clone();
+        let summary = if f.node_item.is_some() || f.field_type.as_deref() == Some("SFNode") {
+            node_summary(&excerpt)
+        } else {
+            first_line(&excerpt)
+        };
+        let full = (summary != excerpt.trim()).then(|| {
+            view! {
+                <details class="value-full">
+                    <summary title="Show the full value as written in the source">"Show source"</summary>
+                    <code>{excerpt.clone()}</code>
+                </details>
+            }
+        });
+        let reason_title = format!("Why this field is read-only here ({})", f.reason);
         view! {
-            <div>
-                <code>{f.value_excerpt.clone()}</code>
-                <span class="reason" title="Why this field is read-only">{f.reason.clone()}</span>
+            <div class="ro-value">
+                {open}
+                {kid_buttons}
+                <code class="value-summary" title=excerpt.clone()>{summary}</code>
+                <span class="reason" data-reason=f.reason.clone() title=reason_title>{reason_words(&f.reason)}</span>
+                {full}
             </div>
         }
         .into_any()
@@ -538,10 +1088,71 @@ pub fn Viewport() -> impl IntoView {
                     disabled=move || !crate::command::enabled(CommandId::ToolScale)
                     on:click=move |_| crate::command::run(CommandId::ToolScale)>"Scale"</button>
                 </span>
+                <span class="sep" hidden=move || u.native.with(|s| s.native_shown())></span>
+                // B2-CAMERA: the camera controls (View menu → Camera). The
+                // camera is view state: no source change, no dirty flag, no
+                // undo step.
+                <span class="tool-group" role="group" aria-label="Camera" hidden=move || u.native.with(|s| s.native_shown())>
+                <button id="btn-fit" class="secondary small"
+                    data-command=CommandId::ViewFitAll.key() title=crate::command::title(CommandId::ViewFitAll)
+                    disabled=move || !crate::command::enabled(CommandId::ViewFitAll)
+                    on:click=move |_| crate::command::run(CommandId::ViewFitAll)>"Fit"</button>
+                <select id="sel-view" class="small" aria-label="Standard view"
+                    title="Front, Back, Left, Right, Top or Bottom view of the whole scene, or Reset View (camera only)"
+                    disabled=move || !crate::command::enabled(CommandId::ViewFront)
+                    on:change=move |ev| {
+                        let v = event_target_value(&ev);
+                        if let Some(sel) = ev.target().and_then(|t| wasm_bindgen::JsCast::dyn_into::<web_sys::HtmlSelectElement>(t).ok()) {
+                            sel.set_value("");
+                        }
+                        if let Some(id) = CommandId::from_key(&v) {
+                            crate::command::run(id);
+                        }
+                    }>
+                    <option value="" selected>"View…"</option>
+                    {[CommandId::ViewFront, CommandId::ViewBack, CommandId::ViewLeft, CommandId::ViewRight,
+                      CommandId::ViewTop, CommandId::ViewBottom, CommandId::ViewResetCamera]
+                        .into_iter()
+                        .map(|c| view! { <option value=c.key() title=c.spec().hint>{c.spec().label}</option> })
+                        .collect_view()}
+                </select>
+                <select id="sel-viewpoint" class="small" aria-label="Viewpoint"
+                    title="Bind an authored Viewpoint (its description, else its DEF name). Camera only."
+                    disabled=move || !crate::command::enabled(CommandId::ViewFitAll)
+                    on:focus=move |_| crate::camera::refresh_viewpoints()
+                    on:pointerdown=move |_| crate::camera::refresh_viewpoints()
+                    on:change=move |ev| {
+                        if let Ok(i) = event_target_value(&ev).parse::<usize>() {
+                            crate::camera::choose_viewpoint(i);
+                        }
+                    }>
+                    <option value="" prop:selected=move || u.viewpoints.with(|v| !v.items.iter().any(|i| i.bound))>
+                        {move || u.viewpoints.with(|v| if v.items.is_empty() { "No viewpoints" } else { "Viewpoints…" })}
+                    </option>
+                    {move || u.viewpoints.with(|v| v.items.iter().enumerate().map(|(i, it)| {
+                        let label = crate::camera::viewpoint_label(it, i);
+                        let bound = it.bound;
+                        view! { <option value=i.to_string() prop:selected=bound>{label}</option> }
+                    }).collect_view())}
+                </select>
+                </span>
             </div>
             <div class="viewport-stage" hidden=move || u.native.with(|s| s.native_shown())>
                 <x3d-canvas id="viewport" class:picking=move || u.pick_mode.get() || u.move_mode.get() || u.rotate_mode.get() || u.scale_mode.get() splashScreen="false" contextMenu="false" notifications="false"
                     timings="false" cache="false"></x3d-canvas>
+                // B2: the selection outline (view state only), under the
+                // gizmo. Drawn from the renderer's camera by `highlight.rs`;
+                // it never takes pointer input.
+                <svg id="selection-outline" class="selection-outline" data-state="hidden" aria-hidden="true">
+                    <path id="hl-halo" class="hl-halo"></path>
+                    <path id="hl-line" class="hl-line"></path>
+                </svg>
+                // B2: why the selection has no outline. Floats over the
+                // canvas so it never changes the viewport's size.
+                <div class="highlight-status" id="highlight-status" role="status" aria-live="polite"
+                    hidden=move || u.highlight_message.with(|m| m.is_none())>
+                    {move || u.highlight_message.get().unwrap_or_default()}
+                </div>
                 // The gizmo overlay. Drawn from the renderer's camera by
                 // `gizmo.rs`; only the handles take pointer input.
                 <svg id="gizmo" class="gizmo" data-state="hidden" data-tool="move" role="group" aria-label="Manipulation handles">
@@ -644,6 +1255,29 @@ pub fn reveal_tree_item(id: &str) {
     if top < st || top + h > st + vh {
         ul.set_scroll_top((top - vh / 3).max(0));
     }
+    // B3: a deep item's name is on screen too (the tree scrolls sideways).
+    let left = li.offset_left() - ul.offset_left();
+    let pad = li
+        .query_selector(".label")
+        .ok()
+        .flatten()
+        .and_then(|l| l.dyn_into::<web_sys::HtmlElement>().ok())
+        .map_or(left, |l| l.offset_left() - ul.offset_left());
+    let (sl, vw) = (ul.scroll_left(), ul.client_width());
+    if pad < sl || pad > sl + vw / 2 {
+        ul.set_scroll_left((pad - 24).max(0));
+    }
+}
+
+/// B3: reveal now, and again once the tree has rendered this revision's
+/// items (a viewport pick may have just brought the tree up to date).
+pub fn reveal_tree_item_soon(id: &str) {
+    reveal_tree_item(id);
+    let id = id.to_string();
+    spawn_local(async move {
+        crate::ipc::sleep(60).await;
+        reveal_tree_item(&id);
+    });
 }
 
 /// UI-MENU-1: the Select tool toggle (toolbar button, Tools menu). Moved
@@ -680,5 +1314,50 @@ pub fn toggle_gizmo(tool: wrlforge_desktop_protocol::gizmo::Tool) {
         crate::gizmo::start();
     } else {
         u.gizmo_message.set(None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ancestors, kind_glyph};
+
+    #[test]
+    fn ancestors_walk_up_a_depth_first_list() {
+        // PROTO P { Group { Transform { Shape { Appearance { Material } } } } }, then a sibling.
+        let d = [1, 2, 3, 4, 5, 6, 4, 1];
+        assert_eq!(ancestors(&d, 5), vec![0, 1, 2, 3, 4]);
+        assert_eq!(ancestors(&d, 6), vec![0, 1, 2]);
+        assert!(ancestors(&d, 0).is_empty());
+        assert!(ancestors(&d, 7).is_empty());
+        assert!(ancestors(&d, 99).is_empty());
+    }
+
+    #[test]
+    fn sfnode_values_summarize_to_one_line() {
+        use super::{first_line, node_summary, reason_words};
+        let x = "IndexedFaceSet {creaseAngle 3\n ccw FALSE coord Coordinate { point IS point } }";
+        assert_eq!(node_summary(x), "IndexedFaceSet");
+        assert_eq!(node_summary("DEF Mat Material { }"), "Material Mat");
+        assert_eq!(node_summary("Appearance{ material NULL }"), "Appearance");
+        assert_eq!(node_summary("USE Wheel"), "USE Wheel");
+        assert_eq!(node_summary("NULL"), "NULL");
+        assert_eq!(first_line("a b\nc"), "a b");
+        assert_eq!(reason_words("field-type-not-editable-in-wd2b"), "edit in Source");
+    }
+
+    #[test]
+    fn kind_glyph_is_one_character_for_every_kind() {
+        let kinds = [
+            "Node",
+            "Use",
+            "Proto",
+            "ExternProto",
+            "Route",
+            "Document",
+            "?",
+        ];
+        for k in kinds {
+            assert_eq!(kind_glyph(k).chars().count(), 1, "{k}");
+        }
     }
 }

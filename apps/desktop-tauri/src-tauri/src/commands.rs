@@ -29,16 +29,66 @@ pub fn startup_document(startup: State<'_, Startup>) -> Option<p::OpenOutcome> {
     startup.0.lock().ok().and_then(|mut s| s.take())
 }
 
+/// B1: the explicit confirmation before EVERY edit of a shared PROTO
+/// definition (PR #146 review: the UI remembers no earlier answer).
 #[tauri::command]
-pub async fn open_document(app: AppHandle) -> p::OpenOutcome {
+pub async fn confirm_shared_edit(app: AppHandle, proto: String, instances: u32) -> bool {
+    if let Some(answer) = app.state::<SmokeState>().shared_override() {
+        return answer;
+    }
+    app.dialog()
+        .message(format!(
+            "This node is part of PROTO {proto}, a shared definition used by {instances} instance(s) in this document.\n\nChanging it changes every instance. Edit the shared definition?"
+        ))
+        .title("Edit shared PROTO definition")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Edit shared definition".into(),
+            "Cancel".into(),
+        ))
+        .blocking_show()
+}
+
+/// D1: where a file dialog starts. The document's own folder, else the
+/// user's home -- never the process working directory, which for the
+/// AppImage is its read-only mount (`/tmp/.mount_*`).
+fn dialog_dir(app: &AppHandle, session: Option<p::SessionId>) -> Option<std::path::PathBuf> {
+    let appdir = std::env::var_os("APPDIR").map(std::path::PathBuf::from);
+    start_dir(
+        session.and_then(|s| app.state::<Service>().folder(s)),
+        app.path().home_dir().ok(),
+        appdir.as_deref(),
+    )
+}
+
+/// The pure rule of [`dialog_dir`]: the document folder when it is an
+/// existing directory outside the AppImage mount, else home under the same
+/// test, else none (the dialog's own default).
+fn start_dir(
+    doc_folder: Option<std::path::PathBuf>,
+    home: Option<std::path::PathBuf>,
+    appdir: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
+    let usable = |d: &std::path::Path| d.is_dir() && !appdir.is_some_and(|a| d.starts_with(a));
+    doc_folder
+        .filter(|d| usable(d))
+        .or_else(|| home.filter(|d| usable(d)))
+}
+
+/// `session`: the active document, if any. Its folder (resolved by Rust
+/// from the session, never a WebView path) is where the dialog starts.
+#[tauri::command]
+pub async fn open_document(app: AppHandle, session: Option<p::SessionId>) -> p::OpenOutcome {
     // `--smoke-create` only: the launch argument's file stands in for the
     // dialog (Rust-chosen, never a WebView path).
     if let Some(path) = app.state::<SmokeState>().open_override() {
         return app.state::<Service>().open_path(&path);
     }
-    let picked = app
-        .dialog()
-        .file()
+    let mut dialog = app.dialog().file();
+    if let Some(dir) = dialog_dir(&app, session) {
+        dialog = dialog.set_directory(dir);
+    }
+    let picked = dialog
         .set_title("Open VRML97 world or item")
         .add_filter("VRML97 (.wrl, .wrz, gzip)", FILTER_EXT)
         .blocking_pick_file();
@@ -101,6 +151,16 @@ pub fn doc_create(
     request: p::CreateRequest,
 ) -> Result<p::CreateOutcome, String> {
     svc.create(&request)
+}
+
+/// B2: Delete / Duplicate the selected node. Synchronous for the same
+/// ordering reason as `doc_edit`.
+#[tauri::command]
+pub fn doc_structure_edit(
+    svc: State<'_, Service>,
+    request: p::StructureEditRequest,
+) -> Result<p::StructureEditOutcome, String> {
+    svc.structure_edit(&request)
 }
 
 #[tauri::command]
@@ -166,9 +226,11 @@ pub async fn doc_save_as(app: AppHandle, session: p::SessionId) -> p::SaveOutcom
             None => p::SaveOutcome::Canceled,
         };
     }
-    let picked = app
-        .dialog()
-        .file()
+    let mut dialog = app.dialog().file();
+    if let Some(dir) = dialog_dir(&app, Some(session)) {
+        dialog = dialog.set_directory(dir);
+    }
+    let picked = dialog
         .set_title("Save VRML97 file as")
         .set_file_name(suggested)
         .add_filter("VRML97 (.wrl, .wrz, gzip)", FILTER_EXT)
@@ -248,6 +310,75 @@ pub fn doc_add_field(
     svc.add_field(&request)
 }
 
+/// B2: an MFString edit (`url`, `info`, ...). Synchronous like
+/// `doc_edit_field`.
+#[tauri::command]
+pub fn doc_edit_strings(
+    svc: State<'_, Service>,
+    request: p::StringEditRequest,
+) -> Result<p::FieldEditOutcome, String> {
+    svc.edit_strings(&request)
+}
+
+/// B2: add an ImageTexture to an Appearance that has no texture.
+#[tauri::command]
+pub fn doc_add_texture(
+    svc: State<'_, Service>,
+    request: p::AddTextureRequest,
+) -> Result<p::FieldEditOutcome, String> {
+    svc.add_texture(&request)
+}
+
+const IMAGE_FILTER_EXT: &[&str] = &["png", "jpg", "jpeg", "gif", "PNG", "JPG", "JPEG", "GIF"];
+
+/// B2: "Choose image…". A native dialog run by Rust, starting in the
+/// document's folder. The chosen file must lie in that folder tree; the
+/// reply is its RELATIVE url (never a path). Nothing is written or copied
+/// here: the UI sends the url as an ordinary, re-proven edit.
+#[tauri::command]
+pub async fn doc_choose_texture(app: AppHandle, session: p::SessionId) -> p::TextureChoice {
+    let Some(folder) = app.state::<Service>().folder(session) else {
+        return p::TextureChoice::Refused {
+            message: "Save the document first: a texture url is relative to the document's folder.".into(),
+        };
+    };
+    let picked = match std::env::var_os("WRLFORGE_SMOKE_TEXTURE_PICK") {
+        // Visual QA only, and only inside the harness's private Xvfb
+        // (`WRLFORGE_SMOKE_XVFB=1`): no one is there to click the GTK
+        // dialog, so Rust reads the stand-in path from its own environment.
+        // The WebView still names no path, and the folder rule below holds.
+        Some(path) if crate::smoke::real_pointer_available() => Some(std::path::PathBuf::from(path)),
+        _ => {
+            let mut dialog = app.dialog().file();
+            if let Some(dir) = dialog_dir(&app, Some(session)) {
+                dialog = dialog.set_directory(dir);
+            }
+            match dialog
+                .set_title("Choose texture image")
+                .add_filter("Images (.png, .jpg, .jpeg, .gif)", IMAGE_FILTER_EXT)
+                .blocking_pick_file()
+            {
+                None => return p::TextureChoice::Canceled,
+                Some(fp) => match fp.into_path() {
+                    Ok(path) => Some(path),
+                    Err(e) => {
+                        return p::TextureChoice::Refused {
+                            message: format!("unsupported dialog result: {e}"),
+                        }
+                    }
+                },
+            }
+        }
+    };
+    let Some(path) = picked else {
+        return p::TextureChoice::Canceled;
+    };
+    match crate::service::texture_url(&folder, &path) {
+        Ok(url) => p::TextureChoice::Chosen { url },
+        Err(message) => p::TextureChoice::Refused { message },
+    }
+}
+
 /// VISUAL-3A: whether the gizmo may move an item. Read-only; async like
 /// `doc_inspect` because it parses.
 #[tauri::command]
@@ -266,6 +397,24 @@ pub async fn doc_translate_prove(
     request: p::TranslateProveRequest,
 ) -> Result<p::TranslateProveOutcome, String> {
     svc.translate_prove(&request)
+}
+
+/// B2 selection highlight: the preview span to locate an item by. Read-only.
+#[tauri::command]
+pub async fn doc_highlight_target(
+    svc: State<'_, Service>,
+    request: p::HighlightTargetRequest,
+) -> Result<p::HighlightTargetOutcome, String> {
+    svc.highlight_target(&request)
+}
+
+/// B2 selection highlight: prove the located runtime node. Read-only.
+#[tauri::command]
+pub async fn doc_highlight_prove(
+    svc: State<'_, Service>,
+    request: p::HighlightProveRequest,
+) -> Result<p::HighlightProveOutcome, String> {
+    svc.highlight_prove(&request)
 }
 
 /// VISUAL-3A1: carry a preview span (the bound Viewpoint) to the current
@@ -393,6 +542,13 @@ pub fn smoke_open_fixture(
             message: "no picking smoke run is armed".into(),
         },
     }
+}
+
+/// `--smoke-move` only: queue answers for the next shared-PROTO
+/// confirmations; returns how many were asked so far.
+#[tauri::command]
+pub fn smoke_shared_consent(smoke: State<'_, SmokeState>, answers: Vec<bool>) -> Result<u32, String> {
+    smoke.shared_script(answers)
 }
 
 /// `--smoke-pick` only: a REAL X pointer click at client CSS px (`x`, `y`)
@@ -729,3 +885,32 @@ pub fn confirm_close(window: tauri::Window, dirty: Vec<(p::SessionId, String)>) 
     gate.asking.store(false, Ordering::SeqCst);
 }
 
+#[cfg(test)]
+mod tests {
+    use super::start_dir;
+
+    /// PR #146 review: Open starts in the active document's folder; an
+    /// unsaved document (no folder), no document, a missing folder or a
+    /// folder inside the AppImage mount fall back to home.
+    #[test]
+    fn open_dialog_starts_in_the_document_folder_else_home() {
+        let base = std::env::temp_dir().join(format!("wrlforge-start-dir-{}", std::process::id()));
+        let (doc, home, mount) = (base.join("doc"), base.join("home"), base.join("mount"));
+        for d in [&doc, &home, &mount.join("usr")] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let m = Some(mount.as_path());
+        // Saved document: its folder.
+        assert_eq!(start_dir(Some(doc.clone()), Some(home.clone()), m), Some(doc.clone()));
+        // Unsaved document / no document: home.
+        assert_eq!(start_dir(None, Some(home.clone()), m), Some(home.clone()));
+        // A folder that no longer exists: home.
+        assert_eq!(start_dir(Some(base.join("gone")), Some(home.clone()), m), Some(home.clone()));
+        // A folder inside the AppImage mount: home.
+        assert_eq!(start_dir(Some(mount.join("usr")), Some(home.clone()), m), Some(home.clone()));
+        // No usable folder at all: the dialog's own default.
+        assert_eq!(start_dir(None, Some(mount.join("usr")), m), None);
+        assert_eq!(start_dir(None, None, None), None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}

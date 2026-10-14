@@ -14,9 +14,10 @@ use wrlforge_desktop_protocol::command::{
     self as c, Availability, CommandContext, CommandId, FocusKind,
 };
 use wrlforge_desktop_protocol::gizmo::Tool;
+use wrlforge_desktop_protocol as p;
 
 use crate::ui::{self, ui};
-use crate::{about, clipboard, dock, editor, extrusion, gizmo, menu, panels, theme};
+use crate::{about, clipboard, dock, editor, extrusion, findbar, gizmo, menu, panels, theme};
 
 /// The current state, read reactively (button `disabled` follows it). The
 /// focus facts are those of the control that had the focus before a menu
@@ -39,6 +40,7 @@ pub fn context() -> CommandContext {
         text_selected,
         native_viewport: u.native.with(|s| s.native_shown()),
         outline_ready: outline_button().is_some(),
+        node_selected: u.selected.with(|s| s.as_ref().is_some_and(|s| s.id.starts_with("node-"))),
     }
 }
 
@@ -54,6 +56,9 @@ fn context_untracked() -> CommandContext {
         text_selected,
         native_viewport: u.native.with_untracked(|s| s.native_shown()),
         outline_ready: outline_button().is_some(),
+        node_selected: u
+            .selected
+            .with_untracked(|s| s.as_ref().is_some_and(|s| s.id.starts_with("node-"))),
     }
 }
 
@@ -167,6 +172,17 @@ pub fn run(id: CommandId) {
         }
         CommandId::ViewLivePreview => ui().preview_enabled.update(|v| *v = !*v),
         CommandId::ViewUpdatePreview => spawn_local(ui::preview(true)),
+        // B2-CAMERA: the renderer's camera only (no source, dirty or undo).
+        CommandId::ViewFitAll => crate::camera::fit(),
+        CommandId::ViewFront
+        | CommandId::ViewBack
+        | CommandId::ViewLeft
+        | CommandId::ViewRight
+        | CommandId::ViewTop
+        | CommandId::ViewBottom => {
+            crate::camera::standard(id.standard_view().expect("standard view command"))
+        }
+        CommandId::ViewResetCamera => crate::camera::reset(),
         CommandId::CreateBox
         | CommandId::CreateSphere
         | CommandId::CreateCylinder
@@ -184,13 +200,20 @@ pub fn run(id: CommandId) {
                 b.click();
             }
         }
+        // B2: Rust plans, proves and applies; one undo step.
+        CommandId::EditDeleteNode => spawn_local(ui::structure_edit(
+            p::StructureOp::Delete,
+        )),
+        CommandId::EditDuplicateNode => spawn_local(ui::structure_edit(
+            p::StructureOp::Duplicate,
+        )),
+        // B2: the Source panel's bar (UI only; replacements go through
+        // the editor's doc_edit path).
+        CommandId::EditFind => findbar::open(findbar::Mode::Find),
+        CommandId::EditReplace => findbar::open(findbar::Mode::Replace),
+        CommandId::EditGoToLine => findbar::open(findbar::Mode::GoTo),
         // Planned: refused above, never reached.
-        CommandId::EditFind
-        | CommandId::EditReplace
-        | CommandId::EditGoToLine
-        | CommandId::EditDeleteNode
-        | CommandId::EditDuplicateNode
-        | CommandId::ViewZoomIn
+        CommandId::ViewZoomIn
         | CommandId::ViewZoomOut
         | CommandId::ViewZoomReset
         | CommandId::WorldMallValidate
@@ -213,6 +236,10 @@ const FIELD_SAFE: &[CommandId] = &[
     CommandId::FileSave,
     CommandId::FileSaveAs,
     CommandId::AppQuit,
+    // B2: they open the Source bar; the field's text is untouched.
+    CommandId::EditFind,
+    CommandId::EditReplace,
+    CommandId::EditGoToLine,
 ];
 
 /// UI-MENU-1: why a key press must not run an application shortcut.
@@ -247,6 +274,19 @@ pub fn modal_or_drag() -> Option<&'static str> {
     None
 }
 
+/// B2-CAMERA: the focus is inside the 3D Viewport pane (its canvas or a
+/// toolbar button), not in a text field, list or check box there.
+fn viewport_focused() -> bool {
+    let Some(el) = active_element() else {
+        return false;
+    };
+    let tag = el.tag_name().to_ascii_uppercase();
+    if matches!(tag.as_str(), "INPUT" | "SELECT" | "TEXTAREA") {
+        return false;
+    }
+    el.closest("section.viewport").ok().flatten().is_some()
+}
+
 fn active_element() -> Option<web_sys::Element> {
     web_sys::window()?.document()?.active_element()
 }
@@ -262,8 +302,16 @@ pub fn on_window_keydown(ev: web_sys::KeyboardEvent) {
     if shortcut_blocked(&ev).is_some() {
         return;
     }
-    let Some(id) = c::from_shortcut(&ev.key(), ev.ctrl_key() || ev.meta_key(), ev.shift_key())
-    else {
+    let primary = ev.ctrl_key() || ev.meta_key();
+    let Some(id) = c::from_shortcut(&ev.key(), primary, ev.shift_key()) else {
+        // B2-CAMERA: an unmodified viewport key (F / Home) while the 3D
+        // Viewport has the focus. Never in the menu bar or a form control.
+        if let Some(id) = c::from_viewport_key(&ev.key(), primary || ev.shift_key()) {
+            if !menu::bar_has_focus() && !menu::is_open() && viewport_focused() {
+                ev.prevent_default();
+                run(id);
+            }
+        }
         return;
     };
     let in_menu = menu::bar_has_focus() || menu::is_open();
@@ -272,7 +320,15 @@ pub fn on_window_keydown(ev: web_sys::KeyboardEvent) {
     } else {
         active_element()
     };
-    let field = clipboard::focus_kind(target) == FocusKind::TextField;
+    let kind = clipboard::focus_kind(target);
+    let field = kind == FocusKind::TextField;
+    // B2: node structure commands never fire from a text control: Ctrl+D
+    // while typing in Source must not duplicate the selected node.
+    if kind != FocusKind::Other
+        && matches!(id, CommandId::EditDuplicateNode | CommandId::EditDeleteNode)
+    {
+        return;
+    }
     if field && !FIELD_SAFE.contains(&id) {
         return;
     }

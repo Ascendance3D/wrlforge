@@ -738,7 +738,7 @@ mod tests {
             assert_eq!(l.layout, Layout::default_layout(), "{text}");
             let n = l.notice.unwrap_or_default();
             assert!(n.contains(word), "{text}: {n}");
-            assert!(n.contains("Source layout"), "{n}");
+            assert!(n.contains(&format!("{} layout", PresetId::DEFAULT.label())), "{n}");
         }
         // Unknown panels are left out; the rest of the layout is kept.
         let unknown = ok.replace("panel.diagnostics", "panel.future");

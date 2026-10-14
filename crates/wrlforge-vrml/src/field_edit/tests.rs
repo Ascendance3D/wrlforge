@@ -40,6 +40,7 @@ fn plan_nth(src: &str, ty: &str, field: &str, components: Vec<Input>, nth: usize
     plan_field_edit(
         src,
         &Request {
+            confirm_shared: false,
             node_from: span.0,
             node_to: span.1,
             field_index: field_index(src, span, field),
@@ -279,12 +280,13 @@ fn identical_siblings_nested_and_def_nodes_edit_only_the_target() {
 
 #[test]
 fn proto_scope_use_and_unsupported_types_refuse() {
-    // Stricter than JS: no WD1.5 scope graph in Rust yet.
+    // B1: a PROTO body node is the shared definition. Without consent the
+    // planner refuses; the interface default is never editable.
     let src =
         format!("{H}PROTO P [ field SFFloat r 1 ] {{ Sphere {{ radius 2 }} }}\nP {{ r 3 }}\n");
     assert_eq!(
         refused(plan(&src, "Sphere", "radius", text(&["4"]))),
-        reason::NODE_IN_PROTO_SCOPE
+        reason::SHARED_DEFINITION_UNCONFIRMED
     );
     let span = node_span(&src, "P", 0);
     assert_eq!(
@@ -344,6 +346,7 @@ fn use_route_and_unknown_spans_are_not_node_instances() {
     let r = plan_field_edit(
         &src,
         &Request {
+            confirm_shared: false,
             node_from: u,
             node_to: u + 5,
             field_index: 0,
@@ -472,6 +475,7 @@ fn identity_reasons_are_span_exact() {
     let src = format!("{H}Transform {{ translation 0 0 0 }}\n");
     let (f, t) = node_span(&src, "Transform", 0);
     let req = |from, to| Request {
+        confirm_shared: false,
         node_from: from,
         node_to: to,
         field_index: 0,
@@ -498,4 +502,112 @@ fn identity_reasons_are_span_exact() {
         refused(plan_field_edit(&src, &wrong_index)),
         reason::FIELD_NOT_PRESENT
     );
+}
+
+// ---- B1: PROTO body = shared definition ------------------------------------
+
+fn plan_shared(src: &str, ty: &str, nth: usize, field: &str, v: &[&str]) -> Plan {
+    let span = node_span(src, ty, nth);
+    plan_field_edit(
+        src,
+        &Request {
+            confirm_shared: true,
+            node_from: span.0,
+            node_to: span.1,
+            field_index: field_index(src, span, field),
+            field_name: field.into(),
+            components: text(v),
+        },
+    )
+}
+
+#[test]
+fn proto_body_edit_with_consent_changes_only_the_definition_token() {
+    let src = format!(
+        "{H}PROTO Car [] {{\n  # body comment\r\n  Transform {{ children Shape {{ appearance Appearance {{ material Material {{ diffuseColor 0.8 0.1 0.1 }} }} geometry Box {{ size 2 1 4 }} }} }}\n}}\nCar {{ }}\nTransform {{ translation 5 0 0 children Car {{ }} }}\n"
+    );
+    let span = node_span(&src, "Material", 0);
+    let nf = inspect_node_fields(&parse(&src), &src, span.0, span.1);
+    assert!(nf.editable, "{}", nf.reason);
+    let shared = nf.shared.expect("a PROTO body node is a shared definition");
+    assert_eq!(shared.proto, "Car");
+    assert_eq!(shared.instances, 2);
+    assert!(!shared.name_ambiguous);
+    let (edits, new) = ready(
+        plan_shared(&src, "Material", 0, "diffuseColor", &["0.1", "0.1", "0.8"]),
+        &src,
+    );
+    assert_eq!(edits.len(), 2, "only the two changed components");
+    assert!(new.contains("diffuseColor 0.1 0.1 0.8"));
+    assert!(new.contains("# body comment\r\n"), "comments and CRLF kept");
+    assert_eq!(new.len(), src.len());
+    // Box size too (a second node in the same body).
+    let (_, new) = ready(plan_shared(&src, "Box", 0, "size", &["3", "1", "4"]), &src);
+    assert!(new.contains("Box { size 3 1 4 }"));
+    // Top-level nodes report no shared definition.
+    let span = node_span(&src, "Transform", 1);
+    let nf = inspect_node_fields(&parse(&src), &src, span.0, span.1);
+    assert!(nf.shared.is_none());
+}
+
+#[test]
+fn proto_scopes_that_are_not_a_plain_body_stay_refused() {
+    // Interface default.
+    let src = format!("{H}PROTO P [ field SFNode n Box {{ size 1 1 1 }} ] {{ Group {{}} }}\n");
+    assert_eq!(
+        refused(plan_shared(&src, "Box", 0, "size", &["2", "2", "2"])),
+        reason::NODE_IN_PROTO_SCOPE
+    );
+    // EXTERNPROTO never has a body here; a Script interface default inside a
+    // body is an interface scope, not the body.
+    let src = format!("{H}PROTO P [] {{ Script {{ field SFNode s Box {{ size 1 1 1 }} }} }}\n");
+    assert_eq!(
+        refused(plan_shared(&src, "Box", 0, "size", &["2", "2", "2"])),
+        reason::NODE_IN_PROTO_SCOPE
+    );
+    // The same PROTO name declared twice: which body the scene uses is not
+    // proven, so neither is editable.
+    let src = format!(
+        "{H}PROTO P [] {{ Box {{ size 1 1 1 }} }}\nPROTO P [] {{ Box {{ size 2 2 2 }} }}\nP {{}}\n"
+    );
+    for nth in 0..2 {
+        assert_eq!(
+            refused(plan_shared(&src, "Box", nth, "size", &["3", "3", "3"])),
+            reason::PROTO_NAME_AMBIGUOUS
+        );
+    }
+    // A field bound with IS takes the instance's value: not editable here.
+    let src = format!("{H}PROTO P [ field SFVec3f s 1 1 1 ] {{ Box {{ size IS s }} }}\nP {{}}\n");
+    let span = node_span(&src, "Box", 0);
+    let nf = inspect_node_fields(&parse(&src), &src, span.0, span.1);
+    assert!(nf.shared.is_some());
+    assert!(nf.fields.iter().all(|f| !f.editable));
+    // A stale span (not a node any more) is refused, never re-targeted.
+    let src = format!("{H}PROTO P [] {{ Box {{ size 1 1 1 }} }}\nP {{}}\n");
+    let span = node_span(&src, "Box", 0);
+    let r = plan_field_edit(
+        &src,
+        &Request {
+            confirm_shared: true,
+            node_from: span.0 + 1,
+            node_to: span.1,
+            field_index: 0,
+            field_name: "size".into(),
+            components: text(&["2", "2", "2"]),
+        },
+    );
+    assert_eq!(refused(r), reason::NODE_NOT_FOUND);
+}
+
+#[test]
+fn nested_proto_body_names_the_innermost_definition() {
+    let src = format!(
+        "{H}PROTO Outer [] {{ PROTO Inner [] {{ Sphere {{ radius 1 }} }} Inner {{}} }}\nOuter {{}}\n"
+    );
+    let span = node_span(&src, "Sphere", 0);
+    let nf = inspect_node_fields(&parse(&src), &src, span.0, span.1);
+    let shared = nf.shared.expect("shared");
+    assert_eq!((shared.proto.as_str(), shared.instances), ("Inner", 1));
+    let (_, new) = ready(plan_shared(&src, "Sphere", 0, "radius", &["2"]), &src);
+    assert!(new.contains("Sphere { radius 2 }"));
 }

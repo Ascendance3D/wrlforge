@@ -38,6 +38,13 @@ fn shortcuts_match_the_pre_registry_handler() {
         ("o", true, Some(FileOpen)),
         ("n", false, Some(FileNewWorld)),
         ("n", true, Some(FileNewWorld)),
+        // B2: Find / Replace / Go to Line.
+        ("f", false, Some(EditFind)),
+        ("h", false, Some(EditReplace)),
+        ("g", false, Some(EditGoToLine)),
+        ("f", true, None),
+        ("h", true, None),
+        ("g", true, None),
         ("w", false, None),
         ("a", false, None),
         ("c", false, None),
@@ -316,6 +323,7 @@ fn planned_commands_never_run_in_any_state() {
         text_selected: true,
         native_viewport: false,
         outline_ready: true,
+        node_selected: true,
     };
     let planned: Vec<_> = COMMANDS
         .iter()
@@ -325,11 +333,6 @@ fn planned_commands_never_run_in_any_state() {
     assert_eq!(
         planned,
         [
-            "edit.find",
-            "edit.replace",
-            "edit.goToLine",
-            "edit.deleteNode",
-            "edit.duplicateNode",
             "view.zoomIn",
             "view.zoomOut",
             "view.zoomReset",
@@ -399,6 +402,36 @@ fn create_and_tool_commands_map_to_the_existing_actions() {
 }
 
 #[test]
+fn delete_and_duplicate_need_a_selected_node() {
+    let none = CommandContext::default();
+    let doc = CommandContext {
+        has_document: true,
+        ..Default::default()
+    };
+    let sel = CommandContext {
+        has_document: true,
+        node_selected: true,
+        ..Default::default()
+    };
+    for id in [CommandId::EditDeleteNode, CommandId::EditDuplicateNode] {
+        let s = id.spec();
+        assert_eq!(s.action, Action::Backend(&["doc_structure_edit"]));
+        assert!(s.mutates_document);
+        assert_eq!(id.availability(none), Availability::Disabled(NO_DOCUMENT));
+        assert_eq!(id.availability(doc), Availability::Disabled(NEEDS_NODE));
+        assert_eq!(id.refusal(doc), Some(NEEDS_NODE));
+        assert_eq!(id.availability(sel), Availability::Enabled);
+        assert_eq!(id.refusal(sel), None);
+    }
+    assert_eq!(
+        from_shortcut("d", true, false),
+        Some(CommandId::EditDuplicateNode)
+    );
+    assert_eq!(from_shortcut("d", true, true), None);
+    assert!(CommandId::EditDeleteNode.spec().shortcuts.is_empty());
+}
+
+#[test]
 fn quit_uses_the_window_close_gate_and_ctrl_q() {
     let s = CommandId::AppQuit.spec();
     assert_eq!(s.action, Action::Backend(&["app_quit"]));
@@ -409,6 +442,31 @@ fn quit_uses_the_window_close_gate_and_ctrl_q() {
     for id in MAC_APP_MENU {
         assert!(matches!(id, CommandId::HelpAbout | CommandId::AppQuit));
     }
+}
+
+/// B2: Find / Replace / Go to Line open a UI bar; the bar's replacements go
+/// through the editor's doc_edit path, never a registry backend command.
+#[test]
+fn find_replace_go_to_line_are_ui_commands_needing_a_document() {
+    use CommandId::*;
+    let none = CommandContext::default();
+    let doc = CommandContext {
+        has_document: true,
+        ..CommandContext::default()
+    };
+    for (id, k) in [(EditFind, "f"), (EditReplace, "h"), (EditGoToLine, "g")] {
+        let s = id.spec();
+        assert_eq!(s.menu, Menu::Edit);
+        assert_eq!(s.action, Action::UiOnly, "{}", s.key);
+        assert!(!s.mutates_document, "{}", s.key);
+        assert_eq!(s.shortcuts, &[Shortcut { key: k, shift: S }]);
+        assert_eq!(id.availability(none), Availability::Disabled(NO_DOCUMENT));
+        assert_eq!(id.refusal(none), Some(NO_DOCUMENT));
+        assert_eq!(id.availability(doc), Availability::Enabled);
+        assert_eq!(id.refusal(doc), None);
+    }
+    assert_eq!(EditFind.title(Platform::Linux), "Find text in the Source editor (Ctrl+F)");
+    assert_eq!(EditGoToLine.spec().shortcuts[0].label(Platform::MacOs), "⌘G");
 }
 
 #[test]
@@ -516,7 +574,7 @@ fn focus_requirements_explain_why() {
 fn every_disabled_state_has_a_reason() {
     use crate::layout::PanelId;
     // Every combination of the boolean facts and focus kinds.
-    for bits in 0u32..64 {
+    for bits in 0u32..128 {
         for focus in [FocusKind::Other, FocusKind::Source, FocusKind::TextField] {
             let ctx = CommandContext {
                 has_document: bits & 1 != 0,
@@ -531,6 +589,7 @@ fn every_disabled_state_has_a_reason() {
                 text_selected: bits & 16 != 0,
                 native_viewport: bits & 32 != 0,
                 outline_ready: bits & 16 != 0,
+                node_selected: bits & 64 != 0,
             };
             for c in COMMANDS {
                 if let Availability::Disabled(why) = c.id.availability(ctx) {
@@ -568,4 +627,80 @@ fn native_menu_events_accept_only_app_menu_keys() {
     ] {
         assert_eq!(from_native_menu(bad), None, "{bad:?}");
     }
+}
+
+// ---- B2-CAMERA ----
+
+#[test]
+fn camera_commands_are_view_items_that_never_touch_the_document() {
+    use crate::camera::StandardView;
+    use CommandId::*;
+    let cams = [
+        ViewFitAll,
+        ViewFront,
+        ViewBack,
+        ViewLeft,
+        ViewRight,
+        ViewTop,
+        ViewBottom,
+        ViewResetCamera,
+    ];
+    for id in cams {
+        let s = id.spec();
+        assert_eq!(s.menu, Menu::View, "{}", s.key);
+        assert_eq!(s.action, Action::UiOnly, "{}", s.key);
+        assert!(!s.mutates_document, "{}", s.key);
+        assert_eq!(s.requires, Requires::ViewportCamera, "{}", s.key);
+        assert!(s.key.starts_with("view.camera."), "{}", s.key);
+    }
+    let views: Vec<_> = cams.iter().filter_map(|c| c.standard_view()).collect();
+    assert_eq!(views, StandardView::ALL);
+    assert_eq!(ViewFitAll.standard_view(), None);
+    assert_eq!(ViewResetCamera.standard_view(), None);
+    // One "Camera" group in View, in this order.
+    let view = MENUS.iter().find(|m| m.menu == Menu::View).unwrap();
+    let at = view
+        .entries
+        .iter()
+        .position(|e| *e == MenuEntry::Group("Camera"))
+        .expect("a Camera group");
+    let got: Vec<_> = view.entries[at + 1..at + 1 + cams.len()].to_vec();
+    assert_eq!(got, cams.map(MenuEntry::Command));
+    // Availability: a document in the X_ITE viewport.
+    assert_eq!(
+        ViewFitAll.availability(CommandContext::default()),
+        Availability::Disabled(NO_DOCUMENT)
+    );
+    let doc = CommandContext {
+        has_document: true,
+        ..CommandContext::default()
+    };
+    assert_eq!(ViewTop.availability(doc), Availability::Enabled);
+    let native = CommandContext {
+        native_viewport: true,
+        ..doc
+    };
+    assert_eq!(ViewTop.refusal(native), Some(NEEDS_XITE_CAMERA));
+}
+
+#[test]
+fn viewport_keys_fit_only_unmodified_and_never_shadow_a_shortcut() {
+    use CommandId::*;
+    assert_eq!(from_viewport_key("f", false), Some(ViewFitAll));
+    assert_eq!(from_viewport_key("F", false), Some(ViewFitAll));
+    assert_eq!(from_viewport_key("Home", false), Some(ViewFitAll));
+    assert_eq!(from_viewport_key("f", true), None);
+    assert_eq!(from_viewport_key("g", false), None);
+    assert_eq!(viewport_key_label(ViewFitAll), "F / Home");
+    assert_eq!(viewport_key_label(ViewTop), "");
+    assert_eq!(
+        ViewFitAll.title(Platform::Linux),
+        format!("{} (F / Home in the viewport)", ViewFitAll.spec().hint)
+    );
+    // A viewport key never fires with the primary modifier, so Ctrl+F
+    // stays Find while a bare F in the viewport is Fit.
+    for (k, _) in VIEWPORT_KEYS {
+        assert_eq!(from_viewport_key(k, true), None, "{k}");
+    }
+    assert_eq!(from_shortcut("f", true, false), Some(EditFind));
 }

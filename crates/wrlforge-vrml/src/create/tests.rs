@@ -170,3 +170,26 @@ fn primitive_ids_are_a_closed_set() {
         assert_eq!(Primitive::from_id(bad), None);
     }
 }
+
+#[test]
+fn d4_placement_writes_the_translation_and_nothing_else() {
+    let src = "#VRML V2.0 utf8\nTransform { }\n";
+    let Plan::Ready { new_text, insert, .. } =
+        plan_create_at(src, Primitive::Box, Some([1.23456, -0.0001, 7.0]))
+    else {
+        panic!("not ready");
+    };
+    assert!(new_text.starts_with(src), "existing text untouched");
+    assert!(insert.contains("  translation 1.235 0 7\n"), "{insert}");
+    // The origin stays available explicitly.
+    let Plan::Ready { insert, .. } = plan_create_at(src, Primitive::Sphere, None) else {
+        panic!("not ready");
+    };
+    assert!(insert.contains("translation 0 0 0"));
+    for bad in [f64::NAN, f64::INFINITY, 2.0e6] {
+        assert!(matches!(
+            plan_create_at(src, Primitive::Box, Some([bad, 0.0, 0.0])),
+            Plan::Refused { reason: reason::PLACEMENT_INVALID, .. }
+        ));
+    }
+}

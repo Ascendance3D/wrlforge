@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// VISUAL-3A / 3A1 -- the ONE narrow X_ITE manipulation adapter (Tauri app).
+// VISUAL-3A / 3A1 / B2 -- the ONE narrow X_ITE manipulation adapter (Tauri app).
 //
-// Every X_ITE surface the translation gizmo and the camera carry need is
-// touched here and nowhere else, and nothing leaves this file toward Rust
-// except PLAIN DATA (numbers, strings, booleans). Three things only:
+// Every X_ITE surface the translation gizmo, the camera carry and the selection
+// highlight need is touched here and nowhere else, and nothing leaves this file
+// toward Rust except PLAIN DATA (numbers, strings, booleans). Four things only:
 //
 //   1. CAMERA. The active layer's viewpoint view and projection matrices, the
 //      layer viewport rectangle and the canvas rectangle, exactly as X_ITE
@@ -23,6 +23,27 @@
 //      -- read before a scene is
 //      replaced and written onto the PROVEN same viewpoint after. Never an
 //      authored field, never the source.
+//   4. VIEW CONTROLS (B2-CAMERA). Fit uses X_ITE's PUBLIC browser.viewAll
+//      (layer, transitionTime). The standard views read the scene bounds in
+//      the bound viewpoint's coordinate system (PRIVATE: X3D.Box3,
+//      X3DLayerNode.getBBox, getModelMatrix, getFieldOfView,
+//      getViewport().getRectangle) and write the user offsets Rust computed
+//      (protocol::camera), then re-check the result through
+//      getUserPosition / getUserOrientation; a mismatch puts the old
+//      offsets back. Both measure the GEOMETRY: an authored bboxCenter /
+//      bboxSize is only a culling hint (ISO/IEC 14772-1 4.6.4) and can be
+//      wrong -- a real mall item's exporter flipped its Z, so framing the
+//      hint missed the car -- so while the bounds are read, synchronously,
+//      each hinted node's isDefaultBBoxSize is shadowed (PRIVATE: _children,
+//      getInnerNode, isDefaultBBoxSize) and put back right after. Reset uses
+//      resetUserOffsets. The viewpoint list reads
+//      the layer's traversed viewpoints (getViewpoints) and binds one
+//      through the PUBLIC browser.bindViewpoint. All of it is editor view
+//      state: never an authored field, never the source.
+//
+//   5. SELECTION HIGHLIGHT (B2). The rendered bounding box of a PROVEN
+//      runtime node and its proven ancestors' frames, read-only (PRIVATE:
+//      X3D.Box3, getInnerNode, getBBox; PUBLIC SAI for Transform fields).
 //
 // Binding (VISUAL-3A1): the runtime node is NOT found here. The pick
 // adapter's provenance generation names the ONE runtime node X_ITE's parser
@@ -115,9 +136,10 @@
       }
     }
 
-    // Bind the PROVEN runtime node `node` (from the pick adapter's nodeAt)
-    // of `scene`. `index` / `name` / `expected` are assertions only (root
-    // position, DEF name or '', source translation). `verify()` must stay
+    // Bind the PROVEN runtime node `node` (from the pick adapter's nodeAt,
+    // or bodyNodeAt for a PROTO body node: index -1, name '') of `scene`.
+    // `index` / `name` / `expected` are assertions only (root position, DEF
+    // name or '', source translation). `verify()` must stay
     // true for the binding to be used.
     function bind(scene, node, index, name, expected, verify) {
       unbind();
@@ -134,12 +156,16 @@
       try { type = sf.getNodeTypeName(); } catch (e) { type = null; }
       if (type !== 'Transform') return { ok: false, reason: 'preview-node-not-a-transform' };
       // Assertion: the proven node sits at the root position Rust computed.
-      var atIndex = null;
-      try {
-        var roots = scene.rootNodes;
-        if (roots && Number.isInteger(index) && index >= 0 && index < roots.length) atIndex = roots[index];
-      } catch (e) { atIndex = null; }
-      if (!atIndex || !sameNode(atIndex, sf)) return { ok: false, reason: 'preview-root-order-disagrees' };
+      // B3: index -1 is a PROTO body node -- the picked instance's copy,
+      // which is no root node; Rust proved its chain through the instance.
+      if (index !== -1) {
+        var atIndex = null;
+        try {
+          var roots = scene.rootNodes;
+          if (roots && Number.isInteger(index) && index >= 0 && index < roots.length) atIndex = roots[index];
+        } catch (e) { atIndex = null; }
+        if (!atIndex || !sameNode(atIndex, sf)) return { ok: false, reason: 'preview-root-order-disagrees' };
+      }
       if (name) {
         var named = null;
         try { named = scene.getNamedNode(String(name)); } catch (e) { named = null; }
@@ -216,6 +242,10 @@
     // ---- VISUAL-3A1 camera carry ---------------------------------------------
     var OFFSETS = ['positionOffset', 'orientationOffset', 'scaleOffset', 'scaleOrientationOffset', 'centerOfRotationOffset'];
 
+    function finiteOrUndefined(v) {
+      return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+    }
+
     function finiteAll(v) {
       for (var i = 0; i < v.length; i++) if (!Number.isFinite(v[i])) return false;
       return true;
@@ -256,6 +286,11 @@
         var s = fov && typeof fov.getValue === 'function' ? Number(fov.getValue()) : NaN;
         if (!(s > 0) || !Number.isFinite(s)) return null;
         out.fieldOfViewScale = s;
+        // B2-CAMERA: the clip planes X_ITE's View All chose for the framed
+        // distance (plain numbers or undefined), so a Fit survives a reload
+        // exactly.
+        out.nearDistance = finiteOrUndefined(vp.nearDistance);
+        out.farDistance = finiteOrUndefined(vp.farDistance);
         return out;
       } catch (e) {
         return null;
@@ -268,6 +303,8 @@
       try {
         for (var i = 0; i < OFFSETS.length; i++) vp['_' + OFFSETS[i]] = state[OFFSETS[i]];
         vp._fieldOfViewScale = state.fieldOfViewScale;
+        if ('nearDistance' in state) vp.nearDistance = state.nearDistance;
+        if ('farDistance' in state) vp.farDistance = state.farDistance;
         vp.update();
         return true;
       } catch (e) {
@@ -321,9 +358,278 @@
       }
     }
 
+    // ---- B2-CAMERA view controls ---------------------------------------------
+    // The current world's active layer and its bound viewpoint, or null.
+    function boundLayer() {
+      if (!compatibility().ok || !fn(browser, 'getWorld')) return null;
+      try {
+        var world = browser.getWorld();
+        var layer = world && fn(world, 'getActiveLayer') ? world.getActiveLayer() : null;
+        if (!layer || !fn(layer, 'getViewpoint') || !('defaultViewpoint' in layer)) return null;
+        var vp = layer.getViewpoint();
+        return vp ? { layer: layer, node: vp, isDefault: vp === layer.defaultViewpoint } : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // The grouping nodes of the current scene that carry an authored bbox
+    // hint, reached through children, Switch choices, LOD levels and
+    // PROTO instances' first body node (Inline content is not entered).
+    function hintedNodes() {
+      var out = [], seen = new Set(), stack = [];
+      var push = function (list) {
+        var arr = null;
+        try { arr = list && fn(list, 'getValue') ? list.getValue() : list; } catch (e) { arr = null; }
+        if (!arr || typeof arr.length !== 'number') return;
+        for (var i = 0; i < arr.length; i++) {
+          var el = arr[i];
+          try { stack.push(el && fn(el, 'getValue') ? el.getValue() : el); } catch (e) { /* skip */ }
+        }
+      };
+      try { push(browser.currentScene.rootNodes); } catch (e) { return out; }
+      while (stack.length && seen.size < 1000000) {
+        var n = stack.pop();
+        if (!n || typeof n !== 'object' || seen.has(n)) continue;
+        seen.add(n);
+        try {
+          var inner = fn(n, 'getInnerNode') ? n.getInnerNode() : n;
+          if (inner && inner !== n) { stack.push(inner); continue; }
+        } catch (e) { continue; }
+        try { if (fn(n, 'isDefaultBBoxSize') && !n.isDefaultBBoxSize()) out.push(n); } catch (e) { /* no hint */ }
+        push(n._children);
+        push(n._choice);
+        push(n._level);
+      }
+      return out;
+    }
+
+    // Run f() with every bbox hint ignored (geometry bounds), then restore.
+    function withGeometryBounds(f) {
+      var hinted = hintedNodes();
+      var always = function () { return true; };
+      for (var i = 0; i < hinted.length; i++) hinted[i].isDefaultBBoxSize = always;
+      try {
+        return f();
+      } finally {
+        for (var j = 0; j < hinted.length; j++) delete hinted[j].isDefaultBBoxSize;
+      }
+    }
+
+    function isViewpoint(vp) {
+      try { return !!vp && fn(vp, 'getTypeName') && vp.getTypeName() === 'Viewpoint'; } catch (e) { return false; }
+    }
+
+    // Fit: X_ITE's own View All on the bound viewpoint (PUBLIC). `time` is
+    // the transition in seconds (0 = immediate). {ok, reason}.
+    function viewAll(time) {
+      var b = boundLayer();
+      if (!b) return { ok: false, reason: 'camera-unavailable' };
+      if (!fn(browser, 'viewAll')) return { ok: false, reason: 'view-all-unavailable' };
+      var t = Number(time);
+      try {
+        withGeometryBounds(function () { browser.viewAll(b.layer, Number.isFinite(t) && t >= 0 ? t : 0); });
+        return { ok: true, isDefault: b.isDefault };
+      } catch (e) {
+        return { ok: false, reason: 'view-all-failed' };
+      }
+    }
+
+    function v3(f) { return [Number(f.x), Number(f.y), Number(f.z)]; }
+
+    // The plain numbers protocol::camera::FrameInput needs, or {reason}.
+    function frameInput() {
+      var b = boundLayer();
+      if (!b || typeof X3D.Box3 !== 'function') return { reason: 'camera-unavailable' };
+      var vp = b.node, layer = b.layer;
+      if (!isViewpoint(vp)) return { reason: 'viewpoint-type-unsupported' };
+      if (!fn(layer, 'getBBox') || !fn(layer, 'getViewport') || !fn(vp, 'getModelMatrix') || !fn(vp, 'getFieldOfView')) {
+        return { reason: 'camera-unavailable' };
+      }
+      try {
+        var box = withGeometryBounds(function () { return layer.getBBox(new X3D.Box3()); });
+        var local = box.copy().multRight(vp.getModelMatrix().copy().inverse());
+        var size = local.size, center = local.center;
+        var rect = layer.getViewport().getRectangle();
+        var out = {
+          center: [Number(center.x), Number(center.y), Number(center.z)],
+          size: [Number(size.x), Number(size.y), Number(size.z)],
+          position: v3(vp._position),
+          orientation: [Number(vp._orientation.x), Number(vp._orientation.y), Number(vp._orientation.z), Number(vp._orientation.angle)],
+          centerOfRotation: v3(vp._centerOfRotation),
+          fieldOfView: Number(vp.getFieldOfView()),
+          viewport: [Number(rect[2]), Number(rect[3])],
+        };
+        var all = out.center.concat(out.size, out.position, out.orientation, out.centerOfRotation, out.viewport, [out.fieldOfView]);
+        return finiteAll(all) ? out : { reason: 'camera-unreadable' };
+      } catch (e) {
+        return { reason: 'camera-unreadable' };
+      }
+    }
+
+    function near(a, b) {
+      return Math.abs(a - b) <= 1e-4 * Math.max(1, Math.abs(a), Math.abs(b));
+    }
+
+    // Write the user offsets Rust computed for a standard view onto the
+    // bound viewpoint, then re-check the user pose they produce. {ok, reason}.
+    function applyView(o) {
+      var b = boundLayer();
+      if (!b || !isViewpoint(b.node)) return { ok: false, reason: 'camera-unavailable' };
+      var vp = b.node;
+      if (!fn(vp, 'update') || !fn(vp, 'getUserPosition') || !fn(vp, 'getUserOrientation') || typeof X3D.SFRotation !== 'function') {
+        return { ok: false, reason: 'camera-unavailable' };
+      }
+      var before = readCamera(vp);
+      if (!before) return { ok: false, reason: 'camera-unreadable' };
+      try {
+        var p = o.positionOffset, r = o.orientationOffset, c = o.centerOfRotationOffset;
+        var nums = p.concat(r, c, o.userPosition, o.userOrientation, [o.nearDistance]).map(Number);
+        if (nums.length !== 18 || !finiteAll(nums)) return { ok: false, reason: 'bad-view' };
+        vp._positionOffset = new X3D.SFVec3f(p[0], p[1], p[2]);
+        vp._orientationOffset = new X3D.SFRotation(r[0], r[1], r[2], r[3]);
+        vp._scaleOffset = new X3D.SFVec3f(1, 1, 1);
+        vp._scaleOrientationOffset = new X3D.SFRotation(0, 0, 1, 0);
+        vp._centerOfRotationOffset = new X3D.SFVec3f(c[0], c[1], c[2]);
+        vp._fieldOfViewScale = 1;
+        vp.nearDistance = Number(o.nearDistance);
+        vp.farDistance = fn(vp, 'getMaxFarValue') ? vp.nearDistance * vp.getMaxFarValue() / 0.125 : undefined;
+        vp.update();
+        // Re-check: the renderer's own user pose must be the requested one.
+        var up = vp.getUserPosition();
+        var dir = vp.getUserOrientation().multVecRot(vp.getUserPosition().set(0, 0, -1));
+        var top = vp.getUserOrientation().multVecRot(vp.getUserPosition().set(0, 1, 0));
+        var wantDir = rotate(o.userOrientation, [0, 0, -1]), wantUp = rotate(o.userOrientation, [0, 1, 0]);
+        var ok = near(up.x, o.userPosition[0]) && near(up.y, o.userPosition[1]) && near(up.z, o.userPosition[2])
+          && near(dir.x, wantDir[0]) && near(dir.y, wantDir[1]) && near(dir.z, wantDir[2])
+          && near(top.x, wantUp[0]) && near(top.y, wantUp[1]) && near(top.z, wantUp[2]);
+        if (!ok) {
+          writeCamera(vp, before);
+          return { ok: false, reason: 'view-not-verified' };
+        }
+        return { ok: true };
+      } catch (e) {
+        writeCamera(vp, before);
+        return { ok: false, reason: 'view-write-failed' };
+      }
+    }
+
+    // Plain-number rotation of v by a VRML axis-angle (the re-check only).
+    function rotate(r, v) {
+      var n = Math.hypot(r[0], r[1], r[2]);
+      if (!(n > 1e-12)) return v.slice();
+      var k = [r[0] / n, r[1] / n, r[2] / n], cs = Math.cos(r[3]), sn = Math.sin(r[3]);
+      var d = k[0] * v[0] + k[1] * v[1] + k[2] * v[2];
+      var x = [k[1] * v[2] - k[2] * v[1], k[2] * v[0] - k[0] * v[2], k[0] * v[1] - k[1] * v[0]];
+      return [0, 1, 2].map(function (i) { return v[i] * cs + x[i] * sn + k[i] * d * (1 - cs); });
+    }
+
+    // Reset: the bound viewpoint as authored (zero user offsets).
+    function resetView() {
+      var b = boundLayer();
+      if (!b || !fn(b.node, 'resetUserOffsets')) return { ok: false, reason: 'camera-unavailable' };
+      try {
+        b.node.resetUserOffsets();
+        return { ok: true, isDefault: b.isDefault };
+      } catch (e) {
+        return { ok: false, reason: 'reset-failed' };
+      }
+    }
+
+    // The authored Viewpoint nodes the layer traversed (runtime objects, JS
+    // only), in scene order, once each: [{node, description, name, bound}].
+    function viewpoints() {
+      var b = boundLayer();
+      if (!b || !fn(b.layer, 'getViewpoints')) return null;
+      try {
+        var list = b.layer.getViewpoints();
+        var all = list && fn(list, 'get') ? list.get() : null;
+        if (!all) return null;
+        var seen = new Set(), out = [];
+        for (var i = 0; i < all.length; i++) {
+          var vp = all[i];
+          if (!vp || seen.has(vp) || vp === b.layer.defaultViewpoint || !isViewpoint(vp)) continue;
+          seen.add(vp);
+          var d = '';
+          try { d = String(vp._description.getValue()); } catch (e) { d = ''; }
+          var name = '';
+          try { name = fn(vp, 'getName') ? String(vp.getName() || '') : ''; } catch (e) { name = ''; }
+          out.push({ node: vp, description: d, name: name, bound: vp === b.node });
+        }
+        return out;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // ---- B2 selection highlight (read-only, plain data out) ------------------
+    // The rendered bounding box of a PROVEN runtime node (the pick adapter's
+    // nodeAt for a span Rust proved): X_ITE's Box3 frame -- a matrix mapping
+    // the cube [-1, 1]^3 onto the box -- in the node's PARENT coordinates
+    // (PRIVATE X_ITE 16.5.0 surfaces: X3D.Box3, X3DNode.getInnerNode,
+    // X3DNode.getBBox). A PROTO instance is measured through getInnerNode,
+    // X_ITE's own "the node this instance renders as". Nothing is written.
+    function bounds(node) {
+      if (!compatibility().ok || typeof X3D.Box3 !== 'function') return { ok: false, reason: 'bounds-unavailable' };
+      if (!node || typeof node !== 'object') return { ok: false, reason: 'runtime-node-not-proven' };
+      try {
+        var inner = fn(node, 'getInnerNode') ? node.getInnerNode() : node;
+        if (!inner || !fn(inner, 'getBBox')) return { ok: false, reason: 'node-has-no-rendered-bounds' };
+        // Geometry nodes return their own box and ignore the argument.
+        var b = inner.getBBox(new X3D.Box3(), false);
+        var m = b ? m16(b.matrix) : null;
+        return m ? { ok: true, box: m } : { ok: false, reason: 'node-has-no-rendered-bounds' };
+      } catch (e) {
+        return { ok: false, reason: 'node-has-no-rendered-bounds' };
+      }
+    }
+
+    // A proven ancestor's runtime type and, for a Transform, its rendered
+    // fields (PUBLIC SAI only), or null when unreadable.
+    function ancestor(node) {
+      if (!compatibility().ok || typeof X3D.SFNode !== 'function' || !node || typeof node !== 'object') return null;
+      try {
+        var sf = new X3D.SFNode(node);
+        if (sf.getValue() !== node) return null;
+        var type = sf.getNodeTypeName();
+        if (typeof type !== 'string') return null;
+        if (type !== 'Transform') return { type: type };
+        var t = sf.translation, r = sf.rotation, s = sf.scale, so = sf.scaleOrientation, c = sf.center;
+        var f = {
+          translation: [t.x, t.y, t.z].map(Number),
+          rotation: [r.x, r.y, r.z, r.angle].map(Number),
+          scale: [s.x, s.y, s.z].map(Number),
+          scaleOrientation: [so.x, so.y, so.z, so.angle].map(Number),
+          center: [c.x, c.y, c.z].map(Number),
+        };
+        var all = f.translation.concat(f.rotation, f.scale, f.scaleOrientation, f.center);
+        return finiteAll(all) ? { type: type, frame: f } : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // Bind one of viewpoints()' nodes through the PUBLIC browser service.
+    function bindViewpoint(node) {
+      var b = boundLayer();
+      if (!b || !fn(browser, 'bindViewpoint')) return { ok: false, reason: 'camera-unavailable' };
+      var list = viewpoints() || [];
+      var known = false;
+      for (var i = 0; i < list.length; i++) if (list[i].node === node) known = true;
+      if (!known) return { ok: false, reason: 'viewpoint-not-in-scene' };
+      try {
+        browser.bindViewpoint(b.layer, node);
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, reason: 'bind-failed' };
+      }
+    }
+
     return Object.freeze({
+      viewAll: viewAll, frameInput: frameInput, applyView: applyView, resetView: resetView, viewpoints: viewpoints, bindViewpoint: bindViewpoint,
       compatibility: compatibility, camera: camera, bind: bind, set: set, setField: setField, restore: restore, release: release, unbind: unbind, rendered: rendered, frame: frame,
       boundViewpoint: boundViewpoint, readCamera: readCamera, writeCamera: writeCamera, viewMatrix: viewMatrix, cameraState: cameraState,
+      bounds: bounds, ancestor: ancestor,
     });
   }
 

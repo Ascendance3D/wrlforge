@@ -61,6 +61,9 @@ pub struct Target {
     pub scale_orientation: [f64; 4],
     /// The rotation / scale pivot (`T + C`).
     pub pivot: [f64; 3],
+    /// B3: the Transform is part of this shared PROTO definition: the
+    /// preview shows the picked instance; a commit asks consent first.
+    pub shared: Option<p::SharedProto>,
 }
 
 /// Which handle a drag holds.
@@ -155,7 +158,8 @@ pub struct GizmoState {
     pub layout: Option<gz::Layout>,
     /// The last drawn rings (Rotate).
     pub rings: Option<gz::RingLayout>,
-    /// The field the last refusal said is missing (`rotation` / `scale`):
+    /// The field the last refusal said is missing (`translation` /
+    /// `rotation` / `scale`):
     /// the gizmo status offers an explicit "Write" for it.
     pub missing_field: Option<&'static str>,
     /// The origin last drawn for a target that is now being replaced: shown
@@ -240,6 +244,16 @@ pub fn reset(reason: &str) {
         g.drawn.clear();
     });
     ui().gizmo_message.set(None);
+}
+
+/// B3: a viewport pick landed (maybe on the same item, another PROTO
+/// instance): re-ask and re-bind on the next idle frame. Never mid-drag.
+pub fn repicked() {
+    GIZMO.with_borrow_mut(|g| {
+        if g.drag.is_none() && !g.committing {
+            g.key = None;
+        }
+    });
 }
 
 /// UI-MENU-1: a handle drag is in progress (application shortcuts wait).
@@ -339,13 +353,21 @@ fn request_target(key: Key) {
                 scale,
                 scale_orientation,
                 pivot,
+                shared,
                 ..
             }) if rev == revision && it == item => {
-                let name = def_name.as_deref().unwrap_or("");
+                let body = shared.is_some();
+                // A body node's DEF lives in the PROTO's own scope, not the
+                // scene's: no name assertion then.
+                let name = if body {
+                    ""
+                } else {
+                    def_name.as_deref().unwrap_or("")
+                };
                 let def_name = def_name.clone().unwrap_or_else(|| "the Transform".into());
                 let span = (preview_from, preview_to);
                 let t0 = now();
-                let proof = prove(session, revision, gen_seq, &item, span, tool).await;
+                let proof = prove(session, revision, gen_seq, &item, span, tool, body).await;
                 let prove_ms = now() - t0;
                 // The world may have moved on while Rust proved it.
                 let current =
@@ -379,6 +401,7 @@ fn request_target(key: Key) {
                             scale,
                             scale_orientation,
                             pivot,
+                            shared: shared.clone(),
                         };
                         let released = GIZMO.with_borrow_mut(|g| {
                             g.target = Some(t);
@@ -397,13 +420,17 @@ fn request_target(key: Key) {
                                 });
                             }
                         }
+                        let in_proto = shared
+                            .as_ref()
+                            .map(|sh| format!(" [shared PROTO {}: the drag previews the picked instance; a change edits all {}]", sh.proto, sh.instances))
+                            .unwrap_or_default();
                         msg(
                             "ok",
                             match tool {
                                 Tool::Move => format!("Move {def_name}: drag the X, Y or Z handle. Esc cancels; the Inspector takes exact values."),
                                 Tool::Rotate => format!("Rotate {def_name}: drag the X, Y or Z ring (world axes, about the center). Shift snaps to 15°. Esc cancels."),
                                 Tool::Scale => format!("Scale {def_name}: drag an X, Y or Z handle (the object's scale axes), or the center square for uniform scale. Esc cancels."),
-                            },
+                            } + &in_proto,
                         );
                     }
                     Err(why) => {
@@ -415,7 +442,17 @@ fn request_target(key: Key) {
                         });
                         msg(
                             "refused",
-                            format!("The preview cannot show {def_name} for this tool ({why}). Use the Inspector."),
+                            match (&shared, why.as_str()) {
+                                (Some(sh), "proto-instance-not-picked") => format!(
+                                    "PROTO {} has several instances on screen: click the instance to change in the viewport first (Select tool), then use the handles. Nothing was changed. [{why}]",
+                                    sh.proto
+                                ),
+                                (Some(sh), _) => format!(
+                                    "The preview cannot prove which rendered instance of PROTO {} shows {def_name}, so the handles are off ({why}). Use the Inspector.",
+                                    sh.proto
+                                ),
+                                (None, _) => format!("The preview cannot show {def_name} for this tool ({why}). Use the Inspector."),
+                            },
                         );
                     }
                 }
@@ -424,6 +461,7 @@ fn request_target(key: Key) {
             | Ok(p::TranslateTargetOutcome::Stale { .. }) => {}
             Ok(p::TranslateTargetOutcome::Refused { reason, message }) => {
                 let missing = match reason.as_str() {
+                    "translation-not-explicitly-authored" => Some("translation"),
                     "rotation-not-explicitly-authored" => Some("rotation"),
                     "scale-not-explicitly-authored" => Some("scale"),
                     _ => None,
@@ -466,11 +504,12 @@ async fn prove(
     item: &str,
     span: (u64, u64),
     tool: Tool,
+    body: bool,
 ) -> Result<(), String> {
     let Some(gen) = crate::pick::active().filter(|g| g.seq == gen_seq) else {
         return Err("preview-scene-replaced".into());
     };
-    let snapshot = ipc::gizmo_locate(gen_seq, span.0, span.1)?;
+    let snapshot = ipc::gizmo_locate(gen_seq, span.0, span.1, body)?;
     #[derive(serde::Serialize)]
     struct A {
         request: p::TranslateProveRequest,
@@ -1215,6 +1254,30 @@ async fn commit(d: Drag) {
     let released = now();
     GIZMO.with_borrow_mut(|g| g.committing = true);
     let t = d.target.clone();
+    // B3: a PROTO body Transform is the shared definition. Ask before EVERY
+    // commit (the same consent the Inspector asks; nothing is remembered);
+    // a refusal restores the view and changes nothing.
+    let confirm_shared = match t.shared.clone() {
+        Some(sh) => {
+            if !ui::confirm_shared(t.session, sh.clone()).await {
+                GIZMO.with_borrow_mut(|g| {
+                    g.committing = false;
+                    g.refused += 1;
+                    g.last_refusal = Some("shared-proto-definition-not-confirmed".into());
+                });
+                ipc::gizmo_restore();
+                return msg(
+                    "refused",
+                    format!(
+                        "Not changed: editing the shared definition PROTO {} was not confirmed. The view was restored; the source is unchanged.",
+                        sh.proto
+                    ),
+                );
+            }
+            true
+        }
+        None => false,
+    };
     #[derive(serde::Serialize)]
     struct A<R> {
         request: R,
@@ -1222,6 +1285,7 @@ async fn commit(d: Drag) {
     let r = match d.grip {
         Grip::Axis(axis) => {
             let request = p::TranslateRequest {
+                confirm_shared,
                 session: t.session,
                 base_revision: t.revision,
                 item: t.item.clone(),
@@ -1233,6 +1297,7 @@ async fn commit(d: Drag) {
         }
         Grip::Ring(axis) => {
             let request = p::RotateRequest {
+                confirm_shared,
                 session: t.session,
                 base_revision: t.revision,
                 item: t.item.clone(),
@@ -1243,6 +1308,7 @@ async fn commit(d: Drag) {
         }
         Grip::Stretch(_) | Grip::Uniform => {
             let request = p::ScaleRequest {
+                confirm_shared,
                 session: t.session,
                 base_revision: t.revision,
                 item: t.item.clone(),
@@ -1458,6 +1524,7 @@ pub async fn write_missing_field() {
         return;
     };
     let values: Vec<String> = match field {
+        "translation" => ["0", "0", "0"].map(String::from).to_vec(),
         "rotation" => ["0", "0", "1", "0"].map(String::from).to_vec(),
         "scale" => ["1", "1", "1"].map(String::from).to_vec(),
         _ => return,

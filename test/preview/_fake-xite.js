@@ -39,6 +39,57 @@ function createFakeX3D() {
   }
   class X3DScene extends X3DExecutionContext {}
 
+  // B3: a PROTO subset, shaped like X_ITE's. A declaration node owns its
+  // body execution context (getOuterNode -> the declaration); every
+  // instance gets its OWN body whose root nodes are COPIES of the
+  // declaration body's nodes, made through X3DNode.prototype.copy (the
+  // surface the adapter's copy hook wraps).
+  class X3DNode extends X3DBaseNode {
+    copy(ctx) {
+      // Like X_ITE: within one instance a node is copied ONCE; asking again
+      // (named nodes are copied first, then met again in the tree) returns
+      // the same copy.
+      if (ctx.copies && ctx.copies.has(this)) return ctx.copies.get(this);
+      const c = new X3DNode(this.type, ctx);
+      if (!ctx.copies) ctx.copies = new Map();
+      ctx.copies.set(this, c);
+      for (const ch of this.children) {
+        const cc = ch.node.copy(ctx);
+        if (!c.fieldObjects) c.fieldObjects = new Map();
+        let field = c.fieldObjects.get(ch.field);
+        if (!field) { field = new FakeField(c, ch.field); c.fieldObjects.set(ch.field, field); }
+        cc.parents.add(field);
+        c.children.push({ field: ch.field, node: cc });
+      }
+      return c;
+    }
+  }
+  class FakeBody extends X3DExecutionContext {
+    constructor(outer) { super(); this.outer = outer; }
+    getOuterNode() { return this.outer; }
+  }
+  class FakeProtoDeclaration extends X3DBaseNode {
+    constructor(name, scene) { super('ProtoDeclaration', scene); this.name = name; this.body = new FakeBody(this); }
+    getBody() { return this.body; }
+    getProtoDeclaration() { return this; }
+  }
+  class FakeProtoInstance extends X3DNode {
+    constructor(decl, ctx) {
+      super(decl.name, ctx);
+      this.decl = decl;
+      this.body = new FakeBody(this);
+      for (const n of decl.body.defs.values()) n.copy(this.body);
+      this.bodyRoots = decl.body.rootNodes.map((n) => {
+        const c = n.copy(this.body);
+        c.parents.add(this.body.rootField);
+        this.body.rootNodes.push(c);
+        return c;
+      });
+    }
+    getBody() { return this.body; }
+    getProtoDeclaration() { return this.decl; }
+  }
+
   function VRMLParser(scene, input) {
     this.scene = scene;
     this.input = input;
@@ -46,8 +97,40 @@ function createFakeX3D() {
   }
   const P = VRMLParser.prototype;
   P.getScene = function () { return this.scene; };
-  P.getExecutionContext = function () { return this.scene; };
-  P.isInsideProtoDeclaration = function () { return false; };
+  P.getExecutionContext = function () { return this.ctx || this.scene; };
+  P.isInsideProtoDeclaration = function () { return !!this.inProto; };
+  // B3: `PROTO Name [ ...interface, skipped... ] { body statements }`.
+  P.protoStatement = function () {
+    this.word(); // PROTO
+    const name = this.word();
+    const decl = new FakeProtoDeclaration(name, this.scene);
+    this.expect('[');
+    let depth = 1;
+    while (depth > 0) {
+      const c = this.input[this.lastIndex];
+      if (c === undefined) throw new Error('fake parse error: unterminated PROTO interface');
+      if (c === '[') depth += 1;
+      if (c === ']') depth -= 1;
+      this.lastIndex += 1;
+    }
+    this.expect('{');
+    const saved = [this.ctx, this.inProto];
+    this.ctx = decl.body;
+    this.inProto = true;
+    try {
+      while (this.peek() !== '}') {
+        const node = this.nodeStatement();
+        node.parents.add(decl.body.rootField);
+        decl.body.rootNodes.push(node);
+      }
+    } finally {
+      [this.ctx, this.inProto] = saved;
+    }
+    this.lastIndex += 1;
+    if (!this.scene.protos) this.scene.protos = new Map();
+    this.scene.protos.set(name, decl);
+    return decl;
+  };
   P.comments = function () {
     const s = this.input;
     let i = this.lastIndex;
@@ -104,21 +187,22 @@ function createFakeX3D() {
     const w = this.word();
     if (w === 'USE') {
       const name = this.word();
-      const node = this.scene.defs.get(name);
+      const node = this.getExecutionContext().defs.get(name);
       if (!node) throw new Error(`fake parse error: unknown USE ${name}`);
       return node;
     }
     if (w === 'DEF') {
       const name = this.word();
       const node = this.node(this.word());
-      this.scene.defs.set(name, node);
+      this.getExecutionContext().defs.set(name, node);
       return node;
     }
     return this.node(w);
   };
   P.node = function (type) {
     if (!type || !/^[A-Z]/.test(type)) throw new Error(`fake parse error: node type expected at ${this.lastIndex}`);
-    const node = new X3DBaseNode(type, this.scene);
+    const decl = this.scene.protos && this.scene.protos.get(type);
+    const node = decl ? new FakeProtoInstance(decl, this.getExecutionContext()) : new X3DNode(type, this.getExecutionContext());
     this.expect('{');
     for (;;) {
       if (this.peek() === '}') { this.lastIndex += 1; break; }
@@ -148,7 +232,7 @@ function createFakeX3D() {
     return node;
   };
 
-  const X3D = { X3DBaseNode, X3DExecutionContext, X3DScene, VRMLParser, FakeField };
+  const X3D = { X3DBaseNode, X3DNode, X3DExecutionContext, X3DScene, VRMLParser, FakeField };
   return X3D;
 }
 
@@ -174,6 +258,7 @@ function createFakeBrowser(X3D, { version = '15.1.10', rect = { left: 0, top: 0,
       else await Promise.resolve();
       parser.comments();
       while (parser.lastIndex < text.length) {
+        if (parser.peekWord() === 'PROTO') { parser.protoStatement(); parser.comments(); continue; }
         const node = parser.nodeStatement();
         node.parents.add(scene.rootField);
         scene.rootNodes.push(node);

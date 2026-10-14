@@ -302,7 +302,20 @@ pub fn move_fixtures() -> Vec<(&'static str, &'static str, String)> {
             doc("", "\n", "Box_1", "").replace("translation 0 0 0", "translation 0.0 0.0 0.0"),
         ),
         (TWINS_FILE, TWINS_LABEL, twins_fixture()),
+        (PROTO_FILE, PROTO_LABEL, proto_fixture()),
     ]
+}
+
+/// B3: the shared-PROTO fixture's file name and label.
+pub const PROTO_FILE: &str = "fx-proto-body.wrl";
+pub const PROTO_LABEL: &str = "shared PROTO body Transform";
+
+/// B3: a Transform in a PROTO body (under a Group whose bboxSize is an IS,
+/// like the Chevy's), and TWO instances: one top-level, one inside a moved
+/// Transform. A scene-tree selection cannot say which instance is meant;
+/// a real click on the top-level one binds that one.
+pub fn proto_fixture() -> String {
+    "#VRML V2.0 utf8\n# B3 — shared PROTO body ✓\nPROTO Car [ field SFVec3f bboxSize 2 2 2 ] {\n  Group {\n    bboxSize IS bboxSize\n    children [\n      DEF CarXForm Transform {\n        translation 0 0 0\n        children [ Shape { appearance Appearance { material Material { diffuseColor 0.2 0.5 0.9 } } geometry Box { } } ]\n      }\n    ]\n  }\n}\nCar { }\nTransform { translation 0 -3 0 children [ Car { } ] }\n# fin ✓\n".into()
 }
 
 /// VISUAL-3A1: the twin fixture's file name and label.
@@ -319,6 +332,12 @@ pub fn twins_fixture() -> String {
         "#VRML V2.0 utf8\n# twins ✓ — VISUAL-3A1 fixture\n{twin}{twin}Viewpoint {{ position 1.5 0.5 9 description \"twins ✓\" }}\n# fin ✓\n"
     )
 }
+
+/// Gizmo run: scripted answers for the shared-PROTO confirmation, and how
+/// many confirmations were asked.
+static SHARED_SCRIPT: Mutex<std::collections::VecDeque<bool>> =
+    Mutex::new(std::collections::VecDeque::new());
+static SHARED_ASKED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 #[derive(Default)]
 pub struct SmokeState(
@@ -705,6 +724,28 @@ impl SmokeState {
 
     /// Smoke only: the discard-confirmation answer. An unplanned question
     /// is answered Cancel (never discards).
+    /// The shared-PROTO confirmation (`confirm_shared_edit`). In the gizmo
+    /// run it is counted and answered from the script (`smoke_shared_consent`),
+    /// else Yes, so a test can prove the UI asks before EVERY shared edit
+    /// and that a No changes nothing. Other runs: `confirm_override`.
+    pub fn shared_override(&self) -> Option<bool> {
+        if self.3.lock().ok()?.is_some() {
+            SHARED_ASKED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            return Some(SHARED_SCRIPT.lock().ok()?.pop_front().unwrap_or(true));
+        }
+        self.confirm_override()
+    }
+
+    /// Gizmo run only: queue `answers` for the next shared-PROTO
+    /// confirmations; returns how many were asked so far.
+    pub fn shared_script(&self, answers: Vec<bool>) -> Result<u32, String> {
+        if self.3.lock().map_err(|e| e.to_string())?.is_none() {
+            return Err("no gizmo smoke run is armed".into());
+        }
+        SHARED_SCRIPT.lock().map_err(|e| e.to_string())?.extend(answers);
+        Ok(SHARED_ASKED.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
     pub fn confirm_override(&self) -> Option<bool> {
         if crate::smoke_recovery::armed() {
             return crate::smoke_recovery::confirm_override();
@@ -996,6 +1037,20 @@ impl SmokeState {
                     "ctrl+alt+z",
                     "a",
                     "b",
+                    // B2: Find / Replace / Go to Line and their inputs.
+                    "ctrl+f",
+                    "ctrl+h",
+                    "ctrl+g",
+                    "ctrl+a",
+                    "2",
+                    "9",
+                    "z",
+                    // PR #146 review: viewport keys (View All) with and
+                    // without Alt / Ctrl+Alt (AltGr on Linux layouts).
+                    "f",
+                    "alt+Home",
+                    "ctrl+alt+f",
+                    "ctrl+alt+Home",
                 ];
                 if !KEYS.contains(&name) {
                     return Err(format!("key {name:?} is not in the smoke key set"));
@@ -1664,6 +1719,30 @@ mod tests {
                 !wrlforge_vrml::field_edit::has_blocking_syntax_error(&p),
                 "{file}"
             );
+            if file == PROTO_FILE {
+                // The PROTO body Transform: a target, a commit only with
+                // consent, one translation token.
+                let at = text.find("DEF CarXForm").unwrap();
+                let u16 = |b: usize| text[..b].encode_utf16().count() as u64;
+                let end = at + text[at..].find("\n      }").unwrap() + "\n      }".len();
+                let (f, t) = (u16(at), u16(end));
+                let tg = translate_target(&text, f, t).unwrap();
+                assert_eq!(tg.root_index, None);
+                assert!(tg.shared.is_some());
+                assert!(matches!(
+                    plan_translate(&text, f, t, Axis::X, 1.75, 2).0,
+                    wrlforge_vrml::field_edit::Plan::Refused { .. }
+                ));
+                let (plan, _) = wrlforge_vrml::manipulate::plan_translate_with(
+                    &text, f, t, Axis::X, 1.75, 2, true,
+                );
+                let wrlforge_vrml::field_edit::Plan::Ready { new_text, .. } = plan else {
+                    panic!("{file}: {plan:?}")
+                };
+                let got = one_translation_token(text.as_bytes(), new_text.as_bytes());
+                assert_eq!(got.as_ref().map(|(_, n)| n.as_str()), Some("1.75"));
+                continue;
+            }
             let t = p
                 .tree
                 .statements
@@ -1713,12 +1792,20 @@ mod tests {
         let preview = std::fs::read_to_string(dir.join("preview-adapter.js")).unwrap();
         assert!(gizmo.contains("function bind(scene, node, index, name, expected, verify)"));
         assert!(gizmo.contains("sf.getValue() === node"));
-        // rootNodes appears once, in the refusing assertion.
-        assert_eq!(gizmo.matches("rootNodes").count(), 1);
+        // rootNodes appears twice: in the refusing assertion, and (B2-CAMERA)
+        // as the start of the bbox-hint walk, which identifies nothing.
+        assert_eq!(gizmo.matches("rootNodes").count(), 2);
+        assert!(gizmo.contains("try { push(browser.currentScene.rootNodes); } catch (e) { return out; }"));
         assert!(gizmo.contains("'preview-root-order-disagrees'"));
         assert!(!gizmo.contains("getNamedNode(String(name)); } catch (e) { named = null; }\n      if (!named) return { ok: true"));
-        assert!(preview.contains("var node = adapter.nodeAt(gen, f, t);"));
-        assert!(preview.contains("adapter.nodeAt(gen, f, t) === node"));
+        // B3: a PROTO body node binds the picked instance's copy
+        // (bodyNodeAt), re-proved as the SAME node before every use.
+        assert!(preview.contains(
+            "var node = isBody ? adapter.bodyNodeAt(gen, f, t) : adapter.nodeAt(gen, f, t);"
+        ));
+        assert!(preview.contains(
+            "(isBody ? adapter.bodyNodeAt(gen, f, t, node) : adapter.nodeAt(gen, f, t)) === node"
+        ));
         assert!(!preview.contains("rootNodes["));
     }
 
@@ -1741,6 +1828,12 @@ mod tests {
             "'positionOffset'",
             "_fieldOfViewScale",
             "defaultViewpoint",
+            // B2-CAMERA view controls.
+            "getBBox",
+            "X3D.Box3",
+            "getModelMatrix",
+            "getUserOrientation",
+            "resetUserOffsets",
         ];
         let mut seen = 0;
         for e in std::fs::read_dir(&dir).unwrap() {

@@ -12,8 +12,10 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod camera;
 pub mod command;
 pub mod gizmo;
+pub mod highlight;
 pub mod layout;
 pub mod syntax;
 pub mod theme;
@@ -333,6 +335,10 @@ pub struct FieldComponent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct EditableField {
+    /// B1 usability: an SFNode field whose value is one authored node: that
+    /// node's exact Scene Tree item id (the Inspector opens it).
+    #[serde(default)]
+    pub node_item: Option<String>,
     /// Index into the node's body statements; sent back with an edit.
     pub index: u32,
     pub name: String,
@@ -353,6 +359,18 @@ pub struct EditableField {
     /// VISUAL-4A: an editable `MFVec2f` / `MFVec3f` / `MFRotation` list.
     #[serde(default)]
     pub list: Option<ListField>,
+    /// B2: an editable `MFString` list (decoded strings, in order).
+    #[serde(default)]
+    pub strings: Option<StringListField>,
+}
+
+/// B2: an editable MFString value as decoded strings.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StringListField {
+    /// "bracketed" | "bare"
+    pub form: String,
+    pub values: Vec<String>,
 }
 
 /// An editable list value, tuple by tuple, as exact source lexemes.
@@ -377,6 +395,20 @@ pub struct NodeFields {
     /// VISUAL-4A: the Extrusion view (authored values and defaults).
     #[serde(default)]
     pub extrusion: Option<ExtrusionInfo>,
+    /// B1: the node is part of a PROTO body, so an edit changes the shared
+    /// definition (every instance). Edits need `confirm_shared`.
+    #[serde(default)]
+    pub shared: Option<SharedProto>,
+}
+
+/// B1: the shared PROTO definition a node belongs to.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedProto {
+    pub proto: String,
+    /// Node statements of that type in the document.
+    pub instances: u32,
+    pub name_ambiguous: bool,
 }
 
 /// One Extrusion field: authored or default, never written automatically.
@@ -437,6 +469,9 @@ pub struct ListEditRequest {
     /// The number of tuples the UI showed.
     pub expected_count: u32,
     pub ops: Vec<ListOp>,
+    /// B1: the user confirmed editing a shared PROTO definition.
+    #[serde(default)]
+    pub confirm_shared: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -460,6 +495,60 @@ pub struct AddFieldRequest {
     pub item: String,
     pub field_name: String,
     pub value: AddFieldValue,
+    /// B1: the user confirmed editing a shared PROTO definition.
+    #[serde(default)]
+    pub confirm_shared: bool,
+}
+
+/// B2: one MFString operation; indices are of the list as the previous
+/// operation left it. Values are decoded text: Rust encodes them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "op", rename_all = "camelCase")]
+pub enum StringOp {
+    Set { index: u32, value: String },
+    Insert { index: u32, value: String },
+    Delete { index: u32 },
+}
+
+/// B2: an MFString edit (`url`, `info`, ...). Applied as ONE transaction,
+/// so one undo step.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StringEditRequest {
+    pub session: SessionId,
+    pub base_revision: u64,
+    pub item: String,
+    pub field_index: u32,
+    pub field_name: String,
+    /// The decoded strings the UI showed.
+    pub expected: Vec<String>,
+    pub ops: Vec<StringOp>,
+    /// B1: the user confirmed editing a shared PROTO definition.
+    #[serde(default)]
+    pub confirm_shared: bool,
+}
+
+/// B2: write `texture ImageTexture { url "<url>" }` into an Appearance with
+/// no texture field. `url` comes from `doc_choose_texture`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AddTextureRequest {
+    pub session: SessionId,
+    pub base_revision: u64,
+    pub item: String,
+    pub url: String,
+    #[serde(default)]
+    pub confirm_shared: bool,
+}
+
+/// B2: the reply to `doc_choose_texture` (a native image dialog run by
+/// Rust). The url is relative to the document's folder, `/`-separated.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum TextureChoice {
+    Chosen { url: String },
+    Canceled,
+    Refused { message: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -480,6 +569,9 @@ pub struct FieldEditRequest {
     pub field_index: u32,
     pub field_name: String,
     pub components: Vec<FieldInput>,
+    /// B1: the user confirmed editing a shared PROTO definition.
+    #[serde(default)]
+    pub confirm_shared: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -543,6 +635,9 @@ pub struct CreateRequest {
     pub session: SessionId,
     pub base_revision: u64,
     pub primitive: Primitive,
+    /// D4: where the new object goes (world coordinates); `None` = origin.
+    #[serde(default)]
+    pub at: Option<[f64; 3]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -555,6 +650,47 @@ pub enum CreateOutcome {
         view: String,
         item: String,
         def_name: String,
+    },
+    /// Refused; the buffer and revision are unchanged.
+    Refused { reason: String, message: String },
+}
+
+/// B2: which structural edit a [`StructureEditRequest`] asks for.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum StructureOp {
+    Delete,
+    Duplicate,
+}
+
+/// B2: delete or duplicate the node named by `item` (a Scene Tree id of
+/// `base_revision`). Rust re-proves the node and the whole result.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StructureEditRequest {
+    pub session: SessionId,
+    pub base_revision: u64,
+    pub item: String,
+    pub op: StructureOp,
+    /// The user confirmed editing a shared PROTO definition.
+    #[serde(default)]
+    pub confirm_shared: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum StructureEditOutcome {
+    /// Applied as ONE undo step.
+    Applied {
+        state: DocState,
+        view: String,
+        /// Duplicate: the copy's Scene Tree id in the NEW revision. Delete:
+        /// `None` (the selection is cleared).
+        #[serde(default)]
+        item: Option<String>,
+        /// Duplicate: `[old, new]` DEF names renamed in the copy.
+        #[serde(default)]
+        renamed: Vec<(String, String)>,
     },
     /// Refused; the buffer and revision are unchanged.
     Refused { reason: String, message: String },
@@ -586,7 +722,9 @@ pub enum TranslateTargetOutcome {
         revision: u64,
         item: String,
         def_name: Option<String>,
-        root_index: u32,
+        /// `None` for a PROTO body Transform (B3): one runtime node per
+        /// instance, none of them a root node.
+        root_index: Option<u32>,
         preview_from: u64,
         preview_to: u64,
         translation: [f64; 3],
@@ -604,6 +742,11 @@ pub enum TranslateTargetOutcome {
         /// World position of the rotation / scale pivot (`T + C`).
         #[serde(default)]
         pivot: [f64; 3],
+        /// B3: the Transform is part of this shared PROTO definition. The
+        /// preview binds the PICKED instance's copy of it; a commit edits
+        /// the definition (every instance) and needs `confirm_shared`.
+        #[serde(default)]
+        shared: Option<SharedProto>,
     },
     Refused {
         reason: String,
@@ -651,6 +794,88 @@ pub enum TranslateProveOutcome {
     },
 }
 
+/// B2 selection highlight: where the preview should LOCATE `item` as it is
+/// in `revision` (any node instance; read-only).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HighlightTargetRequest {
+    pub session: SessionId,
+    pub revision: u64,
+    pub item: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum HighlightTargetOutcome {
+    /// The item's exact UTF-16 PREVIEW span. Locating it proves nothing:
+    /// `doc_highlight_prove` must prove the located runtime node.
+    Ready {
+        revision: u64,
+        item: String,
+        preview_from: u64,
+        preview_to: u64,
+        /// B3: a PROTO body node -- located as the PICKED instance's copy.
+        #[serde(default)]
+        body: bool,
+    },
+    Refused {
+        reason: String,
+        message: String,
+    },
+    Stale {
+        current: u64,
+    },
+}
+
+/// B2: prove that the runtime node the preview located for `item` (a
+/// `snapshotSpan` snapshot of the generation that rendered exactly
+/// `revision` / `preview_hash`) IS that authored node, at any depth.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HighlightProveRequest {
+    pub session: SessionId,
+    pub revision: u64,
+    pub preview_hash: u64,
+    /// The UI's preview generation number (diagnostic).
+    pub generation: u64,
+    pub item: String,
+    pub snapshot: PickSnapshot,
+}
+
+/// One proven ancestor of a highlighted node: its exact UTF-16 PREVIEW span
+/// (the runtime chain agrees with it link by link) and its source type.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HighlightAncestor {
+    pub preview_from: u64,
+    pub preview_to: u64,
+    pub node_type: String,
+    /// B3: the PROTO instance the inner chain was proven through (its body
+    /// root is the next inner ancestor; the instance adds no frame).
+    #[serde(default)]
+    pub proto_instance: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum HighlightProveOutcome {
+    /// The runtime node is exactly the authored node; `ancestors` is its
+    /// proven containment chain, the direct parent first, up to a root node.
+    Proven {
+        revision: u64,
+        item: String,
+        node_type: String,
+        ancestors: Vec<HighlightAncestor>,
+    },
+    Refused {
+        reason: String,
+        message: String,
+    },
+    Stale {
+        current: u64,
+    },
+}
+
 /// VISUAL-3A1 camera carry: map the UTF-16 PREVIEW span `[from, to)` of
 /// `from_revision` through the exact changes that produced `to_revision`
 /// (which must be the current revision). Read-only.
@@ -685,6 +910,9 @@ pub struct TranslateRequest {
     pub axis: gizmo::Axis,
     pub value: f64,
     pub decimals: u8,
+    /// B3: the user confirmed editing a shared PROTO definition.
+    #[serde(default)]
+    pub confirm_shared: bool,
 }
 
 /// VISUAL-4B: one completed rotation drag. `delta` (radians) turns the
@@ -698,6 +926,9 @@ pub struct RotateRequest {
     pub item: String,
     pub axis: gizmo::Axis,
     pub delta: f64,
+    /// B3: the user confirmed editing a shared PROTO definition.
+    #[serde(default)]
+    pub confirm_shared: bool,
 }
 
 /// VISUAL-4B: one completed scale drag: `scale[axis] *= factor`, or every
@@ -710,6 +941,9 @@ pub struct ScaleRequest {
     pub item: String,
     pub axis: Option<gizmo::Axis>,
     pub factor: f64,
+    /// B3: the user confirmed editing a shared PROTO definition.
+    #[serde(default)]
+    pub confirm_shared: bool,
 }
 
 /// The outcome of a Move, Rotate or Scale commit.
