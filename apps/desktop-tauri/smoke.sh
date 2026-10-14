@@ -77,7 +77,9 @@ if [[ $pick -eq 1 ]]; then
   node "$here/smoke-pick-plan.cjs" "$d/plan" || exit 2
   # Real X pointer input only inside this run's own Xvfb (see smoke.rs).
   marker=(); [[ ${#xvfb[@]} -gt 0 ]] && marker=(env WRLFORGE_SMOKE_XVFB=1)
-  timeout 300 "${xvfb[@]}" "${marker[@]}" "${iso[@]}" "$bin" --smoke-pick "$d/plan" --smoke-report "$d/report.json" --config-dir "$d/config" >"$d/stdout.txt" 2>"$d/stderr.txt"
+  # About 1,560 real X commands, each display-checked first: about 270 s
+  # before the per-command check, so 420 s and not 300 s.
+  timeout 420 "${xvfb[@]}" "${marker[@]}" "${iso[@]}" "$bin" --smoke-pick "$d/plan" --smoke-report "$d/report.json" --config-dir "$d/config" >"$d/stdout.txt" 2>"$d/stderr.txt"
   code=$?
   pass=$(sed -n 's/.*"pass": *\(true\|false\).*/\1/p' "$d/report.json" 2>/dev/null | head -1)
   echo "pick: exit=$code pass=${pass:-none} report=$d/report.json"
