@@ -2412,5 +2412,41 @@ async fn viewport_typing(c: &p::PickSmoke, fx: &p::PickFixture, r: &mut R) -> Op
         );
         undo_to(start.textarea_hash, 8).await;
     }
+
+    // (c) The edit boundary: keys typed in the Source and Interact chosen
+    // at once. Every typed key is kept, Rust holds exactly the text the
+    // Source shows, Interact previews that revision, and leaving Interact
+    // writes nothing (the runtime state is never written to the source).
+    let start = untouched().await?;
+    crate::command::run(C::ViewFocusSource);
+    ipc::sleep(300).await;
+    let at = base.find('\n').map_or(0, |i| i + 1) as u32;
+    textarea()?.set_selection_range(at, at).ok()?;
+    for _ in 0..3 {
+        super::gizmo::real("key-z", sx, sy).await.ok()?;
+    }
+    click("btn-interact")?;
+    let in_interact = wait_ms(8000, || {
+        (ipc::preview_scene_input(None) == "interact"
+            && CORE.with_borrow(|c| !c.busy && c.previewed == Some(c.revision)))
+        .then_some(())
+    })
+    .await
+    .is_some();
+    let typed = text_change(&base);
+    let rust = super::snapshot().await?;
+    let same_rust = p::view_hash(&rust.view) == src_hash();
+    let rev_in = CORE.with_borrow(|c| (c.revision, c.previewed));
+    click("btn-select")?;
+    ipc::sleep(300).await;
+    ready(8000).await;
+    let rust2 = super::snapshot().await?;
+    let kept = text_change(&base) == typed && p::view_hash(&rust2.view) == src_hash() && rust2.revision == rust.revision;
+    r.step(
+        "S4 (c): keys typed in the Source and Interact chosen at once: every key is kept, Rust holds the Source text, Interact previews that revision, and leaving Interact writes nothing",
+        typed == Some((at as usize, String::new(), "zzz".into())) && same_rust && rust.dirty && in_interact && rev_in.1 == Some(rev_in.0) && kept,
+        format!("typed {typed:?} · rust same {same_rust} dirty {} · interact {in_interact} · revision/previewed {rev_in:?} · after leaving kept {kept} (revision {} -> {})", rust.dirty, rust.revision, rust2.revision),
+    );
+    undo_to(start.textarea_hash, 8).await;
     Some(())
 }
