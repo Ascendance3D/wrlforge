@@ -26,30 +26,35 @@
 set -uo pipefail
 
 real_home() { getent passwd "$(id -u)" | cut -d: -f6; }
+# Looked up once per run. Empty (lookup failed) refuses every path below.
+REAL_HOME="$(real_home)"
 
 # Messages never show the real home path.
-refuse() { local m="$*"; echo "display-guard: REFUSED: ${m//$(real_home)/\~}" >&2; exit 3; }
+refuse() { local m="$*"; [[ -n "$REAL_HOME" ]] && m="${m//$REAL_HOME/\~}"; echo "display-guard: REFUSED: $m" >&2; exit 3; }
 
-# The arguments of an Xvfb process of this user that serves ":$1", one per
-# line; empty when there is none. pgrep only narrows the candidates (a
-# process it misses is refused); each one is still checked below.
+# The arguments of the X server that holds display ":$1", one per line, when
+# it is an Xvfb process of this user serving ":$1"; empty otherwise. The
+# server named in the display's lock file (written by the server itself and
+# owned by this user) is the one that holds the display now; no process scan.
 xvfb_args() {
-  local want=":$1" p e
-  for p in $(pgrep -u "$(id -u)" -x Xvfb | sed 's|^|/proc/|'); do
-    [[ -O "$p" ]] || continue
-    e="$(readlink "$p/exe" 2>/dev/null)" || continue
-    [[ "${e##*/}" == Xvfb ]] || continue
-    if tr '\0' '\n' <"$p/cmdline" 2>/dev/null | sed 1d | awk -v d="$want" '$0 == d { f = 1 } END { exit !f }'; then
-      tr '\0' '\n' <"$p/cmdline" 2>/dev/null | sed 1d
-      return 0
-    fi
+  local want=":$1" lock="/tmp/.X$1-lock" pid p e a
+  [[ -f "$lock" && -O "$lock" ]] || return 0
+  read -r pid <"$lock" 2>/dev/null || return 0
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  p="/proc/$((10#$pid))"
+  [[ -O "$p" ]] || return 0
+  e="$(readlink "$p/exe" 2>/dev/null)" || return 0
+  [[ "${e##*/}" == Xvfb ]] || return 0
+  local -a args
+  mapfile -d '' -t args <"$p/cmdline" 2>/dev/null || return 0
+  for a in "${args[@]:1}"; do
+    [[ "$a" == "$want" ]] && { printf '%s\n' "${args[@]:1}"; return 0; }
   done
 }
 
 # Refuse a path in the real home or in the owner's runtime directory.
 not_owner_path() {
-  local name="$1" p="$2" h
-  h="$(real_home)"
+  local name="$1" p="$2" h="$REAL_HOME"
   p="$(realpath -m -- "$p")"
   [[ "$p" != "$h" ]] || refuse "$name is the real home"
   case "$p/" in "$h"/*) refuse "$name is inside the real home";; esac

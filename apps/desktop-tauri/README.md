@@ -89,7 +89,7 @@ outside the real profile. `smoke.sh` and `gate-linux.sh` pass its path in
 `WRLFORGE_DISPLAY_GUARD`; without it, input and capture are refused. No
 approval is cached: every `xdotool` and `import` command runs through
 `display-guard.sh --exec`, which checks the display at that moment and then
-starts the command (about 70 ms per command). A manual capture or input
+starts the command (about 25 ms per command). A manual capture or input
 command goes through the same check, and there is no bypass:
 
 ```sh
