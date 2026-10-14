@@ -998,17 +998,59 @@ impl SmokeState {
 const XVFB_GEOMETRY: &str = "1600 1000";
 
 /// Real pointer input is allowed ONLY when `smoke.sh` launched this process
-/// inside its own Xvfb server (`WRLFORGE_SMOKE_XVFB=1`) with a DISPLAY set.
+/// inside its own Xvfb server (`WRLFORGE_SMOKE_XVFB=1`) and `display-guard.sh`
+/// accepts the display.
 /// UI-DOCK-1: whether real X input may be used (the same rule).
 pub fn real_pointer_available() -> bool {
     real_pointer_env().is_ok()
 }
 
+/// POST-ALPHA: every real X input action and every screen capture first
+/// passes `display-guard.sh --check` (path in `WRLFORGE_DISPLAY_GUARD`, set by
+/// `smoke.sh` and `gate-linux.sh`): a private Xvfb of this user reached with
+/// its own cookie from a test profile, never `:0` or the owner's session. The
+/// verdict is taken once per process.
 fn real_pointer_env() -> Result<String, String> {
-    if std::env::var("WRLFORGE_SMOKE_XVFB").as_deref() != Ok("1") {
+    static VERDICT: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
+    VERDICT
+        .get_or_init(|| {
+            display_guard(
+                std::env::var("WRLFORGE_SMOKE_XVFB").ok().as_deref(),
+                std::env::var("WRLFORGE_DISPLAY_GUARD").ok().as_deref(),
+            )
+        })
+        .clone()
+}
+
+/// The uncached check behind [`real_pointer_env`]: the harness marker, then
+/// the shared guard script, which must print `display-guard: OK :N`.
+fn display_guard(marker: Option<&str>, guard: Option<&str>) -> Result<String, String> {
+    if marker != Some("1") {
         return Err("not inside the harness's Xvfb (WRLFORGE_SMOKE_XVFB unset)".into());
     }
-    std::env::var("DISPLAY").map_err(|_| "no DISPLAY".to_string())
+    let guard = Path::new(guard.ok_or("WRLFORGE_DISPLAY_GUARD is not set")?);
+    if !guard.is_absolute() || guard.file_name() != Some("display-guard.sh".as_ref()) {
+        return Err(format!("{} is not the display guard", guard.display()));
+    }
+    let out = std::process::Command::new("timeout")
+        .arg("20")
+        .arg("bash")
+        .arg(guard)
+        .arg("--check")
+        .output()
+        .map_err(|e| format!("display guard: {e}"))?;
+    let said = String::from_utf8_lossy(&out.stdout);
+    let display = said
+        .lines()
+        .find_map(|l| l.strip_prefix("display-guard: OK "))
+        .map(str::to_string);
+    match display {
+        Some(d) if out.status.success() => Ok(d),
+        _ => Err(format!(
+            "display guard refused: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )),
+    }
 }
 
 fn xdotool(args: &[&str]) -> Result<String, String> {
@@ -1834,6 +1876,35 @@ pub fn inspector_change_ok(before: &str, after: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// POST-ALPHA: input and capture are refused without the harness marker,
+    /// without the guard, with a stand-in for it, or when it refuses; the
+    /// guard here sees an unset DISPLAY, so it must refuse.
+    #[test]
+    fn real_input_needs_the_display_guard() {
+        let real = concat!(env!("CARGO_MANIFEST_DIR"), "/../display-guard.sh");
+        let real = std::fs::canonicalize(real).unwrap();
+        let real = real.to_str().unwrap();
+        assert!(display_guard(None, Some(real)).is_err());
+        assert!(display_guard(Some("1"), None).is_err());
+        assert!(display_guard(Some("1"), Some("display-guard.sh")).is_err());
+        assert!(display_guard(Some("1"), Some("/bin/true")).is_err());
+        let t = std::env::temp_dir().join(format!("wrlforge-guard-unit-{}", std::process::id()));
+        std::fs::create_dir_all(&t).unwrap();
+        let fake = t.join("display-guard.sh");
+        std::fs::write(&fake, "echo 'display-guard: OK :0'; exit 3\n").unwrap();
+        assert!(
+            display_guard(Some("1"), fake.to_str()).is_err(),
+            "a failing exit is a refusal"
+        );
+        std::fs::remove_dir_all(&t).unwrap();
+        let out = std::process::Command::new("env")
+            .args(["-u", "DISPLAY", "bash", real, "--check"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(3));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("REFUSED: DISPLAY is not set"));
+    }
 
     #[test]
     fn gizmo_fixtures_are_movable_and_the_disk_check_is_one_token_exact() {

@@ -24,6 +24,9 @@
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 bin="${WRLFORGE_BIN:-$here/target/debug/wrl-forge}"
+# Real X input and screen captures run only after the shared display guard
+# accepts this run's private Xvfb (smoke.rs calls it; see display-guard.sh).
+export WRLFORGE_DISPLAY_GUARD="$here/display-guard.sh"
 xvfb=(); extra=(); cfg=""; create=0; pick=0; keys=0; move=0; extrusion=0; rotscale=0; recovery=0; dock=0; menu=0; research=""
 while [[ "${1:-}" == --* ]]; do
   case "$1" in

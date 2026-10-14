@@ -33,7 +33,7 @@ res() { if [[ "$2" == 1 ]]; then log "PASS $1 :: $3"; else log "FAIL $1 :: $3"; 
 # ---- the complete inventory at this commit --------------------------------
 # cargo: "<binary>|passed|ignored" per test target, doc-tests included. Each
 # must run, with exactly these counts, 0 failed and 0 filtered out.
-inv_app='unittests:wrl_forge_desktop|97|1
+inv_app='unittests:wrl_forge_desktop|98|1
 unittests:wrl_forge|0|0
 tests:app_shell|5|0
 tests:flux_regression|6|0
@@ -72,7 +72,7 @@ recovery:later|15
 theme:report|82
 texture:report|46
 native:report|46'
-guards_want=151; node_want=109; route_want=2; fx_want=58; iso_want=9
+guards_want=151; node_want=109; route_want=2; fx_want=58; iso_want=9; dguard_want=16
 
 # ---- 0. the checkout -------------------------------------------------------
 head="$(git -C "$wt" rev-parse HEAD)"; dirty="$(git -C "$wt" status --porcelain | wc -l)"
@@ -140,6 +140,13 @@ res route-timing-ignored-test "$([[ $rc -eq 0 ]] && rg -q 'ROUTE-TIMING' "$out/r
 (cd "$app" && timeout 60 ./isolated-run.sh --self-test) >"$out/isolation-self-test.txt" 2>&1; rc=$?
 s="$(tail -1 "$out/isolation-self-test.txt")"
 res isolation-self-test "$([[ $rc -eq 0 && "$s" == "ISOLATION SELF-TEST pass=$iso_want fail=0 (want $iso_want)" ]] && echo 1)" "exit=$rc $s"
+# Every real X input and screen capture passes display-guard.sh: prove it
+# refuses :0, an unset or unknown display, a bad cookie and the owner's
+# session BEFORE the command runs, and accepts a private Xvfb.
+(cd "$app" && timeout 60 ./display-guard.sh --self-test) >"$out/display-guard-self-test.txt" 2>&1; rc=$?
+s="$(tail -1 "$out/display-guard-self-test.txt")"
+res display-guard-self-test "$([[ $rc -eq 0 && "$s" == "DISPLAY GUARD SELF-TEST pass=$dguard_want fail=0 (want $dguard_want)" ]] && echo 1)" "exit=$rc $s"
+export WRLFORGE_DISPLAY_GUARD="$app/display-guard.sh"
 profile_before="$(cd "$app" && bash -c 'source ./isolated-run.sh --source-only; snapshot')"
 gui() { local name=$1; shift; (cd "$app" && timeout 600 "$@") >"$out/gui-$name.txt" 2>&1; echo $? >"$out/gui-$name.rc"; }
 gui menu ./smoke.sh --headless --menu &
