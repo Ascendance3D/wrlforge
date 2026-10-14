@@ -35,6 +35,16 @@ extern "C" {
     fn preview_scene_input_fault_js(why: &str) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = sceneInputBlocked, catch)]
     fn preview_scene_input_blocked_js() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = sceneKeysBlocked, catch)]
+    fn preview_scene_keys_blocked_js() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = sceneInputFaultOn, catch)]
+    fn preview_scene_input_fault_on_js(event: &str, why: &str) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = sceneGateLost, catch)]
+    fn preview_scene_gate_lost_js() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = sceneSensorEnable, catch)]
+    fn preview_scene_sensor_enable_js(def: &str, on: bool) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = sceneAdapterReplace, catch)]
+    fn preview_scene_adapter_replace_js() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = sceneField, catch)]
     fn preview_scene_field_js(def: &str, field: &str) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "wrlforgePreview"], js_name = pixel, catch)]
@@ -716,6 +726,47 @@ pub fn preview_scene_input_blocked() -> u64 {
         .ok()
         .and_then(|v| v.as_f64())
         .map_or(0, |n| n as u64)
+}
+
+/// Tests: how many keys the adapter's keyboard block stopped at the canvas.
+pub fn preview_scene_keys_blocked() -> u64 {
+    preview_scene_keys_blocked_js()
+        .ok()
+        .and_then(|v| v.as_f64())
+        .map_or(0, |n| n as u64)
+}
+
+/// Tests (PR #150 review): the gate fault, made by the next `event` (keyup,
+/// keypress, input, compositionstart...) that reaches the canvas; "" disarms.
+pub fn preview_scene_input_fault_on(event: &str, why: &str) {
+    let _ = preview_scene_input_fault_on_js(event, why);
+}
+
+/// Tests (PR #150 review): how many times the adapter lost a verified gate
+/// (and sent Rust the notice).
+pub fn preview_scene_gate_lost() -> u64 {
+    preview_scene_gate_lost_js()
+        .ok()
+        .and_then(|v| v.as_f64())
+        .map_or(0, |n| n as u64)
+}
+
+/// Tests (PR #150 review): enable / disable a DEF-named runtime sensor (SAI;
+/// never the source). True when the node was found.
+pub fn preview_scene_sensor_enable(def: &str, on: bool) -> bool {
+    preview_scene_sensor_enable_js(def, on)
+        .ok()
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// Tests (PR #150 review): dispose the pick adapter and make a new one for
+/// the same X_ITE browser; returns the new gate state.
+pub fn preview_scene_adapter_replace() -> String {
+    preview_scene_adapter_replace_js()
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_else(|| "unavailable:bridge-missing".into())
 }
 
 /// LINUX-EDIT-INPUT-SAFETY: give authored pointing sensors the pointer

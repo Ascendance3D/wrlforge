@@ -63,6 +63,7 @@ struct PickArm {
     /// (path, the exact bytes at arm time): picks must never change them.
     files: Vec<(PathBuf, Vec<u8>)>,
     fixtures: Vec<p::PickFixture>,
+    keys_only: bool,
 }
 
 pub const PICK_FILE: &str = "visual2-world.wrl";
@@ -482,9 +483,12 @@ impl SmokeState {
         #[derive(serde::Deserialize)]
         struct Plan {
             fixtures: Vec<Fx>,
+            #[serde(default, rename = "keysOnly")]
+            keys_only: bool,
         }
         let raw = std::fs::read_to_string(dir.join("plan.json")).map_err(|e| e.to_string())?;
         let plan: Plan = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        let keys_only = plan.keys_only;
         let mut files = Vec::new();
         let mut fixtures = Vec::new();
         for f in plan.fixtures {
@@ -515,6 +519,7 @@ impl SmokeState {
             save_path,
             files,
             fixtures,
+            keys_only,
         });
         Ok(())
     }
@@ -948,6 +953,7 @@ impl SmokeState {
                     themes: p::theme::THEMES.iter().map(|t| t.id.to_string()).collect(),
                     hold_ms: hold,
                     real_pointer: real_pointer_env().is_ok(),
+                    keys_only: a.keys_only,
                 }),
             });
         }
@@ -1088,8 +1094,10 @@ impl SmokeState {
             "wheelup" => xdotool(&["mousemove", &xs, &ys, "click", "4"])?,
             "wheeldown" => xdotool(&["mousemove", &xs, &ys, "click", "5"])?,
             // UI-DOCK-1: keyboard operation of tabs and dividers (fixed set).
-            k if k.starts_with("key-") => {
-                let name = &k[4..];
+            // LINUX-KEY-INPUT-SAFETY: `keydown-` / `keyup-` press or release
+            // one key of the same set (a held key, key repeat).
+            k if k.starts_with("key-") || k.starts_with("keydown-") || k.starts_with("keyup-") => {
+                let (verb, name) = k.split_once('-').unwrap_or(("key", k));
                 const KEYS: &[&str] = &[
                     "Right",
                     "Left",
@@ -1137,11 +1145,17 @@ impl SmokeState {
                     "ctrl+alt+Home",
                     // PR #149 review: Duplicate Node while Interact is on.
                     "ctrl+d",
+                    // LINUX-KEY-INPUT-SAFETY: keyboard sensor input.
+                    "BackSpace",
+                    "F2",
+                    "F7",
+                    "c",
+                    "shift+a",
                 ];
                 if !KEYS.contains(&name) {
                     return Err(format!("key {name:?} is not in the smoke key set"));
                 }
-                xdotool(&["key", name])?
+                xdotool(&[verb, name])?
             }
             "resize" => {
                 if !(320..=1600).contains(&x) || !(240..=1000).contains(&y) {

@@ -62,6 +62,7 @@ dock:main|65
 dock:restore|7
 dock:damaged|7
 pick:report|172
+keys:report|39
 create:report|53
 extrusion:report|58
 move:report|206
@@ -71,7 +72,7 @@ recovery:later|15
 theme:report|82
 texture:report|46
 native:report|46'
-guards_want=151; node_want=85; route_want=2; fx_want=58; iso_want=9
+guards_want=151; node_want=109; route_want=2; fx_want=58; iso_want=9
 
 # ---- 0. the checkout -------------------------------------------------------
 head="$(git -C "$wt" rev-parse HEAD)"; dirty="$(git -C "$wt" status --porcelain | wc -l)"
@@ -123,7 +124,7 @@ res test-shared-crates "$([[ $rc -eq 0 && $ok -eq 0 ]] && echo 1)" "exit=$rc $(a
 (cd "$app" && timeout 300 ./test-xite-guards.sh) >"$out/xite-guards.txt" 2>&1; rc=$?
 s="$(tail -1 "$out/xite-guards.txt")"
 res xite-guards "$([[ $rc -eq 0 && "$s" == "SUMMARY pass=$guards_want fail=0" ]] && echo 1)" "exit=$rc $s (want $guards_want)"
-(cd "$wt" && timeout 120 node --test test/preview/xite-pick-adapter.test.js test/preview/xite-pick-guards.test.js test/preview/xite-pick-binding.test.js test/preview/xite-pick-body-binding.test.js test/preview/xite-gizmo-highlight.test.js test/preview/xite-pick-layers.test.js test/preview/xite-scene-input-gate.test.js) >"$out/node-adapter.txt" 2>&1; rc=$?
+(cd "$wt" && timeout 120 node --test test/preview/xite-pick-adapter.test.js test/preview/xite-pick-guards.test.js test/preview/xite-pick-binding.test.js test/preview/xite-pick-body-binding.test.js test/preview/xite-gizmo-highlight.test.js test/preview/xite-pick-layers.test.js test/preview/xite-scene-input-gate.test.js test/preview/tauri-scene-gate-lost.test.js) >"$out/node-adapter.txt" 2>&1; rc=$?
 np="$(sed -n 's/^ℹ pass //p' "$out/node-adapter.txt")"; nf="$(sed -n 's/^ℹ fail //p' "$out/node-adapter.txt")"; ns="$(sed -n 's/^ℹ skipped //p' "$out/node-adapter.txt")"; nt="$(sed -n 's/^ℹ todo //p' "$out/node-adapter.txt")"
 res js-adapter-tests "$([[ $rc -eq 0 && "$np" == "$node_want" && "$nf" == 0 && "$ns" == 0 && "${nt:-0}" == 0 ]] && echo 1)" "exit=$rc pass=$np fail=$nf skipped=$ns todo=${nt:-0} (want $node_want)"
 (cd "$app/src-tauri" && cargo test -p wrl-forge-desktop route_warning -j 16) >"$out/route-tests.txt" 2>&1; rc=$?
@@ -144,6 +145,7 @@ gui() { local name=$1; shift; (cd "$app" && timeout 600 "$@") >"$out/gui-$name.t
 gui menu ./smoke.sh --headless --menu &
 gui dock ./smoke.sh --headless --dock &
 gui pick ./smoke.sh --headless --pick &
+gui keys ./smoke.sh --headless --keys &
 gui create ./smoke.sh --headless --create &
 gui extrusion ./smoke.sh --headless --extrusion &
 gui move ./smoke.sh --headless --move &

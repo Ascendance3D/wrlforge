@@ -1373,6 +1373,10 @@ pub struct PickSmoke {
     /// the harness's own Xvfb server, never on a desktop session.
     #[serde(default)]
     pub real_pointer: bool,
+    /// LINUX-KEY-INPUT-SAFETY: only the keyboard sensor fixtures, no theme
+    /// workflow (`smoke.sh --keys`).
+    #[serde(default)]
+    pub keys_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

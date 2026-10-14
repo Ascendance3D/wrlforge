@@ -500,7 +500,20 @@ pub fn select_quiet(from: u32, to: u32) {
 }
 
 fn reveal(ta: &HtmlTextAreaElement, from: u32, to: u32) {
+    // LINUX-KEY-INPUT-SAFETY: WebKitGTK can move the keyboard focus into the
+    // Source with the selection (a pick after Interact, when the read-only
+    // Source last held the document selection); typed keys then replaced
+    // the revealed node. The focus stays where it was.
+    let active = || web_sys::window()?.document()?.active_element();
+    let before = active();
     let _ = ta.set_selection_range(from, to);
+    if let Some(b) = before.filter(|b| !b.is_same_node(Some(ta))) {
+        if active().is_some_and(|a| a.is_same_node(Some(ta))) {
+            if let Some(b) = b.dyn_ref::<web_sys::HtmlElement>() {
+                let _ = b.focus();
+            }
+        }
+    }
     let (line, col) = line_col(ta, from);
     let line = line as usize - 1;
     let lh = 18.0_f64; // matches .source line-height in style.css (px)

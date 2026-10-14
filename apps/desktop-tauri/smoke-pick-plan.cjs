@@ -12,7 +12,9 @@
 // Source-form variants (CRLF, lone CR, BOM, Unicode) transform the text and
 // map every oracle span by the same deterministic rule; nothing is searched.
 //
-// Usage: node smoke-pick-plan.cjs <empty /tmp directory>
+// Usage: node smoke-pick-plan.cjs <empty /tmp directory> [--keys]
+// --keys: only the LINUX-KEY-INPUT-SAFETY keyboard sensor fixtures (S2, S3);
+// without it, every other fixture.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -191,6 +193,68 @@ function sensorFixture(id) {
 }
 sensorFixture('S1-edit-input-safety');
 
+// LINUX-KEY-INPUT-SAFETY: keyboard sensors. KeySensor and StringSensor are
+// X3D nodes (X_ITE drops them from a '#VRML V2.0' scene), so these worlds use
+// the X3D classic header; X_ITE loads its KeyDeviceSensor component for them
+// AFTER the pick adapter exists. Only one keyboard sensor may be enabled at a
+// time (X_ITE disables the others), so S2 and S3 have one each (S5 has
+// both). A TouchSensor door (pointer + keyboard sensors in one world) and a
+// looping TimeSensor spin are in each. A keyboard sensor drives a light by
+// ROUTE.
+function keyFixture(id, sensor) {
+  let text = '#X3D V3.3 utf8\nViewpoint { position 0 0 20 description "front" }\nNavigationInfo { type [ "EXAMINE" "ANY" ] }\n'
+    + 'DEF KeyLight DirectionalLight { on FALSE color 1 0.2 0.2 direction 0 0 -1 }\n';
+  const spans = {};
+  const at = (label, t) => { const start = text.length; text += t; spans[label] = { start, end: text.length }; text += '\n'; };
+  const box = (c) => `Shape { appearance Appearance { material Material { diffuseColor ${c} } } geometry Box { size 1.6 1.6 1.6 } }`;
+  if (sensor !== 'string') text += 'DEF KS KeySensor { }\nROUTE KS.isActive TO KeyLight.set_on\n';
+  if (sensor !== 'key') text += 'DEF SS StringSensor { deletionAllowed TRUE }\nROUTE SS.isActive TO KeyLight.set_on\n';
+  at('static', `Transform { translation -4 0 0 children [ ${box('0.6 0.6 0.6')} ] }`);
+  at('door', `DEF Door Transform { translation 0 0 0 children [ DEF DoorTouch TouchSensor { } ${box('0 0.6 0')} ] }`);
+  text += 'DEF Clock TimeSensor { cycleInterval 0.3 }\nDEF Swing OrientationInterpolator { key [ 0 1 ] keyValue [ 0 1 0 0, 0 1 0 1.2 ] }\n'
+    + 'ROUTE DoorTouch.touchTime TO Clock.set_startTime\nROUTE Clock.fraction_changed TO Swing.set_fraction\nROUTE Swing.value_changed TO Door.set_rotation\n';
+  at('spin', `DEF Spin Transform { translation 4 0 0 children [ ${box('0.8 0 0.8')} ] }`);
+  text += 'DEF SpinClock TimeSensor { cycleInterval 2 loop TRUE }\nDEF SpinPath OrientationInterpolator { key [ 0 0.5 1 ] keyValue [ 0 0 1 0, 0 0 1 3.14, 0 0 1 6.28 ] }\n'
+    + 'ROUTE SpinClock.fraction_changed TO SpinPath.set_fraction\nROUTE SpinPath.value_changed TO Spin.set_rotation\n';
+  const file = `${id}.wrl`;
+  write(file, text);
+  fixtures.push({
+    id, file, camera: [0, 0, 20],
+    clicks: [
+      // The Rust analysis is VRML97: an '#X3D' header is a missing
+      // '#VRML V2.0 utf8' header (an error), so every pick refuses UNSUPPORTED
+      // (fails closed), except a sensor object, which refuses first.
+      { id: 'static', world: [-4, 0, 0.8], skip: null, status: 'UNSUPPORTED', note: 'key-input-safety: x3d header', logical: null, oracleStatus: 'PROVEN' },
+      { id: 'door', world: [0, 0, 0.8], skip: null, status: 'REFUSED_SENSOR_CONFLICT', note: 'key-input-safety', logical: null, oracleStatus: 'REFUSED_SENSOR_CONFLICT' },
+      { id: 'time-driven', world: [4, 0, 0.8], skip: null, status: 'UNSUPPORTED', note: 'key-input-safety: x3d header', logical: null, oracleStatus: 'PROVEN' },
+    ],
+  });
+}
+keyFixture('S2-key-sensor', 'key');
+keyFixture('S3-string-sensor', 'string');
+// PR #150 review: both keyboard sensors in one world. X_ITE keeps one
+// enabled, so the other is a DISABLED sensor the gate may have wrapped.
+keyFixture('S5-key-and-string', 'both');
+
+// LINUX-KEY-INPUT-SAFETY: a plain VRML97 world (no keyboard sensor). After
+// the Source had the focus, a viewport click must not let typed keys edit
+// the Source (WebKitGTK inserts at the document selection, which a canvas
+// click leaves inside the textarea).
+(() => {
+  const id = 'S4-viewport-typing';
+  let text = `${HEADER}Viewpoint { position 0 0 20 description "front" }\n`;
+  const box = (c) => `Shape { appearance Appearance { material Material { diffuseColor ${c} } } geometry Box { size 1.6 1.6 1.6 } }`;
+  const start = text.length;
+  text += `Transform { translation -4 0 0 children [ ${box('0.6 0.6 0.6')} ] }`;
+  const end = text.length;
+  text += `\nTransform { translation 4 0 0 children [ ${box('0.2 0.4 0.8')} ] }\n`;
+  write(`${id}.wrl`, text);
+  fixtures.push({
+    id, file: `${id}.wrl`, camera: [0, 0, 20],
+    clicks: [{ id: 'static', world: [-4, 0, 0.8], skip: null, status: 'PROVEN', note: 'key-input-safety', logical: [start, end], oracleStatus: 'PROVEN' }],
+  });
+})();
+
 // ---- optional: the real Chevy (WRLFORGE_PICK_CHEVY=<a /tmp copy>) -----------
 // Not part of the gate (the model is not in the repository). The oracle is a
 // CPU ray cast written HERE: every Shape's IndexedFaceSet (PROTO `point`
@@ -315,5 +379,8 @@ function chevyFixture(src) {
   console.log(`chevy: camera ${CAM.join(' ')} aim ${pick.c.map((x) => x.toFixed(3)).join(' ')} margin ${pick.margin} rad layers ${seq.map((x) => `l${x.line}`).join(' > ')}`);
 }
 
-fs.writeFileSync(path.join(real, 'plan.json'), JSON.stringify({ fixtures }, null, 1));
-console.log(`${fixtures.length} fixtures, ${fixtures.reduce((n, f) => n + f.clicks.length, 0)} clicks -> ${real}`);
+const keysOnly = process.argv[3] === '--keys';
+const isKey = (f) => ['S2-key-sensor', 'S3-string-sensor', 'S4-viewport-typing', 'S5-key-and-string'].includes(f.id);
+const planned = fixtures.filter((f) => isKey(f) === keysOnly);
+fs.writeFileSync(path.join(real, 'plan.json'), JSON.stringify(keysOnly ? { fixtures: planned, keysOnly } : { fixtures: planned }, null, 1));
+console.log(`${planned.length} fixtures, ${planned.reduce((n, f) => n + f.clicks.length, 0)} clicks -> ${real}`);
