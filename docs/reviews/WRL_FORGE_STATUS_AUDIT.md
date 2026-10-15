@@ -88,22 +88,16 @@
     *   *Status:* Not verified (stale claim). These features are implemented and tested in the Rust/Tauri application (`apps/desktop-tauri/README.md`, `docs/architecture/TAURI_RUST_MIGRATION_1.md`).
     *   *Recommended Action:* Update `docs/PRODUCT_VISION.md` to reflect that viewport picking, translation, rotation, and scaling are already completed.
 
-## 6. Conflicting Windows and Mobile Tasks
+## 6. Target Platforms Definition (Linux, macOS, Windows 11)
 
-*   **Windows Target Conflict**
-    *   *Source:* `docs/PRODUCT_VISION.md`, `apps/desktop-tauri/README.md` vs `apps/desktop-tauri/ui/src/about.rs`
-    *   *Evidence:* The vision and Tauri README explicitly state "Windows and mobile are not supported targets" and "Windows and mobile are out of scope". However, `apps/desktop-tauri/ui/src/about.rs` says "1.5.0 is reserved for the complete Rust release on Linux, Windows and macOS." Legacy Electron `package.json` also has `build:win`.
-    *   *Status:* Conflicting.
-    *   *Recommended Action:* Correct the text in `apps/desktop-tauri/ui/src/about.rs` to reflect the approved Linux and macOS 15+ targets only, removing mention of Windows.
+*   **Target Platforms Roadmap Synchronization**
+    *   *Source:* Owner Decision 2026-10-15.
+    *   *Evidence:* The product vision correctly focuses on Linux as the current primary target, followed by macOS 15+. Windows 11 is definitively recognized as a future planned target, not permanently out-of-scope. Mobile remains definitively out-of-scope.
+    *   *Status:* Documentation requires alignment to properly articulate the sequence: Linux (Current) -> macOS 15+ (Later) -> Windows 11 (Future). Current references treating Windows as "out of scope" must be revised to "planned future target (currently unauthorized for implementation)". Windows assets should remain.
+    *   *Recommended Action:* Update `docs/PRODUCT_VISION.md` and `apps/desktop-tauri/README.md` to explicitly list Windows 11 as a planned future target while clarifying it is not yet authorized for implementation or CI.
 
 ## 7. Recommended Tasks for Jules (Grouped by Dependency & Priority)
 
 ### High Priority
 *   **Task 1: Documentation Alignment (Independent)**
-    *   *Description:* Update `docs/PRODUCT_VISION.md` to mark viewport picking, transform gizmos, and extrusion as completed.
-*   **Task 2: Windows Target Cleanup (Independent)**
-    *   *Description:* Correct the text in `apps/desktop-tauri/ui/src/about.rs` to reflect the approved Linux and macOS 15+ targets only, removing mention of Windows.
-
-### Medium Priority
-*   **Task 3: Legacy Electron Scripts Deprecation (Dependent on Tauri Migration)**
-    *   *Description:* If Electron is fully replaced, remove `build:win` and `qa:windows` from `package.json` to prevent confusion about supported platforms.
+    *   *Description:* Update `docs/PRODUCT_VISION.md` to mark viewport picking, transform gizmos, and extrusion as completed. Update the same file and `apps/desktop-tauri/README.md` to articulate the platform rollout sequence (Linux -> macOS 15+ -> Windows 11), ensuring Windows 11 is recognized as a future target and not permanently out-of-scope. Mobile should be the only platform stated as out-of-scope.
