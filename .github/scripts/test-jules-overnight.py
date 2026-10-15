@@ -30,7 +30,7 @@ if args[:2] == ["issue", "list"]:
     bad = {"number": 160, "title": "JULES-TEST invalid", "body": "", "author": {"login": "DJAscendance"}}
     print(json.dumps([bad, valid] if case in ("invalid", "bad_actor") else ([valid] if case != "empty" else [])))
 elif args[0] == "api":
-    num = int(args[2].split("/")[3])
+    num = int(args[2].split("/")[4])
     who = "someone-else" if case == "bad_actor" and num == 160 else "DJAscendance"
     print(json.dumps([{"event": "labeled", "label": {"name": "jules-approved"}, "actor": {"login": who}}]))
 elif args[:2] == ["issue", "edit"]:
