@@ -44,7 +44,7 @@ kept.
 
 ## Platforms
 
-Linux and macOS 15+. Windows and mobile are not supported targets.
+Linux is the primary platform, followed by macOS 15+. Windows 11 is a planned target for a future phase. Mobile remains out of scope.
 
 ## Planned feature groups
 
