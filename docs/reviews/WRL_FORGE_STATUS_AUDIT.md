@@ -26,6 +26,12 @@
     *   *Status:* Verified complete.
     *   *Recommended Action:* Ensure roadmap reflects parser capability advancement.
 
+*   **Viewport Picking (VISUAL-2 / WD2-D)**
+    *   *Source:* `docs/WRL_FORGE_ROADMAP.md`, `apps/desktop-tauri/README.md`, `docs/architecture/TAURI_RUST_MIGRATION_1.md`, `docs/white-dune-2026/WD2_D_XITE_PICKING_CLOSEOUT.md`
+    *   *Evidence:* `WD2-D` is marked as merged (PR #117) and closeout record confirms `WRLFORGE_WD2_D_INDEPENDENT_QA_RETEST_PASS`. `--pick` smoke test in Tauri app. Rust proof and xdotool tests exist.
+    *   *Status:* Verified complete (within its approved scope; deferred selection edge cases tracked separately e.g. #118, #119).
+    *   *Recommended Action:* Update `docs/PRODUCT_VISION.md` to indicate this is complete instead of "next planned".
+
 ## 2. Active Work
 
 *   **Tauri Rust Migration (TAURI-RUST-MIGRATION-1)**
@@ -33,12 +39,6 @@
     *   *Evidence:* Porting of features from Electron to Rust/Tauri.
     *   *Status:* Partially implemented.
     *   *Recommended Action:* Continue migration according to milestones.
-
-*   **Viewport Picking (VISUAL-2 / WD2-D)**
-    *   *Source:* `docs/WRL_FORGE_ROADMAP.md`, `apps/desktop-tauri/README.md`, `docs/architecture/TAURI_RUST_MIGRATION_1.md`
-    *   *Evidence:* `WD2-D` is marked as merged (PR #117) and closeout record exists. `--pick` smoke test in Tauri app. Rust proof and xdotool tests exist.
-    *   *Status:* Partially implemented (feature implementation done, full workstream completion pending acceptance).
-    *   *Recommended Action:* Update `docs/PRODUCT_VISION.md` to indicate this is complete instead of "next planned".
 
 *   **3D Transform Gizmos & Authoring (VISUAL-3A, VISUAL-4B / WD2-E)**
     *   *Source:* `docs/architecture/TAURI_RUST_MIGRATION_1.md`, `apps/desktop-tauri/README.md`, `docs/WRL_FORGE_ROADMAP.md`
