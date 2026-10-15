@@ -59,11 +59,17 @@ Linux and macOS 15+. Windows and mobile are not supported targets.
 
 ## Current status
 
-The first visual creation workflow (VISUAL-1) is being built in the Rust/Tauri
+The first visual creation workflow (VISUAL-1) is built in the Rust/Tauri
 application: New World, Create Box/Sphere/Cylinder/Cone as
 Transform/Shape/Appearance/Material, Scene Tree selection, Inspector editing of
-transform and diffuse color, undo/redo, Save As, and reopen. Viewport picking
-and 3D transform gizmos are the next planned visual features.
+transform and diffuse color, undo/redo, Save As, and reopen.
+
+Source-proven 3D viewport selection (WD2-D) is verified: in the Model
+workspace, clicking an object in the viewport selects the exact authored node
+(or its simple-object Transform) via shared selection authority, with
+fail-closed refusal when source identity cannot be proven. Interactive 3D
+transform gizmos (translate, rotate, scale) and viewport snapping remain
+incomplete planned work under the WD2-E workstream.
 
 Crash recovery (RUST-STAB-1, 2026-10-11) is built in the Rust/Tauri
 application: unsaved work is kept in private recovery records and offered at
