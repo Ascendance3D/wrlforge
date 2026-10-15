@@ -57,6 +57,7 @@ The workflow token has `contents: read` and `issues: write` only. Jules's separa
 
 - Review workflow permissions, owner-label actor checking, and exact repo matching.
 - Validate YAML parsing and Bash syntax.
+- Run `python3 .github/scripts/test-jules-overnight.py` for offline mock checks.
 - Test dry-run no-side-effects behavior.
 - Test valid and invalid issue selection.
 - Test missing API key and unavailable Jules source failure paths.
