@@ -8,8 +8,8 @@
 | Move | `./smoke.sh --headless --move` | `report.json` | `smoke.sh`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh`, `xdotool` | test exists but not run in this audit |
 | Rotate/Scale | `./smoke.sh --headless --rotscale` | `report.json` | `smoke.sh`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh`, `xdotool` | test exists but not run in this audit |
 | Extrusion | `./smoke.sh --headless --extrusion` | `report.json` | `smoke.sh`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh` | test exists but not run in this audit |
-| texture (smoke.sh) | `./smoke.sh --headless --theme tokyo-night-light file.wrl...` | `report.json` | `smoke.sh`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh` | test exists but not run in this audit |
-| texture (direct) | `./target/debug/wrl-forge --smoke-texture ...` | `report.json` | `smoke-texture-plan.py`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh` | test exists but not run in this audit |
-| docking | `./smoke.sh --headless --dock` | `report.json` | `smoke.sh`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh`, `xdotool` | test exists but not run in this audit |
-| recovery | `./smoke.sh --headless --recovery` | `report.json` | `smoke.sh`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh` | test exists but not run in this audit |
-| About/menu | `./smoke.sh --headless --menu` | `report.json` | `smoke.sh`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh` | test exists but not run in this audit |
+| Theme (smoke.sh) | `./smoke.sh --headless --theme tokyo-night-light file.wrl...` | `report.json` | `smoke.sh`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh` | test exists but not run in this audit |
+| Texture (direct) | `python3 smoke-texture-plan.py <temp-dir>` && `env WRLFORGE_SMOKE_XVFB=1 xvfb-run -a -s "-screen 0 1600x1000x24" ./isolated-run.sh --root <temp-profile> -- ./target/debug/wrl-forge --smoke-texture <temp-dir> --smoke-report <report.json> --config-dir <temp-config>` | `<report.json>` | `smoke-texture-plan.py`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh` | test exists but not run in this audit |
+| docking | `./smoke.sh --headless --dock` | `main.json`, `restore.json`, `damaged.json` (in temp run dir) | `smoke.sh`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh`, `xdotool` | test exists but not run in this audit |
+| recovery | `./smoke.sh --headless --recovery` | `ready.json`, `restore.json`, `later.json` (in temp run dir) | `smoke.sh`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh` | test exists but not run in this audit |
+| About/menu | `./smoke.sh --headless --menu` | `report.json` | `smoke.sh`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh`, `xdotool` | test exists but not run in this audit |
