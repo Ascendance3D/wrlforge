@@ -1,0 +1,118 @@
+name: Jules Overnight Queue
+
+# Dispatch at most one owner-approved task per run.
+# Two UTC runs place the work overnight in America/New_York.
+on:
+  schedule:
+    - cron: '17 4 * * *'
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: jules-overnight-queue
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      JULES_API_KEY: ${{ secrets.JULES_API_KEY }}
+    steps:
+      - name: Dispatch one owner-approved issue to Jules
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_REPOSITORY" != "Ascendance3D/wrlforge" ]]; then
+            echo "REFUSED: unexpected repository" >&2
+            exit 1
+          fi
+
+          # A queue entry requires BOTH the owner account and the
+          # explicit jules-approved label. Never use untrusted issue authors.
+          issues="$(gh issue list -R "$GITHUB_REPOSITORY" --state open \
+            --label jules-approved --limit 100 \
+            --json number,title,body,author)"
+          item="$(jq -c '
+            [.[] | select(.author.login == "DJAscendance")
+                 | select(.title | startswith("JULES-"))]
+            | sort_by(.number) | first // empty
+          ' <<< "$issues")"
+
+          if [[ -z "$item" ]]; then
+            echo "No owner-approved Jules task is queued."
+            exit 0
+          fi
+
+          number="$(jq -r '.number' <<< "$item")"
+          title="$(jq -r '.title' <<< "$item")"
+          body="$(jq -r '.body // ""' <<< "$item")"
+
+          if [[ -z "$body" || ${#body} -gt 8000 ]]; then
+            echo "REFUSED: issue #$number has no task or exceeds 8000 characters" >&2
+            exit 1
+          fi
+          if [[ -z "${JULES_API_KEY:-}" ]]; then
+            echo "REFUSED: missing JULES_API_KEY Actions secret" >&2
+            exit 1
+          fi
+
+          # Remove the approval label BEFORE the network call. If the
+          # response is lost, do not silently start a duplicate session.
+          # The owner can inspect the Jules sessions before re-queuing.
+          gh issue edit "$number" -R "$GITHUB_REPOSITORY" \
+            --remove-label jules-approved
+
+          preamble="Work only on this owner-approved WRL Forge public repository task.
+          Use the current main branch as your starting point.
+          Keep all changes strictly within the issue scope.
+          Use the exact source text as the document authority.
+          Target Linux and macOS 15+ only. Do not add Windows or mobile work.
+          Never access or integrate the separate private native X_ITE Rust port.
+          Do not modify workflows, secrets, licensing, release files, or security policy.
+          Do not merge, release, publish, close issues, or change repository settings.
+          Run focused tests when possible and report any checks that did not run.
+          Create a draft pull request for owner review. Include the source issue number.
+          If the task cannot be completed safely, report the blocker and stop."
+
+          prompt="${preamble}
+
+          Task issue #${number}: ${title}
+
+          ${body}"
+
+          payload="$(jq -n --arg prompt "$prompt" --arg title "$title" '{
+            title: $title,
+            prompt: $prompt,
+            sourceContext: {
+              source: "sources/github/Ascendance3D/wrlforge",
+              githubRepoContext: { startingBranch: "main" }
+            },
+            automationMode: "AUTO_CREATE_PR",
+            requirePlanApproval: false
+          }')"
+
+          # No retries. One POST can create one external session.
+          response="$(curl --fail-with-body --silent --show-error \
+            --max-time 120 \
+            -X POST 'https://jules.googleapis.com/v1alpha/sessions' \
+            -H 'Content-Type: application/json' \
+            -H "X-Goog-Api-Key: $JULES_API_KEY" \
+            --data "$payload")"
+
+          session="$(jq -r '.name // empty' <<< "$response")"
+          if [[ "$session" != sessions/* ]]; then
+            echo "Jules returned no valid session name; issue remains unqueued." >&2
+            exit 1
+          fi
+
+          gh issue comment "$number" -R "$GITHUB_REPOSITORY" --body \
+            "Overnight Jules dispatch started: \`$session\`. This task is awaiting an owner-reviewed PR. No merge or release is authorized."
+
+          echo "Started Jules task from issue #$number: $session"
