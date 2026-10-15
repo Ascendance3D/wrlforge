@@ -1,0 +1,30 @@
+name: Jules Overnight Safety Tests
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/jules-overnight.yml'
+      - '.github/workflows/jules-overnight-validation.yml'
+      - '.github/scripts/test-jules-overnight.py'
+      - 'docs/automation/JULES_OVERNIGHT.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-safety:
+    name: Jules offline safety
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Check Python syntax
+        run: python3 -m py_compile .github/scripts/test-jules-overnight.py
+      - name: Test dispatcher with mocked GitHub and Jules APIs
+        run: python3 .github/scripts/test-jules-overnight.py
