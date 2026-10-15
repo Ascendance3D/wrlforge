@@ -67,9 +67,11 @@ transform and diffuse color, undo/redo, Save As, and reopen.
 Source-proven 3D viewport selection (WD2-D) is verified: in the Model
 workspace, clicking an object in the viewport selects the exact authored node
 (or its simple-object Transform) via shared selection authority, with
-fail-closed refusal when source identity cannot be proven. Interactive 3D
-transform gizmos (translate, rotate, scale) and viewport snapping remain
-incomplete planned work under the WD2-E workstream.
+fail-closed refusal when source identity cannot be proven. Direct Translate,
+Rotate, and Scale transform tools are implemented in the Rust/Tauri beta
+(verified via `--move` and `--rotscale` smoke suites), while snapping and
+multi-selection remain open under the parent WD2-E workstream (#50), which is
+not yet fully accepted.
 
 Crash recovery (RUST-STAB-1, 2026-10-11) is built in the Rust/Tauri
 application: unsaved work is kept in private recovery records and offered at
