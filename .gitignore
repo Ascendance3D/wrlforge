@@ -1,4 +1,8 @@
 node_modules/
+
+# Local credentials and machine-specific environment settings. Never commit.
+.env.local
+.env.*.local
 scratch-test/
 
 # Electron / packaging output
