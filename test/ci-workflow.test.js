@@ -80,3 +80,59 @@ test('docs-only PRs skip expensive npm steps without bypassing checks for code',
     assert.strictEqual(step.if, "steps.scope.outputs.run_full == 'true'");
   }
 });
+
+// Behavior of the classifier: run the real step script against merge commits
+// in a throwaway repository. Git rename detection must not hide a code file
+// that is renamed to a Markdown name, and mixed changes must run the full gate.
+function classify(setup) {
+  const { execFileSync } = require('child_process');
+  const os = require('os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrlforge-ci-scope-'));
+  try {
+    const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com',
+      '-c', 'diff.renames=true', '-c', 'commit.gpgsign=false', ...args], { cwd: dir, stdio: 'pipe' });
+    const put = (name, text) => {
+      fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
+      fs.writeFileSync(path.join(dir, name), text);
+    };
+    git('init', '-q', '-b', 'main');
+    const body = 'line\n'.repeat(40);
+    put('src/foo.js', body + 'code\n');
+    put('docs/a.md', body + 'doc\n');
+    git('add', '-A'); git('commit', '-q', '-m', 'base');
+    git('checkout', '-q', '-b', 'pr');
+    setup({ git, put, dir, body });
+    git('add', '-A'); git('commit', '-q', '-m', 'pr');
+    git('checkout', '-q', 'main');
+    git('merge', '-q', '--no-ff', '-m', 'merge', 'pr');
+    const out = path.join(dir, '.out');
+    const script = job.steps.find((step) => step.name === 'Classify PR changes').run;
+    execFileSync('bash', ['-c', script], {
+      cwd: dir, stdio: 'pipe',
+      env: { ...process.env, GITHUB_EVENT_NAME: 'pull_request', GITHUB_OUTPUT: out },
+    });
+    return /run_full=(true|false)/.exec(fs.readFileSync(out, 'utf8'))[1];
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('classifier: Markdown-only edits and Markdown renames use the fast gate', () => {
+  assert.strictEqual(classify(({ put, body }) => put('docs/a.md', body + 'doc2\n')), 'false');
+  assert.strictEqual(classify(({ git, dir }) => git('mv', 'docs/a.md', 'docs/b.md')), 'false');
+});
+
+test('classifier: a code file renamed to a Markdown name runs the full gate', () => {
+  assert.strictEqual(classify(({ git }) => git('mv', 'src/foo.js', 'docs/foo.md')), 'true');
+});
+
+test('classifier: deleting a code file runs the full gate', () => {
+  assert.strictEqual(classify(({ git }) => git('rm', '-q', 'src/foo.js')), 'true');
+});
+
+test('classifier: a Markdown rename mixed with a code edit runs the full gate', () => {
+  assert.strictEqual(classify(({ git, put, body }) => {
+    git('mv', 'docs/a.md', 'docs/b.md');
+    put('src/foo.js', body + 'changed\n');
+  }), 'true');
+});

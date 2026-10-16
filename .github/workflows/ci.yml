@@ -48,7 +48,9 @@ jobs:
             echo "Unable to compare both PR parents: run full checks."
             exit 0
           fi
-          mapfile -d '' changed < <(git diff --name-only -z 'HEAD^1' 'HEAD^2')
+          # --no-renames lists the old and the new path of a move, so a code
+          # file renamed to a .md name cannot pass as a documentation change.
+          mapfile -d '' changed < <(git diff --no-renames --name-only -z 'HEAD^1' 'HEAD^2')
           if (( ${#changed[@]} == 0 )); then
             echo "run_full=true" >> "$GITHUB_OUTPUT"
             echo "Empty PR diff: run full checks."
