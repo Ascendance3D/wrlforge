@@ -65,7 +65,24 @@ with log.open("a") as f:
             items = [{"sourceContext": {"source": source}, "state": "COMPLETED"} for _ in range(5)]
         if case == "other_repo":
             items = [{"sourceContext": {"source": "sources/another-project"}, "state": "IN_PROGRESS"} for _ in range(6)]
-        print(json.dumps({"sessions": items}))
+        if case == "error_body":
+            print(json.dumps({"error": {"message": "unavailable"}}))
+        elif case == "missing_sessions":
+            print(json.dumps({"nextPageToken": ""}))
+        elif case == "null_sessions":
+            print(json.dumps({"sessions": None}))
+        elif case == "invalid_session":
+            print(json.dumps({"sessions": [{"state": "IN_PROGRESS"}]}))
+        elif case == "invalid_page_token":
+            print(json.dumps({"sessions": [], "nextPageToken": 17}))
+        elif case == "paged_capacity":
+            items = [{"sourceContext": {"source": source}, "state": "IN_PROGRESS"} for _ in range(2)]
+            if "pageToken=next-2" in args[-1]:
+                print(json.dumps({"sessions": items}))
+            else:
+                print(json.dumps({"sessions": items, "nextPageToken": "next-2"}))
+        else:
+            print(json.dumps({"sessions": items}))
     else:
         f.write("GET\n")
         repo = {"owner": "Ascendance3D", "repo": "wrlforge",
@@ -184,6 +201,22 @@ class SafetyTests(unittest.TestCase):
         result, log = trial("session_failure", False)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(log, ["GET", "GET", "SESSION_GET"])
+
+    def test_success_status_with_error_body_refuses_dispatch(self):
+        for case in ("error_body", "missing_sessions", "null_sessions",
+                     "invalid_session", "invalid_page_token"):
+            with self.subTest(case=case):
+                result, log = trial(case, False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("invalid Jules sessions response", result.stderr)
+                self.assertEqual(log, ["GET", "GET", "SESSION_GET"])
+
+    def test_paginated_capacity_counts_both_pages(self):
+        result, log = trial("paged_capacity", False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("CAPACITY HOLD: 4 active", result.stdout)
+        self.assertEqual(log, ["GET", "GET", "SESSION_GET", "SESSION_GET"])
+        self.assertNotIn("POST", log)
 
     def test_wrong_repository_refused(self):
         result, log = trial("valid", False, repo="other/repo")
