@@ -11,8 +11,9 @@
 // What must not silently regress:
 //   * the test job trusts exactly its own workspace as command-scope git config
 //     (never a wildcard, never a write to the runner's global config);
-//   * the determinism check still runs, on every event, and still fails on a
-//     real diff of the generated icons.
+//   * the determinism check runs for code/config changes and main pushes,
+//     while Markdown-only pull requests run the fast gate without npm;
+//   * the determinism check still fails on a real diff of generated icons.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -45,11 +46,37 @@ test('the icon determinism check proves the repository, then fails on any icon d
   assert.ok(generate >= 0 && verify > generate, 'verification must run after icon generation');
 
   const step = job.steps[verify];
-  assert.strictEqual(step.if, undefined, 'the check must run on every event');
+  assert.strictEqual(step.if, "steps.scope.outputs.run_full == 'true'",
+    'the check must run for every full Linux validation');
   assert.notStrictEqual(step['continue-on-error'], true, 'the check must be able to fail the job');
   const lines = step.run.trim().split('\n').map((l) => l.trim());
   assert.deepStrictEqual(lines, [
     'git rev-parse --is-inside-work-tree',
     'git diff --exit-code -- assets/generated/icons',
   ]);
+});
+
+test('Linux is the only PR test runner in the current product phase', () => {
+  assert.strictEqual(job.name, 'test (ubuntu)');
+  assert.deepStrictEqual(Object.keys(doc.jobs), ['test']);
+  assert.match(String(job['runs-on']), /ubuntu-latest/);
+  assert.doesNotMatch(String(job['runs-on']), /windows-latest|macos-latest/);
+});
+
+test('docs-only PRs skip expensive npm steps without bypassing checks for code', () => {
+  const classify = job.steps.find((step) => step.name === 'Classify PR changes');
+  assert.ok(classify, 'the PR scope must be checked first');
+  assert.match(classify.run, /HEAD\^1/);
+  assert.match(classify.run, /HEAD\^2/);
+  assert.match(classify.run, /run_full=true/);
+  assert.match(classify.run, /run_full=false/);
+  assert.match(classify.run, /\*\.md\)/);
+  const costly = ['Install dependencies', 'Generate icons', 'Bundle native editor',
+    'Tests + syntax/check gate (includes product-posture)',
+    'Validate packaging configuration'];
+  for (const name of costly) {
+    const step = job.steps.find((item) => item.name === name);
+    assert.ok(step, name + ' must remain in CI');
+    assert.strictEqual(step.if, "steps.scope.outputs.run_full == 'true'");
+  }
 });
