@@ -88,9 +88,13 @@ function classify(setup) {
   const { execFileSync } = require('child_process');
   const os = require('os');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrlforge-ci-scope-'));
+  // Inherited repository-location variables (for example from a git hook)
+  // would point these commands at the real repository.
+  const clean = { ...process.env };
+  for (const name of Object.keys(clean)) if (/^GIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR|OBJECT_DIRECTORY|NAMESPACE|CEILING_DIRECTORIES)$/.test(name)) delete clean[name];
   try {
     const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com',
-      '-c', 'diff.renames=true', '-c', 'commit.gpgsign=false', ...args], { cwd: dir, stdio: 'pipe' });
+      '-c', 'diff.renames=true', '-c', 'commit.gpgsign=false', ...args], { cwd: dir, stdio: 'pipe', env: clean });
     const put = (name, text) => {
       fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
       fs.writeFileSync(path.join(dir, name), text);
@@ -109,7 +113,7 @@ function classify(setup) {
     const script = job.steps.find((step) => step.name === 'Classify PR changes').run;
     execFileSync('bash', ['-c', script], {
       cwd: dir, stdio: 'pipe',
-      env: { ...process.env, GITHUB_EVENT_NAME: 'pull_request', GITHUB_OUTPUT: out },
+      env: { ...clean, GITHUB_EVENT_NAME: 'pull_request', GITHUB_OUTPUT: out },
     });
     return /run_full=(true|false)/.exec(fs.readFileSync(out, 'utf8'))[1];
   } finally {
