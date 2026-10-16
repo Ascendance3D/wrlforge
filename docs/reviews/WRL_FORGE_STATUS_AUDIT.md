@@ -46,10 +46,16 @@
     *   *Status:* Partially implemented (feature implementation done, full workstream completion pending acceptance).
     *   *Recommended Action:* Update `docs/PRODUCT_VISION.md`.
 
-*   **Docking & Configurable Workspace (UI-DOCK-1 / UI-C0 / UI-1)**
+*   **Tauri Docking (UI-DOCK-1)**
     *   *Source:* `docs/WRL_FORGE_ROADMAP.md`, `apps/desktop-tauri/README.md`
-    *   *Evidence:* Smoke test `--dock` exists. UI-C0 / UI-1 are marked as "Next" in roadmap.
-    *   *Status:* Partially implemented (feature implementation done, full workstream completion pending acceptance).
+    *   *Evidence:* Smoke test `--dock` exists. It applies to the Tauri UI-DOCK-1 lane only.
+    *   *Status:* Implementation exists; the smoke test was not run in this audit.
+    *   *Recommended Action:* None.
+
+*   **Dockable Workspace Spike (UI-C0) and Configurable Docked Workspace (UI-1)**
+    *   *Source:* `docs/WRL_FORGE_ROADMAP.md`
+    *   *Evidence:* The roadmap marks both as "Next". The `--dock` smoke test does not establish acceptance of either workstream.
+    *   *Status:* Not accepted. Report each workstream separately when acceptance evidence exists.
     *   *Recommended Action:* None.
 
 ## 3. Blocked Work
