@@ -1,12 +1,8 @@
 name: CI
 
-# Non-visual continuous integration for WRL Forge.
-# Runs the node test suite, the syntax/check gate, deterministic icon
-# generation, product-posture checks, and packaging-config validation on Ubuntu,
-# Windows, and macOS. It deliberately does NOT launch any Electron visual QA
-# suite -- those run one process at a time under the sanctioned VisualQaRunner
-# locally, never concurrently in CI.
-
+# Linux-first product phase. The check name stays stable for branch rules.
+# Documentation-only pull requests use a quick gate without npm builds.
+# This workflow does not prove native Rust/Tauri or GUI readiness.
 on:
   push:
     branches: [main]
@@ -14,7 +10,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# One run per ref; cancel superseded runs so we never stack Electron-adjacent work.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -24,32 +19,8 @@ permissions:
 
 jobs:
   test:
-    name: test (${{ matrix.os }})
-    # Pushes to main run on the self-hosted Proxmox runners (public-ci runner
-    # group, restricted to this repo). Pull requests always use GitHub-hosted
-    # runners so fork code never executes on the self-hosted machines. There is
-    # no self-hosted macOS runner, so macOS is GitHub-hosted either way.
-    runs-on: ${{ github.event_name == 'pull_request' && matrix.hosted || fromJSON(matrix.self_hosted) }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu
-            hosted: ubuntu-latest
-            self_hosted: '["self-hosted", "linux-proxmox"]'
-          - os: windows
-            hosted: windows-latest
-            self_hosted: '["self-hosted", "windows-proxmox"]'
-          - os: macos
-            hosted: macos-latest
-            self_hosted: '"macos-latest"'
-    # actions/checkout trusts the workspace (safe.directory) only inside its own
-    # temporary HOME, so later git commands fall back to the runner's real
-    # config. On the self-hosted Windows runner the persistent workspace is not
-    # owned by the runner account, git refuses it as "dubious ownership", and
-    # `git diff` then silently degrades to --no-index ("Not a git repository",
-    # exit 129) -- issue #113. Trust exactly this workspace, for this job only,
-    # as command-scope config: nothing is written to the runner's global config.
+    name: test (ubuntu)
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","linux-proxmox"]') }}
     env:
       GIT_CONFIG_COUNT: 1
       GIT_CONFIG_KEY_0: safe.directory
@@ -57,33 +28,76 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Classify PR changes
+        id: scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
+            echo "run_full=true" >> "$GITHUB_OUTPUT"
+            echo "Main push or manual run: full Linux checks."
+            exit 0
+          fi
+          if ! git rev-parse --verify 'HEAD^1' >/dev/null 2>&1 ||
+             ! git rev-parse --verify 'HEAD^2' >/dev/null 2>&1; then
+            echo "run_full=true" >> "$GITHUB_OUTPUT"
+            echo "Unable to compare both PR parents: run full checks."
+            exit 0
+          fi
+          mapfile -d '' changed < <(git diff --name-only -z 'HEAD^1' 'HEAD^2')
+          if (( ${#changed[@]} == 0 )); then
+            echo "run_full=true" >> "$GITHUB_OUTPUT"
+            echo "Empty PR diff: run full checks."
+            exit 0
+          fi
+          for file in "${changed[@]}"; do
+            case "$file" in
+              *.md) ;;
+              *)
+                echo "run_full=true" >> "$GITHUB_OUTPUT"
+                echo "Non-Markdown change: run full checks."
+                exit 0
+                ;;
+            esac
+          done
+          echo "run_full=false" >> "$GITHUB_OUTPUT"
+          echo "Markdown-only change: skip npm build and check."
 
       - name: Set up Node.js
+        if: steps.scope.outputs.run_full == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
 
       - name: Install dependencies
+        if: steps.scope.outputs.run_full == 'true'
         run: npm ci
 
       - name: Generate icons
+        if: steps.scope.outputs.run_full == 'true'
         run: npm run build:icons
 
       - name: Verify icon generation is deterministic
-        # Prove git sees the repository first: outside one, `git diff` reports a
-        # usage error that reads like a determinism failure.
+        if: steps.scope.outputs.run_full == 'true'
+        shell: bash
         run: |
           git rev-parse --is-inside-work-tree
           git diff --exit-code -- assets/generated/icons
-        shell: bash
 
       - name: Bundle native editor
+        if: steps.scope.outputs.run_full == 'true'
         run: npm run build:editor
 
       - name: Tests + syntax/check gate (includes product-posture)
+        if: steps.scope.outputs.run_full == 'true'
         run: npm run check
 
       - name: Validate packaging configuration
+        if: steps.scope.outputs.run_full == 'true'
         shell: bash
         run: node .github/scripts/validate-build-config.js
