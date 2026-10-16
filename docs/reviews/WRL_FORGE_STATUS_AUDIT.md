@@ -57,8 +57,8 @@
 *   **macOS Tauri Build Support**
     *   *Source:* `apps/desktop-tauri/README.md`
     *   *Evidence:* Mentions "macOS 15+ is a target but has not been built yet."
-    *   *Status:* Not started: no native macOS Rust/Tauri build or CI job exists (cause of the block is unverified).
-    *   *Recommended Action:* Set up macOS CI environment for Tauri build.
+    *   *Status:* macOS-specific source and dependencies exist. No native macOS Rust/Tauri build, CI job, or run is verified (cause of the block is unverified). See `docs/reviews/MACOS_TAURI_READINESS.md`.
+    *   *Recommended Action:* Owner decision: authorize a macOS native build check when the macOS 15+ phase starts.
 
 ## 4. Future Work
 
@@ -86,7 +86,7 @@
     *   *Source:* `docs/PRODUCT_VISION.md`
     *   *Evidence:* States "Viewport picking and 3D transform gizmos are the next planned visual features."
     *   *Status:* Stale claim. Repository docs (`apps/desktop-tauri/README.md`, `docs/architecture/TAURI_RUST_MIGRATION_1.md`) describe these features as implemented; this audit did not re-run their tests.
-    *   *Recommended Action:* Update `docs/PRODUCT_VISION.md` to reflect that viewport picking, translation, rotation, and scaling are already completed.
+    *   *Recommended Action:* Update `docs/PRODUCT_VISION.md` to state that viewport picking is built (WD2-D closed) and that the Translate, Rotate and Scale tools are implemented. WD2-E (#50) stays open: snapping is partial, multi-selection is missing, and independent QA is pending.
 
 ## 6. Target Platforms Definition (Linux, macOS, Windows 11)
 
@@ -94,10 +94,10 @@
     *   *Source:* Owner Decision 2026-10-15.
     *   *Evidence:* The product vision correctly focuses on Linux as the current primary target, followed by macOS 15+. Windows 11 is definitively recognized as a future planned target, not permanently out-of-scope. Mobile remains definitively out-of-scope.
     *   *Status:* Documentation requires alignment to properly articulate the sequence: Linux (Current) -> macOS 15+ (Later) -> Windows 11 (Future). Current references treating Windows as "out of scope" must be revised to "planned future target (currently unauthorized for implementation)". Windows assets should remain.
-    *   *Recommended Action:* Update `docs/PRODUCT_VISION.md` and `apps/desktop-tauri/README.md` to explicitly list Windows 11 as a planned future target while clarifying it is not yet authorized for implementation or CI.
+    *   *Recommended Action:* Update `docs/PRODUCT_VISION.md` and `apps/desktop-tauri/README.md` to explicitly list Windows 11 as a planned future target while clarifying it is not yet authorized for implementation, packaging, or release.
 
 ## 7. Recommended Tasks for Jules (Grouped by Dependency & Priority)
 
 ### High Priority
 *   **Task 1: Documentation Alignment (Independent)**
-    *   *Description:* Update `docs/PRODUCT_VISION.md` to mark viewport picking, transform gizmos, and extrusion as completed. Update the same file and `apps/desktop-tauri/README.md` to articulate the platform rollout sequence (Linux -> macOS 15+ -> Windows 11), ensuring Windows 11 is recognized as a future target and not permanently out-of-scope. Mobile should be the only platform stated as out-of-scope.
+    *   *Description:* Update `docs/PRODUCT_VISION.md` to mark viewport picking and extrusion as built, and the Translate, Rotate and Scale tools as implemented. State that WD2-E (#50) is not accepted: snapping is partial, multi-selection is missing, and independent QA is pending. Update the same file and `apps/desktop-tauri/README.md` to articulate the platform rollout sequence (Linux -> macOS 15+ -> Windows 11), ensuring Windows 11 is recognized as a future target and not permanently out-of-scope. Mobile should be the only platform stated as out-of-scope.
