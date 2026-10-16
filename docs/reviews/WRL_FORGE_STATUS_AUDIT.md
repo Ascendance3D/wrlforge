@@ -4,19 +4,19 @@
 
 *   **Crash Recovery (RUST-STAB-1)**
     *   *Source:* `docs/architecture/TAURI_RUST_MIGRATION_1.md`, `apps/desktop-tauri/README.md`
-    *   *Evidence:* Mentions of `RUST-STAB-1` crash recovery, tests in `src-tauri/src/recovery.rs`, and smoke test `--recovery`.
+    *   *Evidence:* Mentions of `RUST-STAB-1` crash recovery, tests in `apps/desktop-tauri/src-tauri/src/recovery.rs`, and smoke test `--recovery`.
     *   *Status:* Documented as complete in repository docs; tests and smoke runs were not re-run in this audit.
     *   *Recommended Action:* None needed.
 
 *   **Extrusion Authoring (VISUAL-4A)**
     *   *Source:* `docs/architecture/TAURI_RUST_MIGRATION_1.md`
-    *   *Evidence:* Extrusion editor documented, `--extrusion` smoke test, and `ui/src/smoke/extrusion.rs`.
+    *   *Evidence:* Extrusion editor documented, `--extrusion` smoke test, and `apps/desktop-tauri/ui/src/smoke/extrusion.rs`.
     *   *Status:* Documented as complete in repository docs; tests and smoke runs were not re-run in this audit.
     *   *Recommended Action:* Add to completed features list in `PRODUCT_VISION.md`.
 
 *   **Desktop Menus & Commands (UI-MENU-1)**
     *   *Source:* `docs/architecture/TAURI_RUST_MIGRATION_1.md`
-    *   *Evidence:* Documented as built, smoke tests via `--menu`.
+    *   *Evidence:* Documented as built, smoke tests via `--menu` (`apps/desktop-tauri/ui/src/smoke/menu.rs`).
     *   *Status:* Documented as complete in repository docs; tests and smoke runs were not re-run in this audit.
     *   *Recommended Action:* Document in roadmap history.
 
@@ -28,7 +28,7 @@
 
 *   **Viewport Picking (VISUAL-2 / WD2-D)**
     *   *Source:* `docs/WRL_FORGE_ROADMAP.md`, `apps/desktop-tauri/README.md`, `docs/architecture/TAURI_RUST_MIGRATION_1.md`, `docs/white-dune-2026/WD2_D_XITE_PICKING_CLOSEOUT.md`
-    *   *Evidence:* `WD2-D` is marked as merged (PR #117) and closeout record confirms `WRLFORGE_WD2_D_INDEPENDENT_QA_RETEST_PASS`. `--pick` smoke test in Tauri app. Rust proof and xdotool tests exist.
+    *   *Evidence:* `WD2-D` is marked as merged (PR #117) and closeout record confirms `WRLFORGE_WD2_D_INDEPENDENT_QA_RETEST_PASS`. `--pick` smoke test in Tauri app (`apps/desktop-tauri/ui/src/smoke/pick.rs`). Rust proof and xdotool tests exist.
     *   *Status:* Documented complete; closeout record cited, tests not re-run in this audit (within its approved scope; deferred selection edge cases tracked separately e.g. #118, #119).
     *   *Recommended Action:* Update `docs/PRODUCT_VISION.md` to indicate this is complete instead of "next planned".
 
@@ -42,13 +42,13 @@
 
 *   **3D Transform Gizmos & Authoring (VISUAL-3A, VISUAL-4B / WD2-E)**
     *   *Source:* `docs/architecture/TAURI_RUST_MIGRATION_1.md`, `apps/desktop-tauri/README.md`, `docs/WRL_FORGE_ROADMAP.md`
-    *   *Evidence:* `VISUAL-4B` Rotate and Scale tools documented, `--move` and `--rotscale` smoke tests. Code in `ui/src/smoke/rotscale.rs`. WD2-E is marked as "Next" in roadmap.
+    *   *Evidence:* `VISUAL-4B` Rotate and Scale tools documented, `--move` and `--rotscale` smoke tests. Code in `apps/desktop-tauri/ui/src/smoke/rotscale.rs` and `apps/desktop-tauri/ui/src/smoke/gizmo.rs`. WD2-E is marked as "Next" in roadmap.
     *   *Status:* Partially implemented (feature implementation done, full workstream completion pending acceptance).
     *   *Recommended Action:* Update `docs/PRODUCT_VISION.md`.
 
 *   **Tauri Docking (UI-DOCK-1)**
     *   *Source:* `docs/WRL_FORGE_ROADMAP.md`, `apps/desktop-tauri/README.md`
-    *   *Evidence:* Smoke test `--dock` exists. It applies to the Tauri UI-DOCK-1 lane only.
+    *   *Evidence:* Smoke test `--dock` exists in `apps/desktop-tauri/ui/src/smoke/dock.rs`. It applies to the Tauri UI-DOCK-1 lane only.
     *   *Status:* Implementation exists; the smoke test was not run in this audit.
     *   *Recommended Action:* None.
 
@@ -63,7 +63,7 @@
 *   **macOS Tauri Build Support**
     *   *Source:* `apps/desktop-tauri/README.md`
     *   *Evidence:* Mentions "macOS 15+ is a target but has not been built yet."
-    *   *Status:* macOS-specific source and dependencies exist. No native macOS Rust/Tauri build, CI job, or run is verified (cause of the block is unverified). See `docs/reviews/MACOS_TAURI_READINESS.md`.
+    *   *Status:* macOS-specific source and dependencies exist. No native macOS Rust/Tauri build, CI job, or run is verified (cause of the block is unverified).
     *   *Recommended Action:* Owner decision: authorize a macOS native build check when the macOS 15+ phase starts.
 
 ## 4. Future Work
@@ -97,7 +97,7 @@
 ## 6. Target Platforms Definition (Linux, macOS, Windows 11)
 
 *   **Target Platforms Roadmap Synchronization**
-    *   *Source:* Owner Decision 2026-10-15.
+    *   *Source:* Owner Decision 2026-10-15 (per `docs/automation/JULES_OVERNIGHT.md` and `docs/PRODUCT_VISION.md`).
     *   *Evidence:* The product vision correctly focuses on Linux as the current primary target, followed by macOS 15+. Windows 11 is definitively recognized as a future planned target, not permanently out-of-scope. Mobile remains definitively out-of-scope.
     *   *Status:* Documentation requires alignment to properly articulate the sequence: Linux (Current) -> macOS 15+ (Later) -> Windows 11 (Future). Current references treating Windows as "out of scope" must be revised to "planned future target (currently unauthorized for implementation)". Windows assets should remain.
     *   *Recommended Action:* Update `docs/PRODUCT_VISION.md` and `apps/desktop-tauri/README.md` to explicitly list Windows 11 as a planned future target while clarifying it is not yet authorized for implementation, CI, packaging, or release in current lanes. Mobile stays out of scope.
