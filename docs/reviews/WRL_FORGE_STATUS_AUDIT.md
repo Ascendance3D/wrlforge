@@ -100,7 +100,7 @@
     *   *Source:* Owner Decision 2026-10-15.
     *   *Evidence:* The product vision correctly focuses on Linux as the current primary target, followed by macOS 15+. Windows 11 is definitively recognized as a future planned target, not permanently out-of-scope. Mobile remains definitively out-of-scope.
     *   *Status:* Documentation requires alignment to properly articulate the sequence: Linux (Current) -> macOS 15+ (Later) -> Windows 11 (Future). Current references treating Windows as "out of scope" must be revised to "planned future target (currently unauthorized for implementation)". Windows assets should remain.
-    *   *Recommended Action:* Update `docs/PRODUCT_VISION.md` and `apps/desktop-tauri/README.md` to explicitly list Windows 11 as a planned future target while clarifying it is not yet authorized for implementation or CI.
+    *   *Recommended Action:* Update `docs/PRODUCT_VISION.md` and `apps/desktop-tauri/README.md` to explicitly list Windows 11 as a planned future target while clarifying it is not yet authorized for implementation, CI, packaging, or release in current lanes. Mobile stays out of scope.
 
 ## 7. Recommended Tasks for Jules (Grouped by Dependency & Priority)
 
