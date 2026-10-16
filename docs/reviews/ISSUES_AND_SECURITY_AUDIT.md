@@ -1,14 +1,14 @@
 # Issues and Security/Quality Audit Report
 
 **Repository:** [Ascendance3D/wrlforge](https://github.com/Ascendance3D/wrlforge)
-**PR Head SHA:** `ee68e9c3e8f9948af800ba39fd83d7d0d303d800`
+**Base commit:** `ee68e9c3e8f9948af800ba39fd83d7d0d303d800` (`main` when this audit branch was cut)
 **Status:** Audit & Analysis Report (Draft)
 
 ---
 
 ## Executive Summary
 
-An audit of the repository was performed to analyze the **80 open GitHub issues** and **37 security/quality alerts** (including 18 npm vulnerability packages, test module import dependencies, and Rust compiler toolchain requirements).
+An audit of the repository was performed to analyze the **80 open GitHub issues** (excluding the ten Jules queue issues #160-#169 opened later) and **37 open Dependabot alerts** (GitHub Dependabot API, queried 2026-10-16; code-scanning has no analysis on this repository), plus the Rust toolchain requirement.
 
 No production code or package configurations were altered as part of this analysis task.
 
@@ -52,33 +52,41 @@ The 80 open issues belong to four primary functional domains:
 
 ---
 
-## 2. Analysis of Security and Quality Alerts
+## 2. Analysis of Security Alerts
 
-### Npm Vulnerabilities (18 Packages Identified via `npm audit`)
-1. **`esbuild` (Moderate):** Dev dependency in `esbuild <=0.24.2` (GHSA-67mh-4wv8-2f99). Recommended target: Upgrade to `esbuild >= 0.28.2`.
-2. **`js-yaml` (High):** Quadratic CPU consumption & empty merge sources DoS (CVE-2026-59870 / GHSA-5p4m-2wfm-xmqj). Recommended target: Upgrade to `js-yaml >= 4.3.1`.
-3. **`electron` (High):** Protocol response session cache / sandbox iframe popup bypass. Recommended target: Upgrade to latest supported 41.x patch or 42.x.
-4. **`electron-builder` & `app-builder-lib` (Moderate):** Transitive dependency on `@electron/get` / `global-agent` / `roarr` / `sprintf-js`. Recommended target: Update `electron-builder` to latest 26.x version.
-5. **Transitive High Severity Packages:**
-   * `brace-expansion` (DoS via unbounded expansion length)
-   * `extract-zip` (Symlink path traversal)
-   * `tar` (Uncontrolled recursion in long-path tar member selection)
-   * `undici` (CRLF injection and response splitting)
-   * `fast-uri` (Host confusion & SSRF)
-   * `http-cache-semantics` (Cross-user cached response disclosure)
-   * `@xmldom/xmldom` (Entity reference and element name injection)
+Source: GitHub Dependabot open alerts (37). Counts are alerts, not packages; one package can carry several. Severities are as GitHub reports them. `npm audit` was not run for this document, so no claim here is derived from it.
+
+| Package | Open alerts | Severity (GitHub) | First patched version (GitHub) |
+| --- | --- | --- | --- |
+| `electron` | 6 | 5 high, 1 medium | 41.10.3 to 41.10.6 (latest needed: 41.10.6) |
+| `fast-uri` | 7 | high | 3.1.4 to 3.1.7 |
+| `@xmldom/xmldom` | 8 | 6 high, 2 medium | 0.8.14 / 0.8.15 |
+| `undici` | 4 | 3 medium, 1 low | 6.28.0 / 6.28.1 |
+| `js-yaml` | 2 | high | 4.3.1 / 4.3.2 |
+| `extract-zip` | 2 | high | none published |
+| `http-cache-semantics` | 1 | high | none published |
+| `brace-expansion` | 3 | medium | 1.1.21 / 2.1.7 / 5.0.12 |
+| `esbuild` | 1 | medium | 0.25.0 |
+| `sprintf-js` | 1 | medium | none published |
+| `glib` (Rust crate) | 2 | medium | 0.20.0 |
+
+Notes:
+* `package.json` on `main` pins `esbuild ^0.24.2` and `js-yaml ^4.3.0`, both inside the affected ranges. `electron ^41.7.1` resolves per the lockfile; confirm it reaches 41.10.6.
+* Alert paths for transitive packages (`electron-builder` and its dependencies) were not traced here.
+* Two `extract-zip`, one `http-cache-semantics` and one `sprintf-js` alert have no patched version; remediation needs an upstream bump or replacement, which is unverified.
+* An earlier draft listed `tar` as a high-severity finding. It has no open Dependabot alert and is removed.
 
 ### Rust Toolchain Parity
 * `crates/Cargo.toml` specifies `rust-version = "1.95"`.
-* Current environment has `rustc 1.94.0`. Building workspace crates requires updating the Rust toolchain to `rustc 1.95+`.
+* The audit environment reported `rustc 1.94.0` (unverified here; the reviewer environment has 1.95.0). Building workspace crates requires updating the Rust toolchain to `rustc 1.95+`.
 
 ---
 
 ## 3. Recommended Phased Implementation Roadmap
 
 1. **Phase 1: Security & Dependency Remediation**
-   * Upgrade `esbuild` and `js-yaml` in `package.json`.
-   * Run `npm audit fix` for transitive vulnerability resolutions.
+   * Upgrade `esbuild` (>= 0.25.0) and `js-yaml` (>= 4.3.2) in `package.json`.
+   * Re-check the Dependabot alert list after the lockfile update; do not assume `npm audit fix` clears alerts without a published patch.
    * Update Rust toolchain to `1.95`.
 2. **Phase 2: Foundation Workspace & Security Sandbox**
    * Finalize UI Architecture & Command UX (#33, #38, #43, #121, #122).
