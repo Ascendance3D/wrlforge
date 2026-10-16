@@ -222,10 +222,12 @@ fn escaping_quotes_backslashes_and_unicode() {
         tex("[ \"ä\" \"tëx/🙂.png\" ]")
     );
     assert_eq!(url_edit(&src, vec![del(0)]), tex("[ \"b\" ]"));
+    let src = tex("[ \"🙂\" \"b\" ]");
+    assert_eq!(url_edit(&src, vec![set(1, "c")]), tex("[ \"🙂\" \"c\" ]"));
     // An escaped authored value is read decoded and kept when unchanged.
-    let src = tex(r#"[ "q\"x" "b" ]"#);
-    assert_eq!(shown(&src, "ImageTexture", "url").values()[0], "q\"x");
-    assert_eq!(url_edit(&src, vec![set(1, "c")]), tex(r#"[ "q\"x" "c" ]"#));
+    let src = tex(r#"[ "q\"\\x" "b" ]"#);
+    assert_eq!(shown(&src, "ImageTexture", "url").values()[0], "q\"\\x");
+    assert_eq!(url_edit(&src, vec![set(1, "c")]), tex(r#"[ "q\"\\x" "c" ]"#));
     // A line break cannot be entered.
     assert_eq!(
         refusal(plan_string_edit(
@@ -246,6 +248,11 @@ fn crlf_documents_keep_their_line_endings() {
     );
     let out = url_edit(src, vec![del(0)]);
     assert_eq!(out, src.replace("\"a.png\"\r\n        ", ""));
+
+    // Comments, whitespace, and CRLF outside an edited string are unchanged.
+    let src = "#VRML V2.0 utf8\r\nShape { appearance Appearance { texture ImageTexture { url [\r\n  \"a.png\" # comment\r\n  \"b.png\"\r\n] } } }\r\n";
+    let out = url_edit(src, vec![set(1, "c.png")]);
+    assert_eq!(out, src.replace("\"b.png\"", "\"c.png\""));
 }
 
 #[test]
