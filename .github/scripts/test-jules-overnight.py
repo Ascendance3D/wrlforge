@@ -52,6 +52,20 @@ with log.open("a") as f:
         f.write("POST\n")
         if case == "post_fail": raise SystemExit(22)
         print(json.dumps({"name": "sessions/12345"}))
+    elif "/sessions" in args[-1]:
+        f.write("SESSION_GET\n")
+        if case == "session_failure": raise SystemExit(22)
+        source = "sources/github-Ascendance3D-wrlforge"
+        items = []
+        if case == "at_capacity":
+            items = [{"sourceContext": {"source": source}, "state": "IN_PROGRESS"} for _ in range(4)]
+        if case == "under_capacity":
+            items = [{"sourceContext": {"source": source}, "state": "QUEUED"} for _ in range(3)]
+        if case == "completed_only":
+            items = [{"sourceContext": {"source": source}, "state": "COMPLETED"} for _ in range(5)]
+        if case == "other_repo":
+            items = [{"sourceContext": {"source": "sources/another-project"}, "state": "IN_PROGRESS"} for _ in range(6)]
+        print(json.dumps({"sessions": items}))
     else:
         f.write("GET\n")
         repo = {"owner": "Ascendance3D", "repo": "wrlforge",
@@ -115,17 +129,17 @@ class SafetyTests(unittest.TestCase):
     def test_live_dispatch_once(self):
         result, log = trial("valid", False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(log, ["GET", "GET", "EDIT 161", "POST", "COMMENT 161"])
+        self.assertEqual(log, ["GET", "GET", "SESSION_GET", "EDIT 161", "POST", "COMMENT 161"])
 
     def test_invalid_task_does_not_block_next(self):
         result, log = trial("invalid", False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(log, ["EDIT 160", "COMMENT 160", "GET", "GET", "EDIT 161", "POST", "COMMENT 161"])
+        self.assertEqual(log, ["EDIT 160", "COMMENT 160", "GET", "GET", "SESSION_GET", "EDIT 161", "POST", "COMMENT 161"])
 
     def test_untrusted_approval_actor_is_skipped(self):
         result, log = trial("bad_actor", False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(log, ["EDIT 160", "COMMENT 160", "GET", "GET", "EDIT 161", "POST", "COMMENT 161"])
+        self.assertEqual(log, ["EDIT 160", "COMMENT 160", "GET", "GET", "SESSION_GET", "EDIT 161", "POST", "COMMENT 161"])
 
     def test_empty_queue_has_no_effect(self):
         result, log = trial("empty", False)
@@ -145,7 +159,31 @@ class SafetyTests(unittest.TestCase):
     def test_failed_post_is_not_retried(self):
         result, log = trial("post_fail", False)
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(log, ["GET", "GET", "EDIT 161", "POST"])
+        self.assertEqual(log, ["GET", "GET", "SESSION_GET", "EDIT 161", "POST"])
+
+    def test_four_busy_sessions_hold_without_consuming_label(self):
+        result, log = trial("at_capacity", False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("CAPACITY HOLD", result.stdout)
+        self.assertEqual(log, ["GET", "GET", "SESSION_GET"])
+
+    def test_three_active_sessions_allow_one_more(self):
+        result, log = trial("under_capacity", False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Jules capacity: 3/4", result.stdout)
+        self.assertEqual(log, ["GET", "GET", "SESSION_GET", "EDIT 161", "POST", "COMMENT 161"])
+
+    def test_finished_and_other_repo_sessions_do_not_block(self):
+        for case in ("completed_only", "other_repo"):
+            with self.subTest(case=case):
+                result, log = trial(case, False)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(log, ["GET", "GET", "SESSION_GET", "EDIT 161", "POST", "COMMENT 161"])
+
+    def test_session_api_failure_preserves_label(self):
+        result, log = trial("session_failure", False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(log, ["GET", "GET", "SESSION_GET"])
 
     def test_wrong_repository_refused(self):
         result, log = trial("valid", False, repo="other/repo")
