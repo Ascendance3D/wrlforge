@@ -179,9 +179,23 @@ jobs:
             fi
             sessions="$(curl --fail-with-body --silent --show-error --max-time 30 \
               -H "X-Goog-Api-Key: $JULES_API_KEY" "$url")"
-            if ! jq -e '(.sessions == null or (.sessions | type == "array")) and
-              (.nextPageToken == null or (.nextPageToken | type == "string"))' \
-              <<< "$sessions" > /dev/null; then
+            # A successful HTTP status does not prove this is a session list.
+            # Require a complete list shape, even when the list is empty.
+            # Missing session data or malformed entries must never free a slot.
+            if ! jq -e '
+              type == "object" and
+              has("sessions") and
+              (.sessions | type == "array") and
+              (.error == null) and
+              (.nextPageToken == null or (.nextPageToken | type == "string")) and
+              all(.sessions[]; 
+                type == "object" and
+                (.sourceContext.source | type == "string") and
+                (.state | type == "string") and
+                (.sourceContext.source | length > 0) and
+                (.state | length > 0)
+              )
+            ' <<< "$sessions" > /dev/null; then
               echo 'REFUSED: invalid Jules sessions response; approval remains.' >&2
               exit 1
             fi
