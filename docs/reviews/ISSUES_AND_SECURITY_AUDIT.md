@@ -78,7 +78,7 @@ The `esbuild` alert needs `>= 0.25.0`, so the current `^0.24.2` range is affecte
 
 ### Rust toolchain
 
-`crates/Cargo.toml` sets `rust-version = "1.95"`. The review environment ran `rustc 1.95.0`. No toolchain gap was found.
+`crates/Cargo.toml` sets `rust-version = "1.95"`. The compiler version of the original audit session was not recorded. A later local check (2026-10-16) ran `rustc 1.95.0 (59807616e 2026-04-14)`, which meets the required version. No toolchain gap was found.
 
 ---
 
