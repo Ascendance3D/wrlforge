@@ -1,0 +1,34 @@
+name: Jules Claude Review Safety Tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/scripts/jules_claude_review.py'
+      - '.github/scripts/test_jules_claude_review.py'
+      - '.github/workflows/jules-claude-review.yml'
+      - '.github/workflows/jules-claude-review-validation.yml'
+      - 'docs/automation/JULES_CLAUDE_REVIEW.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout for isolated tests only
+        uses: actions/checkout@v4
+      - name: Unit and policy checks
+        run: |
+          set -euo pipefail
+          python3 -m py_compile .github/scripts/jules_claude_review.py
+          python3 .github/scripts/test_jules_claude_review.py
+      - name: Refuse automatic merge or active review
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'if: ${{ false }}' .github/workflows/jules-claude-review.yml
+          grep -F 'result["merge_authorized"] = False' .github/scripts/jules_claude_review.py
