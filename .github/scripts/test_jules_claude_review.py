@@ -301,6 +301,15 @@ class GateTests(unittest.TestCase):
         fail[0]["conclusion"] = "failure"
         self.assertFalse(gate.ci_gate(fail, S))
 
+    def test_ci_requires_exactly_one_required_run(self):
+        ok, bad = checks()[0], dict(checks()[0], conclusion="failure")
+        self.assertFalse(gate.ci_gate([ok, bad], S))
+        self.assertFalse(gate.ci_gate([bad, ok], S))
+        self.assertFalse(gate.ci_gate([ok, dict(ok)], S))
+        self.assertFalse(gate.ci_gate([dict(ok, status="in_progress")], S))
+        self.assertFalse(gate.ci_gate([dict(ok, head_sha="b" * 40)], S))
+        self.assertTrue(gate.ci_gate([ok], S))
+
     def test_api_calls_use_get_and_fixed_repo_only(self):
         with patch.object(gate.subprocess, "run") as runner:
             runner.return_value.stdout = "{}"

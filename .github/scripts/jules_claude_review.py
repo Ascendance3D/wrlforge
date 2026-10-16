@@ -117,17 +117,19 @@ def ci_gate(checks, sha):
     if not SHA.fullmatch(sha or ""):
         return False
     relevant = [x for x in checks if x.get("name", "").startswith("test (")]
-    observed = {x.get("name") for x in relevant}
     # Only the Linux PR gate is required for the current product phase.
     expected = {"test (ubuntu)"}
-    if not expected.issubset(observed):
-        return False
-    return all(
-        sum(1 for x in relevant if x.get("name") == n and
-            x.get("status") == "completed" and x.get("conclusion") == "success"
-            and x.get("head_sha") == sha) == 1
-        for n in expected
-    )
+    for name in expected:
+        # Exactly one run of each required name, whatever its result: a failed
+        # or duplicate run must never hide behind a successful one.
+        runs = [x for x in relevant if x.get("name") == name]
+        if len(runs) != 1:
+            return False
+        run = runs[0]
+        if not (run.get("status") == "completed" and run.get("conclusion") == "success"
+                and run.get("head_sha") == sha):
+            return False
+    return True
 
 
 def evaluate(pr, paths, confirmed_sessions, history, checks=None):
