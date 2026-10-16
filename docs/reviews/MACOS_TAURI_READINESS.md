@@ -71,7 +71,7 @@ Native macOS compile and link checks, a macOS 15+ runtime test on Apple Silicon,
 - [x] **Native Application Menu**: macOS menu structure created in `src/app_menu.rs`.
 - [x] **Tauri Targets**: `app` and `dmg` listed in `tauri.conf.json`.
 - [ ] **Native Rust/Tauri macOS Compile & Link Check**: Not present in the cited `ci.yml` matrix. A passing Node job is not native build evidence.
-- [ ] **Tauri macOS Entitlements Config**: Add `bundle.macOS` settings to `tauri.conf.json`.
+- [ ] **Tauri macOS Bundle Settings (conditional)**: Add `bundle.macOS` settings only where the distribution policy needs them. Entitlements depend on the capabilities the app uses, and `minimumSystemVersion` is optional.
 - [ ] **macOS Packaging Script**: Create `apps/desktop-tauri/packaging/package-mac.sh`.
 - [ ] **Runtime Validation on macOS 15+ Hardware**: Test native viewport rendering, WebKit composition, and input/menu shortcuts.
 - [ ] **Tauri macOS Release Packaging**: Define how Tauri macOS packages are built and released. This needs a separate owner-approved lane.
