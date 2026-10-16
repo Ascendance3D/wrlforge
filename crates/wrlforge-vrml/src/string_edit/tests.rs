@@ -239,6 +239,24 @@ fn escaping_quotes_backslashes_and_unicode() {
 }
 
 #[test]
+fn edit_spans_are_utf16_offsets_after_non_bmp_text() {
+    // The astral character is two UTF-16 units; the span must follow them.
+    let src = tex("[ \"🙂\" \"b\" ]");
+    let Plan::Ready { edit, .. } = plan_string_edit(
+        &src,
+        &req(&src, "ImageTexture", "url", vec![set(1, "c")]),
+    ) else {
+        panic!("not ready");
+    };
+    let utf16 = |s: &str| s.encode_utf16().count() as u64;
+    // Only the text between the quotes is replaced.
+    let at = src.find("\"b\"").unwrap() + 1;
+    assert_eq!(edit.from, utf16(&src[..at]));
+    assert_eq!(edit.to, edit.from + utf16("b"));
+    assert_eq!(edit.insert, "c");
+}
+
+#[test]
 fn crlf_documents_keep_their_line_endings() {
     let src = "#VRML V2.0 utf8\r\nShape {\r\n  appearance Appearance {\r\n    texture ImageTexture {\r\n      url [\r\n        \"a.png\"\r\n        \"b.png\"\r\n      ]\r\n    }\r\n  }\r\n}\r\n";
     let out = url_edit(src, vec![ins(2, "c.png")]);
