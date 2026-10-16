@@ -1,10 +1,9 @@
 name: Jules Overnight Queue
 
-# Two dispatch slots per UTC day. Work starts only for explicitly approved issues.
+# Hourly overnight dispatch. Work starts only for explicitly approved issues.
 on:
   schedule:
-    - cron: '17 4 * * *'
-    - cron: '17 7 * * *'
+    - cron: '17 4-11 * * *'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -38,6 +37,7 @@ jobs:
           label='jules-approved'
           api='https://jules.googleapis.com/v1alpha'
           dry_run=false
+          max_active=4 # Queue safety setting, not a Jules account limit.
 
           if [[ "$GITHUB_REPOSITORY" != "$repo" || "$GITHUB_REF" != 'refs/heads/main' ]]; then
             echo 'REFUSED: workflow must run on the approved main branch' >&2
@@ -165,6 +165,45 @@ jobs:
             echo 'REFUSED: Jules repository or main branch could not be verified' >&2
             exit 1
           fi
+
+          # Count only sessions from this connected public repository.
+          # Open draft PRs are review work, not active Jules sessions.
+          # Fail closed if the sessions API is unavailable or incomplete.
+          active=0
+          page_token=''
+          for page in {1..20}; do
+            url="$api/sessions?pageSize=100"
+            if [[ -n "$page_token" ]]; then
+              encoded="$(jq -nr --arg token "$page_token" '$token | @uri')"
+              url="$url&pageToken=$encoded"
+            fi
+            sessions="$(curl --fail-with-body --silent --show-error --max-time 30 \
+              -H "X-Goog-Api-Key: $JULES_API_KEY" "$url")"
+            if ! jq -e '(.sessions == null or (.sessions | type == "array")) and
+              (.nextPageToken == null or (.nextPageToken | type == "string"))' \
+              <<< "$sessions" > /dev/null; then
+              echo 'REFUSED: invalid Jules sessions response; approval remains.' >&2
+              exit 1
+            fi
+            page_active="$(jq -r --arg source "$source_name" '
+              [.sessions[]? | select(.sourceContext.source == $source) |
+              select(.state != "COMPLETED" and .state != "FAILED")] | length
+            ' <<< "$sessions")"
+            active=$((active + page_active))
+            if (( active >= max_active )); then
+              echo "CAPACITY HOLD: $active active public-repo Jules sessions (limit $max_active). Issue #$number remains approved."
+              exit 0
+            fi
+            page_token="$(jq -r '.nextPageToken // ""' <<< "$sessions")"
+            if [[ -z "$page_token" ]]; then
+              break
+            fi
+            if (( page == 20 )); then
+              echo 'REFUSED: Jules sessions pagination exceeded limit; approval remains.' >&2
+              exit 1
+            fi
+          done
+          echo "Jules capacity: $active/$max_active active sessions. Existing draft PRs stay in review."
 
           preamble='This is a previously owner-approved issue from the public WRL Forge repository.
           Use main as the starting branch. Limit changes to the issue and open a draft PR.
