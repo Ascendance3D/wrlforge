@@ -180,30 +180,55 @@ jobs:
             sessions="$(curl --fail-with-body --silent --show-error --max-time 30 \
               -H "X-Goog-Api-Key: $JULES_API_KEY" "$url")"
             # A successful HTTP status does not prove this is a session list.
-            # Require a complete list shape, even when the list is empty.
-            # Missing session data or malformed entries must never free a slot.
+            # ListSessions examples may omit sourceContext; GetSession supplies
+            # the repository context for any nonterminal session missing it.
+            # Fail closed on missing or malformed identity, state or source.
             if ! jq -e '
               type == "object" and
               has("sessions") and
               (.sessions | type == "array") and
               (.error == null) and
               (.nextPageToken == null or (.nextPageToken | type == "string")) and
-              all(.sessions[]; 
+              all(.sessions[];
                 type == "object" and
-                (.sourceContext.source | type == "string") and
+                (.name | type == "string") and
+                (.name | test("^sessions/[A-Za-z0-9_-]+$")) and
                 (.state | type == "string") and
-                (.sourceContext.source | length > 0) and
-                (.state | length > 0)
+                (.state | IN("QUEUED", "PLANNING", "AWAITING_PLAN_APPROVAL",
+                  "AWAITING_USER_FEEDBACK", "IN_PROGRESS", "PAUSED",
+                  "COMPLETED", "FAILED", "STATE_UNSPECIFIED")) and
+                ((.sourceContext.source == null) or
+                  (.sourceContext.source | type == "string"))
               )
             ' <<< "$sessions" > /dev/null; then
               echo 'REFUSED: invalid Jules sessions response; approval remains.' >&2
               exit 1
             fi
-            page_active="$(jq -r --arg source "$source_name" '
-              [.sessions[]? | select(.sourceContext.source == $source) |
-              select(.state != "COMPLETED" and .state != "FAILED")] | length
-            ' <<< "$sessions")"
-            active=$((active + page_active))
+            while IFS= read -r item; do
+              state="$(jq -r '.state' <<< "$item")"
+              [[ "$state" == 'COMPLETED' || "$state" == 'FAILED' ]] && continue
+              item_source="$(jq -r '.sourceContext.source // ""' <<< "$item")"
+              if [[ -z "$item_source" ]]; then
+                item_name="$(jq -r '.name' <<< "$item")"
+                details="$(curl --fail-with-body --silent --show-error --max-time 30 \
+                  -H "X-Goog-Api-Key: $JULES_API_KEY" "$api/$item_name")"
+                if ! jq -e --arg name "$item_name" '
+                  type == "object" and
+                  .name == $name and
+                  (.sourceContext.source | type == "string") and
+                  (.sourceContext.source | startswith("sources/"))
+                ' <<< "$details" > /dev/null; then
+                  echo 'REFUSED: Jules session detail lacks verified source; approval remains.' >&2
+                  exit 1
+                fi
+                item_source="$(jq -r '.sourceContext.source' <<< "$details")"
+              fi
+              [[ "$item_source" == "$source_name" ]] && active=$((active + 1))
+              if (( active >= max_active )); then
+                echo "CAPACITY HOLD: $active active public-repo Jules sessions (limit $max_active). Issue #$number remains approved."
+                exit 0
+              fi
+            done < <(jq -c '.sessions[]' <<< "$sessions")
             if (( active >= max_active )); then
               echo "CAPACITY HOLD: $active active public-repo Jules sessions (limit $max_active). Issue #$number remains approved."
               exit 0
