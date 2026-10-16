@@ -34,7 +34,7 @@ jobs:
           from pathlib import Path
           wf = Path(".github/workflows/jules-claude-review.yml").read_text()
           logic = Path(".github/scripts/jules_claude_review.py").read_text()
-          assert "if: " + chr(36) + "{{ false }}" in wf
+          assert "if: " + chr(36) + "{{ false &&" in wf
           assert 'result["merge_authorized"] = False' in logic
           print("Safety guards are present.")
           PY
