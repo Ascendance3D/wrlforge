@@ -5,31 +5,31 @@
 *   **Crash Recovery (RUST-STAB-1)**
     *   *Source:* `docs/architecture/TAURI_RUST_MIGRATION_1.md`, `apps/desktop-tauri/README.md`
     *   *Evidence:* Mentions of `RUST-STAB-1` crash recovery, tests in `src-tauri/src/recovery.rs`, and smoke test `--recovery`.
-    *   *Status:* Verified complete.
+    *   *Status:* Documented as complete in repository docs; tests and smoke runs were not re-run in this audit.
     *   *Recommended Action:* None needed.
 
 *   **Extrusion Authoring (VISUAL-4A)**
     *   *Source:* `docs/architecture/TAURI_RUST_MIGRATION_1.md`
     *   *Evidence:* Extrusion editor documented, `--extrusion` smoke test, and `ui/src/smoke/extrusion.rs`.
-    *   *Status:* Verified complete.
+    *   *Status:* Documented as complete in repository docs; tests and smoke runs were not re-run in this audit.
     *   *Recommended Action:* Add to completed features list in `PRODUCT_VISION.md`.
 
 *   **Desktop Menus & Commands (UI-MENU-1)**
     *   *Source:* `docs/architecture/TAURI_RUST_MIGRATION_1.md`
     *   *Evidence:* Documented as built, smoke tests via `--menu`.
-    *   *Status:* Verified complete.
+    *   *Status:* Documented as complete in repository docs; tests and smoke runs were not re-run in this audit.
     *   *Recommended Action:* Document in roadmap history.
 
 *   **Scope Graph & Typed References (RUST-STAB-2A, RUST-STAB-2B)**
     *   *Source:* `docs/architecture/TAURI_RUST_MIGRATION_1.md`
     *   *Evidence:* Documented as built, tests in `crates/wrlforge-vrml`.
-    *   *Status:* Verified complete.
+    *   *Status:* Documented as complete in repository docs; tests and smoke runs were not re-run in this audit.
     *   *Recommended Action:* Ensure roadmap reflects parser capability advancement.
 
 *   **Viewport Picking (VISUAL-2 / WD2-D)**
     *   *Source:* `docs/WRL_FORGE_ROADMAP.md`, `apps/desktop-tauri/README.md`, `docs/architecture/TAURI_RUST_MIGRATION_1.md`, `docs/white-dune-2026/WD2_D_XITE_PICKING_CLOSEOUT.md`
     *   *Evidence:* `WD2-D` is marked as merged (PR #117) and closeout record confirms `WRLFORGE_WD2_D_INDEPENDENT_QA_RETEST_PASS`. `--pick` smoke test in Tauri app. Rust proof and xdotool tests exist.
-    *   *Status:* Verified complete (within its approved scope; deferred selection edge cases tracked separately e.g. #118, #119).
+    *   *Status:* Documented complete; closeout record cited, tests not re-run in this audit (within its approved scope; deferred selection edge cases tracked separately e.g. #118, #119).
     *   *Recommended Action:* Update `docs/PRODUCT_VISION.md` to indicate this is complete instead of "next planned".
 
 ## 2. Active Work
@@ -57,7 +57,7 @@
 *   **macOS Tauri Build Support**
     *   *Source:* `apps/desktop-tauri/README.md`
     *   *Evidence:* Mentions "macOS 15+ is a target but has not been built yet."
-    *   *Status:* Blocked (likely needs setup/hardware/CI).
+    *   *Status:* Not started: no native macOS Rust/Tauri build or CI job exists (cause of the block is unverified).
     *   *Recommended Action:* Set up macOS CI environment for Tauri build.
 
 ## 4. Future Work
@@ -85,7 +85,7 @@
 *   **`docs/PRODUCT_VISION.md` - Visual Features Status**
     *   *Source:* `docs/PRODUCT_VISION.md`
     *   *Evidence:* States "Viewport picking and 3D transform gizmos are the next planned visual features."
-    *   *Status:* Not verified (stale claim). These features are implemented and tested in the Rust/Tauri application (`apps/desktop-tauri/README.md`, `docs/architecture/TAURI_RUST_MIGRATION_1.md`).
+    *   *Status:* Stale claim. Repository docs (`apps/desktop-tauri/README.md`, `docs/architecture/TAURI_RUST_MIGRATION_1.md`) describe these features as implemented; this audit did not re-run their tests.
     *   *Recommended Action:* Update `docs/PRODUCT_VISION.md` to reflect that viewport picking, translation, rotation, and scaling are already completed.
 
 ## 6. Target Platforms Definition (Linux, macOS, Windows 11)
