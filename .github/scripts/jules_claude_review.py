@@ -104,7 +104,8 @@ def evaluate(pr, paths, confirmed_sessions, history, checks=None):
     elif result["category"] == "BLOCKED":
         result.update(result="BLOCKED", reason="invalid file path")
     elif (not task_id or task_id not in confirmed_sessions or
-          author != "DJAscendance" or task_id not in ref):
+          author != "DJAscendance" or
+          not re.search(r"(?<![0-9])" + re.escape(task_id) + r"(?![0-9])", ref)):
         result["reason"] = "Jules identity not proved by owner issue, author and session branch"
     elif result["category"] == "VERIFIED_NO_OP_CANDIDATE":
         result["reason"] = "no changed files; inspect existing tests before closing"
@@ -187,7 +188,12 @@ def scan(number):
         paths = [p.get("filename") for p in all_pages("/repos/" + REPO + "/pulls/" + str(n) + "/files")]
         comments = all_pages("/repos/" + REPO + "/issues/" + str(n) + "/comments")
         sha = (pr.get("head") or {}).get("sha")
-        checks_result = api("/repos/" + REPO + "/commits/" + str(sha) + "/check-runs?per_page=100")
+        if not isinstance(sha, str) or not SHA.fullmatch(sha):
+            # Invalid metadata blocks this PR but must not make a different
+            # valid PR disappear from the read-only inventory.
+            checks_result = {"check_runs": []}
+        else:
+            checks_result = api("/repos/" + REPO + "/commits/" + sha + "/check-runs?per_page=100")
         if not isinstance(checks_result, dict) or not isinstance(checks_result.get("check_runs"), list):
             raise ValueError("incomplete check-runs response")
         h = review_history(comments, sha)
