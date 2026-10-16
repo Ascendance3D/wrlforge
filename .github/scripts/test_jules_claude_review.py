@@ -185,7 +185,64 @@ class GateTests(unittest.TestCase):
             got = gate.scan(0)
             self.assertEqual(got[0]["result"], "BLOCKED")
             self.assertFalse(got[0]["ci_pass"])
+            # The report stays printable: the workflow slices head_sha[:12].
+            self.assertEqual(got[0]["head_sha"], "invalid-head-sha")
+            self.assertEqual(len(got[0]["head_sha"][:12]), 12)
             api_mock.assert_not_called()
+
+    def scan_with(self, files, api_side_effect):
+        with (patch.object(gate, "issue_sessions", return_value={TASK: REC}),
+              patch.object(gate, "all_pages") as pages,
+              patch.object(gate, "api", side_effect=api_side_effect),
+              patch.dict(os.environ, {"GH_TOKEN": "test-token"})):
+            def page(route, limit=12):
+                if "/pulls?state=open" in route:
+                    return [pr()]
+                if "/pulls/192/files" in route:
+                    return files
+                if "/issues/192/comments" in route:
+                    return []
+                raise AssertionError("unexpected route: " + route)
+            pages.side_effect = page
+            return gate.scan(0)
+
+    def test_rename_from_a_sensitive_path_needs_the_owner(self):
+        done = lambda route: {"total_count": 1, "check_runs": checks()[:1]}
+        plain = self.scan_with([{"filename": DOC[0]}], done)
+        self.assertEqual(plain[0]["result"], "REVIEW_CANDIDATE")
+        for old in (".github/workflows/ci.yml", "crates/wrlforge-vrml/src/lib.rs", "package.json"):
+            with self.subTest(old=old):
+                renamed = self.scan_with(
+                    [{"filename": DOC[0], "previous_filename": old, "status": "renamed"}], done)
+                self.assertEqual(renamed[0]["result"], "OWNER_REVIEW")
+                self.assertIn(old, renamed[0]["files"])
+
+    def test_check_runs_are_paginated_and_incomplete_answers_are_refused(self):
+        first = {"total_count": 150, "check_runs": checks()[:1] * 100}
+        second = {"total_count": 150, "check_runs": checks()[:1] * 50}
+        with patch.object(gate, "api", side_effect=[first, second]) as api_mock:
+            self.assertEqual(len(gate.check_runs(S)), 150)
+            self.assertEqual(api_mock.call_count, 2)
+        with patch.object(gate, "api", return_value={"total_count": 150, "check_runs": []}):
+            with self.assertRaises(ValueError):
+                gate.check_runs(S)
+        with patch.object(gate, "api", return_value={"total_count": 500, "check_runs": checks()[:1] * 100}):
+            with self.assertRaises(ValueError):
+                gate.check_runs(S, limit=2)
+        for bad in ({"check_runs": []}, {"total_count": 1}, [], {"total_count": "1", "check_runs": []}):
+            with self.subTest(bad=bad), patch.object(gate, "api", return_value=bad):
+                with self.assertRaises(ValueError):
+                    gate.check_runs(S)
+
+    def test_active_workflow_actions_are_pinned_to_commit_shas(self):
+        import re
+        root = Path(__file__).resolve().parents[1] / "workflows"
+        for name in ("jules-claude-review.yml", "jules-claude-review-validation.yml"):
+            for line in (root / name).read_text(encoding="utf-8").splitlines():
+                m = re.match(r"\s*uses: (actions/[\w.-]+)@(\S+)", line)
+                if m:
+                    with self.subTest(file=name, action=m.group(1)):
+                        self.assertRegex(m.group(2), r"^[0-9a-f]{40}$")
 
     def test_ci_from_another_commit_never_counts(self):
         self.assertFalse(gate.ci_gate(checks("b" * 40), S))

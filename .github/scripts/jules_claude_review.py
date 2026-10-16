@@ -139,7 +139,9 @@ def evaluate(pr, paths, confirmed_sessions, history, checks=None):
     task_id = verified_task(pr.get("body"))
     ref = head.get("ref", "")
     author = (pr.get("user") or {}).get("login")
-    result = {"pr": pr.get("number"), "head_sha": sha, "result": "OWNER_REVIEW",
+    # The report always carries a printable head_sha, even for invalid metadata.
+    shown = sha if isinstance(sha, str) and SHA.fullmatch(sha) else "invalid-head-sha"
+    result = {"pr": pr.get("number"), "head_sha": shown, "result": "OWNER_REVIEW",
               "category": classify_paths(paths), "reason": ""}
     if (pr.get("state") != "open" or not isinstance(sha, str) or not SHA.fullmatch(sha) or
             base.get("ref") != "main" or source != REPO):
@@ -221,6 +223,33 @@ def issue_sessions():
     return sessions
 
 
+def changed_paths(files):
+    """New and old path of every changed file, so a rename cannot hide a source."""
+    paths = []
+    for entry in files:
+        paths.append(entry.get("filename"))
+        if entry.get("previous_filename"):
+            paths.append(entry.get("previous_filename"))
+    return paths
+
+
+def check_runs(sha, limit=5):
+    """Return every check run of a commit, or refuse an incomplete answer."""
+    runs = []
+    for page in range(1, limit + 1):
+        chunk = api("/repos/" + REPO + "/commits/" + sha + "/check-runs?per_page=100&page=" + str(page))
+        items = chunk.get("check_runs") if isinstance(chunk, dict) else None
+        total = chunk.get("total_count") if isinstance(chunk, dict) else None
+        if not isinstance(items, list) or not isinstance(total, int):
+            raise ValueError("incomplete check-runs response")
+        runs.extend(items)
+        if len(runs) >= total:
+            return runs
+        if not items:
+            break
+    raise ValueError("check-runs pagination incomplete; refuse partial CI evidence")
+
+
 def scan(number):
     if not os.getenv("GH_TOKEN") and not os.getenv("GITHUB_TOKEN"):
         raise RuntimeError("GH_TOKEN or GITHUB_TOKEN is required for read-only scan")
@@ -239,19 +268,17 @@ def scan(number):
         # Only target PRs that declare a Jules session, with no trust yet in that claim.
         if "PR created automatically by Jules for task" not in body:
             continue
-        paths = [p.get("filename") for p in all_pages("/repos/" + REPO + "/pulls/" + str(n) + "/files")]
+        paths = changed_paths(all_pages("/repos/" + REPO + "/pulls/" + str(n) + "/files"))
         comments = all_pages("/repos/" + REPO + "/issues/" + str(n) + "/comments")
         sha = (pr.get("head") or {}).get("sha")
         if not isinstance(sha, str) or not SHA.fullmatch(sha):
             # Invalid metadata blocks this PR but must not make a different
             # valid PR disappear from the read-only inventory.
-            checks_result = {"check_runs": []}
+            runs = []
         else:
-            checks_result = api("/repos/" + REPO + "/commits/" + sha + "/check-runs?per_page=100")
-        if not isinstance(checks_result, dict) or not isinstance(checks_result.get("check_runs"), list):
-            raise ValueError("incomplete check-runs response")
+            runs = check_runs(sha)
         h = review_history(comments, sha)
-        item = evaluate(pr, paths, confirmed, h, checks_result["check_runs"])
+        item = evaluate(pr, paths, confirmed, h, runs)
         item["correction_attempts"] = h["failed_attempts"]
         item["files"] = paths
         report.append(item)

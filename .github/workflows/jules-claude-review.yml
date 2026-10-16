@@ -32,7 +32,7 @@ jobs:
       eligible_sha: ${{ steps.inventory_report.outputs.eligible_sha }}
     steps:
       - name: Checkout trusted main, never the PR head
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: main
           persist-credentials: false
@@ -68,7 +68,7 @@ jobs:
                   outputs.write("eligible_sha=" + chosen["head_sha"] + "\n")
           PY
       - name: Save read-only inventory
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: jules-claude-staged-inventory
           path: ${{ runner.temp }}/jules-review-inventory.json
@@ -89,7 +89,7 @@ jobs:
       checks: read
     steps:
       - name: Checkout trusted main only
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: main
           persist-credentials: false
