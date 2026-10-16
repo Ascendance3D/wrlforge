@@ -1,10 +1,13 @@
 # Linux visual smoke test coverage inventory
 
+Run every command from `apps/desktop-tauri/` after building the debug binary (`target/debug/wrl-forge`). This inventory lists tests that exist. It records no run results.
+
 | Mode | Command | Evidence File | Dependency | Status |
 |---|---|---|---|---|
 | launch | `./smoke.sh --headless file.wrl...` | `report.json` | `smoke.sh`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh` | test exists but not run in this audit |
 | New World | `./smoke.sh --headless --create` | `report.json` | `smoke.sh`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh` | test exists but not run in this audit |
 | picking | `./smoke.sh --headless --pick` | `report.json` | `smoke.sh`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh`, `Node.js`, `xdotool` | test exists but not run in this audit |
+| keys | `./smoke.sh --headless --keys` | `report.json` | `smoke.sh`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh`, `Node.js`, `xdotool` | test exists but not run in this audit |
 | Move | `./smoke.sh --headless --move` | `report.json` | `smoke.sh`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh`, `xdotool` | test exists but not run in this audit |
 | Rotate/Scale | `./smoke.sh --headless --rotscale` | `report.json` | `smoke.sh`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh`, `xdotool` | test exists but not run in this audit |
 | Extrusion | `./smoke.sh --headless --extrusion` | `report.json` | `smoke.sh`, `xvfb-run`, `isolated-run.sh`, `display-guard.sh` | test exists but not run in this audit |
