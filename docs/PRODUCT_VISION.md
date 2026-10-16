@@ -64,14 +64,15 @@ application: New World, Create Box/Sphere/Cylinder/Cone as
 Transform/Shape/Appearance/Material, Scene Tree selection, Inspector editing of
 transform and diffuse color, undo/redo, Save As, and reopen.
 
-Source-proven 3D viewport selection (WD2-D) is verified: in the Model
-workspace, clicking an object in the viewport selects the exact authored node
-(or its simple-object Transform) via shared selection authority, with
-fail-closed refusal when source identity cannot be proven. Direct Translate,
-Rotate, and Scale transform tools are implemented in the Rust/Tauri beta
-(verified via `--move` and `--rotscale` smoke suites), while snapping and
-multi-selection remain open under the parent WD2-E workstream (#50), which is
-not yet fully accepted.
+Source-proven 3D viewport selection (WD2-D, issue #28 closed) is built: in the
+Model workspace, clicking an object in the viewport selects the exact authored
+node (or its simple-object Transform) via shared selection authority, with
+fail-closed refusal when source identity cannot be proven. Windows/macOS
+real-pointer picking QA (#119) and Inline content selection (#118) remain open.
+Direct Translate, Rotate, and Scale transform tools are implemented in the
+Rust/Tauri beta. Shift-drag snaps rotation to 15 degree steps. Translation and
+scale snapping, multi-selection, and independent QA remain open under the parent
+WD2-E workstream (#50), which is not yet accepted.
 
 Crash recovery (RUST-STAB-1, 2026-10-11) is built in the Rust/Tauri
 application: unsaved work is kept in private recovery records and offered at
