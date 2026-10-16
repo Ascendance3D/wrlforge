@@ -81,7 +81,8 @@ def ci_gate(checks, sha):
         return False
     return all(
         sum(1 for x in relevant if x.get("name") == n and
-            x.get("status") == "completed" and x.get("conclusion") == "success") == 1
+            x.get("status") == "completed" and x.get("conclusion") == "success"
+            and x.get("head_sha") == sha) == 1
         for n in expected
     )
 
@@ -93,6 +94,8 @@ def evaluate(pr, paths, confirmed_sessions, history, checks=None):
     sha = head.get("sha", "")
     source = (head.get("repo") or {}).get("full_name")
     task_id = verified_task(pr.get("body"))
+    ref = head.get("ref", "")
+    author = (pr.get("user") or {}).get("login")
     result = {"pr": pr.get("number"), "head_sha": sha, "result": "OWNER_REVIEW",
               "category": classify_paths(paths), "reason": ""}
     if (pr.get("state") != "open" or not SHA.fullmatch(sha) or
@@ -100,8 +103,9 @@ def evaluate(pr, paths, confirmed_sessions, history, checks=None):
         result.update(result="BLOCKED", reason="invalid PR state, SHA, base, or source repository")
     elif result["category"] == "BLOCKED":
         result.update(result="BLOCKED", reason="invalid file path")
-    elif not task_id or task_id not in confirmed_sessions:
-        result["reason"] = "Jules session cannot be proved from owner-approved issue record"
+    elif (not task_id or task_id not in confirmed_sessions or
+          author != "DJAscendance" or task_id not in ref):
+        result["reason"] = "Jules identity not proved by owner issue, author and session branch"
     elif result["category"] == "VERIFIED_NO_OP_CANDIDATE":
         result["reason"] = "no changed files; inspect existing tests before closing"
     elif result["category"] != "LOW_RISK_DOC_CANDIDATE":
