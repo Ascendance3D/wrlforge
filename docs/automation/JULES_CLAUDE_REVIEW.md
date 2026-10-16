@@ -8,6 +8,7 @@ The Jules Claude Review (staged) workflow is a read-only GitHub inventory. It do
 
 - The inventory reads only public Ascendance3D/wrlforge pull requests, changed paths, issue comments, and check runs.
 - A Jules trailer does not prove identity. The inventory also requires an owner-authored JULES issue and its GitHub Actions session-start comment for the same task ID.
+- The session must match exactly in three places: the PR description task ID, the last token of the branch name, and the session ID in the Actions comment on the owner JULES issue. The branch number must be that issue number (`issue-163-...`, `jules-160-...`) or the JULES task number with three digits (`jules-009-...`). Branches of other formats are refused. A session ID found on more than one issue is refused.
 - Missing proof, changed SHA, unrelated repository, changed base, missing API data and sensitive paths stop low-risk eligibility.
 - Only ordinary Markdown files in docs/ can become low-risk *review candidates*. Files about security, audits, dependencies, licenses, credentials, or releases stay under owner review.
 - The result is never an approval. The implementation always sets merge_authorized to false.

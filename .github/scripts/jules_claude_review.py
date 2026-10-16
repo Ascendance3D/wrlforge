@@ -17,7 +17,10 @@ TASK_LINK = re.compile(
     r"PR created automatically by Jules for task \[(\d+)\]"
     r"\(https://jules\.google\.com/task/(\d+)\)"
 )
-SESSION_COMMENT = re.compile(r"Jules session started: .?sessions/([0-9]+)")
+# The dispatcher comment starts exactly like this; text elsewhere is not trusted.
+SESSION_COMMENT = re.compile(r"\AJules session started: `sessions/([0-9]+)`")
+JULES_TITLE = re.compile(r"\AJULES-([0-9]{1,6})(?![0-9])")
+BRANCH_KINDS = ("issue", "jules")
 MARKER = re.compile(
     r"WRL-CLAUDE-REVIEW sha=([0-9a-f]{40}) result="
     r"(PASS|CHANGES_REQUIRED|OWNER_REVIEW|BLOCKED|VERIFIED_NO_OP)"
@@ -36,6 +39,45 @@ SENSITIVE_TERMS = ("SECURITY", "AUDIT", "AUTH", "LICENSE", "RELEASE", "CREDENTIA
 def verified_task(body):
     match = TASK_LINK.search(body or "")
     return match.group(1) if match and match.group(1) == match.group(2) else None
+
+
+def branch_link(ref):
+    """Parse issue-<N>-...-<session> and jules-<N>-...-<session> branch names.
+
+    Return (kind, number, session) with all parts as digit strings, or None.
+    The session is always the last token, never a substring in the middle.
+    """
+    parts = (ref or "").split("-")
+    if len(parts) < 3 or parts[0] not in BRANCH_KINDS:
+        return None
+    number, session = parts[1], parts[-1]
+    if not (number.isascii() and number.isdigit() and len(number) <= 6):
+        return None
+    if not (session.isascii() and session.isdigit()):
+        return None
+    return parts[0], number, session
+
+
+def session_is_proved(task_id, ref, record):
+    """True only if PR task, branch and the recorded issue agree exactly.
+
+    record is {"issue": <issue number>, "task": <JULES task number or None>}
+    for the session, taken from the owner-authored JULES issue.
+    """
+    link = branch_link(ref)
+    if not task_id or not link or not isinstance(record, dict):
+        return False
+    kind, number, session = link
+    if session != task_id:
+        return False
+    issue, task = record.get("issue"), record.get("task")
+    if not isinstance(issue, int):
+        return False
+    if number == str(issue):
+        return True
+    # A jules-NNN branch may name the JULES task number (JULES-009 -> 009).
+    return (kind == "jules" and isinstance(task, int)
+            and number == "%03d" % task)
 
 
 def classify_paths(paths):
@@ -104,9 +146,8 @@ def evaluate(pr, paths, confirmed_sessions, history, checks=None):
         result.update(result="BLOCKED", reason="invalid PR state, SHA, base, or source repository")
     elif result["category"] == "BLOCKED":
         result.update(result="BLOCKED", reason="invalid file path")
-    elif (not task_id or task_id not in confirmed_sessions or
-          author != "DJAscendance" or
-          not re.search(r"(?<![0-9])" + re.escape(task_id) + r"(?![0-9])", ref)):
+    elif (author != "DJAscendance" or
+          not session_is_proved(task_id, ref, confirmed_sessions.get(task_id))):
         result["reason"] = "Jules identity not proved by owner issue, author and session branch"
     elif result["category"] == "VERIFIED_NO_OP_CANDIDATE":
         result["reason"] = "no changed files; inspect existing tests before closing"
@@ -147,13 +188,19 @@ def all_pages(path, limit=12):
 
 
 def issue_sessions():
-    """Map session IDs proved by owner-authored JULES issues and Actions comments."""
+    """Map session IDs to the owner-authored JULES issue that recorded them.
+
+    Each value is {"issue": number, "task": JULES task number}. A session ID
+    recorded on more than one issue is ambiguous and is dropped.
+    """
     sessions = {}
+    ambiguous = set()
     issues = all_pages("/repos/" + REPO + "/issues?state=all", limit=20)
     for issue in issues:
-        if issue.get("pull_request") or not (issue.get("title") or "").startswith("JULES-"):
+        if issue.get("pull_request"):
             continue
-        if (issue.get("user") or {}).get("login") != "DJAscendance":
+        title = JULES_TITLE.match(issue.get("title") or "")
+        if not title or (issue.get("user") or {}).get("login") != "DJAscendance":
             continue
         number = issue.get("number")
         if not isinstance(number, int):
@@ -162,9 +209,15 @@ def issue_sessions():
         for entry in comments:
             if (entry.get("user") or {}).get("login") != "github-actions[bot]":
                 continue
-            m = SESSION_COMMENT.search(entry.get("body") or "")
-            if m:
-                sessions[m.group(1)] = number
+            m = SESSION_COMMENT.match(entry.get("body") or "")
+            if not m:
+                continue
+            record = {"issue": number, "task": int(title.group(1))}
+            if sessions.get(m.group(1), record) != record:
+                ambiguous.add(m.group(1))
+            sessions[m.group(1)] = record
+    for session in ambiguous:
+        del sessions[session]
     return sessions
 
 
