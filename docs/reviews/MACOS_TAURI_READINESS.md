@@ -35,7 +35,7 @@ Native macOS compile and link checks, a macOS 15+ runtime test on Apple Silicon,
 
 ### 4. CI & Workflows (`.github/workflows/`)
 - **`ci.yml`**: Includes `macos-latest` matrix job that executes `npm ci`, icon generation, legacy editor bundling, and Node static checks (`npm run check`). This is **not** a Rust/Tauri native compilation or linking check.
-- **`release.yml`**: Currently handles macOS packaging via Electron (`npm run dist:mac` / `scripts/notarize-dmg.js`). **Tauri macOS release packaging is not yet hooked into `release.yml`**.
+- **`release.yml`**: Legacy Electron only. A manual run accepts only published Electron tags (up to v1.4.0) and builds macOS with `npm run dist:mac` / `scripts/notarize-dmg.js`. It refuses Rust-line tags (1.4.5 and later). **No workflow builds Tauri macOS packages.** The Rust line is packaged by the owner's local process (`docs/RELEASES.md`, "Release lines"), Linux x64 only today.
 
 ---
 
@@ -74,7 +74,7 @@ Native macOS compile and link checks, a macOS 15+ runtime test on Apple Silicon,
 - [ ] **Tauri macOS Entitlements Config**: Add `bundle.macOS` settings to `tauri.conf.json`.
 - [ ] **macOS Packaging Script**: Create `apps/desktop-tauri/packaging/package-mac.sh`.
 - [ ] **Runtime Validation on macOS 15+ Hardware**: Test native viewport rendering, WebKit composition, and input/menu shortcuts.
-- [ ] **Release Workflow Integration**: Update `.github/workflows/release.yml` for Tauri macOS builds.
+- [ ] **Tauri macOS Release Packaging**: Define how Tauri macOS packages are built and released. This needs a separate owner-approved lane.
 
 ---
 
