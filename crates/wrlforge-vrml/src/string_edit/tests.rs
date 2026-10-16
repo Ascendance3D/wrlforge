@@ -242,7 +242,7 @@ fn escaping_quotes_backslashes_and_unicode() {
 fn edit_spans_are_utf16_offsets_after_non_bmp_text() {
     // The astral character is two UTF-16 units; the span must follow them.
     let src = tex("[ \"🙂\" \"b\" ]");
-    let Plan::Ready { edit, .. } = plan_string_edit(
+    let Plan::Ready { edit, new_text, .. } = plan_string_edit(
         &src,
         &req(&src, "ImageTexture", "url", vec![set(1, "c")]),
     ) else {
@@ -254,6 +254,9 @@ fn edit_spans_are_utf16_offsets_after_non_bmp_text() {
     assert_eq!(edit.from, utf16(&src[..at]));
     assert_eq!(edit.to, edit.from + utf16("b"));
     assert_eq!(edit.insert, "c");
+    // The exact source: only the string body changed.
+    assert_eq!(new_text, tex("[ \"🙂\" \"c\" ]"));
+    assert_eq!(splice(&src, &[edit]).unwrap(), new_text);
 }
 
 #[test]
