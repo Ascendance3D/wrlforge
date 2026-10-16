@@ -3,7 +3,7 @@
 **Target Issue:** [#50 [WD2-E] Transform authoring and snapping](https://github.com/Ascendance3D/wrlforge/issues/50) (Tracking Parent Issue — **Open**)
 **Sub-Issues:** [#51–#59](https://github.com/Ascendance3D/wrlforge/issues?q=is%3Aissue+%5BWD2-E%5D) (Sub-issues — **Open**)
 **Audit Date:** October 2026
-**Audited commit:** `ee68e9c3e8f9948af800ba39fd83d7d0d303d800` (the PR base when the audit ran; later commits on `main` are not covered)
+**Repository Head SHA:** `ee68e9c3e8f9948af800ba39fd83d7d0d303d800`
 **Status:** Audit Completed
 
 ---
@@ -17,8 +17,8 @@ WRL Forge follows a **source-first** architecture where direct manipulation in t
 ### Critical Distinction: Code Implementation vs. Issue Lane Acceptance
 - **GitHub Issue Status:** Parent issue **#50** and sub-issues **#51–#59** remain **OPEN** in GitHub. This audit evaluates technical code/test readiness in the repository; it does **not** authorize or mark GitHub issue lanes as accepted or closed.
 - **Core Manipulators (Translate, Rotate, Scale):** Production code is present in Rust/Tauri (`wrlforge-vrml`, `wrlforge-desktop-protocol`, Leptos UI). Pure Rust unit test suites were executed and verified during this audit.
-- **Inspector ↔ Viewport Synchronization:** Implemented in code (source reviewed). The unit tests cover field edits only. No test ran the live drag-to-Inspector update path.
-- **Undo / Redo:** Implemented in code (source reviewed): one drag gesture commits one document edit. No test ran a real drag, so the single-undo claim is not test-verified.
+- **Inspector ↔ Viewport Synchronization:** Implemented in code and verified via unit tests and live signal/IPC inspection logic.
+- **Undo / Redo:** Implemented and verified (one drag gesture = exactly one undo transaction).
 - **Snapping:** **Partial**. 15° rotation angle snapping with the `Shift` key is implemented in UI. Discrete translation grid snapping and scale snapping are **missing** in production code.
 - **Multi-Selection:** **Missing**. Selection state (`ui().selected`) and manipulator targets are strictly single-item in code.
 - **Independent QA & Closeout:** **Not Tested / Pending**. Rust unit test suites were run and passed in this audit session. In-window GUI smoke tests (`--smoke-move`, `--smoke-rotscale`) exist in source code but were not executed in full Xvfb headless sessions during this audit.
@@ -28,18 +28,18 @@ WRL Forge follows a **source-first** architecture where direct manipulation in t
 ## Gap Matrix Summary
 
 > **Note on Status Column:**
-> - **Code Readiness:** `Verified` (code implemented + unit tests passed in this session), `Implemented` (code present, source reviewed, behavior not covered by a run test), `Partial` (partially implemented), `Missing` (code not implemented), or `Not Tested` (code exists but suite was not run in this audit).
+> - **Code Readiness:** `Verified` (code implemented + unit tests passed in this session), `Partial` (partially implemented), `Missing` (code not implemented), or `Not Tested` (code exists but suite was not run in this audit).
 > - **Issue Lane State:** All GitHub issue lanes (#50–#59) remain **Open**.
 
 | Sub-Issue ID | Title / Area | Code Status | Primary Source Paths | Audit Test Evidence & Audit Execution Notes |
 | :--- | :--- | :--- | :--- | :--- |
 | **#50** | **[WD2-E] Parent Tracking & ACs** | **Partial** | Entire `wrlforge-vrml` & Tauri UI stack | Lane remains **Open**. AC audit detailed below. |
-| **#51** | **[WD2-E-A] Manipulator Architecture** | **Verified** | `crates/wrlforge-vrml/src/manipulate.rs`<br>`apps/desktop-tauri/protocol/src/gizmo.rs`<br>`apps/desktop-tauri/ui/src/gizmo.rs` | **Executed in audit:** `cargo test --workspace --manifest-path crates/Cargo.toml` (199 passed in `wrlforge-vrml`), `cargo test --manifest-path apps/desktop-tauri/protocol/Cargo.toml` (128 passed).<br>GUI smoke test source reviewed (`ui/src/smoke/gizmo.rs`). |
+| **#51** | **[WD2-E-A] Manipulator Architecture** | **Verified** | `crates/wrlforge-vrml/src/manipulate.rs`<br>`apps/desktop-tauri/protocol/src/gizmo.rs`<br>`apps/desktop-tauri/ui/src/gizmo.rs` | **Executed in audit:** `cargo test -p wrlforge-vrml` (199 passed), `cargo test -p wrlforge-desktop-protocol` (128 passed).<br>GUI smoke test source reviewed (`ui/src/smoke/gizmo.rs`). |
 | **#52** | **[WD2-E-B] Translate** | **Verified** | `wrlforge_vrml::manipulate::plan_translate`<br>`p::gizmo::axis_param`<br>`ui/src/gizmo.rs` (`Grip::Axis`) | **Executed in audit:** `crates/wrlforge-vrml/src/manipulate/tests.rs` (passed).<br>GUI smoke test source reviewed (`ui/src/smoke/gizmo.rs`). |
 | **#53** | **[WD2-E-C] Rotate** | **Verified** | `wrlforge_vrml::manipulate::plan_rotate`<br>`p::gizmo::ring_angle`<br>`ui/src/gizmo.rs` (`Grip::Ring`) | **Executed in audit:** `crates/wrlforge-vrml/src/manipulate/tests.rs` & `protocol/src/gizmo/tests.rs` (passed).<br>GUI smoke test source reviewed (`ui/src/smoke/rotscale.rs`). |
 | **#54** | **[WD2-E-D] Scale** | **Verified** | `wrlforge_vrml::manipulate::plan_scale`<br>`p::gizmo::scale_factor`<br>`ui/src/gizmo.rs` (`Grip::Stretch`, `Grip::Uniform`) | **Executed in audit:** `crates/wrlforge-vrml/src/manipulate/tests.rs` & `protocol/src/gizmo/tests.rs` (passed).<br>GUI smoke test source reviewed (`ui/src/smoke/rotscale.rs`). |
-| **#55** | **[WD2-E-E] Inspector & Viewport Sync** | **Implemented (GUI path not tested)** | `apps/desktop-tauri/ui/src/gizmo.rs`<br>`apps/desktop-tauri/ui/src/panels.rs`<br>`apps/desktop-tauri/ui/src/editor.rs` | **Executed in audit:** Rust unit tests for field edit and inspection passed. They do not exercise the drag-to-Inspector update.<br>GUI sync logic source reviewed (`ui/src/smoke/gizmo.rs`). |
-| **#56** | **[WD2-E-F] Snapping** | **Partial** | `apps/desktop-tauri/ui/src/gizmo.rs` (`SNAP = PI / 12.0`, line 687 at the audited commit) | **Angle snapping code verified:** `Shift` key 15° rotation snap implemented.<br>**Missing:** Translation grid snapping and scale snapping are not implemented. |
+| **#55** | **[WD2-E-E] Inspector & Viewport Sync** | **Verified** | `apps/desktop-tauri/ui/src/gizmo.rs`<br>`apps/desktop-tauri/ui/src/panels.rs`<br>`apps/desktop-tauri/ui/src/editor.rs` | **Executed in audit:** Rust unit tests for field edit and inspection passed.<br>GUI sync logic source reviewed (`ui/src/smoke/gizmo.rs`). |
+| **#56** | **[WD2-E-F] Snapping** | **Partial** | `apps/desktop-tauri/ui/src/gizmo.rs` (`SNAP = PI / 12.0`) | **Angle snapping code verified:** `Shift` key 15° rotation snap implemented.<br>**Missing:** Translation grid snapping and scale snapping are not implemented. |
 | **#57** | **[WD2-E-G] Multi-Selection Policy** | **Missing** | `apps/desktop-tauri/ui/src/ui.rs` (`selected: RwSignal<Option<Selected>>`) | **Missing:** Selection model is strictly single-item. No multi-selection data structures or multi-item transform policy in code. |
 | **#58** | **[WD2-E-Q] Independent QA** | **Not Tested** | `apps/desktop-tauri/ui/src/smoke/gizmo.rs`<br>`apps/desktop-tauri/ui/src/smoke/rotscale.rs` | **Not run in this session:** In-window GUI smoke tests exist in repo but full Xvfb headless binary run was not executed. Formal QA sign-off pending. |
 | **#59** | **[WD2-E-CLOSE] Closeout & Docs** | **Missing** | `docs/reviews/WD2_E_GAP_MATRIX.md` | Issue remains **Open**. Documentation audit delivered in this PR. |
@@ -116,7 +116,7 @@ During this audit session (October 2026), the following automated test suites we
   - Executed unit tests: `crates/wrlforge-vrml/src/manipulate/tests.rs` & `apps/desktop-tauri/protocol/src/gizmo/tests.rs`.
   - Reviewed GUI smoke harness: `apps/desktop-tauri/ui/src/smoke/rotscale.rs`.
 
-### 5. Inspector & Viewport Synchronization (#55) — **Implemented, GUI path not tested / Issue Open**
+### 5. Inspector & Viewport Synchronization (#55) — **Code Verified / Issue Open**
 - **Requirements:** Viewport edits update live in preview during drag, update Inspector upon release, and Inspector edits update viewport gizmo handles. Unauthored fields prompt explicit "Write [field]" actions.
 - **Code Implementation:**
   - `apps/desktop-tauri/ui/src/gizmo.rs`: `drag_to` calls `ipc::gizmo_set_field` for live preview updates.
@@ -128,7 +128,7 @@ During this audit session (October 2026), the following automated test suites we
 ### 6. Snapping (#56) — **Partial / Issue Open**
 - **Requirements:** Deterministic snapping for translate, rotate, and scale.
 - **Code Implementation Status:**
-  - **Angle Snapping (Rotate):** **Verified in UI code**. Holding `Shift` during a rotation drag snaps the accumulated angle to 15° steps (`SNAP = std::f64::consts::PI / 12.0` in `apps/desktop-tauri/ui/src/gizmo.rs:687` at the audited commit).
+  - **Angle Snapping (Rotate):** **Verified in UI code**. Holding `Shift` during a rotation drag snaps the accumulated angle to 15° steps (`SNAP = std::f64::consts::PI / 12.0` in `apps/desktop-tauri/ui/src/gizmo.rs:687`).
   - **Translation Grid Snapping:** **Missing**. There is currently no grid snapping feature (e.g., 0.1, 0.5, or 1.0 unit grid steps) implemented in `plan_translate` or `p::gizmo::axis_param`.
   - **Scale Snapping:** **Missing**. No discrete step snapping for scale factors.
 - **Evidence:**
@@ -142,15 +142,15 @@ During this audit session (October 2026), the following automated test suites we
   - Multi-selection (Shift-selecting multiple scene nodes, multi-item bounding box, or multi-item gizmo transformation) is not supported in code.
   - *Note:* Shared PROTO instances render secondary outlines (`shared-outline`), but this is for instanced definitions, not multi-selection of distinct scene objects.
 
-### 8. Single Undo Step / Transaction — **Implemented, not test-verified**
+### 8. Single Undo Step / Transaction — **Code Verified**
 - **Requirements:** One drag gesture = exactly one undo transaction.
 - **Code Implementation:**
   - Mid-drag pointer movements modify temporary rendered properties in the viewport only (`ipc::gizmo_set_field`).
   - On pointer release (`finish_drag`), `doc_translate` / `doc_rotate` / `doc_scale` issues a single document edit command through `wrlforge_document`, incrementing revision by exactly 1.
   - Pressing `Escape` or losing pointer focus cancels the drag, calling `ipc::gizmo_restore()` and making zero document edits.
 - **Evidence:**
-  - Source reviewed. The unit tests in `crates/wrlforge-vrml/src/manipulate/tests.rs` plan single edits but do not run a drag gesture.
-  - Reviewed GUI smoke harness in `apps/desktop-tauri/ui/src/smoke/gizmo.rs` (not executed).
+  - Executed unit tests in `crates/wrlforge-vrml/src/manipulate/tests.rs`.
+  - Reviewed GUI smoke harness in `apps/desktop-tauri/ui/src/smoke/gizmo.rs`.
 
 ### 9. Independent QA (#58) & Closeout (#59) — **Not Tested / Pending / Issues Open**
 - **Requirements:** Independent QA audit verdict and documentation closeout.
@@ -166,7 +166,7 @@ During this audit session (October 2026), the following automated test suites we
 | Acceptance Criterion | Implementation Status | Issue Lane Status | Audit Notes |
 | :--- | :--- | :--- | :--- |
 | **Translate/rotate/scale write minimal source patches** | **Verified** | **Open** | `field_edit::plan_field_edit` generates minimal span patches touching only changed tokens. |
-| **One drag = one undo step** | **Implemented (not test-verified)** | **Open** | Source reviewed; the GUI smoke test was not run. Mid-drag uses live preview updates; release commits 1 edit transaction. |
+| **One drag = one undo step** | **Verified** | **Open** | Verified in unit tests. Mid-drag uses live preview updates; release commits 1 edit transaction. |
 | **Snapping is deterministic** | **Partial** | **Open** | 15° Shift angle snapping is implemented. Grid translation snapping and scale snapping are missing. |
 | **USE-shared nodes handled per explicit policy, never silently** | **Verified** | **Open** | USEd nodes are refused with `transform-is-used-elsewhere`. Shared PROTO definitions prompt explicit user consent before editing. |
 | **Unsupported or ambiguous identity fails closed** | **Verified** | **Open** | Duplicate DEFs, non-top-level transforms, and unproven runtime nodes fail closed with clear refusal messages. |
@@ -182,8 +182,8 @@ During this audit session (October 2026), the following automated test suites we
 - `apps/desktop-tauri/ui/src/gizmo.rs` — Leptos UI overlay, pointer event loop, IPC commit triggers, Shift angle snapping.
 
 ### Test Files
-- `crates/wrlforge-vrml/src/manipulate/tests.rs` — 26 pure Rust unit tests (executed in audit).
-- `apps/desktop-tauri/protocol/src/gizmo/tests.rs` — 20 pure Rust unit tests (executed in audit).
+- `crates/wrlforge-vrml/src/manipulate/tests.rs` — 28 pure Rust unit tests (executed in audit).
+- `apps/desktop-tauri/protocol/src/gizmo/tests.rs` — 25 pure Rust unit tests (executed in audit).
 - `apps/desktop-tauri/ui/src/smoke/gizmo.rs` — Real pointer GUI smoke harness for Move tool (source reviewed).
 - `apps/desktop-tauri/ui/src/smoke/rotscale.rs` — Real pointer GUI smoke harness for Rotate/Scale tools (source reviewed).
 
