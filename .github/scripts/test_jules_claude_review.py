@@ -87,10 +87,10 @@ class GateTests(unittest.TestCase):
 
     def test_missing_sha_does_not_call_check_runs_endpoint(self):
         bad = pr(sha=None)
-        with patch.object(gate, "issue_sessions", return_value={TASK: 160}), (
-             patch.object(gate, "all_pages") as pages), (
-             patch.object(gate, "api") as api_mock), (
-             patch.dict(os.environ, {"GH_TOKEN": "test-token"})):
+        with (patch.object(gate, "issue_sessions", return_value={TASK: 160}),
+              patch.object(gate, "all_pages") as pages,
+              patch.object(gate, "api") as api_mock,
+              patch.dict(os.environ, {"GH_TOKEN": "test-token"})):
             def page(route, limit=12):
                 if "/pulls?state=open" in route:
                     return [bad]
