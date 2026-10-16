@@ -76,7 +76,8 @@ def ci_gate(checks, sha):
         return False
     relevant = [x for x in checks if x.get("name", "").startswith("test (")]
     observed = {x.get("name") for x in relevant}
-    expected = {"test (ubuntu)", "test (macos)", "test (windows)"}
+    # Only the Linux PR gate is required for the current product phase.
+    expected = {"test (ubuntu)"}
     if not expected.issubset(observed):
         return False
     return all(
