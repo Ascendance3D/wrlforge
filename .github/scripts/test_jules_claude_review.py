@@ -66,6 +66,45 @@ class GateTests(unittest.TestCase):
         other["head"]["ref"] = "unlinked-branch"
         self.assertEqual(gate.evaluate(other, DOC, {TASK: 160}, history())["result"], "OWNER_REVIEW")
 
+    def test_task_id_must_be_full_branch_numeric_token(self):
+        other = pr()
+        other["head"]["ref"] = "jules-task-9" + TASK
+        self.assertEqual(
+            gate.evaluate(other, DOC, {TASK: 160}, history())["result"],
+            "OWNER_REVIEW"
+        )
+        other["head"]["ref"] = "jules-task-" + TASK + "9"
+        self.assertEqual(
+            gate.evaluate(other, DOC, {TASK: 160}, history())["result"],
+            "OWNER_REVIEW"
+        )
+        # The real session ID may be bracketed by non-digit branch parts.
+        other["head"]["ref"] = "jules-" + TASK + "-fix"
+        self.assertEqual(
+            gate.evaluate(other, DOC, {TASK: 160}, history())["result"],
+            "REVIEW_CANDIDATE"
+        )
+
+    def test_missing_sha_does_not_call_check_runs_endpoint(self):
+        bad = pr(sha=None)
+        with patch.object(gate, "issue_sessions", return_value={TASK: 160}), (
+             patch.object(gate, "all_pages") as pages), (
+             patch.object(gate, "api") as api_mock), (
+             patch.dict(os.environ, {"GH_TOKEN": "test-token"})):
+            def page(route, limit=12):
+                if "/pulls?state=open" in route:
+                    return [bad]
+                if "/pulls/192/files" in route:
+                    return [{"filename": DOC[0]}]
+                if "/issues/192/comments" in route:
+                    return []
+                raise AssertionError("unexpected route: " + route)
+            pages.side_effect = page
+            got = gate.scan(0)
+            self.assertEqual(got[0]["result"], "BLOCKED")
+            self.assertFalse(got[0]["ci_pass"])
+            api_mock.assert_not_called()
+
     def test_ci_from_another_commit_never_counts(self):
         self.assertFalse(gate.ci_gate(checks("b" * 40), S))
 
