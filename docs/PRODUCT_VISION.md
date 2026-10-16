@@ -70,8 +70,9 @@ node (or its simple-object Transform) via shared selection authority, with
 fail-closed refusal when source identity cannot be proven. Windows/macOS
 real-pointer picking QA (#119) and Inline content selection (#118) remain open.
 Direct Translate, Rotate, and Scale transform tools are implemented in the
-Rust/Tauri beta. Snapping, multi-selection, and independent QA remain open under
-the parent WD2-E workstream (#50), which is not yet accepted.
+Rust/Tauri beta. Shift-drag snaps rotation to 15 degree steps. Translation and
+scale snapping, multi-selection, and independent QA remain open under the parent
+WD2-E workstream (#50), which is not yet accepted.
 
 Crash recovery (RUST-STAB-1, 2026-10-11) is built in the Rust/Tauri
 application: unsaved work is kept in private recovery records and offered at
