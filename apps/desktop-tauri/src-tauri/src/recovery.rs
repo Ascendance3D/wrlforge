@@ -1118,11 +1118,16 @@ mod tests {
         drop(rec); // Release the lock so a new instance can offer records
 
         // Helper to check conditions
-        let check_damaged = |second: &Recovery| {
+        let check_damaged = |second: &Recovery, reason: &str| {
             let s = second.store().unwrap().scan();
             assert!(s.offered.is_empty(), "Damaged record should not be offered");
             assert_eq!(s.damaged.len(), 1, "Record should be reported as damaged");
             assert_eq!(s.damaged[0].id, id);
+            assert!(
+                s.damaged[0].reason.contains(reason),
+                "wrong refusal reason: {}",
+                s.damaged[0].reason
+            );
             assert_eq!(
                 fs::read_to_string(&orig_file).unwrap(),
                 "original content",
@@ -1134,20 +1139,20 @@ mod tests {
 
         // Test case 1: Truncated record
         fs::write(&record_path, &good_bytes[..good_bytes.len() - 1]).unwrap();
-        check_damaged(&second);
+        check_damaged(&second, "truncated");
 
         // Test case 2: Bad payload checksum
         let mut bad_checksum = good_bytes.clone();
         let last = bad_checksum.len() - 1;
         bad_checksum[last] ^= 1;
         fs::write(&record_path, &bad_checksum).unwrap();
-        check_damaged(&second);
+        check_damaged(&second, "recovered text failed its checksum");
 
         // Test case 3: Extra trailing bytes
         let mut trailing_bytes = good_bytes.clone();
         trailing_bytes.push(0);
         fs::write(&record_path, &trailing_bytes).unwrap();
-        check_damaged(&second);
+        check_damaged(&second, "unexpected bytes");
     }
 
     #[test]
