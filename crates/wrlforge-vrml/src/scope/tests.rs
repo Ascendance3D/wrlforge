@@ -132,6 +132,20 @@ fn proto_body_def_binds_inside_only() {
     assert_gate(&g);
 }
 
+#[test]
+fn scene_def_not_visible_inside_proto_body() {
+    let src = "#VRML V2.0 utf8\nDEF Outer Group { }\nPROTO P [ ] { Group { children [ USE Outer ] } }\nGroup { children [ USE Outer ] }";
+    let g = graph(src);
+    let u = uses(&g, "Outer");
+    // Inside the PROTO body: the scene DEF is not visible.
+    assert_eq!(u[0].status, Status::Unresolved);
+    assert_eq!(u[0].reason, reason::DEF_NOT_VISIBLE_ACROSS_PROTO_BOUNDARY);
+    // Outside the PROTO: the scene DEF is visible.
+    assert_eq!(u[1].status, Status::Resolved);
+    assert_eq!(target_at(&g, u[1]), Some(at(src, "DEF Outer", 0)));
+    assert_gate(&g);
+}
+
 // 5. Nested PROTOs: separate from the enclosing body too (4.8.4).
 #[test]
 fn nested_proto_scopes_are_disjoint_both_ways() {
