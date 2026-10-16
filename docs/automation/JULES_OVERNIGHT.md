@@ -15,19 +15,19 @@ This workflow starts **at most one Jules session per run** from approved GitHub 
 2. Save the key in **GitHub > Settings > Secrets and variables > Actions** as the repository secret `JULES_API_KEY`.
 3. Confirm the Jules GitHub app already has access to `Ascendance3D/wrlforge`. The dispatcher lists Jules sources and verifies the exact repository and the `main` branch. It does **not** guess the Jules source resource name.
 4. Create the GitHub issue label `jules-approved`, if it does not already exist.
-5. Review PR #159, obtain independent QA, and merge it **only with owner approval**.
+5. PR #159 was merged after safety QA. Any future dispatcher change still needs independent QA and owner approval.
 6. Test the **Jules Overnight Queue** workflow manually from `main` with `dry_run=true`.
 7. After verifying the dry run, have the owner apply `jules-approved` to an already-created, small, owner-authored issue with a title starting `JULES-`.
 
-The ten prepared tasks are issues #160–#169. **They are not approved yet.** Do not apply their approval labels merely because the workflow exists. If another Jules task is already running, do not queue the same work again.
+Issue #169 was dispatched and produced draft PR #170. Issues #160–#168 are owner-approved and queued. Do not re-approve a consumed issue without checking Jules sessions for duplicates. Existing draft PRs #152–#158 and #170 remain an independent review backlog; this dispatcher does not close or merge them.
 
 ## Scheduling and manual use
 
-GitHub Actions schedules dispatch at `04:17` and `07:17` UTC daily, subject to GitHub scheduling delays. GitHub uses UTC, so these do not always map to the same local wall-clock hours across daylight-saving changes.
+GitHub Actions attempts dispatch **hourly at minute 17, 04:17–11:17 UTC daily**. This is approximately 00:17–07:17 EDT or 23:17–06:17 EST. GitHub scheduled runs can be delayed. The dispatcher attempts **at most one task per run**.
 
 A **manual** workflow run defaults to `dry_run=true`. The dry run lists eligible work and checks its latest approval-label actor. It **does not** change labels, post comments, read the Jules API, or create a session. It does not need a Jules API key.
 
-A scheduled run performs **live dispatch** when there is a valid owner-approved task and the key and Jules source are available. A manual run with `dry_run=false` also performs live dispatch. GitHub Actions concurrency prevents overlapping runs of this workflow. Two runs per day is the current scheduling limit; it is not a guarantee that two tasks will finish.
+A scheduled run performs **live dispatch** when there is a valid owner-approved task and the key and Jules source are available. A manual run with `dry_run=false` also performs live dispatch. GitHub Actions concurrency prevents overlapping runs of this workflow. Hourly dispatch is a maximum rate, not a guarantee of completion.
 
 ## Approval policy
 
@@ -47,7 +47,9 @@ The workflow checks the GitHub repository and current branch and refuses to run 
 
 Before removing an accepted label, the workflow checks that `JULES_API_KEY` exists and queries Jules's `GET /v1alpha/sources` endpoint. It follows pagination, requires exactly one matching connected GitHub repository, and uses `GET /v1alpha/sources/{sourceId}` to verify the repository and an available `main` branch.
 
-Once these checks pass, it removes the issue's approval label **before** the external `POST /v1alpha/sessions`. This gives the task at-most-once automatic dispatch. If the network fails or the response is lost after removal, it **does not retry**. Check the Jules Sessions page before any owner re-approval.
+The dispatcher queries the paginated `GET /v1alpha/sessions` API. If a nonterminal session in the list omits `sourceContext`, the dispatcher calls `GET /v1alpha/sessions/{sessionId}` and checks the full session before it counts that session. An API error or missing repository source stops dispatch without changing the approval label. The dispatcher counts only nonterminal sessions for the verified public repository source. **Four active sessions** is the initial safety limit, not a Google Jules account limit. `COMPLETED` and `FAILED` do not use a slot. All other states use a slot, including paused sessions. A full queue or sessions API failure leaves the approval label in place. The list response must include a `sessions` array, including when empty, with valid session names and states. The workflow rejects HTTP-success error bodies, missing session arrays, malformed session records, and incomplete pages. This conservative rule may stop dispatch if the Jules API omits its list field for an empty result. Existing GitHub draft PRs do not use active Jules session slots. Change the limit only after review.
+
+Once the capacity check passes, it removes the issue's approval label **before** the external `POST /v1alpha/sessions`. This gives the task at-most-once automatic dispatch. If the network fails or the response is lost after removal, it **does not retry**. Check the Jules Sessions page before any owner re-approval.
 
 The API uses `AUTO_CREATE_PR` and `requirePlanApproval=false` to let Jules proceed through an **already approved issue**. The task prompt requests a **draft PR**. The API does not guarantee draft status, so every Jules PR must remain under review and cannot be merged automatically.
 
@@ -60,7 +62,7 @@ The workflow token has `contents: read` and `issues: write` only. Jules's separa
 - Run `python3 .github/scripts/test-jules-overnight.py` for offline mock checks.
 - Test dry-run no-side-effects behavior.
 - Test valid and invalid issue selection.
-- Test missing API key and unavailable Jules source failure paths.
+- Test missing API key, unavailable Jules source, session API failures, four active sessions, and the three-session dispatch path.
 - Test duplicate protection and uncertain POST responses.
 - Obtain independent security/logic QA and require the owner's merge approval.
 
