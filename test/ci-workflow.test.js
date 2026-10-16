@@ -72,13 +72,15 @@ test('docs-only PRs skip expensive npm steps without bypassing checks for code',
   assert.match(classify.run, /run_full=false/);
   assert.match(classify.run, /\*\.md\)/);
   const costly = ['Install dependencies', 'Generate icons', 'Bundle native editor',
-    'Tests + syntax/check gate (includes product-posture)',
-    'Validate packaging configuration'];
+    'Tests + syntax/check gate (includes product-posture)'];
   for (const name of costly) {
     const step = job.steps.find((item) => item.name === name);
     assert.ok(step, name + ' must remain in CI');
     assert.strictEqual(step.if, "steps.scope.outputs.run_full == 'true'");
-  }
+  }  // The packaging check needs only Node and stays on for every pull request.
+  const packaging = job.steps.find((item) => item.name === 'Validate packaging configuration');
+  assert.ok(packaging, 'packaging validation must remain in CI');
+  assert.strictEqual(packaging.if, undefined, 'packaging validation must not be conditional');
 });
 
 // Behavior of the classifier: run the real step script against merge commits

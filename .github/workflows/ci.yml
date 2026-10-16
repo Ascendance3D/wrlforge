@@ -100,6 +100,5 @@ jobs:
         run: npm run check
 
       - name: Validate packaging configuration
-        if: steps.scope.outputs.run_full == 'true'
         shell: bash
         run: node .github/scripts/validate-build-config.js
