@@ -98,7 +98,7 @@ def evaluate(pr, paths, confirmed_sessions, history, checks=None):
     author = (pr.get("user") or {}).get("login")
     result = {"pr": pr.get("number"), "head_sha": sha, "result": "OWNER_REVIEW",
               "category": classify_paths(paths), "reason": ""}
-    if (pr.get("state") != "open" or not SHA.fullmatch(sha) or
+    if (pr.get("state") != "open" or not isinstance(sha, str) or not SHA.fullmatch(sha) or
             base.get("ref") != "main" or source != REPO):
         result.update(result="BLOCKED", reason="invalid PR state, SHA, base, or source repository")
     elif result["category"] == "BLOCKED":
