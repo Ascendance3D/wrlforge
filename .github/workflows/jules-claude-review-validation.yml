@@ -1,0 +1,57 @@
+name: Jules Claude Review Safety Tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/scripts/jules_claude_review.py'
+      - '.github/scripts/test_jules_claude_review.py'
+      - '.github/workflows/jules-claude-review.yml'
+      - '.github/workflows/jules-claude-review-validation.yml'
+      - 'docs/automation/JULES_CLAUDE_REVIEW.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout for isolated tests only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Unit and policy checks
+        run: |
+          set -euo pipefail
+          python3 -m py_compile .github/scripts/jules_claude_review.py
+          python3 .github/scripts/test_jules_claude_review.py
+      - name: Refuse automatic merge or active review
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import runpy
+          wf = Path(".github/workflows/jules-claude-review.yml").read_text()
+          matches = re.findall(r"(?m)^  claude-review-DISABLED:\s*$", wf)
+          assert len(matches) == 1, "expected exactly one disabled review job"
+          job = wf.split("\n  claude-review-DISABLED:\n", 1)[1]
+          job = re.split(r"(?m)^  [A-Za-z][\w-]*:\s*$", job, maxsplit=1)[0]
+          guards = [line.strip() for line in job.splitlines()
+                    if line.startswith("    if: ")]
+          required = "if: " + chr(36) + "{{ false && needs.inventory.outputs.eligible_pr != '' }}"
+          assert guards == [required], "live Claude guard changed"
+          gate = runpy.run_path(".github/scripts/jules_claude_review.py")
+          result = gate["evaluate"](
+              {"number": 1, "state": "open", "body": "",
+               "head": {"sha": "a" * 40, "repo": {"full_name": "Ascendance3D/wrlforge"}},
+               "base": {"ref": "main"}},
+              ["docs/readme.md"], {}, {"attempt_limit_reached": False,
+                                        "already_reviewed": False})
+          assert result["merge_authorized"] is False
+          print("Effective Claude and merge guards verified.")
+          PY
