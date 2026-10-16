@@ -12,7 +12,7 @@ A desktop tool for editing, previewing, inspecting, and packaging classic VRML97
 **Status:** Public beta · prerelease
 **Platforms:** Linux x64 · Windows x64 · macOS Apple Silicon (arm64)
 
-> **Note:** WRL Forge is transitioning from its legacy Electron implementation to a new Rust/Tauri desktop application. Current Rust/Tauri development targets **Linux first**, then **macOS 15+**. **Windows 11** is planned for a future phase. Current Windows development, CI, packaging, and release are not authorized. The legacy Electron releases supported Windows, Linux, and macOS. Historical release information, build instructions, and legacy application details are preserved in this repository for reference.
+> **Note:** WRL Forge is transitioning from its legacy Electron implementation to a new Rust/Tauri desktop application. Current Rust/Tauri development targets **Linux first**, then **macOS 15+**. **Windows 11** is planned for a future phase. Current Windows implementation, packaging, and release work are not authorized. The legacy Electron releases supported Windows, Linux, and macOS. Historical release information, build instructions, and legacy application details are preserved in this repository for reference.
 
 **➡️ [Download WRL Forge](https://wrlforge.com)**
 
