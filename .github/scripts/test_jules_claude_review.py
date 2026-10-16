@@ -155,8 +155,9 @@ class GateTests(unittest.TestCase):
 
     def test_missing_and_failed_ci_are_holds(self):
         self.assertFalse(gate.ci_gate([], S))
-        altered = checks()[:2]
+        altered = checks()[1:]
         self.assertFalse(gate.ci_gate(altered, S))
+        self.assertTrue(gate.ci_gate(checks()[:1], S))
         fail = checks()
         fail[0]["conclusion"] = "failure"
         self.assertFalse(gate.ci_gate(fail, S))
