@@ -145,7 +145,7 @@ pub fn AboutDialog() -> impl IntoView {
                     on:keydown=move |ev: web_sys::KeyboardEvent| if ev.key() == "Escape" { ev.prevent_default(); hide(); }>
                     <h3 id="about-title">"About WRL Forge"</h3>
                     {body}
-                    <p class="muted">"Standards-first VRML97 model and code editor. This 1.4.x Rust build is a Beta; 1.5.0 is reserved for the complete Rust release on Linux, Windows and macOS."</p>
+                    <p class="muted">"Standards-first VRML97 model and code editor. This 1.4.x Rust build is a Beta; 1.5.0 is reserved for the complete Rust release on Linux first and macOS 15+ next, with Windows 11 as a future target."</p>
                     <div class="about-actions">
                         <button id="about-close" class="secondary" node_ref=close on:click=move |_| hide()>"Close"</button>
                     </div>
