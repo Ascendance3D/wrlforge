@@ -20,7 +20,9 @@ DOC = ["docs/reviews/NEW_FEATURE.md"]
 
 def pr(sha=S, body=BODY, branch="main", repo=gate.REPO, state="open"):
     return {"number": 192, "state": state, "body": body,
-            "head": {"sha": sha, "repo": {"full_name": repo}},
+            "user": {"login": "DJAscendance"},
+            "head": {"sha": sha, "ref": "jules-task-" + TASK,
+                     "repo": {"full_name": repo}},
             "base": {"ref": branch}}
 
 
@@ -55,6 +57,17 @@ class GateTests(unittest.TestCase):
         for case in (pr(repo="attacker/repo"), pr(branch="staging"), pr(state="closed")):
             with self.subTest(case=case):
                 self.assertEqual(gate.evaluate(case, DOC, {TASK: 160}, history())["result"], "BLOCKED")
+
+    def test_other_author_or_missing_session_branch_not_eligible(self):
+        other = pr()
+        other["user"]["login"] = "unverified"
+        self.assertEqual(gate.evaluate(other, DOC, {TASK: 160}, history())["result"], "OWNER_REVIEW")
+        other = pr()
+        other["head"]["ref"] = "unlinked-branch"
+        self.assertEqual(gate.evaluate(other, DOC, {TASK: 160}, history())["result"], "OWNER_REVIEW")
+
+    def test_ci_from_another_commit_never_counts(self):
+        self.assertFalse(gate.ci_gate(checks("b" * 40), S))
 
     def test_head_sha_is_required(self):
         self.assertEqual(gate.evaluate(pr(sha="moving"), DOC, {TASK: 160}, history())["result"], "BLOCKED")
