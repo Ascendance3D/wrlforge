@@ -771,8 +771,9 @@ mod tests {
 
     #[test]
     fn item_ids_use_utf16_offsets_in_proto_and_bom() {
-        let src = "\u{feff}#VRML V2.0 utf8\nPROTO P [ ] { \u{1f600} Group { } }\n";
+        let src = "\u{feff}#VRML V2.0 utf8\nPROTO P [ ] { # \u{1f600}\n Group { } }\n";
         let r = parse(src);
+        assert!(r.diagnostics.is_empty());
         let t = build_scene_tree(&r.tree, src);
 
         let group_id = t
@@ -783,7 +784,9 @@ mod tests {
         let node = &t.items[group_id];
 
         let start16 = src[..src.find("Group").unwrap()].encode_utf16().count() as u64;
-        let end16 = src[..src.find("Group").unwrap() + "Group { }".len()].encode_utf16().count() as u64;
+        let end16 = src[..src.find("Group").unwrap() + "Group { }".len()]
+            .encode_utf16()
+            .count() as u64;
         assert_eq!(node.from, start16);
         assert_eq!(node.id, format!("node-{start16}-{end16}"));
     }
