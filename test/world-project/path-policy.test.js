@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
-const { classifyReference, CATEGORY } = require('../../src/world-project/path-policy');
+const { classifyReference, CATEGORY, toPosix, RESOLVABLE, REMOTE } = require('../../src/world-project/path-policy');
 
 const ROOT = path.resolve('/proj');
 const DIR = path.resolve('/proj/vrml');
@@ -73,4 +73,65 @@ test('empty / whitespace is malformed', () => {
 test('file:// is treated as absolute-local', () => {
   const c = classifyReference('file:///proj/vrml/img/a.png', DIR, ROOT);
   assert.equal(c.category, CATEGORY.ABSOLUTE);
+});
+
+test('no project root leaves projectRelative as null', () => {
+  const c = classifyReference('x.png', DIR, null);
+  assert.equal(c.category, CATEGORY.LOCAL);
+  assert.equal(c.resolvable, true);
+  assert.equal(c.projectRelative, null);
+  assert.equal(c.resolved, path.resolve('/proj/vrml/x.png'));
+});
+
+test('absolute references resolve projectRelative when inside root', () => {
+  const c1 = classifyReference('file:///proj/vrml/img/a.png', DIR, ROOT);
+  assert.equal(c1.category, CATEGORY.ABSOLUTE);
+  assert.equal(c1.projectRelative, 'vrml/img/a.png');
+
+  const c2 = classifyReference('file:///proj/vrml/img/a.png', DIR, null);
+  assert.equal(c2.category, CATEGORY.ABSOLUTE);
+  assert.equal(c2.projectRelative, null);
+
+  const c3 = classifyReference('/proj/a/b.png', DIR, ROOT);
+  assert.equal(c3.category, CATEGORY.ABSOLUTE);
+  assert.equal(c3.projectRelative, 'a/b.png');
+
+  const c4 = classifyReference('/outside/x.png', DIR, ROOT);
+  assert.equal(c4.category, CATEGORY.ABSOLUTE);
+  assert.equal(c4.projectRelative, null);
+
+  const c5 = classifyReference('file:a.png', DIR, ROOT);
+  assert.equal(c5.category, CATEGORY.ABSOLUTE);
+});
+
+test('normalization and edge cases', () => {
+  const c1 = classifyReference('sub\\\\x.png', DIR, ROOT);
+  assert.equal(c1.category, CATEGORY.LOCAL);
+  assert.equal(c1.projectRelative, 'vrml/sub/x.png');
+
+  const c2 = classifyReference('  x.png  ', DIR, ROOT);
+  assert.equal(c2.category, CATEGORY.LOCAL);
+  assert.equal(c2.projectRelative, 'vrml/x.png');
+
+  const c3 = classifyReference('..', DIR, ROOT);
+  assert.equal(c3.category, CATEGORY.LOCAL);
+  assert.equal(c3.projectRelative, '');
+
+  const c4 = classifyReference(null, DIR, ROOT);
+  assert.equal(c4.category, CATEGORY.MALFORMED);
+});
+
+test('schemes and exports', () => {
+  const c1 = classifyReference('mailto:a@b', DIR, ROOT);
+  assert.equal(c1.category, CATEGORY.REMOTE_OTHER);
+  assert.equal(c1.note, 'mailto: remote URL');
+
+  const c2 = classifyReference('HTTP://H/x', DIR, ROOT);
+  assert.equal(c2.category, CATEGORY.REMOTE_HTTP);
+  assert.equal(c2.note, 'http URL');
+
+  assert.equal(toPosix('a\\b'), 'a/b');
+  assert.equal(RESOLVABLE.has('local'), true);
+
+  assert.deepEqual(Array.from(REMOTE).sort(), [CATEGORY.REMOTE_HTTP, CATEGORY.REMOTE_PROTOCOL, CATEGORY.REMOTE_OTHER].sort());
 });
