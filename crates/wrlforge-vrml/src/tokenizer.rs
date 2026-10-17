@@ -668,6 +668,43 @@ mod tests {
     }
 
     #[test]
+    fn crlf_counts_as_one_line_break_while_byte_offsets_remain_exact() {
+        let src = "#VRML V2.0 utf8\r\nGroup { }\r\n";
+        let t = tokenize(src);
+
+        let header = &t.tokens[0];
+        assert_eq!(header.range.start.line, 1);
+
+        let group = &t.tokens[1];
+        assert_eq!(group.range.start.line, 2);
+        assert_eq!(group.range.start.column, 1);
+
+        // UTF-8 byte offset for "#VRML V2.0 utf8\r\n" is 17 bytes
+        assert_eq!(group.range.start.byte, 17);
+        // UTF-16 code unit offset for "#VRML V2.0 utf8\r\n" is 17
+        assert_eq!(group.range.start.offset, 17);
+
+        assert_eq!(group.lexeme(src), "Group");
+    }
+
+    #[test]
+    fn token_following_a_comment_and_mixed_line_endings_starts_at_the_exact_expected_span() {
+        let src = "# Comment 1\n# Comment 2\r\nNode {}";
+        let t = tokenize(src);
+
+        let node = &t.tokens[0];
+        assert_eq!(node.range.start.line, 3);
+        assert_eq!(node.range.start.column, 1);
+
+        // length of "# Comment 1\n" = 12 bytes
+        // length of "# Comment 2\r\n" = 13 bytes
+        // total = 25 bytes
+        assert_eq!(node.range.start.byte, 25);
+        assert_eq!(node.range.start.offset, 25);
+        assert_eq!(node.lexeme(src), "Node");
+    }
+
+    #[test]
     fn invalid_numbers_and_unknown_chars_diagnose_without_hanging() {
         let t = tokenize("12abc 0x \\ \"open");
         let codes: Vec<&str> = t.diagnostics.iter().map(|d| d.code.as_str()).collect();
