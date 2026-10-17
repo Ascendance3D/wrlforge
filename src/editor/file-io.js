@@ -6,7 +6,7 @@
 // conflict-detection paths are exercised by unit tests without real disk faults.
 //
 // Reuses the production primitives rather than re-deriving them:
-//   * isGzip (magic bytes)        <- src/files/vrml-file.js
+//   * isGzip, getGzipCap (magic bytes, cap) <- src/files/vrml-file.js
 //   * readWrlSource (gzip-transparent load) <- src/preview/wrl-source.js
 //   * backupPath (timestamped, collision-free naming) <- src/files/backups.js
 //
@@ -52,7 +52,7 @@
 const nodeFs = require('fs');
 const nodeZlib = require('zlib');
 const crypto = require('crypto');
-const { isGzip } = require('../files/vrml-file');
+const { isGzip, getGzipCap } = require('../files/vrml-file');
 const { readWrlSource } = require('../preview/wrl-source');
 const { backupPath } = require('../files/backups');
 const { FORMAT, formatFromGzip } = require('./wrl-document');
@@ -65,6 +65,7 @@ function resolveDeps(deps) {
     hash: (deps && deps.hash) || defaultHash,
     now: (deps && deps.now) || (() => new Date()),
     readSource: (deps && deps.readSource) || readWrlSource,
+    getGzipCap: (deps && deps.getGzipCap) || getGzipCap,
   };
 }
 
@@ -128,9 +129,24 @@ function decodeBytes(bytes, format, deps) {
   const d = resolveDeps(deps);
   if (format === FORMAT.GZIP) {
     if (!isGzip(bytes)) throw new Error('expected gzip bytes but magic bytes are absent');
-    return d.zlib.gunzipSync(bytes).toString('utf8');
+    try {
+      const cap = d.getGzipCap();
+      return d.zlib.gunzipSync(bytes, { maxOutputLength: cap }).toString('utf8');
+    } catch (err) {
+      if (err && (err.code === 'ERR_BUFFER_TOO_LARGE' || err.code === 'ERR_STRING_TOO_LONG')) {
+        throw new Error('decoding candidate exceeded the allowed decompression limit');
+      }
+      throw err;
+    }
   }
-  return bytes.toString('utf8');
+  try {
+    return bytes.toString('utf8');
+  } catch (err) {
+    if (err && err.code === 'ERR_STRING_TOO_LONG') {
+      throw new Error('decoding candidate exceeds the maximum text size');
+    }
+    throw err;
+  }
 }
 
 // --- gzip preservation (Lane B, B1) ------------------------------------------
@@ -161,9 +177,10 @@ function wouldPreserve({ filePath, text, format }, deps) {
     if (!d.fs.existsSync(filePath)) return false;
     const raw = d.fs.readFileSync(filePath);
     if (!isGzip(raw)) return false;
-    return d.zlib.gunzipSync(raw).toString('utf8') === text;
+    const cap = d.getGzipCap();
+    return d.zlib.gunzipSync(raw, { maxOutputLength: cap }).toString('utf8') === text;
   } catch {
-    // Unreadable, truncated or corrupt: identity is unprovable, so it is false.
+    // Unreadable, truncated, corrupt or over limit: identity is unprovable, so it is false.
     return false;
   }
 }

@@ -18,7 +18,7 @@
 
 const fsDefault = require('fs');
 const zlibDefault = require('zlib');
-const { isGzip } = require('../files/vrml-file');
+const { isGzip, getGzipCap } = require('../files/vrml-file');
 
 // Nothing on disk that could be weighed. Every field is null rather than 0 or
 // false: "no artifact" is not "an artifact of zero bytes".
@@ -68,9 +68,11 @@ function measureArtifact(filePath, text, deps = {}) {
   // recompression of what they contain.
   let inflated = null;
   try {
-    inflated = zlib.gunzipSync(raw);
+    const getCap = deps.getGzipCap || getGzipCap;
+    const cap = getCap();
+    inflated = zlib.gunzipSync(raw, { maxOutputLength: cap });
   } catch {
-    // Gzip magic bytes but a broken stream: the size is real, the identity is
+    // Gzip magic bytes but a broken stream or over limit: the size is real, the identity is
     // unprovable. Report both facts honestly.
     return { artifactBytes: raw.length, artifactIsGzip: true, artifactMatchesText: null };
   }

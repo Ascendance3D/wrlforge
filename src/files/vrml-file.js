@@ -16,4 +16,14 @@ function editPathFor(mallPath) {
   return path.join(dir, `${base}.edit.wrl`);
 }
 
-module.exports = { GZIP_MAGIC, isGzip, editPathFor };
+// Shared limits for decompression to prevent gzip bombs.
+// 1 GiB cap for locally opened files, since detailed legitimate VRML worlds can be hundreds of MB,
+// and can feature huge compression ratios.
+const MAX_DECODED_BYTES = 1024 * 1024 * 1024; // 1 GiB
+
+// Returns the bounded maximum output length for gunzipSync.
+function getGzipCap() {
+  return MAX_DECODED_BYTES;
+}
+
+module.exports = { GZIP_MAGIC, isGzip, editPathFor, getGzipCap, MAX_DECODED_BYTES };
