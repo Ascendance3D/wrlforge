@@ -627,4 +627,164 @@ mod tests {
         let r = parse(SRC);
         assert!(inspect(&r.tree, SRC, "node-0-1").is_none());
     }
+
+    #[test]
+    fn use_reference_status_from_scoped_tree() {
+        let src = "#VRML V2.0 utf8\nDEF A Group {}\nUSE A\nPROTO P [ ] { DEF B Group {} }\nUSE B\n";
+        let r = parse(src);
+        let (t, _) = build_scene_tree_scoped(&r, src);
+
+        // Find USE A
+        let use_a_id = t
+            .order
+            .iter()
+            .find(|i| t.items[*i].label == "USE A")
+            .unwrap();
+        let use_a = &t.items[use_a_id];
+        assert_eq!(use_a.use_status, Some("resolved"));
+        assert_eq!(use_a.refs.len(), 1);
+        let ref_a = &use_a.refs[0];
+        assert_eq!(ref_a.role, "use");
+
+        let def_a_id = t
+            .order
+            .iter()
+            .find(|i| t.items[*i].label == "Group A")
+            .unwrap();
+        assert_eq!(ref_a.target.as_ref(), Some(def_a_id));
+
+        // Find USE B
+        let use_b_id = t
+            .order
+            .iter()
+            .find(|i| t.items[*i].label == "USE B")
+            .unwrap();
+        let use_b = &t.items[use_b_id];
+        assert_eq!(use_b.use_status, Some("unresolved"));
+        assert_eq!(use_b.refs.len(), 1);
+        let ref_b = &use_b.refs[0];
+        assert_eq!(ref_b.role, "use");
+        assert_eq!(ref_b.target, None);
+    }
+
+    #[test]
+    fn route_reference_status_from_scoped_tree() {
+        let src = "#VRML V2.0 utf8\nDEF S Group { }\nDEF D Group { }\nROUTE S.a TO D.b\nROUTE S.a TO M.b\n";
+        let r = parse(src);
+        let (t, _) = build_scene_tree_scoped(&r, src);
+
+        let s_id = t
+            .order
+            .iter()
+            .find(|i| t.items[*i].label == "Group S")
+            .unwrap();
+        let d_id = t
+            .order
+            .iter()
+            .find(|i| t.items[*i].label == "Group D")
+            .unwrap();
+
+        let route1_id = t
+            .order
+            .iter()
+            .find(|i| t.items[*i].label == "ROUTE S.a → D.b")
+            .unwrap();
+        let route1 = &t.items[route1_id];
+        assert_eq!(route1.refs.len(), 2);
+
+        let ref_s1 = route1
+            .refs
+            .iter()
+            .find(|r| r.role == "route-source")
+            .unwrap();
+        assert_eq!(ref_s1.status, "resolved");
+        assert_eq!(ref_s1.target.as_ref(), Some(s_id));
+
+        let ref_d1 = route1
+            .refs
+            .iter()
+            .find(|r| r.role == "route-destination")
+            .unwrap();
+        assert_eq!(ref_d1.status, "resolved");
+        assert_eq!(ref_d1.target.as_ref(), Some(d_id));
+
+        let route2_id = t
+            .order
+            .iter()
+            .find(|i| t.items[*i].label == "ROUTE S.a → M.b")
+            .unwrap();
+        let route2 = &t.items[route2_id];
+        assert_eq!(route2.refs.len(), 2);
+
+        let ref_s2 = route2
+            .refs
+            .iter()
+            .find(|r| r.role == "route-source")
+            .unwrap();
+        assert_eq!(ref_s2.status, "resolved");
+        assert_eq!(ref_s2.target.as_ref(), Some(s_id));
+
+        let ref_m2 = route2
+            .refs
+            .iter()
+            .find(|r| r.role == "route-destination")
+            .unwrap();
+        assert_eq!(ref_m2.status, "unresolved");
+        assert_eq!(ref_m2.target, None);
+    }
+
+    #[test]
+    fn inspect_shows_exact_source_for_use_route_and_externproto() {
+        let src = "#VRML V2.0 utf8\n# \u{1F600}\r\nEXTERNPROTO E [ ] [ \"a.wrl\"\r\n\"b.wrl\" ]\r\nUSE  T\r\nROUTE  X.y  TO  Z.w\r\n";
+        let r = parse(src);
+        let t = build_scene_tree(&r.tree, src);
+
+        let use_id = t
+            .order
+            .iter()
+            .find(|i| t.items[*i].label == "USE T")
+            .unwrap();
+        let insp_use = inspect(&r.tree, src, use_id).unwrap();
+        let use_row = insp_use.rows.iter().find(|r| r.name == "USE").unwrap();
+        assert_eq!(use_row.source, "USE  T");
+
+        let route_id = t
+            .order
+            .iter()
+            .find(|i| t.items[*i].label == "ROUTE X.y → Z.w")
+            .unwrap();
+        let insp_route = inspect(&r.tree, src, route_id).unwrap();
+        let from_row = insp_route.rows.iter().find(|r| r.name == "from").unwrap();
+        assert_eq!(from_row.source, "X.y");
+        let to_row = insp_route.rows.iter().find(|r| r.name == "to").unwrap();
+        assert_eq!(to_row.source, "Z.w");
+
+        let ext_id = t
+            .order
+            .iter()
+            .find(|i| t.items[*i].label == "EXTERNPROTO E")
+            .unwrap();
+        let insp_ext = inspect(&r.tree, src, ext_id).unwrap();
+        let url_row = insp_ext.rows.iter().find(|r| r.name == "url").unwrap();
+        assert_eq!(url_row.source, "[ \"a.wrl\"\r\n\"b.wrl\" ]");
+    }
+
+    #[test]
+    fn item_ids_use_utf16_offsets_in_proto_and_bom() {
+        let src = "\u{feff}#VRML V2.0 utf8\nPROTO P [ ] { \u{1f600} Group { } }\n";
+        let r = parse(src);
+        let t = build_scene_tree(&r.tree, src);
+
+        let group_id = t
+            .order
+            .iter()
+            .find(|i| t.items[*i].label == "Group")
+            .unwrap();
+        let node = &t.items[group_id];
+
+        let start16 = src[..src.find("Group").unwrap()].encode_utf16().count() as u64;
+        let end16 = src[..src.find("Group").unwrap() + "Group { }".len()].encode_utf16().count() as u64;
+        assert_eq!(node.from, start16);
+        assert_eq!(node.id, format!("node-{start16}-{end16}"));
+    }
 }
