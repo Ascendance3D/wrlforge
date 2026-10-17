@@ -485,15 +485,9 @@ pub struct ListEditRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum AddFieldValue {
-    Bool {
-        value: bool,
-    },
-    Number {
-        value: String,
-    },
-    List {
-        tuples: Vec<Vec<String>>,
-    },
+    Bool { value: bool },
+    Number { value: String },
+    List { tuples: Vec<Vec<String>> },
     /// VISUAL-4B: one SFVec2f / SFVec3f / SFRotation value.
     Tuple {
         values: Vec<String>,
@@ -1256,17 +1250,10 @@ pub struct NativeShown {
 pub enum NativeEvent {
     /// A resolved viewport click. The UI applies it exactly like a
     /// `doc_pick` reply (late and stale replies are refused there too).
-    Pick {
-        session: SessionId,
-        pick: PickOutcome,
-    },
+    Pick { session: SessionId, pick: PickOutcome },
     /// Escape in the native viewport: clear the selection.
-    Cleared {
-        session: Option<SessionId>,
-    },
-    State {
-        state: NativeState,
-    },
+    Cleared { session: Option<SessionId> },
+    State { state: NativeState },
 }
 
 /// The Tauri event name that carries `NativeEvent`.
@@ -1652,7 +1639,7 @@ mod tests {
 
     // Case 4: Security shape
     #[test]
-    fn rejects_filesystem_paths() {
+    fn request_types_carry_no_filesystem_path_keys() {
         let requests = vec![
             serde_json::to_value(EditRequest {
                 session: 1,
