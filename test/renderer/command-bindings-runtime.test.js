@@ -90,6 +90,8 @@ test('disabled command refuses through click, forced dispatch and keyboard', () 
 });
 
 test('title and aria-keyshortcuts are set correctly', () => {
+  Object.defineProperty(globalThis, 'navigator', { value: { platform: 'linux' }, writable: true, configurable: true });
+
   const reg = CR.createCommandRegistry();
   reg.register(rec('file.save', { keys: ['Mod+S'], label: 'Save' }));
   const b = button('b', 'file.save');
@@ -99,6 +101,8 @@ test('title and aria-keyshortcuts are set correctly', () => {
 });
 
 test('aria-label is set correctly for icon-only buttons', () => {
+  Object.defineProperty(globalThis, 'navigator', { value: { platform: 'linux' }, writable: true, configurable: true });
+
   const reg = CR.createCommandRegistry();
   reg.register(rec('view.zoomIn', { keys: ['Mod++'], label: 'Increase size' }));
   const b = button('b', 'view.zoomIn');
