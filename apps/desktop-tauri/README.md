@@ -31,7 +31,11 @@ cargo build -p wrl-forge-desktop          # or --release
 ```
 
 `dist/` is embedded into the binary at compile time, so rebuild the binary
-after `./build-ui.sh`.
+after `./build-ui.sh`. `dist/` is not committed: on a fresh checkout, run
+`./build-ui.sh` (or `--debug`) before any `cargo build` or `cargo test` of
+`wrl-forge-desktop`, or `tauri::generate_context!()` fails with "The
+`frontendDist` configuration is set to `"../dist"` but this path doesn't
+exist". Re-run it after UI changes.
 
 ## Linux packages (PKG-LINUX-1)
 
