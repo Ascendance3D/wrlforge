@@ -16,4 +16,17 @@ function editPathFor(mallPath) {
   return path.join(dir, `${base}.edit.wrl`);
 }
 
-module.exports = { GZIP_MAGIC, isGzip, editPathFor };
+// Shared limits for decompression to prevent gzip bombs.
+// 64 MiB is comfortably above any legitimate text .wrl we open (largest known is ~1.3MB),
+// and the 250x ratio ensures even tiny hostile compressed inputs cannot expand unbounded.
+// 250x was chosen because valid limit-twin-small.wrl.gz expands from 589 bytes to 120,030 bytes (~204x).
+const MAX_DECODED_BYTES = 64 * 1024 * 1024;
+const MAX_EXPANSION_RATIO = 250;
+
+// Returns the bounded maximum output length for gunzipSync.
+function getGzipCap(rawLength) {
+  const ratioCap = Math.floor(rawLength * MAX_EXPANSION_RATIO);
+  return Math.min(MAX_DECODED_BYTES, ratioCap);
+}
+
+module.exports = { GZIP_MAGIC, isGzip, editPathFor, getGzipCap, MAX_DECODED_BYTES, MAX_EXPANSION_RATIO };

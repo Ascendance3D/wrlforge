@@ -36,6 +36,25 @@ test('corrupt gzip (valid magic bytes, broken body) throws a clear, prefixed err
   );
 });
 
+test('gzip bomb expanding past the allowed limit throws a clear limit error without unbounded allocation', () => {
+  const zlib = require('zlib');
+  const os = require('os');
+  const tmpBomb = path.join(os.tmpdir(), 'wrlforge-test-bomb-wrl-source.wrl');
+  // Small input that would expand to 64MB if allowed (exceeds ratio cap for small inputs)
+  const bombContent = Buffer.alloc(10 * 1024 * 1024, 0x41);
+  const bomb = zlib.gzipSync(bombContent);
+  fs.writeFileSync(tmpBomb, bomb);
+
+  try {
+    assert.throws(
+      () => readWrlSource(tmpBomb),
+      /exceeds the allowed decompression limit/i,
+    );
+  } finally {
+    fs.unlinkSync(tmpBomb);
+  }
+});
+
 test('reading a source file does not modify it', () => {
   const p = path.join(FX, 'gz-gzipped-twin.wrl');
   const before = md5(p);

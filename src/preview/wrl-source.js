@@ -13,7 +13,7 @@ const fs = require('fs');
 const zlib = require('zlib');
 // Reuse the trusted gzip detection from the production file layer rather than
 // duplicating the magic-byte check here.
-const { isGzip } = require('../files/vrml-file');
+const { isGzip, getGzipCap } = require('../files/vrml-file');
 
 // Returns { text, wasGzipped, rawBytes }. Throws a clear, prefixed error if a
 // file that looks gzipped fails to inflate (truncated/corrupt archive).
@@ -23,8 +23,12 @@ function readWrlSource(filePath) {
   let text;
   if (wasGzipped) {
     try {
-      text = zlib.gunzipSync(raw).toString('utf8');
+      const cap = getGzipCap(raw.length);
+      text = zlib.gunzipSync(raw, { maxOutputLength: cap }).toString('utf8');
     } catch (err) {
+      if (err && err.code === 'ERR_BUFFER_TOO_LARGE') {
+        throw new Error(`WRL source at ${filePath} exceeds the allowed decompression limit.`);
+      }
       throw new Error(`WRL source at ${filePath} has gzip magic bytes but failed to decompress: ${err.message}`);
     }
   } else {

@@ -233,6 +233,28 @@ test('wouldPreserve proves identity only for an exact gzip match, and fails clos
   assert.strictEqual(io.wouldPreserve({ filePath: gz, text: WRL, format: FORMAT.GZIP }, { fs: throwingFs }), false);
 });
 
+test('wouldPreserve fails safely and decodeBytes throws clear error on gzip bomb exceeding limits', () => {
+  const os = require('os');
+  const bombPath = path.join(os.tmpdir(), 'wrlforge-test-bomb-file-io.wrl');
+  // Small input expanding beyond limit (10MB of 'A')
+  const bombContent = Buffer.alloc(10 * 1024 * 1024, 0x41);
+  const bombBytes = zlib.gzipSync(bombContent);
+  fs.writeFileSync(bombPath, bombBytes);
+
+  try {
+    // wouldPreserve must return false on ERR_BUFFER_TOO_LARGE
+    assert.strictEqual(io.wouldPreserve({ filePath: bombPath, text: bombContent.toString('utf8'), format: FORMAT.GZIP }), false);
+
+    // decodeBytes must throw a specific ERR_BUFFER_TOO_LARGE error
+    assert.throws(
+      () => io.decodeBytes(bombBytes, FORMAT.GZIP),
+      /decoding candidate exceeded the allowed decompression limit/i
+    );
+  } finally {
+    fs.unlinkSync(bombPath);
+  }
+});
+
 test('B1: an unchanged gzip save is a true no-op -- exact bytes, mtime and no backup', () => {
   const dir = tmpDir('preserve-noop');
   const p = path.join(dir, 'item.wrl');
