@@ -9,7 +9,10 @@ const CB = require('../../renderer/command-bindings');
 function el(tagName, attrs = {}, extra = {}) {
   const listeners = {};
   const node = {
-    tagName, id: attrs.id || '', disabled: false, value: '', children: [],
+    tagName, id: attrs.id || '', disabled: false, value: '', textContent: '', children: [],
+    get title() { return this.getAttribute('title') || null; },
+    set title(v) { this.setAttribute('title', v); },
+
     _attrs: { ...attrs },
     getAttribute(n) { return Object.prototype.hasOwnProperty.call(this._attrs, n) ? this._attrs[n] : null; },
     setAttribute(n, v) { this._attrs[n] = String(v); },
@@ -84,6 +87,37 @@ test('disabled command refuses through click, forced dispatch and keyboard', () 
   const ev = keydown(win, { key: 's', ctrlKey: true });
   assert.equal(ev.defaultPrevented, true);
   assert.equal(runs, 0);
+});
+
+test('title and aria-keyshortcuts are set correctly', () => {
+  const reg = CR.createCommandRegistry();
+  reg.register(rec('file.save', { keys: ['Mod+S'], label: 'Save' }));
+  const b = button('b', 'file.save');
+  CB.bindControls(reg, root([b]), 'linux');
+  assert.equal(b.title, 'Save (Ctrl+s)'); // display string doesn't uppercase the S, it's just 'Mod+s' underneath which resolves to 'Ctrl+s'
+  assert.equal(b.getAttribute('aria-keyshortcuts'), 'Control+S');
+});
+
+test('aria-label is set correctly for icon-only buttons', () => {
+  const reg = CR.createCommandRegistry();
+  reg.register(rec('view.zoomIn', { keys: ['Mod++'], label: 'Increase size' }));
+  const b = button('b', 'view.zoomIn');
+  b.textContent = ' ';
+  CB.bindControls(reg, root([b]), 'linux');
+  assert.equal(b.title, 'Increase size (Ctrl++)');
+  assert.equal(b.getAttribute('aria-label'), 'Increase size');
+  assert.equal(b.getAttribute('aria-keyshortcuts'), 'Control+Plus');
+});
+
+test('existing title and aria-keyshortcuts are preserved', () => {
+  const reg = CR.createCommandRegistry();
+  reg.register(rec('file.save', { keys: ['Mod+S'], label: 'Save' }));
+  const b = button('b', 'file.save');
+  b.title = 'Existing title';
+  b.setAttribute('aria-keyshortcuts', 'ExistingShortcut');
+  CB.bindControls(reg, root([b]), 'linux');
+  assert.equal(b.title, 'Existing title');
+  assert.equal(b.getAttribute('aria-keyshortcuts'), 'ExistingShortcut');
 });
 
 test('unknown data-command throws ECOMMAND_BIND', () => {
