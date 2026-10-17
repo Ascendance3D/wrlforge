@@ -150,3 +150,109 @@ test('cycle project (safe) builds successfully', () => {
     assert.ok(fs.existsSync(dest));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('World Project bundle entry names are portable on every platform', () => {
+  const root = tmpDir();
+  let destDir;
+  try {
+    fs.mkdirSync(path.join(root, 'vrml', 'tex', 'sub'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'audio'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'tex'), { recursive: true });
+
+    // Primary world.wrl
+    fs.writeFileSync(path.join(root, 'world.wrl'), 'Inline { url "vrml/a.wrl" }');
+    // Nested a.wrl that references other nested files
+    fs.writeFileSync(
+      path.join(root, 'vrml', 'a.wrl'),
+      'ImageTexture { url "tex/sub/b.png" } AudioClip { url "../audio/c.wav" } ImageTexture { url "../tex/ü-ß.png" }'
+    );
+    // Create referenced empty files
+    fs.writeFileSync(path.join(root, 'vrml', 'tex', 'sub', 'b.png'), 'png');
+    fs.writeFileSync(path.join(root, 'audio', 'c.wav'), 'wav');
+    fs.writeFileSync(path.join(root, 'tex', 'ü-ß.png'), 'utf8-png');
+
+    destDir = tmpDir();
+    const dest = path.join(destDir, 'bundle.zip');
+    const scan = scanProject({ root, primary: path.join(root, 'world.wrl') });
+    const plan = buildPackagePlan(scan);
+
+    // Ensure all test files were found and added to the plan
+    assert.equal(plan.files.length, 5, 'plan should contain world.wrl, a.wrl, b.png, c.wav, and ü-ß.png');
+    const relPaths = plan.files.map((f) => f.relPath).sort();
+    assert.deepEqual(relPaths, [
+      'audio/c.wav',
+      'tex/ü-ß.png',
+      'vrml/a.wrl',
+      'vrml/tex/sub/b.png',
+      'world.wrl'
+    ]);
+
+    writeReviewBundle(scan, dest, { plan });
+    assert.ok(fs.existsSync(dest));
+
+    const buf = fs.readFileSync(dest);
+    const entries = readZip(buf);
+
+    // 1. Entry names contain no \, do not start with /, no .. segment, no drive letter
+    for (const entry of entries) {
+      assert.ok(!entry.name.includes('\\'), `entry name contains \\: ${entry.name}`);
+      assert.ok(!entry.name.startsWith('/'), `entry name starts with /: ${entry.name}`);
+      assert.ok(!entry.name.includes('..'), `entry name contains ..: ${entry.name}`);
+      assert.ok(!/^[A-Za-z]:/.test(entry.name), `entry name contains drive letter: ${entry.name}`);
+    }
+
+    // 2. Project file entry is exactly BUNDLE_FILES_PREFIX + <posix relative path>,
+    // with same relative paths as plan.files[].relPath
+    const projectEntries = entries.filter(e => e.name.startsWith('project/'));
+    assert.equal(projectEntries.length, plan.files.length);
+
+    for (const file of plan.files) {
+      const entryName = `project/${file.relPath}`;
+      const entry = entries.find(e => e.name === entryName);
+      assert.ok(entry, `missing entry for ${entryName}`);
+    }
+
+    // Manifest paths match archive entry names one for one
+    const manifestEntry = entries.find(e => e.name === 'MANIFEST.json');
+    assert.ok(manifestEntry);
+    const manifest = JSON.parse(manifestEntry.data.toString('utf8'));
+    assert.equal(manifest.files.length, plan.files.length);
+    for (const mf of manifest.files) {
+      const entryName = `project/${mf.path}`;
+      const entry = entries.find(e => e.name === entryName);
+      assert.ok(entry, `manifest file ${mf.path} not found in archive as ${entryName}`);
+    }
+
+    // 3. File name with non-ASCII UTF-8 round-trips byte-exact
+    const utf8Name = 'project/tex/ü-ß.png';
+    const utf8Entry = entries.find(e => e.name === utf8Name);
+    assert.ok(utf8Entry, 'UTF-8 entry missing');
+    assert.deepEqual(utf8Entry.data, Buffer.from('utf8-png'), 'UTF-8 entry data mismatch');
+
+    // Central directory header should have general-purpose bit 11 (FLAG_UTF8)
+    let eocd = -1;
+    for (let i = buf.length - 22; i >= 0; i--) {
+      if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+    }
+    const count = buf.readUInt16LE(eocd + 10);
+    let p = buf.readUInt32LE(eocd + 16);
+    let foundUtf8Central = false;
+    for (let n = 0; n < count; n++) {
+      const nameLen = buf.readUInt16LE(p + 28);
+      const extraLen = buf.readUInt16LE(p + 30);
+      const commentLen = buf.readUInt16LE(p + 32);
+      const name = buf.toString('utf8', p + 46, p + 46 + nameLen);
+      if (name === utf8Name) {
+        foundUtf8Central = true;
+        const flags = buf.readUInt16LE(p + 8);
+        assert.ok((flags & 0x0800) === 0x0800, 'UTF-8 flag (bit 11) not set in central directory header');
+      }
+      p += 46 + nameLen + extraLen + commentLen;
+    }
+    assert.ok(foundUtf8Central, 'UTF-8 entry not found in central directory');
+
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    if (destDir) fs.rmSync(destDir, { recursive: true, force: true });
+  }
+});
