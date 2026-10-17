@@ -350,6 +350,29 @@ test('refusal: an invalid number literal in the value is a syntax error -> read-
   refusedWith(plan(doc, 'Transform', 'translation', ['1', '2', '3']), R.SYNTAX_ERRORS);
 });
 
+
+test('refusal: a depth-capped parse makes every field read-only and refuses edits', () => {
+  const text = H + 'Group { children Group { children Shape { } } }\n';
+  const parseResult = vrml.parse(text, { maxDepth: 1 });
+  const doc = { text, parseResult, session: tx.createParseSession(text, parseResult) };
+  const node = nodeOf(doc, 'Group');
+
+  // Case 3: Parse carries VRML030 error-severity diagnostic, but precedence means
+  // we refuse due to incomplete parse before syntax errors.
+  assert.ok(parseResult.depthCapped, 'parse is depth-capped');
+  const d = parseResult.syntaxDiagnostics.find((diag) => diag.code === 'VRML030' && diag.severity === 'error');
+  assert.ok(d, 'depth-capped parse includes VRML030 error');
+
+  // Case 1: inspectNodeFields reports 'document-parse-incomplete'
+  const info = fe.inspectNodeFields(doc.session, node);
+  assert.equal(info.reason, R.PARSE_INCOMPLETE);
+  assert.ok(info.fields.every((f) => !f.editable && f.reason === R.PARSE_INCOMPLETE));
+
+  // Case 2: planFieldEdit returns status:'refused', reason:'document-parse-incomplete'
+  const planInfo = plan(doc, 'Group', 'children', ['Shape { }']);
+  refusedWith(planInfo, R.PARSE_INCOMPLETE);
+});
+
 test('refusal: a missing header alone does not block editing', () => {
   const doc = open('Transform { translation 0 0 0 }\n');
   assert.ok(doc.parseResult.syntaxDiagnostics.some((d) => d.code === 'VRML001'));
