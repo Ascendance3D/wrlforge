@@ -328,6 +328,56 @@ mod tests {
     }
 
     #[test]
+    fn test_spine_edge_cases() {
+        let i0 = info("#VRML V2.0 utf8\nExtrusion { spine [ ] }\n");
+        assert!(i0.notes.iter().any(|n| n.field == "spine" && n.level == Level::Error));
+        let i_closed_gt_2 = info("#VRML V2.0 utf8\nExtrusion { spine [ 0 0 0, 0 1 0, 0 0 0 ] }\n");
+        assert!(i_closed_gt_2.notes.iter().any(|n| n.field == "spine" && n.level == Level::Info && n.text.contains("spine is closed")));
+        let i_closed_eq_2 = info("#VRML V2.0 utf8\nExtrusion { spine [ 0 0 0, 0 0 0 ] }\n");
+        assert!(!i_closed_eq_2.notes.iter().any(|n| n.field == "spine" && n.level == Level::Info && n.text.contains("spine is closed")));
+    }
+
+    #[test]
+    fn test_cross_section_zero_area() {
+        let i = info("#VRML V2.0 utf8\nExtrusion { crossSection [ 0 0, 1 1, 2 2 ] }\n");
+        assert!(i.notes.iter().any(|n| n.field == "crossSection" && n.level == Level::Info && n.text.contains("zero area")));
+    }
+
+    #[test]
+    fn test_scale_orientation_counts() {
+        let i1 = info("#VRML V2.0 utf8\nExtrusion { spine [ 0 0 0, 0 1 0, 0 2 0 ] scale [ 1 1, 2 2, 3 3 ] orientation [ 0 1 0 0, 0 1 0 1, 0 1 0 2 ] }\n");
+        assert!(!i1.notes.iter().any(|n| n.field == "scale" && n.level == Level::Warning));
+        assert!(!i1.notes.iter().any(|n| n.field == "orientation" && n.level == Level::Warning));
+        let i2 = info("#VRML V2.0 utf8\nExtrusion { spine [ 0 0 0, 0 1 0, 0 2 0 ] scale [ 1 1 ] orientation [ 0 1 0 0 ] }\n");
+        assert!(!i2.notes.iter().any(|n| n.field == "scale" && n.level == Level::Warning));
+        assert!(!i2.notes.iter().any(|n| n.field == "orientation" && n.level == Level::Warning));
+        let i3 = info("#VRML V2.0 utf8\nExtrusion { spine [ 0 0 0, 0 1 0, 0 2 0 ] }\n");
+        assert!(!i3.notes.iter().any(|n| n.field == "scale" && n.level == Level::Warning));
+        assert!(!i3.notes.iter().any(|n| n.field == "orientation" && n.level == Level::Warning));
+        let i4 = info("#VRML V2.0 utf8\nExtrusion { spine [ 0 0 0, 0 1 0, 0 2 0 ] scale [ 1 1, 2 2 ] orientation [ 0 1 0 0, 0 1 0 1 ] }\n");
+        assert!(i4.notes.iter().any(|n| n.field == "scale" && n.level == Level::Warning));
+        assert!(i4.notes.iter().any(|n| n.field == "orientation" && n.level == Level::Warning));
+    }
+
+    #[test]
+    fn test_inspect_at() {
+        let src = "#VRML V2.0 utf8\nExtrusion { spine [ 0 0 0, 0 1 0 ] } Transform { children [ Extrusion { } ] }\n";
+        let p = parse(src);
+        let node0 = &p.tree.statements[0];
+        let node1 = &p.tree.statements[1];
+        let range0 = node0.range();
+        let info0 = inspect_at(&p, src, range0.start.offset as u64, range0.end.offset as u64);
+        assert!(info0.is_some());
+        let range1 = node1.range();
+        let info1 = inspect_at(&p, src, range1.start.offset as u64, range1.end.offset as u64);
+        assert!(info1.is_none());
+        let info_multiple = inspect_at(&p, src, range0.start.offset as u64, range1.end.offset as u64);
+        assert!(info_multiple.is_none());
+        let info_zero = inspect_at(&p, src, 0, 15);
+        assert!(info_zero.is_none());
+    }
+
+    #[test]
     fn counts_axes_and_unreadable_values_are_reported() {
         let i = info("#VRML V2.0 utf8\nExtrusion { spine [ 0 0 0 ] crossSection [ 0 0, 1 0, 1 1 ] orientation [ 0 0 2 1 ] creaseAngle [ 1 ] }\n");
         assert!(i
