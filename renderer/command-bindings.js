@@ -38,17 +38,17 @@
 
       const desc = reg.get(id);
       if (desc.keys && desc.keys.length > 0) {
-        if (!node.getAttribute('aria-keyshortcuts')) {
-          node.setAttribute('aria-keyshortcuts', desc.keys.map((k) => CR.formatAriaShortcut(k, platform)).join(' '));
+        if (!node.hasAttribute('aria-keyshortcuts')) {
+          node.setAttribute('aria-keyshortcuts', [...new Set(desc.keys.map((k) => CR.formatAriaShortcut(k, platform)))].join(' '));
         }
-        if (!node.title) {
+        if (!node.hasAttribute('title')) {
           node.title = `${desc.label} (${CR.formatShortcutDisplay(desc.keys[0], platform)})`;
         }
       } else {
-        if (!node.title) node.title = desc.label;
+        if (!node.hasAttribute('title')) node.title = desc.label;
       }
 
-      if (!node.getAttribute('aria-label') && !(node.textContent || '').trim()) {
+      if (!node.hasAttribute('aria-label') && !(node.textContent || '').trim()) {
         node.setAttribute('aria-label', desc.label);
       }
 

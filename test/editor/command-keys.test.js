@@ -10,16 +10,19 @@ const { normalizeShortcut, shortcutFromEvent, isModShortcut, createCommandRegist
 const invalid = (s) => assert.throws(() => normalizeShortcut(s), (e) => e.code === 'ECOMMAND_INVALID', s);
 
 test('display strings for linux, win32 and darwin', () => {
-  assert.equal(formatShortcutDisplay('Mod+s', 'linux'), 'Ctrl+s');
-  assert.equal(formatShortcutDisplay('Mod+Shift+s', 'win32'), 'Ctrl+Shift+s');
-  assert.equal(formatShortcutDisplay('Mod+s', 'MacIntel'), '⌘s');
-  assert.equal(formatShortcutDisplay('Mod+Shift+s', 'macOS'), '⌘⇧s');
+  assert.equal(formatShortcutDisplay('Mod+s', 'linux'), 'Ctrl+S');
+  assert.equal(formatShortcutDisplay('Mod+Shift+s', 'win32'), 'Ctrl+Shift+S');
+  assert.equal(formatShortcutDisplay('Mod+s', 'MacIntel'), '⌘S');
+  assert.equal(formatShortcutDisplay('Mod+Shift+s', 'macOS'), '⌘⇧S');
   assert.equal(formatAriaShortcut('Mod+s', 'linux'), 'Control+S');
   assert.equal(formatAriaShortcut('Mod+Shift+s', 'macOS'), 'Meta+Shift+S');
 
   // Literal plus symbol
   assert.equal(formatAriaShortcut('Mod++', 'linux'), 'Control+Plus');
   assert.equal(formatShortcutDisplay('Mod++', 'linux'), 'Ctrl++');
+
+  assert.equal(formatAriaShortcut('Mod+Add', 'linux'), 'Control+Plus');
+  assert.equal(formatAriaShortcut('Mod+Subtract', 'linux'), 'Control+-');
 
   assert.equal(formatShortcutDisplay(null, 'linux'), '');
   assert.equal(formatAriaShortcut(null, 'linux'), '');

@@ -100,6 +100,7 @@ function makeElement(tagName, attrs, doc) {
     getAttribute(k) { return Object.prototype.hasOwnProperty.call(a, k) ? a[k] : null; },
     setAttribute(k, v) { a[k] = String(v); },
     removeAttribute(k) { delete a[k]; },
+    hasAttribute(k) { return Object.prototype.hasOwnProperty.call(a, k); },
     appendChild(c) { c.parentNode = el; el.children.push(c); return c; },
     removeChild(c) { const i = el.children.indexOf(c); if (i >= 0) el.children.splice(i, 1); return c; },
     get firstChild() { return el.children[0] || null; },
