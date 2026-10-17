@@ -448,14 +448,9 @@ test('B2: a rename failure leaves the destination intact and the temp cleaned; t
   assert.equal(sha(fs.readFileSync(p)), beforeSha, 'destination intact -- the swap never happened');
   assert.deepEqual(tempsIn(dir), [], 'temp cleaned up');
 
-  // Honest reporting: the backup is created immediately before the rename, so a
-  // rename failure DOES leave a timestamped backup behind. That is not a
-  // rollback failure -- the backup is a copy, the original is untouched -- but
-  // claiming "nothing was created" would be false.
+  // A rename failure cleans up the timestamped backup it created before failing.
   const backups = backupsIn(dir);
-  assert.equal(backups.length, 1, 'the pre-rename backup remains on disk');
-  assert.ok(Buffer.compare(fs.readFileSync(path.join(dir, backups[0])), prior) === 0,
-    'and it is an exact copy of the still-present original');
+  assert.equal(backups.length, 0, 'the pre-rename backup is cleaned up on rename failure');
 });
 
 // --- 7. plain output ---------------------------------------------------------

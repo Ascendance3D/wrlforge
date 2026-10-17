@@ -96,10 +96,15 @@ test('safeSave preserves the original when the write is interrupted', () => {
   assert.deepStrictEqual(leftovers, [], 'the temp file was cleaned up');
 });
 
-test('safeSave with backup-then-rename-failure leaves original unchanged and removes temp, but might leave backup', (t) => {
+test('safeSave with backup-then-rename-failure leaves original unchanged and removes temp and backup', () => {
   const dir = tmpDir('save-backup-then-rename-failure');
   const p = path.join(dir, 'item.wrl');
   fs.writeFileSync(p, WRL, 'utf8');
+
+  // Create a pre-existing unrelated backup to ensure it is not deleted
+  const preExistingBackup = path.join(dir, 'item.wrl.bak-2000-01-01T00-00-00-000Z');
+  fs.writeFileSync(preExistingBackup, 'OLD BACKUP', 'utf8');
+
   const badFs = faultyFs({
     renameSync: () => {
       const err = new Error('EBUSY: resource busy or locked');
@@ -121,12 +126,8 @@ test('safeSave with backup-then-rename-failure leaves original unchanged and rem
   assert.deepStrictEqual(leftovers, [], 'the temp file was cleaned up');
 
   const backups = files.filter((f) => f.includes('.bak'));
-  if (backups.length > 0) {
-    t.skip('owner review: backup left after failed replace');
-  } else {
-    // If no backup was left, we verify the product rule "no write means no backup"
-    assert.deepStrictEqual(backups, [], 'no backup is left behind');
-  }
+  assert.deepStrictEqual(backups, ['item.wrl.bak-2000-01-01T00-00-00-000Z'], 'new backup was cleaned up and unrelated backup left alone');
+  assert.strictEqual(fs.readFileSync(preExistingBackup, 'utf8'), 'OLD BACKUP', 'pre-existing backup is unaffected');
 });
 
 test('safeSave preserves the original and throws when renameSync throws EBUSY or EACCES', () => {

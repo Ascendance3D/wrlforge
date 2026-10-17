@@ -275,6 +275,7 @@ function safeSave({
   }
 
   const tmpPath = tempSiblingPath(filePath, d);
+  let backup = null;
   try {
     // (3) write temp sibling with an explicit flush+close. Inside the try so a
     // failure mid-write (which may still have created the temp via openSync) is
@@ -290,7 +291,6 @@ function safeSave({
 
     // (5) back up the prior file (timestamped -> never clobbers an unrelated
     // backup; that is the documented rotation rule).
-    let backup = null;
     if (d.fs.existsSync(filePath)) {
       backup = backupPath(filePath, d.now);
       d.fs.copyFileSync(filePath, backup);
@@ -304,6 +304,9 @@ function safeSave({
   } catch (err) {
     // Never leave the temp presented as a completed save; original stays intact.
     safeUnlink(tmpPath, d);
+    if (backup) {
+      safeUnlink(backup, d);
+    }
     throw err;
   }
 }
