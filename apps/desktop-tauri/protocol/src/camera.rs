@@ -378,27 +378,23 @@ mod tests {
         for v in StandardView::ALL {
             let (dir, up) = v.look();
             // Direction and up must be normalized.
-            let dir_len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
-            let up_len = (up[0] * up[0] + up[1] * up[1] + up[2] * up[2]).sqrt();
-            assert!(
-                (dir_len - 1.0).abs() < 1e-9,
-                "{v:?} direction not normalized"
-            );
+            let dir_len = (dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]).sqrt();
+            let up_len = (up[0]*up[0] + up[1]*up[1] + up[2]*up[2]).sqrt();
+            assert!((dir_len - 1.0).abs() < 1e-9, "{v:?} direction not normalized");
             assert!((up_len - 1.0).abs() < 1e-9, "{v:?} up not normalized");
 
             // Direction and up must be orthogonal.
-            let dot = dir[0] * up[0] + dir[1] * up[1] + dir[2] * up[2];
+            let dot = dir[0]*up[0] + dir[1]*up[1] + dir[2]*up[2];
             assert!(dot.abs() < 1e-9, "{v:?} direction and up not orthogonal");
 
             // The cross product of the look direction and the up vector must be a normalized
             // right vector, establishing a consistent right-handed coordinate system.
             let right = [
-                dir[1] * up[2] - dir[2] * up[1],
-                dir[2] * up[0] - dir[0] * up[2],
-                dir[0] * up[1] - dir[1] * up[0],
+                dir[1]*up[2] - dir[2]*up[1],
+                dir[2]*up[0] - dir[0]*up[2],
+                dir[0]*up[1] - dir[1]*up[0],
             ];
-            let right_len =
-                (right[0] * right[0] + right[1] * right[1] + right[2] * right[2]).sqrt();
+            let right_len = (right[0]*right[0] + right[1]*right[1] + right[2]*right[2]).sqrt();
             assert!((right_len - 1.0).abs() < 1e-9, "{v:?} right not normalized");
         }
     }

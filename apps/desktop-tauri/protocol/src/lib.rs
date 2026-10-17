@@ -489,15 +489,9 @@ pub struct ListEditRequest {
 #[serde(tag = "kind", rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub enum AddFieldValue {
-    Bool {
-        value: bool,
-    },
-    Number {
-        value: String,
-    },
-    List {
-        tuples: Vec<Vec<String>>,
-    },
+    Bool { value: bool },
+    Number { value: String },
+    List { tuples: Vec<Vec<String>> },
     /// VISUAL-4B: one SFVec2f / SFVec3f / SFRotation value.
     Tuple {
         values: Vec<String>,
@@ -617,6 +611,8 @@ pub enum FieldEditOutcome {
     Refused {
         reason: String,
         message: Option<String>,
+        /// Sent as `componentIndex`, like every other camelCase key.
+        #[serde(rename = "componentIndex")]
         component_index: Option<u32>,
     },
 }
@@ -1279,17 +1275,10 @@ pub struct NativeShown {
 pub enum NativeEvent {
     /// A resolved viewport click. The UI applies it exactly like a
     /// `doc_pick` reply (late and stale replies are refused there too).
-    Pick {
-        session: SessionId,
-        pick: PickOutcome,
-    },
+    Pick { session: SessionId, pick: PickOutcome },
     /// Escape in the native viewport: clear the selection.
-    Cleared {
-        session: Option<SessionId>,
-    },
-    State {
-        state: NativeState,
-    },
+    Cleared { session: Option<SessionId> },
+    State { state: NativeState },
 }
 
 /// The Tauri event name that carries `NativeEvent`.
@@ -1656,7 +1645,7 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_string(&field_edit_outcome).unwrap(),
-            r#"{"status":"refused","reason":"error","message":null,"component_index":0}"#
+            r#"{"status":"refused","reason":"error","message":null,"componentIndex":0}"#
         );
     }
 
@@ -1841,5 +1830,58 @@ mod tests {
         let structure_edit_json = r#"{"session": 1, "baseRevision": 2, "item": "item1", "op": "Duplicate", "confirmShared": false, "offset": null, "path": "/etc/passwd"}"#;
         let res: Result<StructureEditRequest, _> = serde_json::from_str(structure_edit_json);
         assert!(res.is_err());
+    }
+
+    // The four field-edit requests: a valid body parses, the same body with
+    // one extra key is refused.
+    #[test]
+    fn field_edit_requests_reject_an_extra_key() {
+        fn check<T: serde::Serialize + serde::de::DeserializeOwned>(req: T) {
+            let mut v = serde_json::to_value(&req).unwrap();
+            assert!(serde_json::from_value::<T>(v.clone()).is_ok());
+            v.as_object_mut()
+                .unwrap()
+                .insert("path".into(), serde_json::json!("/etc/passwd"));
+            assert!(serde_json::from_value::<T>(v).is_err());
+        }
+        check(StringEditRequest {
+            session: 1,
+            base_revision: 2,
+            item: "item1".to_string(),
+            field_index: 3,
+            field_name: "test".to_string(),
+            expected: vec!["old".to_string()],
+            ops: vec![StringOp::Set {
+                index: 0,
+                value: "val".to_string(),
+            }],
+            confirm_shared: false,
+        });
+        check(FieldEditRequest {
+            session: 1,
+            base_revision: 2,
+            item: "item1".to_string(),
+            field_index: 3,
+            field_name: "test".to_string(),
+            components: vec![FieldInput::Text {
+                value: "val".to_string(),
+            }],
+            confirm_shared: false,
+        });
+        check(AddFieldRequest {
+            session: 1,
+            base_revision: 2,
+            item: "item1".to_string(),
+            field_name: "test".to_string(),
+            value: AddFieldValue::Bool { value: true },
+            confirm_shared: false,
+        });
+        check(AddTextureRequest {
+            session: 1,
+            base_revision: 2,
+            item: "item1".to_string(),
+            url: "stone.png".to_string(),
+            confirm_shared: false,
+        });
     }
 }

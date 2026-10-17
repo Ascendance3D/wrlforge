@@ -461,11 +461,7 @@ fn parent_frame_rings_measure_the_parent_angle() {
             let local = ring_point(pivot_local, ring.axis, lay.radius / 2.0, th);
             let (x, y) = project(&cam, frame_point(Some(&m), local)).unwrap();
             let got = ring_angle_in(&cam, pivot, Some(&m), ring.axis, lay.radius, x, y).unwrap();
-            assert!(
-                angle_step(th, got).abs() < 1e-6,
-                "{:?} {th} {got}",
-                ring.axis
-            );
+            assert!(angle_step(th, got).abs() < 1e-6, "{:?} {th} {got}", ring.axis);
             checked += 1;
         }
     }
