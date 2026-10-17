@@ -30,12 +30,26 @@
 
   function bindControls(reg, root) {
     const paints = [];
+    const platform = (typeof navigator !== 'undefined' && ((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform)) || '';
     const controls = Array.from(root.querySelectorAll('[data-command]')).filter((n) => n.tagName !== 'OPTION');
     for (const node of controls) {
       const id = node.getAttribute('data-command');
       if (!reg.has(id)) throw bindError(`no command "${id}" for #${node.id || node.tagName}`);
+
+      const desc = reg.get(id);
+      if (desc.keys && desc.keys.length > 0) {
+        node.setAttribute('aria-keyshortcuts', desc.keys.map((k) => CR.formatAriaShortcut(k, platform)).join(' '));
+        node.title = `${desc.label} (${CR.formatShortcutDisplay(desc.keys[0], platform)})`;
+      } else {
+        node.title = desc.label;
+      }
+
+      if (!node.getAttribute('aria-label') && !(node.textContent || '').trim()) {
+        node.setAttribute('aria-label', desc.label);
+      }
+
       node.addEventListener('click', () => { reg.execute(id, { source: 'toolbar' }); });
-      const toggle = reg.get(id).isToggle;
+      const toggle = desc.isToggle;
       paints.push(() => {
         node.disabled = !reg.isEnabled(id);
         if (toggle) node.setAttribute('aria-pressed', String(reg.isChecked(id)));

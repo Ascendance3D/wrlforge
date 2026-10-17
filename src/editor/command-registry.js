@@ -85,6 +85,21 @@ function shortcutFromEvent(e) {
 
 function isModShortcut(shortcut) { return typeof shortcut === 'string' && shortcut.startsWith('Mod+'); }
 
+function formatShortcutDisplay(shortcut, platform) {
+  if (typeof shortcut !== 'string') return '';
+  const isMac = typeof platform === 'string' && /mac/i.test(platform);
+  let s = shortcut;
+  if (isMac) s = s.replace('Mod+', '⌘').replace('Shift+', '⇧');
+  else s = s.replace('Mod+', 'Ctrl+');
+  return s;
+}
+
+function formatAriaShortcut(shortcut, platform) {
+  if (typeof shortcut !== 'string') return '';
+  const isMac = typeof platform === 'string' && /mac/i.test(platform);
+  return shortcut.replace('Mod+', isMac ? 'Meta+' : 'Control+');
+}
+
 function validateRecord(r) {
   const bad = (why) => { throw commandError('ECOMMAND_INVALID', why); };
   if (!r || typeof r !== 'object') bad('a command record must be an object');
@@ -190,6 +205,7 @@ function createCommandRegistry() {
 const WRL_COMMAND_REGISTRY_API = Object.freeze({
   COMMAND_AREAS, COMMAND_ID_PATTERN, KEY_OWNERS,
   createCommandRegistry, normalizeShortcut, shortcutFromEvent, isModShortcut,
+  formatShortcutDisplay, formatAriaShortcut,
 });
 
 if (typeof module !== 'undefined' && module.exports) {
