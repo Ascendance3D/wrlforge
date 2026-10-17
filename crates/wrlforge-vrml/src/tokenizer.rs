@@ -720,4 +720,102 @@ mod tests {
             ["bool", "bool", "keyword", "keyword", "keyword", "id", "eof"]
         );
     }
+
+    #[test]
+    fn numbers_signed_values_leading_and_trailing_dots_exponents_and_hex_produce_exact_lexemes_and_values(
+    ) {
+        let src = "-1 +2 .5 5. 1e3 1E-3 -2.5e+2 0xFF 0x1a";
+        let t = tokenize(src);
+        assert!(t.diagnostics.is_empty());
+        let expected = vec![
+            ("-1", -1.0, Numeric::Int),
+            ("+2", 2.0, Numeric::Int),
+            (".5", 0.5, Numeric::Float),
+            ("5.", 5.0, Numeric::Float),
+            ("1e3", 1000.0, Numeric::Float),
+            ("1E-3", 0.001, Numeric::Float),
+            ("-2.5e+2", -250.0, Numeric::Float),
+            ("0xFF", 255.0, Numeric::Hex),
+            ("0x1a", 26.0, Numeric::Hex),
+        ];
+        let mut iter = t.tokens.iter();
+        for (lex, val, num) in expected {
+            let tok = iter.next().unwrap();
+            assert_eq!(tok.lexeme(src), lex);
+            match &tok.kind {
+                TokKind::Number {
+                    value,
+                    numeric,
+                    valid,
+                } => {
+                    assert_eq!(*value, val);
+                    assert_eq!(*numeric, num);
+                    assert!(*valid);
+                }
+                _ => panic!("Expected number token"),
+            }
+        }
+    }
+
+    #[test]
+    fn strings_decode_escapes_while_keeping_exact_source_lexeme_and_fallback_for_other_backslashes()
+    {
+        let src = r#""a\"b\\c\nd""#;
+        let t = tokenize(src);
+        assert!(t.diagnostics.is_empty());
+        let tok = &t.tokens[0];
+        assert_eq!(tok.lexeme(src), r#""a\"b\\c\nd""#);
+        match &tok.kind {
+            TokKind::Str { value, terminated } => {
+                // VRML97 ONLY escapes \" and \\. Other \ remains followed by the char.
+                assert_eq!(value, "a\"b\\c\\nd");
+                assert!(*terminated);
+            }
+            _ => panic!("Expected string"),
+        }
+    }
+
+    #[test]
+    fn separators_like_commas_and_whitespace_never_merge_or_split_numbers_and_keep_exact_offsets() {
+        let src = "1,2 ,3 1,,2";
+        let t = tokenize(src);
+        assert!(t.diagnostics.is_empty());
+        let expected = vec![
+            ("1", 1.0, 0, 0),
+            ("2", 2.0, 2, 2),
+            ("3", 3.0, 5, 5),
+            ("1", 1.0, 7, 7),
+            ("2", 2.0, 10, 10),
+        ];
+        let mut iter = t.tokens.iter();
+        for (lex, val, byte, offset) in expected {
+            let tok = iter.next().unwrap();
+            assert_eq!(tok.lexeme(src), lex);
+            assert_eq!(tok.range.start.byte, byte);
+            assert_eq!(tok.range.start.offset, offset);
+            match &tok.kind {
+                TokKind::Number { value, .. } => {
+                    assert_eq!(*value, val);
+                }
+                _ => panic!("Expected number token"),
+            }
+        }
+    }
+
+    #[test]
+    fn literals_adjacent_to_punctuation_tokenize_with_exact_spans_and_no_diagnostics() {
+        let src = "[1 2] {0.5} \"a\"]";
+        let t = tokenize(src);
+        assert!(t.diagnostics.is_empty());
+        let lexemes: Vec<&str> = t
+            .tokens
+            .iter()
+            .filter(|tok| tok.kind != TokKind::Eof)
+            .map(|tok| tok.lexeme(src))
+            .collect();
+        assert_eq!(
+            lexemes,
+            vec!["[", "1", "2", "]", "{", "0.5", "}", "\"a\"", "]"]
+        );
+    }
 }
