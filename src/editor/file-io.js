@@ -65,6 +65,7 @@ function resolveDeps(deps) {
     hash: (deps && deps.hash) || defaultHash,
     now: (deps && deps.now) || (() => new Date()),
     readSource: (deps && deps.readSource) || readWrlSource,
+    getGzipCap: (deps && deps.getGzipCap) || getGzipCap,
   };
 }
 
@@ -130,16 +131,23 @@ function decodeBytes(bytes, format, deps) {
     if (!isGzip(bytes)) throw new Error('expected gzip bytes but magic bytes are absent');
     try {
       const getCap = d.getGzipCap || getGzipCap;
-      const cap = getCap(bytes.length);
+      const cap = getCap();
       return d.zlib.gunzipSync(bytes, { maxOutputLength: cap }).toString('utf8');
     } catch (err) {
-      if (err && err.code === 'ERR_BUFFER_TOO_LARGE') {
+      if (err && (err.code === 'ERR_BUFFER_TOO_LARGE' || err.code === 'ERR_STRING_TOO_LONG')) {
         throw new Error('decoding candidate exceeded the allowed decompression limit');
       }
       throw err;
     }
   }
-  return bytes.toString('utf8');
+  try {
+    return bytes.toString('utf8');
+  } catch (err) {
+    if (err && err.code === 'ERR_STRING_TOO_LONG') {
+      throw new Error('decoding candidate exceeded the allowed decompression limit');
+    }
+    throw err;
+  }
 }
 
 // --- gzip preservation (Lane B, B1) ------------------------------------------
@@ -171,7 +179,7 @@ function wouldPreserve({ filePath, text, format }, deps) {
     const raw = d.fs.readFileSync(filePath);
     if (!isGzip(raw)) return false;
     const getCap = d.getGzipCap || getGzipCap;
-    const cap = getCap(raw.length);
+    const cap = getCap();
     return d.zlib.gunzipSync(raw, { maxOutputLength: cap }).toString('utf8') === text;
   } catch {
     // Unreadable, truncated, corrupt or over limit: identity is unprovable, so it is false.

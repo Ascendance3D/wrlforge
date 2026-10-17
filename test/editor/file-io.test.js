@@ -235,23 +235,53 @@ test('wouldPreserve proves identity only for an exact gzip match, and fails clos
 
 test('wouldPreserve fails safely and decodeBytes throws clear error on gzip bomb exceeding limits', () => {
   const os = require('os');
-  const bombPath = path.join(os.tmpdir(), 'wrlforge-test-bomb-file-io.wrl');
-  // Small input expanding beyond limit (10MB of 'A')
-  const bombContent = Buffer.alloc(10 * 1024 * 1024, 0x41);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrlforge-bomb-file-io-'));
+  const bombPath = path.join(dir, 'bomb.wrl');
+
+  // A small string that easily clears the artificially low injected cap
+  const bombContent = Buffer.alloc(2048, 0x41);
   const bombBytes = zlib.gzipSync(bombContent);
   fs.writeFileSync(bombPath, bombBytes);
 
   try {
+    const deps = { getGzipCap: () => 1024 };
+
     // wouldPreserve must return false on ERR_BUFFER_TOO_LARGE
-    assert.strictEqual(io.wouldPreserve({ filePath: bombPath, text: bombContent.toString('utf8'), format: FORMAT.GZIP }), false);
+    assert.strictEqual(io.wouldPreserve({ filePath: bombPath, text: bombContent.toString('utf8'), format: FORMAT.GZIP }, deps), false);
 
     // decodeBytes must throw a specific ERR_BUFFER_TOO_LARGE error
     assert.throws(
-      () => io.decodeBytes(bombBytes, FORMAT.GZIP),
+      () => io.decodeBytes(bombBytes, FORMAT.GZIP, deps),
       /decoding candidate exceeded the allowed decompression limit/i
     );
   } finally {
-    fs.unlinkSync(bombPath);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a legitimate highly compressible file expands safely when within cap', () => {
+  const os = require('os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrlforge-legit-io-'));
+  const p = path.join(dir, 'highly-compressible.wrl');
+
+  // Highly compressible content simulating >250x compression ratio
+  const text = Buffer.alloc(100 * 1024, 0x41).toString('utf8');
+  const compressed = zlib.gzipSync(Buffer.from(text, 'utf8'));
+
+  // ensure > 250x compression ratio actually works without ratio limits checking it
+  assert.ok(compressed.length * 250 < text.length, "the compression ratio must exceed 250x to be a valid test");
+
+  fs.writeFileSync(p, compressed);
+
+  try {
+    // Should not throw and correctly decode
+    const decoded = io.decodeBytes(compressed, FORMAT.GZIP);
+    assert.strictEqual(decoded, text);
+
+    // wouldPreserve must return true since identity is provable
+    assert.strictEqual(io.wouldPreserve({ filePath: p, text, format: FORMAT.GZIP }), true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 

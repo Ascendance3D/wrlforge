@@ -310,14 +310,13 @@ test('gzip bomb that exceeds max decompression bounds safely degrades to unknown
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrlforge-bomb-'));
   try {
     const out = path.join(dir, 'bomb.wrl');
-    // Generate a file that has valid headers and compresses very well, yielding a tiny footprint
-    // but a huge output buffer (>64MB constraint inside the implementation).
-    const bombContent = Buffer.alloc(10 * 1024 * 1024, 0x41);
+    // A small string that easily clears the artificially low injected cap
+    const bombContent = Buffer.alloc(2048, 0x41);
     const bombBytes = zlib.gzipSync(bombContent);
     fs.writeFileSync(out, bombBytes);
 
     // Attempt measurement with a legitimate document text (bomb decompresses to an unexpected large content).
-    const ctx = measureArtifact(out, VALID);
+    const ctx = measureArtifact(out, VALID, { getGzipCap: () => 1024 });
 
     // measureArtifact catches the ERR_BUFFER_TOO_LARGE from zlib and degrades to unknown/unprovable identity
     assert.equal(ctx.artifactBytes, bombBytes.length);

@@ -17,22 +17,31 @@ const { isGzip, getGzipCap } = require('../files/vrml-file');
 
 // Returns { text, wasGzipped, rawBytes }. Throws a clear, prefixed error if a
 // file that looks gzipped fails to inflate (truncated/corrupt archive).
-function readWrlSource(filePath) {
-  const raw = fs.readFileSync(filePath);
+function readWrlSource(filePath, deps = {}) {
+  const fsTarget = deps.fs || fs;
+  const raw = fsTarget.readFileSync(filePath);
   const wasGzipped = isGzip(raw);
   let text;
   if (wasGzipped) {
     try {
-      const cap = getGzipCap(raw.length);
+      const getCap = deps.getGzipCap || getGzipCap;
+      const cap = getCap();
       text = zlib.gunzipSync(raw, { maxOutputLength: cap }).toString('utf8');
     } catch (err) {
-      if (err && err.code === 'ERR_BUFFER_TOO_LARGE') {
+      if (err && (err.code === 'ERR_BUFFER_TOO_LARGE' || err.code === 'ERR_STRING_TOO_LONG')) {
         throw new Error(`WRL source at ${filePath} exceeds the allowed decompression limit.`);
       }
       throw new Error(`WRL source at ${filePath} has gzip magic bytes but failed to decompress: ${err.message}`);
     }
   } else {
-    text = raw.toString('utf8');
+    try {
+      text = raw.toString('utf8');
+    } catch (err) {
+      if (err && err.code === 'ERR_STRING_TOO_LONG') {
+        throw new Error(`WRL source at ${filePath} exceeds the allowed decompression limit.`);
+      }
+      throw err;
+    }
   }
   return { text, wasGzipped, rawBytes: raw.length };
 }
