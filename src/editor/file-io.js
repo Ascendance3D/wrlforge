@@ -130,8 +130,7 @@ function decodeBytes(bytes, format, deps) {
   if (format === FORMAT.GZIP) {
     if (!isGzip(bytes)) throw new Error('expected gzip bytes but magic bytes are absent');
     try {
-      const getCap = d.getGzipCap || getGzipCap;
-      const cap = getCap();
+      const cap = d.getGzipCap();
       return d.zlib.gunzipSync(bytes, { maxOutputLength: cap }).toString('utf8');
     } catch (err) {
       if (err && (err.code === 'ERR_BUFFER_TOO_LARGE' || err.code === 'ERR_STRING_TOO_LONG')) {
@@ -144,7 +143,7 @@ function decodeBytes(bytes, format, deps) {
     return bytes.toString('utf8');
   } catch (err) {
     if (err && err.code === 'ERR_STRING_TOO_LONG') {
-      throw new Error('decoding candidate exceeded the allowed decompression limit');
+      throw new Error('decoding candidate exceeds the maximum text size');
     }
     throw err;
   }
@@ -178,8 +177,7 @@ function wouldPreserve({ filePath, text, format }, deps) {
     if (!d.fs.existsSync(filePath)) return false;
     const raw = d.fs.readFileSync(filePath);
     if (!isGzip(raw)) return false;
-    const getCap = d.getGzipCap || getGzipCap;
-    const cap = getCap();
+    const cap = d.getGzipCap();
     return d.zlib.gunzipSync(raw, { maxOutputLength: cap }).toString('utf8') === text;
   } catch {
     // Unreadable, truncated, corrupt or over limit: identity is unprovable, so it is false.

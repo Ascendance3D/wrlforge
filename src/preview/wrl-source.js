@@ -38,7 +38,7 @@ function readWrlSource(filePath, deps = {}) {
       text = raw.toString('utf8');
     } catch (err) {
       if (err && err.code === 'ERR_STRING_TOO_LONG') {
-        throw new Error(`WRL source at ${filePath} exceeds the allowed decompression limit.`);
+        throw new Error(`WRL source at ${filePath} exceeds the maximum text size.`);
       }
       throw err;
     }

@@ -69,7 +69,7 @@ function measureArtifact(filePath, text, deps = {}) {
   let inflated = null;
   try {
     const getCap = deps.getGzipCap || getGzipCap;
-    const cap = getCap(raw.length);
+    const cap = getCap();
     inflated = zlib.gunzipSync(raw, { maxOutputLength: cap });
   } catch {
     // Gzip magic bytes but a broken stream or over limit: the size is real, the identity is
