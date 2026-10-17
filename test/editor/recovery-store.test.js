@@ -142,3 +142,92 @@ test('saveRecovery rejects an invalid record shape (does not write)', () => {
   assert.strictEqual(store.saveRecovery(ud, truly), false);
   assert.strictEqual(store.loadRecovery(ud).ok, false);
 });
+
+test('validateRecord rejects null and non-objects (case 1)', () => {
+  assert.deepStrictEqual(store.validateRecord(null), { ok: false, reason: 'bad-shape' });
+  assert.deepStrictEqual(store.validateRecord('s'), { ok: false, reason: 'bad-shape' });
+});
+
+test('validateRecord rejects specific field overrides from a valid record (case 2)', () => {
+  const validRecord = {
+    schemaVersion: 2,
+    sourcePath: '/path',
+    context: 'mall',
+    profile: 'mall-item',
+    root: '/root',
+    format: 'plain',
+    baseline: 'base',
+    buffer: 'buff',
+    dirty: true,
+    activeWorkspace: 'editor',
+    updatedAt: 1234,
+    sourceStat: { mtimeMs: 1, size: 1, hash: 'h' }
+  };
+
+  assert.deepStrictEqual(store.validateRecord({ ...validRecord, context: 1 }), { ok: false, reason: 'bad-context' });
+  assert.deepStrictEqual(store.validateRecord({ ...validRecord, profile: null }), { ok: false, reason: 'bad-profile' });
+  assert.deepStrictEqual(store.validateRecord({ ...validRecord, sourcePath: 5 }), { ok: false, reason: 'bad-sourcePath' });
+  assert.deepStrictEqual(store.validateRecord({ ...validRecord, root: 5 }), { ok: false, reason: 'bad-root' });
+  assert.deepStrictEqual(store.validateRecord({ ...validRecord, format: 'zip' }), { ok: false, reason: 'bad-format' });
+  assert.deepStrictEqual(store.validateRecord({ ...validRecord, baseline: 1 }), { ok: false, reason: 'bad-baseline' });
+  assert.deepStrictEqual(store.validateRecord({ ...validRecord, dirty: 'y' }), { ok: false, reason: 'bad-dirty' });
+});
+
+test('validateRecord handles sourceStat and schemaVersion variants (case 3)', () => {
+  const validRecord = {
+    schemaVersion: 2,
+    sourcePath: '/path',
+    context: 'mall',
+    profile: 'mall-item',
+    root: '/root',
+    format: 'plain',
+    baseline: 'base',
+    buffer: 'buff',
+    dirty: true,
+    activeWorkspace: 'editor',
+    updatedAt: 1234
+  };
+
+  assert.deepStrictEqual(store.validateRecord({ ...validRecord, sourceStat: 'x' }), { ok: false, reason: 'bad-sourceStat' });
+  assert.deepStrictEqual(store.validateRecord({ ...validRecord, sourceStat: { mtimeMs: 1, size: '1', hash: 'h' } }), { ok: false, reason: 'bad-sourceStat' });
+  assert.deepStrictEqual(store.validateRecord({ ...validRecord, sourceStat: { mtimeMs: 1, size: 1, hash: 'h' } }), { ok: true });
+
+  // older schema version 1 is ok
+  assert.deepStrictEqual(store.validateRecord({ ...validRecord, schemaVersion: 1 }), { ok: true });
+});
+
+test('makeRecord sanitization and loadRecovery reporting of damaged record (case 4)', () => {
+  // makeRecord sanitizing
+  const record = store.makeRecord({
+    sourceStat: { mtimeMs: '12', size: 3, hash: 'ab' }
+  });
+  assert.deepStrictEqual(record.sourceStat, { mtimeMs: 12, size: 3, hash: 'ab' });
+
+  const recordNoHash = store.makeRecord({
+    sourceStat: { mtimeMs: 12, size: 3, hash: '' }
+  });
+  assert.strictEqual(recordNoHash.sourceStat, null);
+
+  // Bogus activeWorkspace, format, buffer, and sourcePath values
+  const bogusRecord = store.makeRecord({
+    activeWorkspace: 'invalid-workspace',
+    format: 'bogus-format',
+    buffer: null,
+    sourcePath: null
+  });
+  assert.strictEqual(bogusRecord.activeWorkspace, 'editor');
+  assert.strictEqual(bogusRecord.format, 'plain');
+  assert.strictEqual(bogusRecord.buffer, '');
+  assert.strictEqual(bogusRecord.sourcePath, null);
+
+  // A damaged record written to a temp dir makes loadRecovery report that reason
+  const ud = tmpUserData();
+  fs.writeFileSync(store.recoveryStorePath(ud), JSON.stringify({
+    ...bogusRecord,
+    schemaVersion: 2,
+    context: 123 // invalid type to trigger a reason
+  }));
+  const r = store.loadRecovery(ud);
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'bad-context');
+});
