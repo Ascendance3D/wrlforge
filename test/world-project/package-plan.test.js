@@ -56,7 +56,7 @@ test('deterministic manifest: two builds are byte-identical and sorted', () => {
   assert.deepEqual(files, sorted, 'files must be in a stable sorted order');
 });
 
-test('manifest ordering is code-unit based and locale-independent', () => {
+test('manifest ordering is code-unit based and locale-independent', (t) => {
   // Construct a temporary project with files that sort differently based on locale.
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrlforge-plan-test-'));
   try {
@@ -65,7 +65,6 @@ test('manifest ordering is code-unit based and locale-independent', () => {
       fs.writeFileSync(path.join(tmpDir, f), 'data');
     }
     const worldWrl = '#VRML V2.0 utf8\n' + files.map((f) => `ImageTexture { url "${f}" }`).join('\n');
-    fs.writeFileSync(path.join(tmpDir, 'world.wrl'), worldWrl);
 
     // Reference not existing files to populate findings.missing and check those too.
     const missingWrl = '#VRML V2.0 utf8\n' + files.map((f) => `ImageTexture { url "missing_${f}" }`).join('\n');
@@ -95,21 +94,29 @@ test('manifest ordering is code-unit based and locale-independent', () => {
         const man = buildManifest(plan);
         console.log(JSON.stringify({
           files: man.files.map((f) => f.path),
-          missing: plan.findings.missing.map((m) => m.relPath)
+          missing: plan.findings.missing.map((m) => m.relPath),
+          localeSort: ['z', 'ä'].sort((a, b) => a.localeCompare(b))
         }));
       `;
+      let out;
       try {
-        const out = child_process.execFileSync(process.execPath, ['-e', script], {
+        out = child_process.execFileSync(process.execPath, ['-e', script], {
           env: { ...process.env, LANG: 'sv_SE.UTF-8', LC_ALL: 'sv_SE.UTF-8' },
           encoding: 'utf8'
         });
-        const subResult = JSON.parse(out);
-        assert.deepEqual(subResult.files, expectedFiles, 'Subprocess files order should match code-unit sort despite sv_SE locale');
-        assert.deepEqual(subResult.missing, expectedMissing, 'Subprocess missing order should match code-unit sort despite sv_SE locale');
       } catch (err) {
-        // Log child process errors but don't fail if the OS just rejects the locale
-        if (err.stderr) console.error(err.stderr);
+        t.skip('subprocess exec failed: ' + (err.stderr || err.message));
+        return;
       }
+
+      const subResult = JSON.parse(out);
+      if (subResult.localeSort[0] !== 'z' || subResult.localeSort[1] !== 'ä') {
+        t.skip('locale sv_SE.UTF-8 not supported on this system (got order: ' + subResult.localeSort.join(',') + ')');
+        return;
+      }
+
+      assert.deepEqual(subResult.files, expectedFiles, 'Subprocess files order should match code-unit sort despite sv_SE locale');
+      assert.deepEqual(subResult.missing, expectedMissing, 'Subprocess missing order should match code-unit sort despite sv_SE locale');
     }
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
