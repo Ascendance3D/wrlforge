@@ -97,7 +97,22 @@ function formatShortcutDisplay(shortcut, platform) {
 function formatAriaShortcut(shortcut, platform) {
   if (typeof shortcut !== 'string') return '';
   const isMac = typeof platform === 'string' && /mac/i.test(platform);
-  return shortcut.replace('Mod+', isMac ? 'Meta+' : 'Control+');
+  let s = shortcut.replace('Mod+', isMac ? 'Meta+' : 'Control+');
+
+  if (s.endsWith('++')) {
+    s = s.slice(0, -2) + '+Plus';
+  }
+
+  const parts = s.split('+');
+  if (parts.length > 0) {
+    let last = parts.pop();
+    if (last.length === 1 && /[a-z]/.test(last)) {
+      last = last.toUpperCase();
+    }
+    parts.push(last);
+    s = parts.join('+');
+  }
+  return s;
 }
 
 function validateRecord(r) {

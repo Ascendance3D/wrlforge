@@ -28,9 +28,9 @@
     return e;
   }
 
-  function bindControls(reg, root) {
+  function bindControls(reg, root, platformOverride) {
     const paints = [];
-    const platform = (typeof navigator !== 'undefined' && ((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform)) || '';
+    const platform = platformOverride || ((typeof navigator !== 'undefined' && ((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform)) || '');
     const controls = Array.from(root.querySelectorAll('[data-command]')).filter((n) => n.tagName !== 'OPTION');
     for (const node of controls) {
       const id = node.getAttribute('data-command');
@@ -38,10 +38,14 @@
 
       const desc = reg.get(id);
       if (desc.keys && desc.keys.length > 0) {
-        node.setAttribute('aria-keyshortcuts', desc.keys.map((k) => CR.formatAriaShortcut(k, platform)).join(' '));
-        node.title = `${desc.label} (${CR.formatShortcutDisplay(desc.keys[0], platform)})`;
+        if (!node.getAttribute('aria-keyshortcuts')) {
+          node.setAttribute('aria-keyshortcuts', desc.keys.map((k) => CR.formatAriaShortcut(k, platform)).join(' '));
+        }
+        if (!node.title) {
+          node.title = `${desc.label} (${CR.formatShortcutDisplay(desc.keys[0], platform)})`;
+        }
       } else {
-        node.title = desc.label;
+        if (!node.title) node.title = desc.label;
       }
 
       if (!node.getAttribute('aria-label') && !(node.textContent || '').trim()) {

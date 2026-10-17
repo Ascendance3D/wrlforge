@@ -90,27 +90,34 @@ test('disabled command refuses through click, forced dispatch and keyboard', () 
 });
 
 test('title and aria-keyshortcuts are set correctly', () => {
-  Object.defineProperty(globalThis, 'navigator', { value: { platform: 'linux' }, writable: true, configurable: true });
-
   const reg = CR.createCommandRegistry();
   reg.register(rec('file.save', { keys: ['Mod+S'], label: 'Save' }));
   const b = button('b', 'file.save');
-  CB.bindControls(reg, root([b]));
-  assert.equal(b.title, 'Save (Ctrl+s)');
-  assert.equal(b.getAttribute('aria-keyshortcuts'), 'Control+s');
+  CB.bindControls(reg, root([b]), 'linux');
+  assert.equal(b.title, 'Save (Ctrl+s)'); // display string doesn't uppercase the S, it's just 'Mod+s' underneath which resolves to 'Ctrl+s'
+  assert.equal(b.getAttribute('aria-keyshortcuts'), 'Control+S');
 });
 
 test('aria-label is set correctly for icon-only buttons', () => {
-  Object.defineProperty(globalThis, 'navigator', { value: { platform: 'linux' }, writable: true, configurable: true });
-
   const reg = CR.createCommandRegistry();
   reg.register(rec('view.zoomIn', { keys: ['Mod++'], label: 'Increase size' }));
   const b = button('b', 'view.zoomIn');
   b.textContent = ' ';
-  CB.bindControls(reg, root([b]));
+  CB.bindControls(reg, root([b]), 'linux');
   assert.equal(b.title, 'Increase size (Ctrl++)');
   assert.equal(b.getAttribute('aria-label'), 'Increase size');
-  assert.equal(b.getAttribute('aria-keyshortcuts'), 'Control++');
+  assert.equal(b.getAttribute('aria-keyshortcuts'), 'Control+Plus');
+});
+
+test('existing title and aria-keyshortcuts are preserved', () => {
+  const reg = CR.createCommandRegistry();
+  reg.register(rec('file.save', { keys: ['Mod+S'], label: 'Save' }));
+  const b = button('b', 'file.save');
+  b.title = 'Existing title';
+  b.setAttribute('aria-keyshortcuts', 'ExistingShortcut');
+  CB.bindControls(reg, root([b]), 'linux');
+  assert.equal(b.title, 'Existing title');
+  assert.equal(b.getAttribute('aria-keyshortcuts'), 'ExistingShortcut');
 });
 
 test('unknown data-command throws ECOMMAND_BIND', () => {
