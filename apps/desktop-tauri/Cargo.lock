@@ -5761,6 +5761,7 @@ name = "wrlforge-desktop-protocol"
 version = "1.4.51"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]
