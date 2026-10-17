@@ -1,15 +1,37 @@
 # Jules overnight queue
 
+> **Status (2026-10-17): the scheduled workflow is disabled.** Jules work is now dispatched locally and reviewed before merge; see [Local dispatch and review](#local-dispatch-and-review-current). The **Jules Overnight Queue** workflow stays in the repository, disabled in GitHub Actions, as a fallback. Do not re-enable it while local dispatch is in use, or one approved issue can be dispatched twice.
+
 This workflow starts **at most one Jules session per run** from approved GitHub issues in the public `Ascendance3D/wrlforge` repository. It never accesses the separate private native X_ITE Rust port.
+
+## Local dispatch and review (current)
+
+The owner's agent dispatches Jules sessions from a workstation with the [`jules-dispatch`](https://github.com/Yuuqq/jules-dispatch) CLI/MCP server. The approval contract below is unchanged: only owner-authored `JULES-` issues the owner approved are dispatched.
+
+1. **Task.** Each task is an owner-authored GitHub issue titled `JULES-NNN — …`. It names one allowed file or test module, numbered cases, acceptance criteria, and the standard limits. Issues start as **"Queued for owner review"**. The owner approves dispatch explicitly, and the issue text is then changed to **"Owner-approved for dispatch"**.
+2. **Dispatch.** Owner-approved issues go out in small waves of three to five independent tasks, each with **`requirePlanApproval: true`**. The prompt is the issue text plus delivery rules: branch `jules-<issue>-<slug>`, a PR description beginning `Fixes #<issue>`, the exact test command with pass/fail counts, no `Signed-off-by` trailers, a draft PR, and never merge. The agent applies `jules-approved` for the record, posts `Jules session started: sessions/<id>` on the issue, and removes the label. That keeps the review inventory's session proof working.
+3. **Plan review.** Every Jules plan is checked against the issue and `WD.md` before approval. A plan that claims a case is "already covered" is approved only after the named test is read. A verified no-op closes the issue without a PR.
+4. **PR review.** For each PR, in its own worktree under `.worktrees/wrlforge/`, the agent:
+   - runs `npm run check` (JavaScript) or the crate's `cargo +1.95.0 test` locally (CI does not run the Rust tests);
+   - checks file scope and rustfmt on the added code only;
+   - reviews against the issue;
+   - runs a scoped `codex exec` review with the requirements spelled out. A plain `codex review` missed real defects.
+
+   Findings go back to the same Jules session. If a session fails a fix round, a fresh session starts from the PR branch, or the owner applies the fix-up.
+5. **Merge.** Only after the owner authorizes it, the agent waits for CI on the final head, then squash-merges with `--match-head-commit` and the owner's `Signed-off-by` trailer. Jules commits carry no DCO sign-off of their own. The agent then tells the session the task is complete, so it does not push again.
+
+Owner decisions (which issues, dependency exceptions, how to finish a failed session) are asked for explicitly. Nothing is merged, closed or re-labeled without that authorization.
 
 ## Owner platform plan
 
 1. Linux is the current development platform.
 2. macOS 15+ follows Linux.
-3. Windows 11 is a future planned target. This queue does **not** authorize Windows development, CI, packaging, or release.
+3. Windows 11: cross-platform tests and fixes are allowed (owner decision, 2026-10-17). CI runs on ubuntu, windows and macOS, and GUI checks run on the owner's Windows 11 test machine per `docs/WINDOWS_QA_RUNBOOK.md`. This queue does **not** authorize Windows packaging or release.
 4. Mobile is out of scope.
 
 ## Setup (requires owner action)
+
+These steps apply only to the disabled GitHub Actions fallback. Follow them only after the owner decides to re-enable **Jules Overnight Queue** and local dispatch has stopped. Running both paths can dispatch one approved issue twice. For local dispatch, use [Local dispatch and review](#local-dispatch-and-review-current) instead.
 
 1. Create a Jules API key at <https://jules.google.com/settings>. Do not paste it in chat or an issue.
 2. Save the key in **GitHub > Settings > Secrets and variables > Actions** as the repository secret `JULES_API_KEY`.
@@ -19,11 +41,11 @@ This workflow starts **at most one Jules session per run** from approved GitHub 
 6. Test the **Jules Overnight Queue** workflow manually from `main` with `dry_run=true`.
 7. After verifying the dry run, have the owner apply `jules-approved` to an already-created, small, owner-authored issue with a title starting `JULES-`.
 
-Issue #169 was dispatched and produced draft PR #170. Issues #160–#168 are owner-approved and queued. Do not re-approve a consumed issue without checking Jules sessions for duplicates. Existing draft PRs #152–#158 and #170 remain an independent review backlog; this dispatcher does not close or merge them.
+Do not re-approve a consumed issue without checking Jules sessions for duplicates. Current task and PR status lives in GitHub issues, not in this file.
 
 ## Scheduling and manual use
 
-GitHub Actions attempts dispatch **hourly at minute 17, 04:17–11:17 UTC daily**. This is approximately 00:17–07:17 EDT or 23:17–06:17 EST. GitHub scheduled runs can be delayed. The dispatcher attempts **at most one task per run**.
+The schedule below applies only while the workflow is enabled; it was disabled on 2026-10-17. While enabled, GitHub Actions attempts dispatch **hourly at minute 17, 04:17–11:17 UTC daily**. This is approximately 00:17–07:17 EDT or 23:17–06:17 EST. GitHub scheduled runs can be delayed. The dispatcher attempts **at most one task per run**.
 
 A **manual** workflow run defaults to `dry_run=true`. The dry run lists eligible work and checks its latest approval-label actor. It **does not** change labels, post comments, read the Jules API, or create a session. It does not need a Jules API key.
 
@@ -73,6 +95,8 @@ CodeRabbit can skip draft PRs by default. Request a manual review if necessary. 
 ## Stop and recovery
 
 To stop **new** tasks, disable **Jules Overnight Queue** in GitHub Actions or remove `jules-approved` from all waiting issues. This does not stop Jules sessions that are already running.
+
+With local dispatch, stopping new tasks means not dispatching. To stop a running session, use `jules-dispatch cancel <sessionId>`; the session ID is in the issue's `Jules session started` comment.
 
 For a failed POST or missing session record, check the Jules session list before restoring any approval label. Do not assume a failed GitHub Actions run means that Jules did not create a session.
 
