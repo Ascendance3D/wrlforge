@@ -26,7 +26,7 @@ Owner decisions (which issues, dependency exceptions, how to finish a failed ses
 
 1. Linux is the current development platform.
 2. macOS 15+ follows Linux.
-3. Windows 11 is a future planned target. This queue does **not** authorize Windows development, CI, packaging, or release.
+3. Windows 11: cross-platform tests and fixes are allowed (owner decision, 2026-10-17). CI runs on ubuntu, windows and macOS, and GUI checks run on the owner's Windows 11 test machine per `docs/WINDOWS_QA_RUNBOOK.md`. This queue does **not** authorize Windows packaging or release.
 4. Mobile is out of scope.
 
 ## Setup (requires owner action)
