@@ -60,6 +60,7 @@ pub enum OpenOutcome {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct EditRequest {
     pub session: SessionId,
     pub base_revision: u64,
@@ -458,6 +459,7 @@ pub struct ExtrusionInfo {
 /// left it. Components are raw user text: Rust validates them.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "op", rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub enum ListOp {
     Set { index: u32, components: Vec<String> },
     Insert { index: u32, components: Vec<String> },
@@ -468,6 +470,7 @@ pub enum ListOp {
 /// editing session). Applied as ONE transaction, so one undo step.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ListEditRequest {
     pub session: SessionId,
     pub base_revision: u64,
@@ -484,6 +487,7 @@ pub struct ListEditRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub enum AddFieldValue {
     Bool { value: bool },
     Number { value: String },
@@ -497,6 +501,7 @@ pub enum AddFieldValue {
 /// VISUAL-4A: write one ABSENT field into the node, because the user asked.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct AddFieldRequest {
     pub session: SessionId,
     pub base_revision: u64,
@@ -512,6 +517,7 @@ pub struct AddFieldRequest {
 /// operation left it. Values are decoded text: Rust encodes them.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "op", rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub enum StringOp {
     Set { index: u32, value: String },
     Insert { index: u32, value: String },
@@ -522,6 +528,7 @@ pub enum StringOp {
 /// so one undo step.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct StringEditRequest {
     pub session: SessionId,
     pub base_revision: u64,
@@ -540,6 +547,7 @@ pub struct StringEditRequest {
 /// no texture field. `url` comes from `doc_choose_texture`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct AddTextureRequest {
     pub session: SessionId,
     pub base_revision: u64,
@@ -553,6 +561,7 @@ pub struct AddTextureRequest {
 /// Rust). The url is relative to the document's folder, `/`-separated.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "status", rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub enum TextureChoice {
     Chosen { url: String },
     Canceled,
@@ -561,6 +570,7 @@ pub enum TextureChoice {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub enum FieldInput {
     Bool { value: bool },
     Text { value: String },
@@ -570,6 +580,7 @@ pub enum FieldInput {
 /// SAME revision; Rust re-proves the node and field before any change.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct FieldEditRequest {
     pub session: SessionId,
     pub base_revision: u64,
@@ -600,6 +611,8 @@ pub enum FieldEditOutcome {
     Refused {
         reason: String,
         message: Option<String>,
+        /// Sent as `componentIndex`, like every other camelCase key.
+        #[serde(rename = "componentIndex")]
         component_index: Option<u32>,
     },
 }
@@ -639,6 +652,7 @@ impl Primitive {
 /// `base_revision`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct CreateRequest {
     pub session: SessionId,
     pub base_revision: u64,
@@ -666,6 +680,7 @@ pub enum CreateOutcome {
 /// B2: which structural edit a [`StructureEditRequest`] asks for.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub enum StructureOp {
     Delete,
     Duplicate,
@@ -675,6 +690,7 @@ pub enum StructureOp {
 /// `base_revision`). Rust re-proves the node and the whole result.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct StructureEditRequest {
     pub session: SessionId,
     pub base_revision: u64,
@@ -718,6 +734,7 @@ pub enum StructureEditOutcome {
 /// VISUAL-3A: may the translation gizmo move `item` as it is in `revision`?
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct TranslateTargetRequest {
     pub session: SessionId,
     pub revision: u64,
@@ -782,6 +799,7 @@ pub enum TranslateTargetOutcome {
 /// exactly `revision` / `preview_hash`) IS that authored Transform.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct TranslateProveRequest {
     pub session: SessionId,
     pub revision: u64,
@@ -842,6 +860,7 @@ pub enum TranslateProveOutcome {
 /// in `revision` (any node instance; read-only).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct HighlightTargetRequest {
     pub session: SessionId,
     pub revision: u64,
@@ -876,6 +895,7 @@ pub enum HighlightTargetOutcome {
 /// `revision` / `preview_hash`) IS that authored node, at any depth.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct HighlightProveRequest {
     pub session: SessionId,
     pub revision: u64,
@@ -930,6 +950,7 @@ pub enum HighlightProveOutcome {
 /// (which must be the current revision). Read-only.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct PreviewCarryRequest {
     pub session: SessionId,
     pub from_revision: u64,
@@ -952,6 +973,7 @@ pub enum PreviewCarryOutcome {
 /// `decimals` places), re-proves the node and writes ONE token.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct TranslateRequest {
     pub session: SessionId,
     pub base_revision: u64,
@@ -973,6 +995,7 @@ pub struct TranslateRequest {
 /// `Rot(axis, delta) · rotation`, formats, re-proves and writes it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct RotateRequest {
     pub session: SessionId,
     pub base_revision: u64,
@@ -992,6 +1015,7 @@ pub struct RotateRequest {
 /// component when `axis` is `None` (uniform).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ScaleRequest {
     pub session: SessionId,
     pub base_revision: u64,
@@ -1147,6 +1171,7 @@ pub struct PickSnapshot {
 /// the document holds exactly that text now.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct PickRequest {
     pub session: SessionId,
     pub revision: u64,
@@ -1620,7 +1645,7 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_string(&field_edit_outcome).unwrap(),
-            r#"{"status":"refused","reason":"error","message":null,"component_index":0}"#
+            r#"{"status":"refused","reason":"error","message":null,"componentIndex":0}"#
         );
     }
 
@@ -1720,15 +1745,143 @@ mod tests {
         }
     }
 
-    // Case 4 (addon): Extra unknown key
     #[test]
-    fn permits_unknown_fields() {
-        let json_str = r#"{"session": 1, "baseRevision": 2, "from": 3, "to": 4, "insert": "test", "path": "/etc/passwd"}"#;
-        // Check current behavior. If it succeeds, it means unknown fields are silently accepted.
-        let result: Result<EditRequest, _> = serde_json::from_str(json_str);
-        assert!(
-            result.is_ok(),
-            "Expected EditRequest to silently accept unknown fields (current behavior)"
-        );
+    fn rejects_unknown_fields() {
+        let edit_json = r#"{"session": 1, "baseRevision": 2, "from": 3, "to": 4, "insert": "test", "path": "/etc/passwd"}"#;
+        let res: Result<EditRequest, _> = serde_json::from_str(edit_json);
+        assert!(res.is_err());
+
+        let list_json = r#"{"session": 1, "baseRevision": 2, "item": "i", "fieldIndex": 0, "fieldName": "f", "expectedCount": 1, "ops": [{"op": "set", "index": 0, "components": ["a"]}], "confirmShared": false, "path": "/etc/passwd"}"#;
+        let res: Result<ListEditRequest, _> = serde_json::from_str(list_json);
+        assert!(res.is_err());
+
+        let list_op_json =
+            r#"{"op": "set", "index": 0, "components": ["a"], "path": "/etc/passwd"}"#;
+        let res: Result<ListOp, _> = serde_json::from_str(list_op_json);
+        assert!(res.is_err());
+        let list_op_ok_json = r#"{"op": "set", "index": 0, "components": ["a"]}"#;
+        let res_ok: Result<ListOp, _> = serde_json::from_str(list_op_ok_json);
+        assert!(res_ok.is_ok());
+
+        let add_field_value_json = r#"{"kind": "bool", "value": true, "path": "/etc/passwd"}"#;
+        let res: Result<AddFieldValue, _> = serde_json::from_str(add_field_value_json);
+        assert!(res.is_err());
+        let add_field_value_ok_json = r#"{"kind": "bool", "value": true}"#;
+        let res_ok: Result<AddFieldValue, _> = serde_json::from_str(add_field_value_ok_json);
+        assert!(res_ok.is_ok());
+
+        let string_op_json = r#"{"op": "set", "index": 0, "value": "a", "path": "/etc/passwd"}"#;
+        let res: Result<StringOp, _> = serde_json::from_str(string_op_json);
+        assert!(res.is_err());
+
+        let texture_choice_json = r#"{"status": "chosen", "url": "a", "path": "/etc/passwd"}"#;
+        let res: Result<TextureChoice, _> = serde_json::from_str(texture_choice_json);
+        assert!(res.is_err());
+
+        let field_input_json = r#"{"kind": "bool", "value": true, "path": "/etc/passwd"}"#;
+        let res: Result<FieldInput, _> = serde_json::from_str(field_input_json);
+        assert!(res.is_err());
+
+        let structure_op_json = r#"{"op": "delete", "path": "/etc/passwd"}"#;
+        let res: Result<StructureOp, _> = serde_json::from_str(structure_op_json);
+        assert!(res.is_err());
+
+        let translate_target_json = r#"{"session": 1, "revision": 2, "item": "item1", "tool": "Move", "path": "/etc/passwd"}"#;
+        let res: Result<TranslateTargetRequest, _> = serde_json::from_str(translate_target_json);
+        assert!(res.is_err());
+
+        let translate_prove_json = r#"{"session": 1, "revision": 2, "item": "item1", "previewHash": 12345, "generation": 1, "snapshot": {"outcome": "hit"}, "tool": "Move", "instance": "1", "path": "/etc/passwd"}"#;
+        let res: Result<TranslateProveRequest, _> = serde_json::from_str(translate_prove_json);
+        assert!(res.is_err());
+
+        let highlight_target_json =
+            r#"{"session": 1, "revision": 2, "item": "item1", "path": "/etc/passwd"}"#;
+        let res: Result<HighlightTargetRequest, _> = serde_json::from_str(highlight_target_json);
+        assert!(res.is_err());
+
+        let highlight_prove_json = r#"{"session": 1, "revision": 2, "item": "item1", "previewHash": 12345, "generation": 1, "snapshot": {"outcome": "hit"}, "path": "/etc/passwd"}"#;
+        let res: Result<HighlightProveRequest, _> = serde_json::from_str(highlight_prove_json);
+        assert!(res.is_err());
+
+        let preview_carry_json = r#"{"session": 1, "fromRevision": 2, "toRevision": 3, "from": 4, "to": 5, "path": "/etc/passwd"}"#;
+        let res: Result<PreviewCarryRequest, _> = serde_json::from_str(preview_carry_json);
+        assert!(res.is_err());
+
+        let translate_json = r#"{"session": 1, "baseRevision": 2, "item": "item1", "axis": "Y", "value": 2.0, "decimals": 2, "confirmShared": false, "instance": "1", "path": "/etc/passwd"}"#;
+        let res: Result<TranslateRequest, _> = serde_json::from_str(translate_json);
+        assert!(res.is_err());
+
+        let rotate_json = r#"{"session": 1, "baseRevision": 2, "item": "item1", "axis": "Y", "delta": 1.5, "confirmShared": false, "instance": "1", "path": "/etc/passwd"}"#;
+        let res: Result<RotateRequest, _> = serde_json::from_str(rotate_json);
+        assert!(res.is_err());
+
+        let scale_json = r#"{"session": 1, "baseRevision": 2, "item": "item1", "axis": "Y", "factor": 2.0, "confirmShared": false, "instance": "1", "path": "/etc/passwd"}"#;
+        let res: Result<ScaleRequest, _> = serde_json::from_str(scale_json);
+        assert!(res.is_err());
+
+        let pick_json = r#"{"session": 1, "revision": 2, "previewHash": 123, "generation": 1, "snapshot": {"outcome": "hit"}, "path": "/etc/passwd"}"#;
+        let res: Result<PickRequest, _> = serde_json::from_str(pick_json);
+        assert!(res.is_err());
+
+        let create_json = r#"{"session": 1, "baseRevision": 2, "primitive": "Box", "at": null, "path": "/etc/passwd"}"#;
+        let res: Result<CreateRequest, _> = serde_json::from_str(create_json);
+        assert!(res.is_err());
+
+        let structure_edit_json = r#"{"session": 1, "baseRevision": 2, "item": "item1", "op": "Duplicate", "confirmShared": false, "offset": null, "path": "/etc/passwd"}"#;
+        let res: Result<StructureEditRequest, _> = serde_json::from_str(structure_edit_json);
+        assert!(res.is_err());
+    }
+
+    // The four field-edit requests: a valid body parses, the same body with
+    // one extra key is refused.
+    #[test]
+    fn field_edit_requests_reject_an_extra_key() {
+        fn check<T: serde::Serialize + serde::de::DeserializeOwned>(req: T) {
+            let mut v = serde_json::to_value(&req).unwrap();
+            assert!(serde_json::from_value::<T>(v.clone()).is_ok());
+            v.as_object_mut()
+                .unwrap()
+                .insert("path".into(), serde_json::json!("/etc/passwd"));
+            assert!(serde_json::from_value::<T>(v).is_err());
+        }
+        check(StringEditRequest {
+            session: 1,
+            base_revision: 2,
+            item: "item1".to_string(),
+            field_index: 3,
+            field_name: "test".to_string(),
+            expected: vec!["old".to_string()],
+            ops: vec![StringOp::Set {
+                index: 0,
+                value: "val".to_string(),
+            }],
+            confirm_shared: false,
+        });
+        check(FieldEditRequest {
+            session: 1,
+            base_revision: 2,
+            item: "item1".to_string(),
+            field_index: 3,
+            field_name: "test".to_string(),
+            components: vec![FieldInput::Text {
+                value: "val".to_string(),
+            }],
+            confirm_shared: false,
+        });
+        check(AddFieldRequest {
+            session: 1,
+            base_revision: 2,
+            item: "item1".to_string(),
+            field_name: "test".to_string(),
+            value: AddFieldValue::Bool { value: true },
+            confirm_shared: false,
+        });
+        check(AddTextureRequest {
+            session: 1,
+            base_revision: 2,
+            item: "item1".to_string(),
+            url: "stone.png".to_string(),
+            confirm_shared: false,
+        });
     }
 }
