@@ -485,9 +485,15 @@ pub struct ListEditRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum AddFieldValue {
-    Bool { value: bool },
-    Number { value: String },
-    List { tuples: Vec<Vec<String>> },
+    Bool {
+        value: bool,
+    },
+    Number {
+        value: String,
+    },
+    List {
+        tuples: Vec<Vec<String>>,
+    },
     /// VISUAL-4B: one SFVec2f / SFVec3f / SFRotation value.
     Tuple {
         values: Vec<String>,
@@ -1250,10 +1256,17 @@ pub struct NativeShown {
 pub enum NativeEvent {
     /// A resolved viewport click. The UI applies it exactly like a
     /// `doc_pick` reply (late and stale replies are refused there too).
-    Pick { session: SessionId, pick: PickOutcome },
+    Pick {
+        session: SessionId,
+        pick: PickOutcome,
+    },
     /// Escape in the native viewport: clear the selection.
-    Cleared { session: Option<SessionId> },
-    State { state: NativeState },
+    Cleared {
+        session: Option<SessionId>,
+    },
+    State {
+        state: NativeState,
+    },
 }
 
 /// The Tauri event name that carries `NativeEvent`.
@@ -1474,4 +1487,261 @@ pub fn view_hash_units(units: impl IntoIterator<Item = u16>) -> u64 {
         h = h.wrapping_mul(0x100000001b3);
     }
     h & ((1u64 << 53) - 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Case 1: Round trip
+    #[test]
+    fn round_trips_requests() {
+        let edit = EditRequest {
+            session: 1,
+            base_revision: 2,
+            from: 3,
+            to: 4,
+            insert: "test".to_string(),
+            item: Some("item1".to_string()),
+        };
+        let serialized = serde_json::to_string(&edit).unwrap();
+        let deserialized: EditRequest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(edit, deserialized);
+
+        let list_edit = ListEditRequest {
+            session: 1,
+            base_revision: 2,
+            item: "item1".to_string(),
+            field_index: 3,
+            field_name: "test".to_string(),
+            expected_count: 1,
+            ops: vec![ListOp::Insert {
+                index: 0,
+                components: vec!["val".to_string()],
+            }],
+            confirm_shared: false,
+        };
+        let serialized = serde_json::to_string(&list_edit).unwrap();
+        let deserialized: ListEditRequest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(list_edit, deserialized);
+
+        let string_edit = StringEditRequest {
+            session: 1,
+            base_revision: 2,
+            item: "item1".to_string(),
+            field_index: 3,
+            field_name: "test".to_string(),
+            expected: vec!["old".to_string()],
+            ops: vec![StringOp::Set {
+                index: 0,
+                value: "val".to_string(),
+            }],
+            confirm_shared: false,
+        };
+        let serialized = serde_json::to_string(&string_edit).unwrap();
+        let deserialized: StringEditRequest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(string_edit, deserialized);
+
+        let field_edit = FieldEditRequest {
+            session: 1,
+            base_revision: 2,
+            item: "item1".to_string(),
+            field_index: 3,
+            field_name: "test".to_string(),
+            components: vec![FieldInput::Text {
+                value: "val".to_string(),
+            }],
+            confirm_shared: false,
+        };
+        let serialized = serde_json::to_string(&field_edit).unwrap();
+        let deserialized: FieldEditRequest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(field_edit, deserialized);
+
+        let add_field = AddFieldRequest {
+            session: 1,
+            base_revision: 2,
+            item: "item1".to_string(),
+            field_name: "test".to_string(),
+            value: AddFieldValue::Bool { value: true },
+            confirm_shared: false,
+        };
+        let serialized = serde_json::to_string(&add_field).unwrap();
+        let deserialized: AddFieldRequest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(add_field, deserialized);
+
+        let add_texture = AddTextureRequest {
+            session: 1,
+            base_revision: 2,
+            item: "item1".to_string(),
+            url: "http://example.com/texture.png".to_string(),
+            confirm_shared: false,
+        };
+        let serialized = serde_json::to_string(&add_texture).unwrap();
+        let deserialized: AddTextureRequest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(add_texture, deserialized);
+    }
+
+    // Case 2: Exact JSON
+    #[test]
+    fn serializes_exact_json_shape() {
+        let edit = EditRequest {
+            session: 1,
+            base_revision: 2,
+            from: 3,
+            to: 4,
+            insert: "test".to_string(),
+            item: Some("item1".to_string()),
+        };
+        let json_val = serde_json::to_value(&edit).unwrap();
+        assert_eq!(json_val["baseRevision"], 2);
+
+        // OpenOutcome
+        let open_outcome = OpenOutcome::Canceled;
+        assert_eq!(
+            serde_json::to_string(&open_outcome).unwrap(),
+            r#"{"status":"canceled"}"#
+        );
+
+        // EditOutcome
+        let edit_outcome = EditOutcome::Refused {
+            message: "error".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_string(&edit_outcome).unwrap(),
+            r#"{"status":"refused","message":"error"}"#
+        );
+
+        // SaveOutcome
+        let save_outcome = SaveOutcome::Canceled;
+        assert_eq!(
+            serde_json::to_string(&save_outcome).unwrap(),
+            r#"{"status":"canceled"}"#
+        );
+
+        // InspectOutcome
+        let inspect_outcome = InspectOutcome::Missing;
+        assert_eq!(
+            serde_json::to_string(&inspect_outcome).unwrap(),
+            r#"{"status":"missing"}"#
+        );
+
+        // FieldEditOutcome
+        let field_edit_outcome = FieldEditOutcome::Refused {
+            component_index: Some(0),
+            reason: "error".to_string(),
+            message: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&field_edit_outcome).unwrap(),
+            r#"{"status":"refused","reason":"error","message":null,"component_index":0}"#
+        );
+    }
+
+    // Case 3: Defaults
+    #[test]
+    fn deserializes_with_defaults() {
+        let json_str = r#"{"session": 1, "baseRevision": 2, "from": 3, "to": 4, "insert": "test"}"#;
+        let edit: EditRequest = serde_json::from_str(json_str).unwrap();
+        assert_eq!(edit.item, None);
+
+        let json_str_missing_required =
+            r#"{"baseRevision": 2, "from": 3, "to": 4, "insert": "test"}"#;
+        let result: Result<EditRequest, _> = serde_json::from_str(json_str_missing_required);
+        assert!(result.is_err());
+    }
+
+    // Case 4: Security shape
+    #[test]
+    fn rejects_filesystem_paths() {
+        let requests = vec![
+            serde_json::to_value(EditRequest {
+                session: 1,
+                base_revision: 2,
+                from: 3,
+                to: 4,
+                insert: "test".to_string(),
+                item: None,
+            })
+            .unwrap(),
+            serde_json::to_value(ListEditRequest {
+                session: 1,
+                base_revision: 2,
+                item: "item1".to_string(),
+                field_index: 3,
+                field_name: "test".to_string(),
+                expected_count: 1,
+                ops: vec![ListOp::Insert {
+                    index: 0,
+                    components: vec!["val".to_string()],
+                }],
+                confirm_shared: false,
+            })
+            .unwrap(),
+            serde_json::to_value(StringEditRequest {
+                session: 1,
+                base_revision: 2,
+                item: "item1".to_string(),
+                field_index: 3,
+                field_name: "test".to_string(),
+                expected: vec![],
+                ops: vec![],
+                confirm_shared: false,
+            })
+            .unwrap(),
+            serde_json::to_value(FieldEditRequest {
+                session: 1,
+                base_revision: 2,
+                item: "item1".to_string(),
+                field_index: 3,
+                field_name: "test".to_string(),
+                components: vec![],
+                confirm_shared: false,
+            })
+            .unwrap(),
+            serde_json::to_value(AddFieldRequest {
+                session: 1,
+                base_revision: 2,
+                item: "item1".to_string(),
+                field_name: "test".to_string(),
+                value: AddFieldValue::Bool { value: true },
+                confirm_shared: false,
+            })
+            .unwrap(),
+            serde_json::to_value(AddTextureRequest {
+                session: 1,
+                base_revision: 2,
+                item: "item1".to_string(),
+                url: "http://example.com".to_string(),
+                confirm_shared: false,
+            })
+            .unwrap(),
+        ];
+
+        let disallowed_keys = ["path", "filePath", "absPath", "dir"];
+        for req in requests {
+            if let serde_json::Value::Object(map) = req {
+                for key in map.keys() {
+                    assert!(
+                        !disallowed_keys.contains(&key.as_str()),
+                        "Found disallowed key: {}",
+                        key
+                    );
+                }
+            } else {
+                panic!("Expected an object");
+            }
+        }
+    }
+
+    // Case 4 (addon): Extra unknown key
+    #[test]
+    fn permits_unknown_fields() {
+        let json_str = r#"{"session": 1, "baseRevision": 2, "from": 3, "to": 4, "insert": "test", "path": "/etc/passwd"}"#;
+        // Check current behavior. If it succeeds, it means unknown fields are silently accepted.
+        let result: Result<EditRequest, _> = serde_json::from_str(json_str);
+        assert!(
+            result.is_ok(),
+            "Expected EditRequest to silently accept unknown fields (current behavior)"
+        );
+    }
 }
