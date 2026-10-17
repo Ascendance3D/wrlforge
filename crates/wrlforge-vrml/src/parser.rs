@@ -862,4 +862,131 @@ mod tests {
         let r = parse("}}]]{{[[ DEF USE ROUTE . . 1e PROTO [ field ");
         assert!(!r.diagnostics.is_empty());
     }
+
+    #[test]
+    fn depth_limit_terminates_and_keeps_partial_tree() {
+        // max_depth limits block parsing at a specific depth.
+        let src_at_limit = "#VRML V2.0 utf8\nGroup { children [ Group {} ] }";
+        let r_at_limit = parse_with(
+            src_at_limit,
+            Limits {
+                max_depth: 2,
+                max_nodes: 10,
+            },
+        );
+        assert!(
+            r_at_limit.diagnostics.is_empty(),
+            "{:?}",
+            r_at_limit.diagnostics
+        );
+        assert!(!r_at_limit.depth_capped);
+
+        let src_past_limit =
+            "#VRML V2.0 utf8\nGroup { children [ Group { children [ Group {} ] } ] }";
+        let r_past_limit = parse_with(
+            src_past_limit,
+            Limits {
+                max_depth: 1,
+                max_nodes: 10,
+            },
+        );
+        let codes: Vec<_> = r_past_limit
+            .diagnostics
+            .iter()
+            .map(|d| d.code.as_str())
+            .collect();
+        assert_eq!(codes, vec!["VRML030"]);
+        assert!(r_past_limit.depth_capped);
+
+        // Check the partial tree.
+        let Ast::Node(outer) = &r_past_limit.tree.statements[0] else {
+            panic!()
+        };
+        assert_eq!(outer.node_type, "Group");
+        let Ast::Field(children) = &outer.fields[0] else {
+            panic!()
+        };
+        let Ast::Array { items, .. } = children.value.as_deref().unwrap() else {
+            panic!()
+        };
+        let Ast::Node(inner) = &items[0] else {
+            panic!()
+        };
+        assert_eq!(inner.node_type, "Group");
+        let Ast::Field(inner_children) = &inner.fields[0] else {
+            panic!()
+        };
+        let Ast::Array {
+            items: inner_items, ..
+        } = inner_children.value.as_deref().unwrap()
+        else {
+            panic!()
+        };
+        let Ast::Node(innermost) = &inner_items[0] else {
+            panic!()
+        };
+        assert!(innermost.incomplete); // the innermost node is marked incomplete because depth capped here
+        assert_eq!(innermost.fields.len(), 0); // No innermost children parsed due to depth limit
+    }
+
+    #[test]
+    fn externproto_parses_interface_and_url() {
+        let src = "#VRML V2.0 utf8\nEXTERNPROTO E [ eventIn SFBool a, eventOut SFBool b, field SFInt32 c, exposedField SFColor d ] [ \"a.wrl\" ]";
+        let r = parse(src);
+        assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+        let Ast::ExternProto(ep) = &r.tree.statements[0] else {
+            panic!()
+        };
+        assert_eq!(ep.name.as_deref(), Some("E"));
+        assert_eq!(ep.interfaces.len(), 4);
+        assert_eq!(ep.interfaces[0].access, "eventIn");
+        assert_eq!(ep.interfaces[1].access, "eventOut");
+        assert_eq!(ep.interfaces[2].access, "field");
+        assert_eq!(ep.interfaces[3].access, "exposedField");
+        let url = ep.url.as_ref().unwrap();
+        assert_eq!(url.range().slice(src), "[ \"a.wrl\" ]");
+    }
+
+    #[test]
+    fn script_node_fields_keep_exact_ranges_without_diagnostics() {
+        let src = "#VRML V2.0 utf8\nScript { eventIn SFBool e eventOut SFBool o field SFInt32 f 1 url \"javascript:foo()\" }";
+        let r = parse(src);
+        assert!(r.diagnostics.is_empty(), "{:?}", r.diagnostics);
+        let Ast::Node(n) = &r.tree.statements[0] else {
+            panic!()
+        };
+        assert_eq!(n.node_type, "Script");
+        assert_eq!(n.interfaces.len(), 3);
+        assert_eq!(n.interfaces[0].access, "eventIn");
+        assert_eq!(n.interfaces[1].access, "eventOut");
+        assert_eq!(n.interfaces[2].access, "field");
+        assert_eq!(n.fields.len(), 1);
+        let Ast::Field(url_field) = &n.fields[0] else {
+            panic!()
+        };
+        assert_eq!(url_field.name, "url");
+        assert_eq!(url_field.range.slice(src), "url \"javascript:foo()\"");
+    }
+
+    #[test]
+    fn recovery_locality_isolates_malformed_fields() {
+        let src = "#VRML V2.0 utf8\nGroup {}\nGroup { bad _ }\nGroup {}";
+        let r = parse(src);
+        let codes: Vec<_> = r.diagnostics.iter().map(|d| d.code.as_str()).collect();
+        // The one unexpected token inside the middle group produces a diagnostic exactly for that group
+        assert_eq!(codes, vec!["VRML020"]);
+        assert_eq!(r.tree.statements.len(), 3);
+        let Ast::Node(n1) = &r.tree.statements[0] else {
+            panic!()
+        };
+        assert_eq!(n1.range.slice(src), "Group {}");
+        let Ast::Node(n2) = &r.tree.statements[1] else {
+            panic!()
+        };
+        assert_eq!(n2.range.slice(src), "Group { bad _ }");
+        let Ast::Node(n3) = &r.tree.statements[2] else {
+            panic!()
+        };
+        assert_eq!(n3.range.slice(src), "Group {}");
+    }
 }
