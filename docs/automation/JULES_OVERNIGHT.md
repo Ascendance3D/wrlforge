@@ -31,6 +31,8 @@ Owner decisions (which issues, dependency exceptions, how to finish a failed ses
 
 ## Setup (requires owner action)
 
+These steps apply only to the disabled GitHub Actions fallback. Follow them only after the owner decides to re-enable **Jules Overnight Queue** and local dispatch has stopped. Running both paths can dispatch one approved issue twice. For local dispatch, use [Local dispatch and review](#local-dispatch-and-review-current) instead.
+
 1. Create a Jules API key at <https://jules.google.com/settings>. Do not paste it in chat or an issue.
 2. Save the key in **GitHub > Settings > Secrets and variables > Actions** as the repository secret `JULES_API_KEY`.
 3. Confirm the Jules GitHub app already has access to `Ascendance3D/wrlforge`. The dispatcher lists Jules sources and verifies the exact repository and the `main` branch. It does **not** guess the Jules source resource name.
