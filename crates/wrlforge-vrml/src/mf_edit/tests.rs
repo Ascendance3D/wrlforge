@@ -618,3 +618,26 @@ fn single_tuple_fields_are_added_only_on_request() {
         );
     }
 }
+
+#[test]
+fn out_of_range_delete_and_insert_refuse_on_each_tuple_type() {
+    let src = format!("{H}Extrusion {{ scale [ 1 1, 0 2, 3 3 ] spine [ 0 0 0, 0 1 0, 0 2 0 ] orientation [ 0 0 1 0, 0 1 0 0 ] }}\n");
+    for (field, len, ins_val) in [
+        ("scale", 3, &["1", "1"][..]),
+        ("spine", 3, &["1", "1", "1"][..]),
+        ("orientation", 2, &["0", "1", "0", "0"][..]),
+    ] {
+        assert_eq!(refusal(&src, field, vec![del(len)]), reason::INDEX, "{field} del(len)");
+        assert_eq!(refusal(&src, field, vec![del(999)]), reason::INDEX, "{field} del(999)");
+        assert_eq!(refusal(&src, field, vec![ins(len + 1, ins_val)]), reason::INDEX, "{field} ins(len + 1)");
+
+        let want = if field == "scale" {
+            src.replace("3 3 ]", "3 3, 1 1 ]")
+        } else if field == "spine" {
+            src.replace("0 2 0 ]", "0 2 0, 1 1 1 ]")
+        } else {
+            src.replace("0 1 0 0 ]", "0 1 0 0, 0 1 0 0 ]")
+        };
+        expect(&src, field, vec![ins(len, ins_val)], &want);
+    }
+}
