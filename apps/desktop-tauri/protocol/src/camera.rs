@@ -374,6 +374,32 @@ mod tests {
     }
 
     #[test]
+    fn all_six_standard_views_have_consistent_direction_and_up_conventions() {
+        for v in StandardView::ALL {
+            let (dir, up) = v.look();
+            // Direction and up must be normalized.
+            let dir_len = (dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]).sqrt();
+            let up_len = (up[0]*up[0] + up[1]*up[1] + up[2]*up[2]).sqrt();
+            assert!((dir_len - 1.0).abs() < 1e-9, "{v:?} direction not normalized");
+            assert!((up_len - 1.0).abs() < 1e-9, "{v:?} up not normalized");
+
+            // Direction and up must be orthogonal.
+            let dot = dir[0]*up[0] + dir[1]*up[1] + dir[2]*up[2];
+            assert!(dot.abs() < 1e-9, "{v:?} direction and up not orthogonal");
+
+            // The cross product of the look direction and the up vector must be a normalized
+            // right vector, establishing a consistent right-handed coordinate system.
+            let right = [
+                dir[1]*up[2] - dir[2]*up[1],
+                dir[2]*up[0] - dir[0]*up[2],
+                dir[0]*up[1] - dir[1]*up[0],
+            ];
+            let right_len = (right[0]*right[0] + right[1]*right[1] + right[2]*right[2]).sqrt();
+            assert!((right_len - 1.0).abs() < 1e-9, "{v:?} right not normalized");
+        }
+    }
+
+    #[test]
     fn framing_distance_fits_the_smaller_viewport_dimension() {
         // A 2 x 2 x 2 box, 90° field of view, square viewport:
         // 2 * 1.1 / 2 / tan(45°) + 1 = 2.1.
@@ -388,6 +414,19 @@ mod tests {
         // A narrow viewport: the width limits.
         let narrow = framing_distance([4.0, 1.0, 0.0], FRAC_PI_2, [400.0, 800.0]).unwrap();
         assert!((narrow - 2.2).abs() < 1e-12, "{narrow}");
+    }
+
+    #[test]
+    fn framing_distance_handles_extreme_aspect_ratios() {
+        let size = [2.0, 2.0, 2.0];
+        // The field of view limits framing along the smaller viewport dimension.
+        // For a 2x2x2 box at 90° FOV, the bounding dimension is 2.0.
+        // Expected distance: 2.0 * 1.1 / 2.0 / tan(45°) + 2.0 / 2.0 = 2.1
+        let very_wide = framing_distance(size, FRAC_PI_2, [100000.0, 1.0]).unwrap();
+        assert!((very_wide - 2.1).abs() < 1e-12, "{very_wide}");
+
+        let very_tall = framing_distance(size, FRAC_PI_2, [1.0, 100000.0]).unwrap();
+        assert!((very_tall - 2.1).abs() < 1e-12, "{very_tall}");
     }
 
     #[test]
@@ -417,6 +456,22 @@ mod tests {
         assert_eq!(framing_distance([-1.0, 1.0, 1.0], FRAC_PI_4, vp), None);
         // A flat box (a plane seen edge-on) still frames.
         assert!(framing_distance([2.0, 0.0, 2.0], FRAC_PI_4, vp).is_some());
+    }
+
+    #[test]
+    fn framing_distance_handles_near_degenerate_scene_bounds() {
+        let vp = [640.0, 480.0];
+        // Near-degenerate scenes are tiny but > 0. Expected distances mathematically hold.
+        let tiny = framing_distance([1e-15, 1e-15, 1e-15], FRAC_PI_4, vp).unwrap();
+        let expected_tiny = 1.1e-15 / 2.0 / (FRAC_PI_4 / 2.0).tan() + 0.5e-15;
+        assert!((tiny - expected_tiny).abs() < 1e-25, "{tiny}");
+
+        let tiny_flat = framing_distance([1e-15, 0.0, 0.0], FRAC_PI_4, vp).unwrap();
+        // For [x, 0, 0], aspect ratio limits scaling.
+        // across = x / (640/480) = 1e-15 / (4/3) = 0.75e-15
+        // expected: 0.75e-15 * 1.1 / 2.0 / tan(22.5°) + 0.0
+        let expected_flat = (0.75e-15 * 1.1) / 2.0 / (FRAC_PI_4 / 2.0).tan();
+        assert!((tiny_flat - expected_flat).abs() < 1e-25, "{tiny_flat}");
     }
 
     fn input() -> FrameInput {
