@@ -466,8 +466,14 @@ fn find_replace_go_to_line_are_ui_commands_needing_a_document() {
         assert_eq!(id.availability(doc), Availability::Enabled);
         assert_eq!(id.refusal(doc), None);
     }
-    assert_eq!(EditFind.title(Platform::Linux), "Find text in the Source editor (Ctrl+F)");
-    assert_eq!(EditGoToLine.spec().shortcuts[0].label(Platform::MacOs), "⌘G");
+    assert_eq!(
+        EditFind.title(Platform::Linux),
+        "Find text in the Source editor (Ctrl+F)"
+    );
+    assert_eq!(
+        EditGoToLine.spec().shortcuts[0].label(Platform::MacOs),
+        "⌘G"
+    );
 }
 
 #[test]
@@ -717,7 +723,10 @@ fn viewport_keys_fit_only_unmodified_and_never_shadow_a_shortcut() {
     assert_eq!(from_viewport_key("Escape", true), None);
     assert_eq!(viewport_key_label(EditClearSelection), "Escape");
     let s = EditClearSelection.spec();
-    assert_eq!((s.menu, s.requires, s.action, s.mutates_document), (Menu::Edit, Requires::NodeSelected, Action::UiOnly, false));
+    assert_eq!(
+        (s.menu, s.requires, s.action, s.mutates_document),
+        (Menu::Edit, Requires::NodeSelected, Action::UiOnly, false)
+    );
     assert!(s.shortcuts.is_empty());
     assert_eq!(
         ViewFitAll.title(Platform::Linux),
@@ -739,13 +748,24 @@ fn interact_is_the_one_explicit_sensor_mode_and_never_edits() {
     assert_eq!(s.label, "Interact");
     assert_eq!(
         (s.menu, s.requires, s.action, s.mutates_document, s.check),
-        (Menu::Tools, Requires::ViewportTool, Action::UiOnly, false, Check::Interact)
+        (
+            Menu::Tools,
+            Requires::ViewportTool,
+            Action::UiOnly,
+            false,
+            Check::Interact
+        )
     );
     assert!(s.shortcuts.is_empty());
-    assert!(s.hint.contains("Leaving Interact reloads the preview from the source"));
+    assert!(s
+        .hint
+        .contains("Leaving Interact reloads the preview from the source"));
     assert_eq!(CommandId::from_key("tool.interact"), Some(ToolInteract));
     // Needs a document and the X_ITE viewport, like the other tools.
-    let mut ctx = CommandContext { has_document: true, ..Default::default() };
+    let mut ctx = CommandContext {
+        has_document: true,
+        ..Default::default()
+    };
     assert_eq!(ToolInteract.refusal(ctx), None);
     ctx.native_viewport = true;
     assert!(ToolInteract.refusal(ctx).is_some());

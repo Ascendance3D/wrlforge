@@ -881,7 +881,10 @@ pub fn from_viewport_key(key: &str, modified: bool) -> Option<CommandId> {
         return None;
     }
     let key = key.to_lowercase();
-    VIEWPORT_KEYS.iter().find(|(k, _)| *k == key).map(|(_, id)| *id)
+    VIEWPORT_KEYS
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, id)| *id)
 }
 
 /// The label of a command's viewport keys (`F / Home`), or "".

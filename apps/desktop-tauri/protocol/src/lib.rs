@@ -485,9 +485,15 @@ pub struct ListEditRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum AddFieldValue {
-    Bool { value: bool },
-    Number { value: String },
-    List { tuples: Vec<Vec<String>> },
+    Bool {
+        value: bool,
+    },
+    Number {
+        value: String,
+    },
+    List {
+        tuples: Vec<Vec<String>>,
+    },
     /// VISUAL-4B: one SFVec2f / SFVec3f / SFRotation value.
     Tuple {
         values: Vec<String>,
@@ -1250,10 +1256,17 @@ pub struct NativeShown {
 pub enum NativeEvent {
     /// A resolved viewport click. The UI applies it exactly like a
     /// `doc_pick` reply (late and stale replies are refused there too).
-    Pick { session: SessionId, pick: PickOutcome },
+    Pick {
+        session: SessionId,
+        pick: PickOutcome,
+    },
     /// Escape in the native viewport: clear the selection.
-    Cleared { session: Option<SessionId> },
-    State { state: NativeState },
+    Cleared {
+        session: Option<SessionId>,
+    },
+    State {
+        state: NativeState,
+    },
 }
 
 /// The Tauri event name that carries `NativeEvent`.
@@ -1566,6 +1579,135 @@ mod tests {
         let serialized = serde_json::to_string(&add_texture).unwrap();
         let deserialized: AddTextureRequest = serde_json::from_str(&serialized).unwrap();
         assert_eq!(add_texture, deserialized);
+
+        let create_request = CreateRequest {
+            session: 1,
+            base_revision: 2,
+            primitive: Primitive::Box,
+            at: None,
+        };
+        let serialized = serde_json::to_string(&create_request).unwrap();
+        let deserialized: CreateRequest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(create_request, deserialized);
+
+        let structure_edit = StructureEditRequest {
+            session: 1,
+            base_revision: 2,
+            item: "item1".to_string(),
+            op: StructureOp::Duplicate,
+            confirm_shared: false,
+            offset: None,
+        };
+        let serialized = serde_json::to_string(&structure_edit).unwrap();
+        let deserialized: StructureEditRequest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(structure_edit, deserialized);
+
+        let translate_target = TranslateTargetRequest {
+            session: 1,
+            revision: 2,
+            item: "item1".to_string(),
+            tool: crate::gizmo::Tool::Move,
+        };
+        let serialized = serde_json::to_string(&translate_target).unwrap();
+        let deserialized: TranslateTargetRequest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(translate_target, deserialized);
+
+        let translate_prove = TranslateProveRequest {
+            session: 1,
+            revision: 2,
+            item: "item1".to_string(),
+            preview_hash: 12345,
+            generation: 1,
+            snapshot: PickSnapshot::default(),
+            tool: crate::gizmo::Tool::Move,
+            instance: Some("1".to_string()),
+        };
+        let serialized = serde_json::to_string(&translate_prove).unwrap();
+        let deserialized: TranslateProveRequest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(translate_prove, deserialized);
+
+        let highlight_target = HighlightTargetRequest {
+            session: 1,
+            revision: 2,
+            item: "item1".to_string(),
+        };
+        let serialized = serde_json::to_string(&highlight_target).unwrap();
+        let deserialized: HighlightTargetRequest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(highlight_target, deserialized);
+
+        let highlight_prove = HighlightProveRequest {
+            session: 1,
+            revision: 2,
+            item: "item1".to_string(),
+            preview_hash: 12345,
+            generation: 1,
+            snapshot: PickSnapshot::default(),
+        };
+        let serialized = serde_json::to_string(&highlight_prove).unwrap();
+        let deserialized: HighlightProveRequest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(highlight_prove, deserialized);
+
+        let preview_carry = PreviewCarryRequest {
+            session: 1,
+            from_revision: 2,
+            to_revision: 3,
+            from: 4,
+            to: 5,
+        };
+        let serialized = serde_json::to_string(&preview_carry).unwrap();
+        let deserialized: PreviewCarryRequest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(preview_carry, deserialized);
+
+        let translate = TranslateRequest {
+            session: 1,
+            base_revision: 2,
+            item: "item1".to_string(),
+            axis: crate::gizmo::Axis::Y,
+            value: 2.0,
+            decimals: 2,
+            confirm_shared: false,
+            instance: Some("1".to_string()),
+        };
+        let serialized = serde_json::to_string(&translate).unwrap();
+        let deserialized: TranslateRequest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(translate, deserialized);
+
+        let rotate = RotateRequest {
+            session: 1,
+            base_revision: 2,
+            item: "item1".to_string(),
+            axis: crate::gizmo::Axis::Y,
+            delta: 1.5,
+            confirm_shared: false,
+            instance: Some("1".to_string()),
+        };
+        let serialized = serde_json::to_string(&rotate).unwrap();
+        let deserialized: RotateRequest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(rotate, deserialized);
+
+        let scale = ScaleRequest {
+            session: 1,
+            base_revision: 2,
+            item: "item1".to_string(),
+            axis: Some(crate::gizmo::Axis::Y),
+            factor: 2.0,
+            confirm_shared: false,
+            instance: Some("1".to_string()),
+        };
+        let serialized = serde_json::to_string(&scale).unwrap();
+        let deserialized: ScaleRequest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(scale, deserialized);
+
+        let pick = PickRequest {
+            session: 1,
+            revision: 2,
+            preview_hash: 123,
+            generation: 1,
+            snapshot: PickSnapshot::default(),
+        };
+        let serialized = serde_json::to_string(&pick).unwrap();
+        let deserialized: PickRequest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(pick, deserialized);
     }
 
     // Case 2: Exact JSON

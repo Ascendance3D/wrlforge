@@ -89,9 +89,9 @@ pub fn node_role(node_type: &str) -> NodeRole {
         | "TextureTransform" | "Coordinate" | "Normal" | "Color" | "TextureCoordinate"
         | "FontStyle" => NodeRole::Property,
         "Viewpoint" | "NavigationInfo" | "Background" | "Fog" | "WorldInfo"
-        | "DirectionalLight" | "PointLight" | "SpotLight" | "Sound" | "AudioClip"
-        | "Script" | "TimeSensor" | "TouchSensor" | "PlaneSensor" | "CylinderSensor"
-        | "SphereSensor" | "ProximitySensor" | "VisibilitySensor" => NodeRole::NotRendered,
+        | "DirectionalLight" | "PointLight" | "SpotLight" | "Sound" | "AudioClip" | "Script"
+        | "TimeSensor" | "TouchSensor" | "PlaneSensor" | "CylinderSensor" | "SphereSensor"
+        | "ProximitySensor" | "VisibilitySensor" => NodeRole::NotRendered,
         t if t.ends_with("Interpolator") => NodeRole::NotRendered,
         _ => NodeRole::Rendered,
     }
@@ -441,7 +441,8 @@ pub fn svg_path(edges: &[Edge], ox: f64, oy: f64) -> String {
 }
 
 pub use mesh::{
-    build_mesh, display, fingerprint, mesh_edges, split_hidden, Display, EdgeSplit, Mesh, ShapeReport,
+    build_mesh, display, fingerprint, mesh_edges, split_hidden, Display, EdgeSplit, Mesh,
+    ShapeReport,
 };
 
 mod mesh;
