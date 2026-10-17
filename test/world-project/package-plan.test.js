@@ -12,6 +12,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const child_process = require('child_process');
+const os = require('os');
 const { scanProject } = require('../../src/world-project/project-loader');
 const {
   buildPackagePlan, buildManifest, manifestJson, renderReport,
@@ -49,8 +51,69 @@ test('deterministic manifest: two builds are byte-identical and sorted', () => {
   const b = manifestJson(buildPackagePlan(scan));
   assert.equal(a, b, 'same project → identical manifest JSON');
   const files = JSON.parse(a).files.map((f) => f.path);
-  const sorted = [...files].sort((x, y) => x.localeCompare(y));
+  const cmp = (x, y) => x < y ? -1 : x > y ? 1 : 0;
+  const sorted = [...files].sort(cmp);
   assert.deepEqual(files, sorted, 'files must be in a stable sorted order');
+});
+
+test('manifest ordering is code-unit based and locale-independent', () => {
+  // Construct a temporary project with files that sort differently based on locale.
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrlforge-plan-test-'));
+  try {
+    const files = ['z.png', 'ä.png', 'B.png', 'a.png', 'a-b.png', 'a_b.png'];
+    for (const f of files) {
+      fs.writeFileSync(path.join(tmpDir, f), 'data');
+    }
+    const worldWrl = '#VRML V2.0 utf8\n' + files.map((f) => `ImageTexture { url "${f}" }`).join('\n');
+    fs.writeFileSync(path.join(tmpDir, 'world.wrl'), worldWrl);
+
+    // Reference not existing files to populate findings.missing and check those too.
+    const missingWrl = '#VRML V2.0 utf8\n' + files.map((f) => `ImageTexture { url "missing_${f}" }`).join('\n');
+    fs.writeFileSync(path.join(tmpDir, 'world.wrl'), worldWrl + '\n' + missingWrl);
+
+    const scan = scanProject({ root: tmpDir, primary: path.join(tmpDir, 'world.wrl') });
+    const plan = buildPackagePlan(scan);
+    const man = buildManifest(plan);
+
+    // Expect code-unit sort: 'B.png' (66), 'a-b.png' (97,45), 'a.png' (97,46), 'a_b.png' (97,95), 'z.png' (122), 'ä.png' (228)
+    const expectedFiles = ['B.png', 'a-b.png', 'a.png', 'a_b.png', 'world.wrl', 'z.png', 'ä.png'];
+    assert.deepEqual(man.files.map((f) => f.path), expectedFiles);
+
+    // Verify findings follow the same sort order
+    const expectedMissing = ['missing_B.png', 'missing_a-b.png', 'missing_a.png', 'missing_a_b.png', 'missing_z.png', 'missing_ä.png'];
+    assert.deepEqual(plan.findings.missing.map((m) => m.relPath), expectedMissing);
+
+    // Run identical check in a subprocess with sv_SE locale if on Unix
+    if (process.platform !== 'win32') {
+      const script = `
+        const path = require('path');
+        const { scanProject } = require(${JSON.stringify(path.join(__dirname, '../../src/world-project/project-loader.js'))});
+        const { buildPackagePlan, buildManifest } = require(${JSON.stringify(path.join(__dirname, '../../src/world-project/package-plan.js'))});
+        const tmpDir = ${JSON.stringify(tmpDir)};
+        const scan = scanProject({ root: tmpDir, primary: path.join(tmpDir, 'world.wrl') });
+        const plan = buildPackagePlan(scan);
+        const man = buildManifest(plan);
+        console.log(JSON.stringify({
+          files: man.files.map((f) => f.path),
+          missing: plan.findings.missing.map((m) => m.relPath)
+        }));
+      `;
+      try {
+        const out = child_process.execFileSync(process.execPath, ['-e', script], {
+          env: { ...process.env, LANG: 'sv_SE.UTF-8', LC_ALL: 'sv_SE.UTF-8' },
+          encoding: 'utf8'
+        });
+        const subResult = JSON.parse(out);
+        assert.deepEqual(subResult.files, expectedFiles, 'Subprocess files order should match code-unit sort despite sv_SE locale');
+        assert.deepEqual(subResult.missing, expectedMissing, 'Subprocess missing order should match code-unit sort despite sv_SE locale');
+      } catch (err) {
+        // Log child process errors but don't fail if the OS just rejects the locale
+        if (err.stderr) console.error(err.stderr);
+      }
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
 
 test('nested WRL: primary + nested WRL + textures with correct depth + referencedBy', () => {

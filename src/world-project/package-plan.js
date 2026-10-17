@@ -73,6 +73,8 @@ const MANIFEST_NAME = 'MANIFEST.json';
 const REPORT_NAME = 'REPORT.md';
 const README_NAME = 'READ-ME-FIRST.txt';
 
+const cmp = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+
 const TEXTURE_KIND = 'texture';
 
 const relOf = (root, abs) =>
@@ -200,7 +202,7 @@ function buildPackagePlan(scan, deps = {}) {
       refCount: c.refCount != null ? c.refCount : Math.max(referencedBy.length, c.kind === 'wrl' && c.depth === 0 ? 0 : 1),
     });
   }
-  files.sort((a, b) => a.relPath.localeCompare(b.relPath));
+  files.sort((a, b) => cmp(a.relPath, b.relPath));
 
   const packagedRel = new Set(files.map((f) => f.relPath));
 
@@ -216,17 +218,17 @@ function buildPackagePlan(scan, deps = {}) {
   // Findings (project-relative where a path is available).
   const missing = (graph.missing || []).map((m) => ({
     relPath: relOf(projectRoot, m.path), kind: m.kind, refCount: m.refCount,
-  })).sort((a, b) => a.relPath.localeCompare(b.relPath));
+  })).sort((a, b) => cmp(a.relPath, b.relPath));
   const caseMismatches = (graph.caseMismatches || []).map((c) => ({
     referenced: relOf(projectRoot, c.referenced), actual: path.basename(c.actual),
-  })).sort((a, b) => a.referenced.localeCompare(b.referenced));
+  })).sort((a, b) => cmp(a.referenced, b.referenced));
   const unsafe = [...new Set((graph.unsafe || []).map((u) => u.url))].sort()
     .map((url) => ({ url, category: (graph.unsafe.find((u) => u.url === url) || {}).category || null }));
   const remote = [...new Set((graph.remoteRefs || []).map((r) => r.url))].sort()
     .map((url) => ({ url }));
   const cycles = (graph.cycles || []).map((c) => ({
     from: relOf(projectRoot, c.from), to: relOf(projectRoot, c.to),
-  })).sort((a, b) => (a.from + a.to).localeCompare(b.from + b.to));
+  })).sort((a, b) => cmp(a.from + a.to, b.from + b.to));
   const repeated = files.filter((f) => (f.refCount || 0) > 1)
     .map((f) => ({ relPath: f.relPath, refCount: f.refCount }));
 
@@ -252,8 +254,8 @@ function buildPackagePlan(scan, deps = {}) {
       reason: c.reason || null,
       artifact: c.artifactPath || null,
     })),
-  })).sort((a, b) => a.referrer.localeCompare(b.referrer)
-    || String(a.name).localeCompare(String(b.name))
+  })).sort((a, b) => cmp(a.referrer, b.referrer)
+    || cmp(String(a.name), String(b.name))
     || (a.candidates.length - b.candidates.length));
 
   const externProtoBlocking = externProtos.filter((g) => (
@@ -271,7 +273,7 @@ function buildPackagePlan(scan, deps = {}) {
   // Unknown is not the same as none, so it is surfaced rather than assumed empty.
   const externProtoErrors = (graph.externProtoErrors || []).map((e) => ({
     referrer: relOf(projectRoot, e.referrer), error: e.error,
-  })).sort((a, b) => a.referrer.localeCompare(b.referrer));
+  })).sort((a, b) => cmp(a.referrer, b.referrer));
 
   // Blocking rules: anything that could not be reproduced portably.
   const blocking = [];
