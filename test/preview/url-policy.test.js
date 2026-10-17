@@ -7,7 +7,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { isBlockedPreviewUrl, scanRemoteUrls, schemeOf } = require('../../src/preview/url-policy');
+const { isBlockedPreviewUrl, scanRemoteUrls, schemeOf, ALLOWED_SCHEMES } = require('../../src/preview/url-policy');
 
 test('local schemes are allowed (not blocked)', () => {
   for (const u of [
@@ -20,6 +20,24 @@ test('local schemes are allowed (not blocked)', () => {
   ]) {
     assert.equal(isBlockedPreviewUrl(u), false, `${u} should be allowed`);
   }
+});
+
+test('isBlockedPreviewUrl is false for every allowed scheme', () => {
+  assert.equal(isBlockedPreviewUrl('about:blank'), false);
+  assert.equal(isBlockedPreviewUrl('wrlworld://w/a.png'), false);
+  assert.equal(isBlockedPreviewUrl('chrome-extension://x/y'), false);
+  assert.equal(isBlockedPreviewUrl('devtools://d'), false);
+
+  for (const scheme of ALLOWED_SCHEMES) {
+    assert.equal(isBlockedPreviewUrl(`${scheme}://test`), false);
+  }
+});
+
+test('isBlockedPreviewUrl is true for javascript, mailto, padded HTTPS, and Windows drive paths', () => {
+  assert.equal(isBlockedPreviewUrl('javascript:alert(1)'), true);
+  assert.equal(isBlockedPreviewUrl('mailto:a@b'), true);
+  assert.equal(isBlockedPreviewUrl('  HTTPS://x  '), true);
+  assert.equal(isBlockedPreviewUrl('C:/x.png'), true);
 });
 
 test('explicit HTTP URLs are blocked', () => {
@@ -52,6 +70,25 @@ test('schemeOf parses the leading scheme and ignores protocol-relative', () => {
   assert.equal(schemeOf('relative/path.png'), null);
 });
 
+test('scanRemoteUrls finds ws/wss, trims/deduplicates, ignores file/mailto, and handles null', () => {
+  const text = `#VRML V2.0 utf8
+    Appearance { texture ImageTexture { url "ws://host/a" } }
+    Appearance { texture ImageTexture { url [ "  https://h/e " ] } }
+    Appearance { texture ImageTexture { url "https://h/e" } }
+    Appearance { texture ImageTexture { url "WSS://host/b" } }
+    Appearance { texture ImageTexture { url "file:///local" } }
+    Appearance { texture ImageTexture { url "mailto:a@b" } }`;
+
+  const remote = scanRemoteUrls(text);
+  assert.deepEqual(remote.sort(), [
+    'https://h/e',
+    'ws://host/a',
+    'WSS://host/b',
+  ].sort());
+
+  assert.deepEqual(scanRemoteUrls(null), []);
+});
+
 test('scanRemoteUrls finds http/https/protocol-relative references in url fields', () => {
   const text = `#VRML V2.0 utf8
     Appearance { texture ImageTexture { url "http://example.com/a.png" } }
@@ -64,6 +101,15 @@ test('scanRemoteUrls finds http/https/protocol-relative references in url fields
     'http://example.com/a.png',
     'https://cdn.test/b.jpg',
   ]);
+});
+
+test('scanRemoteUrls known limitation: only the first string in an array is scanned', () => {
+  // Known limitation: the advisory scan only reads the FIRST string in the array.
+  // The network gate isBlockedPreviewUrl still enforces every actual request.
+  const text = `#VRML V2.0 utf8
+    Appearance { texture ImageTexture { url [ "a.png" "https://h/x" ] } }`;
+
+  assert.deepEqual(scanRemoteUrls(text), []);
 });
 
 test('scanRemoteUrls returns empty for a purely local item', () => {
