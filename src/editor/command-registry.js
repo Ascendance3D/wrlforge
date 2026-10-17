@@ -85,6 +85,59 @@ function shortcutFromEvent(e) {
 
 function isModShortcut(shortcut) { return typeof shortcut === 'string' && shortcut.startsWith('Mod+'); }
 
+function formatShortcutDisplay(shortcut, platform) {
+  if (typeof shortcut !== 'string') return '';
+  const isMac = typeof platform === 'string' && /mac/i.test(platform);
+  let s = shortcut;
+  if (isMac) s = s.replace('Mod+', '⌘').replace('Shift+', '⇧');
+  else s = s.replace('Mod+', 'Ctrl+');
+
+  const parts = s.split('+');
+  if (parts.length > 1) {
+    let last = parts.pop();
+    if (last.length === 1 && /[a-z]/.test(last)) {
+      last = last.toUpperCase();
+    }
+    parts.push(last);
+    s = parts.join('+');
+  } else if (parts.length === 1) {
+    if (s.startsWith('⌘⇧') && s.length === 3 && /[a-z]/.test(s[2])) {
+      s = s.slice(0, 2) + s[2].toUpperCase();
+    } else if (s.startsWith('⌘') && s.length === 2 && /[a-z]/.test(s[1])) {
+      s = s[0] + s[1].toUpperCase();
+    } else if (s.length === 1 && /[a-z]/.test(s)) {
+      s = s.toUpperCase();
+    }
+  }
+
+  return s;
+}
+
+function formatAriaShortcut(shortcut, platform) {
+  if (typeof shortcut !== 'string') return '';
+  const isMac = typeof platform === 'string' && /mac/i.test(platform);
+  let s = shortcut.replace('Mod+', isMac ? 'Meta+' : 'Control+');
+
+  if (s.endsWith('++')) {
+    s = s.slice(0, -2) + '+Plus';
+  } else if (s.endsWith('+Add')) {
+    s = s.slice(0, -4) + '+Plus';
+  } else if (s.endsWith('+Subtract')) {
+    s = s.slice(0, -9) + '+-';
+  }
+
+  const parts = s.split('+');
+  if (parts.length > 0) {
+    let last = parts.pop();
+    if (last.length === 1 && /[a-z]/.test(last)) {
+      last = last.toUpperCase();
+    }
+    parts.push(last);
+    s = parts.join('+');
+  }
+  return s;
+}
+
 function validateRecord(r) {
   const bad = (why) => { throw commandError('ECOMMAND_INVALID', why); };
   if (!r || typeof r !== 'object') bad('a command record must be an object');
@@ -190,6 +243,7 @@ function createCommandRegistry() {
 const WRL_COMMAND_REGISTRY_API = Object.freeze({
   COMMAND_AREAS, COMMAND_ID_PATTERN, KEY_OWNERS,
   createCommandRegistry, normalizeShortcut, shortcutFromEvent, isModShortcut,
+  formatShortcutDisplay, formatAriaShortcut,
 });
 
 if (typeof module !== 'undefined' && module.exports) {
