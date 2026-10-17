@@ -17,7 +17,7 @@ const path = require('node:path');
 const zlib = require('node:zlib');
 const crypto = require('node:crypto');
 
-const { repackMall } = require('../../src/mall/repack');
+const { repackMall, SAVE_ERROR_MESSAGE } = require('../../src/mall/repack');
 const io = require('../../src/editor/file-io');
 const { FORMAT } = require('../../src/editor/wrl-document');
 const { MALL_UPLOAD_MAX_BYTES } = require('../../validator');
@@ -73,6 +73,89 @@ test('B2: an unchanged gzip Mall artifact is preserved byte-for-byte, with no ba
   assert.equal(res.sizeStatus, 'pass');
   assert.equal(res.artifactBytes, before.length,
     'the reported upload size is the REAL artifact, not a candidate');
+});
+
+// --- 10. save-error reporting ------------------------------------------------
+
+test('B2: safeSave EEXTERNAL gives the specific message and zero counts', () => {
+  const p = path.join(tmpDir('err-eexternal'), 'item.wrl');
+  const res = repackMall({ mallPath: p, text: WRL, asGzip: true }, {
+    safeSave: () => {
+      const e = new Error('simulated eexternal');
+      e.code = 'EEXTERNAL';
+      throw e;
+    },
+  });
+
+  assert.equal(res.saved, false);
+  assert.equal(res.errorCode, 'EEXTERNAL');
+  assert.equal(res.message, SAVE_ERROR_MESSAGE.EEXTERNAL);
+  assert.equal(res.writtenBytes, 0);
+  assert.equal(res.backup, null);
+  assert.equal(res.candidateBytes, null);
+  assert.equal(res.maxBytes, null);
+  assert.equal(res.overBytes, null);
+});
+
+test('B2: safeSave unknown error falls back to ESAVE and a generic message', () => {
+  const p = path.join(tmpDir('err-unknown'), 'item.wrl');
+  const res = repackMall({ mallPath: p, text: WRL, asGzip: true }, {
+    safeSave: () => {
+      throw new Error('disk full');
+    },
+  });
+
+  assert.equal(res.saved, false);
+  assert.equal(res.errorCode, 'ESAVE');
+  assert.equal(res.message, 'Not saved — disk full');
+  assert.equal(res.writtenBytes, 0);
+  assert.equal(res.backup, null);
+});
+
+test('B2: safeSave EVERIFY gives the exact EVERIFY message text', () => {
+  const p = path.join(tmpDir('err-everify'), 'item.wrl');
+  const res = repackMall({ mallPath: p, text: WRL, asGzip: true }, {
+    safeSave: () => {
+      const e = new Error('simulated everify');
+      e.code = 'EVERIFY';
+      throw e;
+    },
+  });
+
+  assert.equal(res.saved, false);
+  assert.equal(res.errorCode, 'EVERIFY');
+  assert.equal(res.message, SAVE_ERROR_MESSAGE.EVERIFY);
+});
+
+test('B2: real-filesystem unchanged-gzip no-op has specific message, real save has null message, neither breaks backup expectations', () => {
+  const dir = tmpDir('err-messages');
+  const p = path.join(dir, 'item.wrl');
+
+  // Real save (initial write)
+  const res1 = repackMall({ mallPath: p, text: WRL, asGzip: true });
+  assert.equal(res1.saved, true);
+  assert.equal(res1.message, null, 'a real save has no success message text');
+  // Initial save from scratch has no backup because there was no prior file
+
+  // Create a backup manually so the next real save overwrite has something to back up
+  fs.writeFileSync(p, foreignGzip(WRL));
+  const beforeBackups = backupsIn(dir).length;
+
+  // Unchanged gzip no-op
+  const res2 = repackMall({ mallPath: p, text: WRL, asGzip: true });
+  assert.equal(res2.saved, true);
+  assert.equal(res2.preserved, true);
+  assert.equal(res2.message, 'Already saved — the existing gzip artifact already matches this text, so nothing was rewritten.');
+  assert.equal(res2.backup, null, 'no write means no backup returned');
+  assert.equal(backupsIn(dir).length, beforeBackups, 'Mall behavior must not change: no write means no backup on disk');
+
+  // Overwrite with change
+  const res3 = repackMall({ mallPath: p, text: WRL + '# modified\n', asGzip: true });
+  assert.equal(res3.saved, true);
+  assert.equal(res3.preserved, false);
+  assert.equal(res3.message, null);
+  assert.ok(res3.backup, 'a real overwrite creates a backup');
+  assert.equal(backupsIn(dir).length, beforeBackups + 1, 'backup file was written');
 });
 
 // --- 2. over-limit refusal ---------------------------------------------------
