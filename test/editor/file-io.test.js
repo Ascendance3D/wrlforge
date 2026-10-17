@@ -96,6 +96,117 @@ test('safeSave preserves the original when the write is interrupted', () => {
   assert.deepStrictEqual(leftovers, [], 'the temp file was cleaned up');
 });
 
+test('safeSave with backup-then-rename-failure leaves original unchanged and removes temp and backup', () => {
+  const dir = tmpDir('save-backup-then-rename-failure');
+  const p = path.join(dir, 'item.wrl');
+  fs.writeFileSync(p, WRL, 'utf8');
+
+  // Create a pre-existing unrelated backup to ensure it is not deleted
+  const preExistingBackup = path.join(dir, 'item.wrl.bak-2000-01-01T00-00-00-000Z');
+  fs.writeFileSync(preExistingBackup, 'OLD BACKUP', 'utf8');
+
+  const badFs = faultyFs({
+    renameSync: () => {
+      const err = new Error('EBUSY: resource busy or locked');
+      err.code = 'EBUSY';
+      throw err;
+    }
+  });
+  let errCode;
+  try {
+    io.safeSave({ filePath: p, text: 'CLOBBERED', format: FORMAT.PLAIN }, { fs: badFs });
+  } catch (err) {
+    errCode = err.code;
+  }
+  assert.strictEqual(errCode, 'EBUSY', 'safeSave should throw the renameSync error');
+  assert.strictEqual(fs.readFileSync(p, 'utf8'), WRL, 'source is untouched after a failed replace');
+
+  const files = fs.readdirSync(dir);
+  const leftovers = files.filter((f) => f.includes('wrlforge-tmp'));
+  assert.deepStrictEqual(leftovers, [], 'the temp file was cleaned up');
+
+  const backups = files.filter((f) => f.includes('.bak'));
+  assert.deepStrictEqual(backups, ['item.wrl.bak-2000-01-01T00-00-00-000Z'], 'new backup was cleaned up and unrelated backup left alone');
+  assert.strictEqual(fs.readFileSync(preExistingBackup, 'utf8'), 'OLD BACKUP', 'pre-existing backup is unaffected');
+});
+
+test('safeSave preserves the original and throws when renameSync throws EBUSY or EACCES', () => {
+  for (const code of ['EBUSY', 'EACCES']) {
+    const dir = tmpDir(`save-fail-rename-${code.toLowerCase()}`);
+    const p = path.join(dir, 'item.wrl');
+    fs.writeFileSync(p, WRL, 'utf8');
+    const badFs = faultyFs({
+      renameSync: () => {
+        const err = new Error(`${code}: simulated error`);
+        err.code = code;
+        throw err;
+      }
+    });
+    let errCode;
+    try {
+      io.safeSave({ filePath: p, text: 'CLOBBERED', format: FORMAT.PLAIN }, { fs: badFs });
+    } catch (err) {
+      errCode = err.code;
+    }
+    assert.strictEqual(errCode, code, `safeSave should throw the ${code} error`);
+    assert.strictEqual(fs.readFileSync(p, 'utf8'), WRL, 'source is untouched after a failed replace');
+    const leftovers = fs.readdirSync(dir).filter((f) => f.includes('wrlforge-tmp'));
+    assert.deepStrictEqual(leftovers, [], 'the temp file was cleaned up');
+  }
+});
+
+test('safeSave preserves the original, cleans up, and does not rename if copyFileSync (backup) throws EACCES', () => {
+  const dir = tmpDir('save-fail-backup-eacces');
+  const p = path.join(dir, 'item.wrl');
+  fs.writeFileSync(p, WRL, 'utf8');
+  let renameCalled = false;
+  const badFs = faultyFs({
+    copyFileSync: () => {
+      const err = new Error('EACCES: permission denied');
+      err.code = 'EACCES';
+      throw err;
+    },
+    renameSync: (...args) => {
+      renameCalled = true;
+      return fs.renameSync(...args);
+    }
+  });
+  let errCode;
+  try {
+    io.safeSave({ filePath: p, text: 'CLOBBERED', format: FORMAT.PLAIN }, { fs: badFs });
+  } catch (err) {
+    errCode = err.code;
+  }
+  assert.strictEqual(errCode, 'EACCES', 'safeSave should throw the copyFileSync error');
+  assert.strictEqual(renameCalled, false, 'renameSync should never be called');
+  assert.strictEqual(fs.readFileSync(p, 'utf8'), WRL, 'source is untouched after a failed backup');
+  const leftovers = fs.readdirSync(dir).filter((f) => f.includes('wrlforge-tmp'));
+  assert.deepStrictEqual(leftovers, [], 'the temp file was cleaned up');
+});
+
+test('safeSave preserves the original and throws when renameSync throws EPERM', () => {
+  const dir = tmpDir('save-fail-rename-eperm');
+  const p = path.join(dir, 'item.wrl');
+  fs.writeFileSync(p, WRL, 'utf8');
+  const badFs = faultyFs({
+    renameSync: () => {
+      const err = new Error('EPERM: operation not permitted');
+      err.code = 'EPERM';
+      throw err;
+    }
+  });
+  let errCode;
+  try {
+    io.safeSave({ filePath: p, text: 'CLOBBERED', format: FORMAT.PLAIN }, { fs: badFs });
+  } catch (err) {
+    errCode = err.code;
+  }
+  assert.strictEqual(errCode, 'EPERM', 'safeSave should throw the EPERM error');
+  assert.strictEqual(fs.readFileSync(p, 'utf8'), WRL, 'source is untouched after a failed replace');
+  const leftovers = fs.readdirSync(dir).filter((f) => f.includes('wrlforge-tmp'));
+  assert.deepStrictEqual(leftovers, [], 'the temp file was cleaned up');
+});
+
 test('safeSave aborts (EVERIFY) and preserves the source when the written file will not decode', () => {
   const dir = tmpDir('save-fail-verify');
   const p = path.join(dir, 'item.wrl');
