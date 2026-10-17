@@ -12,7 +12,7 @@ This document outlines the design proposal for WD2-E-F Snapping (#56) for WRL Fo
 ## 2. Translate Grid and Scale Step Snapping
 **User Model:**
 * Snapping will activate when the user holds the `Shift` modifier key, matching the existing rotation behavior.
-* **Translation Snapping:** Snaps movement to increments of standard grid sizes (e.g., 0.1, 0.5, 1.0 meters). Since the manipulator operates in parent coordinates (which is world space for top-level transforms), snapping constraints apply to these world-space axes.
+* **Translation Snapping:** Snaps movement to increments of standard grid sizes (e.g., 0.1, 0.5, 1.0 meters). Since the manipulator operates in parent coordinates (which is world space for top-level transforms, or parent-local space for nested Transforms), snapping constraints apply to these axes. Note: `doc_translate_target` in `apps/desktop-tauri/ui/src/gizmo.rs:5` currently requires the Transform to be a top-level node, meaning snapping currently only applies in world space.
 * **Scale Snapping:** Snaps the scaling factor to increments (e.g., 0.1, 0.5 steps). This is applied to the calculated uniform or local-axis factor before composition.
 
 ## 3. Where Snapping Lives (Architecture)
@@ -22,11 +22,11 @@ Snapping must remain strictly as UI state.
 
 ## 4. Number Formatting
 * Snapped values are sent to the backend planners. `plan_translate` and `plan_scale` use `field_edit::plan_field_edit` to generate exact UTF-16 edits.
-* **Precision:** The decimal formatting relies on the screen precision metric (`decimals_for(units_per_px)` in `apps/desktop-tauri/protocol/src/gizmo.rs:743`).
+* **Precision and Step Rule:** The decimal formatting relies on the screen precision metric (`decimals_for(units_per_px)` in `apps/desktop-tauri/protocol/src/gizmo.rs:743`). However, for snapped values, the rule is: a snapped value must be written with exactly the decimals the step needs (e.g. max(step decimals, minimal exact repr)), and must never be rounded off-grid due to zoom level.
 * **Preservation:** Unchanged components keep their exact authored lexemes (`plan_translate_with` and `plan_scale_with` logic). Only the manipulated component's token changes, preserving the user's authored number style on untouched components.
 
 ## 5. Fail-Closed Cases
-* **IS-Bound Fields:** Unverified in source, but stated as a product requirement that uneditable fields fail closed.
+* **IS-Bound Fields:** Uneditable fields fail closed. Verified at `crates/wrlforge-vrml/src/field_edit.rs:58` (`IS_BOUND = "field-is-is-bound"`) and the refusal at `:664`. Because `plan_translate` and `plan_scale` route through `plan_field_edit`, they reach this gate and safely refuse.
 * **DEF/USE Shared Nodes:** USEd nodes refuse edits. Shared PROTO definitions require explicit confirmation (`ui::confirm_shared` in `apps/desktop-tauri/ui/src/gizmo.rs:1411`).
 * **Non-finite input:** Handled safely. E.g., `axis_param` in `protocol/src/gizmo.rs:327` returns `Err(refusal::NOT_FINITE)`. Planners like `plan_rotate` also check `!delta.is_finite()` and return `reason::VALUE_NOT_FINITE` (`crates/wrlforge-vrml/src/manipulate.rs:1127`).
 * **Rotations near singularities:** `axis_param` protects against parallel rays (`denom < MIN_SIN2`).
@@ -38,6 +38,7 @@ Snapping must remain strictly as UI state.
 
 ## 7. Test Plan
 * **Planner Unit Tests:** Add pure Rust tests in `crates/wrlforge-vrml/src/manipulate/tests.rs` (or similar) supplying known "snapped" floating-point values to `plan_translate` and `plan_scale` to verify exact UTF-16 span replacement strings.
+* **Formatting Test Case:** Add a specific planner test case verifying that snapped values are written exactly (e.g., 0.1 step always outputs "0.1" or "0.100" as minimally exact, ignoring screen zoom precision truncations that would place it off-grid).
 * **UI Smoke Tests:** Extend `apps/desktop-tauri/ui/src/smoke/gizmo.rs` and `apps/desktop-tauri/ui/src/smoke/rotscale.rs` to simulate pointer drags with `Shift` held, asserting that the resulting IPC requests contain correctly quantized values for translation and scale, matching the 15° rotation test.
 
 ## 8. Open Questions for the Owner
@@ -45,6 +46,8 @@ Snapping must remain strictly as UI state.
    * *Recommendation:* Hardcode standard steps (e.g., 0.1 for translation, 0.1 for scale) for beta to reduce settings surface area.
 2. **Translation Snapping Origin:** Does translation snap relative to the object's original position, or to absolute world coordinate grid lines?
    * *Recommendation:* Snap relative to the object's start-of-drag position (delta snapping) to avoid unexpected large jumps for off-grid objects.
+3. **Modifier Conflict:** Is `Shift` already used for anything else during translate/scale drags?
+   * *Recommendation:* No current conflicts found during pointer drags (Shift is only used for rotation snapping, `ev.shift_key()` in `apps/desktop-tauri/ui/src/gizmo.rs:1371`).
 
 ## 9. Out of Scope
 * Multi-selection transformation (#57).
