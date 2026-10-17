@@ -19,7 +19,7 @@
 | Electron Dialog | Modal Focus Trap | Unverified | `renderer/editor.html:616` |
 | Rust Dialog | Modal Focus Trap | Unverified | `apps/desktop-tauri/ui/src/about.rs:144` |
 | Electron Contrast | WCAG 1.4.3 Contrast (Minimum) | Pass | `renderer/editor.html:97`, `100` |
-| Rust Contrast | WCAG 1.4.3 Contrast (Minimum) | Fail | `apps/desktop-tauri/ui/static/themes.css:179` |
+| Rust Contrast | WCAG 1.4.3 Contrast (Minimum) | Partial | `apps/desktop-tauri/ui/static/themes.css:305`, `309` (Tokyo Night Light muted/placeholder on `--wf-bg-app`) |
 | Electron Zoom | WCAG 1.4.4 Resize Text | Pass | `renderer/editor.html:434-438` |
 | Rust Zoom | WCAG 1.4.4 Resize Text | Unverified | `apps/desktop-tauri/ui/src/` |
 | Command ARIA | ARIA `aria-keyshortcuts` | Pass | `renderer/command-bindings.js:42` |
@@ -49,21 +49,33 @@
 - **Evidence:** `renderer/editor.html:435` `<button id="zoomOutBtn" data-command="view.zoomOut" class="secondary" title="Decrease size (Ctrl -)" aria-label="Decrease size">−</button>`.
 - **Fix:** The `title` attribute is often read inconsistently by screen readers. A combination of `aria-label` for the base name and `aria-description` or a custom tooltip for the keyboard shortcut is preferred.
 
-**4. Secondary Text Contrast Ratio (Tokyo Night Theme) (Moderate)**
-- **Affected element:** Secondary Text in Tauri Tokyo Night.
-- **Criterion:** WCAG 1.4.3 Contrast (Minimum) 4.5:1.
-- **Evidence:** `apps/desktop-tauri/ui/static/themes.css:179` (`--wf-text-disabled: #545c7e;` on `--wf-bg-app: #1a1b26`).
-- **Fix:** The contrast ratio of `#545c7e` on `#1a1b26` is 2.76:1, which is below the 4.5:1 AA threshold.
+**4. Muted and Placeholder Text Contrast, Tokyo Night Light (Moderate)**
+- **Affected element:** Muted and placeholder text in the Tauri `tokyo-night-light` theme, wherever it is drawn directly on the app background (`--wf-bg-app`).
+- **Criterion:** WCAG 1.4.3 Contrast (Minimum), 4.5:1 for normal text.
+- **Evidence:** `apps/desktop-tauri/ui/static/themes.css:292` (`--wf-bg-app: #c1c2c7`), `:305` (`--wf-text-muted: #4f5266`), `:309` (`--wf-text-placeholder: #5a5d6f`).
+- **Fix:** On `--wf-bg-app`, muted text measures 4.32:1 and placeholder text 3.66:1, both below 4.5:1. On the editor surface (`--wf-surface-editor: #e6e7ed`) they pass, at 6.23:1 and 5.27:1. Darken the two tokens for this theme, or confirm at runtime that muted and placeholder text never sit directly on `--wf-bg-app`. Which surfaces carry these tokens was not traced statically, so this is **Partial** rather than Fail.
+- **Not a finding:** `--wf-text-disabled` (e.g. `#545c7e`, 2.23–2.90:1 in the dark themes) is used for inactive controls. WCAG 1.4.3 exempts text in inactive user-interface components.
 
-*Contrast Evaluation Data (WCAG 2.x relative-luminance formula)*:
-- Electron Dark: text (`#ddd`) on background (`#1b1b1b`) = 12.68:1 (Passes > 4.5:1)
-- Electron Dark: primary button text (`#fff`) on bg (`#2d6ae0`) = 4.94:1 (Passes > 4.5:1)
-- Electron Dark: primary button focus (`#7db3ff`) on bg (`#1b1b1b`) = 8.01:1 (Passes > 3:1)
-- Tauri Tokyo: text (`#a9b1d6`) on background (`#1a1b26`) = 8.10:1 (Passes > 4.5:1)
-- Tauri Tokyo: secondary text (`#565f89`) on background (`#1a1b26`) = 2.76:1 (Fails < 4.5:1)
-- Tauri High Contrast: text (`#ffffff`) on background (`#000000`) = 21.00:1 (Passes > 4.5:1)
-- Tauri High Contrast: primary button text (`#ffffff`) on bg (`#005fcc`) = 5.98:1 (Passes > 4.5:1)
-- Tauri High Contrast: focus (`#00e0ff`) on bg (`#000000`) = 13.11:1 (Passes > 3:1)
+*Contrast evaluation data (WCAG 2.x relative-luminance formula; every value read from the cited line):*
+
+| Theme (`apps/desktop-tauri/ui/static/themes.css`) | Token | Foreground | Background | Ratio | Result (4.5:1 text) |
+|---|---|---|---|---|---|
+| `tokyo-night` (`:26`) | text-primary `:41` | `#c0caf5` | bg-app `#101014` `:30` | 11.76:1 | Pass |
+| `tokyo-night` | text-secondary `:43` | `#a9b1d6` | bg-app `#101014` | 8.99:1 | Pass |
+| `tokyo-night` | text-muted / placeholder `:44`, `:48` | `#8089b3` | bg-app `#101014` | 5.56:1 | Pass |
+| `tokyo-night` | text-muted | `#8089b3` | surface-editor `#1a1b26` | 5.00:1 | Pass |
+| `tokyo-night-storm` (`:164`) | text-secondary `:179` | `#a9b1d6` | bg-app `#1b1e2e` `:167` | 7.82:1 | Pass |
+| `tokyo-night-storm` | text-muted / placeholder `:180`, `:184` | `#8a94c2` | bg-app `#1b1e2e` | 5.58:1 | Pass |
+| `tokyo-night-storm` | text-muted | `#8a94c2` | surface-editor `#24283b` | 4.92:1 | Pass |
+| `tokyo-night-light` (`:289`) | text-primary `:302` | `#343b59` | bg-app `#c1c2c7` `:292` | 6.16:1 | Pass |
+| `tokyo-night-light` | text-muted `:305` | `#4f5266` | bg-app `#c1c2c7` | **4.32:1** | **Fail** |
+| `tokyo-night-light` | text-placeholder `:309` | `#5a5d6f` | bg-app `#c1c2c7` | **3.66:1** | **Fail** |
+| `tokyo-night-light` | text-muted / placeholder | `#4f5266` / `#5a5d6f` | surface-editor `#e6e7ed` | 6.23:1 / 5.27:1 | Pass |
+| Electron default dark (`renderer/editor.html`) | body text | `#ddd` | `#1b1b1b` | 12.68:1 | Pass |
+| Electron default dark | primary button `:97` | `#fff` | `#2d6ae0` | 4.94:1 | Pass |
+| Electron default dark | focus outline | `#7db3ff` | `#1b1b1b` | 8.01:1 | Pass (3:1 non-text) |
+
+The Tauri UI defines only the three themes above, so it has no high-contrast theme. The Electron editor offers `dark`, `light`, `terminal`, `tokyo` and `contrast` (`src/settings/preferences.js:46`). Only the default dark palette was computed here; the other four Electron themes are **Unverified**.
 
 **5. Modal Focus Management (Unverified)**
 - **Affected element:** `.modal-backdrop` and `.about-dialog` `role="dialog"`.
