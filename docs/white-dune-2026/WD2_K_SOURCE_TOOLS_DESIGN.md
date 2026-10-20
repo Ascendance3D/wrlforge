@@ -39,27 +39,29 @@ The rule for every navigation action (go-to-definition, find references, symbol 
 
 1.  **Scope graph is the reference authority.** Every lookup goes through `resolve(graph, reference)` on a graph built from the current parse session. The tools never match DEF names by text search, and never re-implement scoping.
 2.  **Navigate only on `STATUS.RESOLVED` with a symbol.** The command layer moves the cursor only when the resolution's `status` is `STATUS.RESOLVED` and it carries a `symbol` with a `declRange`. Every other status refuses navigation. The cursor does not move.
-3.  **Defined results.** The command layer maps each resolution to exactly one of these results (names proposed):
+3.  **Defined results.** The command layer maps each resolution to exactly one of these results. Result names and all quoted user text are proposed:
 
     | Scope-graph result | Command result | User-facing behavior |
     |---|---|---|
     | `RESOLVED` with `symbol` | `navigate` | Select the DEF name span (`declRange`) and scroll it into view. |
     | `RESOLVED`, reason `NODE_TYPE_IS_BUILTIN` | `refuse:builtin` | "Built-in node type — no source definition." |
+    | `RESOLVED` without `symbol`, any other reason | `refuse:unknown` | Refuse. A resolution without a symbol is never a jump target. |
     | `AMBIGUOUS` (for example `DUPLICATE_DEF_IN_SCOPE`) | `ambiguous` | List every candidate from `evidence` in source order. Nothing is preselected; the user picks one explicitly. |
-    | `INVALID` (`MISSING_NAME`, `SELF_REFERENTIAL_USE`, `USE_BEFORE_DEF`, …) | `refuse:invalid` | "Cannot navigate: <reason message>." `USE_BEFORE_DEF` may list the later declarations as information, not as a jump target. |
+    | `INVALID` (`MISSING_NAME`, `SELF_REFERENTIAL_USE`, `USE_BEFORE_DEF`, …) | `refuse:invalid` | "Cannot navigate: <proposed text for the `REASON` code>." The scope graph returns reason codes only; the user-facing wording per code is proposed and needs owner approval (§11.1). `USE_BEFORE_DEF` may list the later declarations as information, not as a jump target. |
     | `UNRESOLVED` | `refuse:unresolved` | "No visible definition." |
     | `UNSUPPORTED` | `refuse:unsupported` | "Not supported." |
     | `RECOVERED` | `refuse:incomplete` | "Document structure incomplete." |
+    | Session text differs from the current buffer (§3.5) | `refuse:stale` | "Document changed — try again." No lookup is made against the stale graph. |
     | Any status not listed above | `refuse:unknown` | Refuse. New statuses never default to navigation. |
 
 4.  **No first-match fallback.** When there are several candidates, the tool never jumps to the first, closest, or type-matching one. Choosing from the ambiguity list is a separate, explicit user action.
-5.  **Stale analysis.** Navigation uses the scope graph of the parse session for the current buffer. If the buffer changed after that session was created, the tool refuses (`refuse:stale`) or waits for the next analysis. It never maps a stale `declRange` onto newer text.
+5.  **Stale analysis.** Navigation uses the scope graph of the parse session for the current buffer. If the buffer changed after that session was created, the tool refuses with `refuse:stale` (fail-closed). The user can retry after the next analysis. It never maps a stale `declRange` onto newer text.
 6.  **PROTO scopes.** Resolution respects PROTO boundaries exactly as the scope graph does (`DEF_NOT_VISIBLE_ACROSS_PROTO_BOUNDARY` is a refusal, not a cross-scope jump).
 7.  **External definitions.** Go-to-definition on an `EXTERNPROTO` instance stops at the `EXTERNPROTO` declaration in this document. It does not open or fetch the external file and reports "Defined externally."
 
 ## 4. Source Patches and Undo
 
-Rename is out of scope, but structural selection and later steps may produce targeted edits (for example, deleting a selected node span).
+None of the five steps in §9 edits the document. These rules bind any later, separately approved step that does (for example, deleting a selected node span). Rename remains out of scope.
 
 1.  **Span-anchored edits only.** Edits are WD1.2 edit sets (`src/vrml/edit.js`) against the exact text of a parse session. Text outside each edit span is never touched.
 2.  **Stale-span guard.** Before dispatch, the planner checks that the current buffer equals the session text (the same gate as `documentGate` in `src/vrml/structure-edit.js`). It then builds a receipt with `verifyTransaction({ oldText, edits, newText })`. The editor dispatch re-checks the buffer (`applyVerifiedEdits` refuses with `buffer-changed`). On any mismatch the edit is refused and nothing is applied; the user can retry after the next analysis.
@@ -72,13 +74,13 @@ Rename is out of scope, but structural selection and later steps may produce tar
 Structural selection changes the selection only. It does not edit text.
 
 1.  **Expansion order.** From the cursor or current selection, each "expand" step selects the smallest enclosing `src/vrml` parse range that strictly contains the current selection, in this order:
-    1.  **Value** — the token or value range (number, string, `TRUE`, a single node, a `[ … ]` list).
+    1.  **Value** — a single token value (number, string, `TRUE`), then, if that value is an element of a `[ … ]` list, the whole list. A node is never selected at this level; nodes are selected at level 3.
     2.  **Field** — field name plus its value.
     3.  **Node** — the node including its `DEF name` prefix, or the `USE name` statement.
     4.  **Parent node** — the next enclosing node, then repeat steps 2–4 upward.
     "Shrink" walks the same stack back down. It never invents a range that did not appear on the expansion stack.
 2.  **Strings.** A string literal is one value. Expansion inside a string first selects the whole string, including quotes. It never selects part of a string and part of the surrounding source. Text inside a string is not parsed further (§6).
-3.  **Comments.** A cursor inside a `#` comment selects the comment. The next step expands to the enclosing node. A comment is never split. Comments adjacent to a node are not added to the node range.
+3.  **Comments.** A cursor inside a `#` comment selects the comment. The next step follows the same smallest-strictly-enclosing rule as §5.1: inside a `[ … ]` list it selects the list, otherwise the field or node that encloses the comment. A comment is never split. Comments adjacent to a node are not added to the node range.
 4.  **Root and whitespace.** At the top-level scene, expansion stops; another expand step leaves the selection unchanged. On whitespace between statements, the first step selects the nearest enclosing node, or does nothing at the root.
 5.  **Incomplete source.** If the parse is truncated, depth-capped, has blocking syntax errors, or the enclosing node is marked `incomplete`, structural selection does not expand past the last complete range. It shows "Document structure incomplete." It never guesses a closing brace.
 6.  **Units.** All ranges use UTF-16 code-unit offsets from the tokenizer, the same units CodeMirror uses, so non-ASCII and non-BMP text select correctly.
@@ -87,7 +89,7 @@ Structural selection changes the selection only. It does not edit text.
 
 `src/vrml` tokenizes each `url` entry of a Script node as one VRML string token. This lane keeps that as the only structure for Script content.
 
-1.  **`javascript:` strings** — Treated as one VRML string value. Highlighting stays the existing string highlight. Navigation inside the string does nothing. Structural selection follows §5.2.
+1.  **`javascript:` strings** — Treated as one VRML string value. Highlighting stays the existing string highlight. Navigation inside the string returns `refuse:unsupported` ("Not supported inside Script code."); the cursor does not move. Structural selection follows §5.2.
 2.  **`vrmlscript:` strings** — Same behavior as `javascript:`.
 3.  **Other or nested syntax** (`ecmascript:`, CDATA-style content, escaped quotes, embedded VRML-like text) — Same behavior. The content is opaque. No tool interprets it.
 4.  **Incomplete Script blocks** (an unterminated string, or a Script node with parse errors) — Handled by §5.5 and §3 (`refuse:incomplete`). Nothing inside the string is highlighted structurally.
@@ -109,7 +111,7 @@ Each case returns a defined result. None of them crashes or produces a wrong ans
 3.  **Invalid or unresolved reference** — `refuse:invalid` or `refuse:unresolved`. The cursor does not move.
 4.  **Stale session** — `refuse:stale`. Edits refuse with `buffer-changed`.
 5.  **External definition** — "Defined externally." No file access or fetching.
-6.  **Root or whitespace selection** — Expansion stops with no change.
+6.  **Root, or whitespace at the root** — Expansion stops with no change.
 7.  **Read-only editor** — Edits refuse with `editor-read-only`. Navigation and selection still work.
 
 ## 9. Proposed Implementation Order
@@ -127,12 +129,12 @@ Each step requires its own owner GO.
 **Independent QA is required for this lane.**
 
 **Focused tests (Node, `node:test`):**
-1.  **Resolution mapping:** One fixture per row of the §3.3 table — resolved USE; duplicate DEF in one scope (`ambiguous`, cursor unchanged, no candidate preselected); missing name; self-referential USE outside Script (`refuse:invalid`); USE inside a Script referencing its own DEF (`navigate`); USE before DEF; DEF behind a PROTO boundary (`refuse:unresolved`); recovered document (`refuse:incomplete`); built-in node type (`refuse:builtin`); an unknown status value (`refuse:unknown`).
+1.  **Resolution mapping:** One fixture per row of the §3.3 table — resolved USE; duplicate DEF in one scope (`ambiguous`, cursor unchanged, no candidate preselected); missing name; self-referential USE outside Script (`refuse:invalid`); USE inside a Script referencing its own DEF (`navigate`); USE before DEF; DEF behind a PROTO boundary (`refuse:unresolved`); recovered document (`refuse:incomplete`); built-in node type (`refuse:builtin`); a resolved result without a symbol (`refuse:unknown`); an unknown status value (`refuse:unknown`).
 2.  **Stale session:** Navigation and edits computed on one session refuse after an intervening edit to the buffer.
 3.  **Structural selection:** At least five nesting fixtures (value → field → node → parent node) with exact expected spans; a cursor in a string; a cursor in a comment; root and whitespace; a truncated document; non-BMP characters before the target span.
-4.  **Script strings:** `javascript:` and `vrmlscript:` URLs, an unterminated Script string, and an escaped quote inside a string — selection never crosses the string boundary and no structural highlights appear inside the string.
+4.  **Script strings:** `javascript:` and `vrmlscript:` URLs, an unterminated Script string, and an escaped quote inside a string — selection never crosses the string boundary, navigation inside the string returns `refuse:unsupported`, and no structural highlights appear inside the string.
 5.  **Command registry:** The palette provider returns only registry commands and respects `enabled`.
-6.  **Edits and undo:** A verified edit preserves all text outside its span (byte-exact, LF and CRLF fixtures); an overlapping or invalid edit set is rejected with no change; one action adds exactly one undo step (`historyDepth()`), and undo restores the exact previous text.
+6.  **Edits and undo (only for a later, separately approved editing step; §4):** A verified edit preserves all text outside its span (byte-exact, LF and CRLF fixtures); an overlapping or invalid edit set is rejected with no change; one action adds exactly one undo step (`historyDepth()`), and undo restores the exact previous text.
 
 **Visual QA (Electron, Linux first, then macOS 15+):**
 1.  **Palette:** Opens, filters by typing, runs a command with the keyboard.
@@ -143,7 +145,7 @@ Each step requires its own owner GO.
 
 ## 11. Open Owner Decisions
 
-1.  Approve the result names and messages in §3.3, or replace them.
+1.  Approve the result names (including `refuse:stale` and `refuse:unknown`) and the proposed user text per `REASON` code in §3.3, or replace them.
 2.  Approve a new `userEvent` value for source-tool edits (§4.4), or reuse `input.model`.
 3.  Whether any JavaScript-aware Script assistance (second grammar or new dependency) should ever be considered (§6.6).
 4.  Whether structural selection should include leading comments attached to a node (§5.3 currently excludes them).
