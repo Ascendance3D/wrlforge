@@ -126,7 +126,8 @@ Required binding (mandatory, not an option):
    `beginGeneration` path. The bridge keeps one ledger **per generation id**.
    Each Inline WRL request served through a serving context that carries a
    generation is recorded in that generation's ledger, as canonical path
-   (§6.2) → SHA-256 of the exact bytes served. The `saved()` serving context
+   (§6.2) → { the exact request URL as received, SHA-256 of the exact bytes
+   served }. The `saved()` serving context
    carries no generation and records nothing, so a pick on a saved-version
    render can never open a target.
 2. Requests served from the workspace disk preview context are never
@@ -283,17 +284,31 @@ through the `wrlworld://` handler instead of reusing a cached scene.
 
 ### 6.1 Request
 
-The renderer sends exactly `{ sessionId, generationId, inlineSpan: { start,
-end } }` over **one new IPC channel (proposed `editor:openInlineTarget`)**. It
-takes no path, no URL, and no file name. The reported scene URL from
-`snapshot.inline` is sent only as evidence `{ sceneUrl }` and is never used as
-authority except as described in §6.2.
+The renderer sends exactly `{ sessionId, generationId, bufferVersion,
+inlineSpan: { start, end }, sceneUrl }` over **one new IPC channel (proposed
+`editor:openInlineTarget`)**. It takes no filesystem path and no file name.
+
+- `bufferVersion` is the renderer's current buffer version, the same counter
+  it already sends with `previewLoad`.
+- `sceneUrl` is the `wrlworld://` URL X_ITE reported for the hit's Inline
+  scene (`snapshot.inline`). It is **untrusted evidence**, never authority: main
+  accepts it only if it is byte-identical to a request URL main itself served
+  and recorded for that generation (§4.1 rule 1, §6.2 step 4).
+  `INLINE_OPEN_CANDIDATE` carries it from the snapshot only so the renderer can
+  forward it; `resolvePick` does not inspect it.
+
+The authority for the target is main's own record: the authored entry it reads
+from its registered text (§6.2 step 2) and the served-request record of the
+clicked generation.
 
 ### 6.2 Main-side resolution
 
-1. Session and generation: `sessionId` must be the live editor session and
-   `generationId` both the accepted and the latest requested generation
-   (§4.1 rule 6). Else `inline-target-changed`.
+1. Session, generation and parent buffer: `sessionId` must be the live editor
+   session, `generationId` both the accepted and the latest requested
+   generation (§4.1 rule 6), and `bufferVersion` equal to the version
+   `BufferOverlay` registered for that generation. A parent edit that has not
+   yet started a new generation therefore still refuses. Else
+   `inline-target-changed`.
 2. Authored entry: re-parse main's own registered text (§4.2) and require
    exactly one `Inline` node at the span, outside any PROTO body; else
    `inline-owner-unproven`. Its `url` must have exactly one entry that
@@ -302,7 +317,10 @@ authority except as described in §6.2.
 3. Classification: `classifyReference` must return `CATEGORY.LOCAL`. Remote
    categories refuse `inline-target-remote`; absolute, traversal, malformed and
    inline-script categories refuse `inline-target-unauthorized`.
-4. Scene URL normalization. Main maps `sceneUrl` with the existing
+4. Scene URL. `sceneUrl` must be byte-identical to the request URL recorded in
+   the clicked generation's ledger; anything else refuses
+   `inline-owner-unproven`. Main then maps the recorded URL (its own copy) with
+   the existing
    `requestToAbsPath` (`src/world-project/preview-source.js`) and first refuses,
    with `inline-target-unauthorized`, any URL that:
    - is not exactly scheme `wrlworld:` and authority `project` (this rejects
@@ -320,7 +338,8 @@ authority except as described in §6.2.
    mismatch is a different key and refuses. Symlink escapes are still caught
    separately by `realpathInside` inside `authorizeWorldReference`.
 6. Agreement: the canonical path from the authored entry (step 2) must equal
-   the canonical path from `sceneUrl` (step 4). Else `inline-owner-unproven`.
+   the canonical path of the recorded request URL (step 4). Else
+   `inline-owner-unproven`.
 7. Graph: the path must be a readable graph WRL node whose parent is the
    edited document. Else `inline-target-missing`.
 8. Ledger: the clicked generation's ledger must hold a non-ambiguous,
@@ -399,13 +418,18 @@ D3.
    The renderer never derives the name from a URL.
 2. **Cancel** does nothing. The parent document, buffer, selection, and undo
    history are untouched.
-3. **Open** runs the existing unsaved-changes guard (`confirmUnsaved` in
+3. **Parent edit while the prompt is open.** Any change to the parent buffer
+   (or a new preview load) dismisses the prompt and discards the candidate; the
+   status line shows the existing `REFUSED_STALE` text. The candidate is never
+   re-authorized against new parent text. Main's `bufferVersion` check (§6.2
+   step 1) is the backstop if the request is already in flight.
+4. **Open** runs the existing unsaved-changes guard (`confirmUnsaved` in
    `renderer/editor.js`), then sends the open request. §6.2 runs again in full
    before §6.3, so nothing from the dry run is trusted. If the user cancels the
    guard, or the open refuses, nothing changes.
-4. The click never moves the Scene Tree selection or the Inspector in the
+5. The click never moves the Scene Tree selection or the Inspector in the
    parent document.
-5. Any refusal shows its one-line text in the existing status line and does
+6. Any refusal shows its one-line text in the existing status line and does
    nothing else.
 
 ## 8. Acceptance cases
@@ -417,7 +441,8 @@ session are byte-for-byte and id-for-id identical before and after the click.
 | # | Case | Fixture | Expected |
 |---|---|---|---|
 | 1 | Authorized local Inline | `main.wrl`: `Inline { url "chair.wrl" }`; `chair.wrl` in the graph | `INLINE_OPEN_CANDIDATE`; prompt "Open chair.wrl in the editor?"; on Open (after the unsaved guard) the session is `chair.wrl` with exactly the served text; on Cancel, no change |
-| 2a | Stale parent | Case 1, then edit `main.wrl` without a preview refresh | `REFUSED_STALE` (existing reason); no change |
+| 2a | Stale parent | Case 1, then edit `main.wrl` and click before the preview refreshes | `REFUSED_STALE` `source-changed-since-preview` (existing `resolvePick` step 1: `gen.text !== currentText`); no prompt; no change |
+| 2a′ | Parent edit while the prompt is open | Case 1; click, prompt opens; edit `main.wrl` | Prompt dismissed, candidate discarded, status line shows the `REFUSED_STALE` text; a crafted open with the old `bufferVersion` refuses `inline-target-changed`; no change beyond the user's own edit |
 | 2b | Target changed on disk | Case 1, then change `chair.wrl` on disk after the preview loaded, then Open | `REFUSED_EXTERNAL` `inline-target-changed`; no change |
 | 2c | Click during an in-progress reload | Case 1; change `chair.wrl`; start a reload; click the still-displayed old render before the new load completes | `REFUSED_STALE` in the renderer (pick map retired before the load); no prompt; no change |
 | 2c′ | Reload while the prompt is open | Case 1; click, prompt opens; change `chair.wrl` and start a reload; press Open | `REFUSED_EXTERNAL` `inline-target-changed` (generation no longer the latest requested); no change |
