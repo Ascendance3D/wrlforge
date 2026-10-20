@@ -82,9 +82,9 @@ missing refuses with exactly the result listed in §5.3.
 |---|---|---|
 | I1 | The **parent preview generation** is the displayed one and equals the editor buffer | The existing `resolvePick` stale check: `currentCheck === null` and `gen.text === analysis.text === currentText` |
 | I2 | The hit Shape's execution context is **one Inline scene**, owned by **one Inline node** that has one recorded occurrence in the parent generation text and one live parent | The adapter reports, as plain data, the owning Inline node's single occurrence `[start,end)` and the scene's loaded URL **(proposed field `snapshot.inline`)**; it omits the field when any part is unproven |
-| I3 | That occurrence joins **exactly one** AST `Inline` node of the current analysis, outside any PROTO body, with exactly one local `url` entry | The exact-span join `resolvePick` already uses (steps 7–9), applied to the Inline node |
-| I4 | The scene URL and the authored `url` entry name **the same** canonical path (§6.2), which is a readable World Project graph WRL node whose parent is the edited document | Main decides, from its own copies only (§6) |
-| I5 | The text the editor opens is **byte-for-byte the text main served** to the clicked, displayed preview generation | Served-text ledger keyed by generation (§4.1) and verify-then-commit open (§6.3) |
+| I3 | That occurrence joins **exactly one** AST `Inline` node of the current analysis, outside any PROTO body | The exact-span join `resolvePick` already uses (steps 7–9), applied to the Inline node. `resolvePick` is pure and browser-bundled; it does **no** URL or path classification |
+| I4 | The authored `url` has exactly one local entry, and it and the scene URL name **the same** canonical path (§6.2), which is a readable World Project graph WRL node whose parent is the edited document | Main decides, from its own copies only (§6). Path classification lives only in main (§2) |
+| I5 | The text the editor opens is **byte-for-byte the text main served** to the clicked preview generation, which must be the accepted and latest requested one | Served-text ledger keyed by generation (§4.1) and verify-then-commit open (§6.3) |
 
 ### 4.1 Served-text ledger (I5)
 
@@ -97,41 +97,67 @@ Facts on `main` this design relies on:
 - Every editor World preview generation is started by
   `WorldPreviewBridge` through `this.overlay.beginGeneration(sessionId)`, which
   replaces the bridge's serving context (`_serving`) **before** the new render
-  is accepted. The previous scene stays on screen until the renderer accepts
-  the new generation (`accept()` → `acceptGeneration`, which refuses replayed
-  and stale generations).
-- The renderer already receives that id as `provenance.generationId`
-  (`renderer/editor-preview.js`), so every pick snapshot's
+  completes. `BufferOverlay` holds **one** entry per session (`register()`
+  stores the latest buffer text; there are no per-generation copies), and
+  `resolve({ generation })` returns `STALE` unless the generation is the
+  session's latest requested one.
+- The renderer calls `retirePicking('preview-shows-last-valid-scene')`
+  (`renderer/editor-preview.js`) before every new load, so a click while a
+  reload is pending is already refused `REFUSED_STALE` in the renderer.
+- The renderer calls `previewAccept` after **every** load, including a load
+  whose render failed (X_ITE kept the last valid scene). So an *accepted*
+  generation is not proof that its scene is *displayed*. This stays
+  fail-closed because the pick map of the earlier scene was retired before the
+  load; a failed render leaves no armed generation to pick from.
+- The renderer already receives the generation id as
+  `provenance.generationId`, so every pick snapshot's
   `generation.overlayGeneration` names the main-side generation that rendered
   it.
-- One `wrlworld://` handler in `main.js` serves both the editor live preview
-  (through `worldPreviewBridge.servingContext()`) and the World workspace disk
-  preview.
+- One `wrlworld://` handler in `main.js` serves `live || worldPreview`: the
+  editor live preview (through `worldPreviewBridge.servingContext()`) when it
+  is active, else the World workspace disk preview. The handler cannot tell
+  which page made a request.
+- `saved()` ("Show saved version") replaces `_serving` **without**
+  `beginGeneration`.
 
 Required binding (mandatory, not an option):
 
-1. **(proposed)** The bridge keeps one ledger **per generation id**. Each Inline
-   WRL request served through the bridge's serving context is recorded in the
-   ledger of the generation that `_serving` names at serve time, as
-   canonical path (§6.2) → SHA-256 of the exact bytes served.
-2. Requests served by the workspace disk preview are never recorded. A
-   generation has no ledger unless the bridge started it.
+1. **(proposed)** `_serving` gains a `generation` field set by the
+   `beginGeneration` path. The bridge keeps one ledger **per generation id**.
+   Each Inline WRL request served through a serving context that carries a
+   generation is recorded in that generation's ledger, as canonical path
+   (§6.2) → SHA-256 of the exact bytes served. The `saved()` serving context
+   carries no generation and records nothing, so a pick on a saved-version
+   render can never open a target.
+2. Requests served from the workspace disk preview context are never
+   recorded. Because the handler cannot identify the requesting page, this
+   guarantee depends on (a) the single `mainWindow` that swaps between the
+   World workspace and the editor, and (b) the bridge serving context being
+   cleared (`invalidateSession` / `clear`) when the editor session ends or the
+   window leaves the editor. An implementation must test both.
 3. A ledger entry whose bytes came from the unsaved-buffer overlay
    (`resolveWorldRequest` returns `overlay: true`) is marked **overlay**. An
    overlay entry is never openable (§6.4).
 4. If one path is recorded twice in one generation with different digests,
    the entry is marked **ambiguous** and is never openable.
-5. Ledgers are retained only for the currently accepted generation and any
-   later pending one. Accepting a generation drops every older ledger.
-6. An open request is valid only when its generation id **equals the
-   currently accepted (displayed) generation** for that session. A pending,
-   older, replayed, or unknown id refuses. A click on the old render while a
-   new one is pending uses the old, still-accepted ledger; once the new render
-   is accepted, the old click refuses.
+5. Ledgers are retained only for the latest requested generation. Beginning a
+   new generation drops every older ledger.
+6. An open request is valid only when its generation id is **both** the
+   session's accepted generation **and** its latest requested generation
+   (`acceptedGeneration === requestedGeneration`, and `resolve({ generation })`
+   is not `STALE`). Any pending reload, older, replayed, or unknown id refuses
+   `inline-target-changed`, including when the reload began after the prompt
+   opened.
 7. A request served for an older scene after `_serving` moved on is recorded
    under the newer generation. If the content differs it becomes ambiguous
    there (rule 4); if it is missing from the clicked generation's ledger the
    open refuses. Either way the result fails closed.
+8. **(proposed adapter probe)** Rule 1 assumes X_ITE re-fetches every Inline
+   on every generation. This is unverified. An inventory probe must prove it on
+   each pinned X_ITE build. If X_ITE caches Inline scenes, no request reaches
+   the new generation's ledger and Open refuses after every refresh: still
+   fail-closed, but case 1 fails, and the lane must not ship until the probe
+   passes or the owner approves another binding.
 
 The ledger stores digests only, never text, and never leaves main.
 
@@ -139,12 +165,14 @@ The ledger stores digests only, never text, and never leaves main.
 
 The Inline node proven in I3 has an authored `url` MFString.
 
-- Main reads that entry from **its own registered copy of the clicked
-  generation's text** (the copy `overlay.resolve` registers for the
-  generation), at the Inline span supplied by the renderer. The span is only
-  a locator: main re-parses its own copy, requires exactly one `Inline` node at
-  exactly that span, and reads the `url` field itself. No URL string from the
-  renderer is used as authority.
+- Main reads that entry from **its own registered buffer text**, the single
+  entry `BufferOverlay` holds for the session. That text is the clicked
+  generation's text only while the generation is the latest requested one
+  (§4.1 rule 6); otherwise `resolve({ generation })` returns `STALE` and the
+  open refuses `inline-target-changed`. The renderer's span is only a locator:
+  main re-parses its own copy, requires exactly one `Inline` node at exactly
+  that span, **outside any PROTO body**, and reads the `url` field itself. No
+  URL string from the renderer is used as authority.
 - The `url` must have exactly one entry that `classifyReference`
   (`src/world-project/path-policy.js`) classifies as `CATEGORY.LOCAL`. Zero or
   several local entries refuse, because X_ITE loads the first loadable
@@ -181,7 +209,8 @@ document on disk is not modified.
 One new branch at step 5, and only there:
 
 - If `snapshot.ctxKind === 'external-scene'` **and** the snapshot carries a
-  complete `snapshot.inline` block, run the I3 join. On success, return the new
+  complete `snapshot.inline` block, run the I3 join (span and type only; no
+  URL inspection). On success, return the new
   status **(proposed `INLINE_OPEN_CANDIDATE`)** carrying:
   - the parent generation id,
   - the proven parent `Inline` node span and type.
@@ -208,7 +237,7 @@ Preserved behavior:
 | Owning Inline node is `USE`d, has more than one live parent, or has zero or several recorded occurrences | adapter omits `snapshot.inline` | `REFUSED_EXTERNAL` `hit-belongs-to-another-document` |
 | Scene URL not readable through a proven adapter surface (§5.4) | adapter omits `snapshot.inline` | `REFUSED_EXTERNAL` `hit-belongs-to-another-document` |
 | `snapshot.inline` present, but the span does not join exactly one `Inline` AST node, the join type differs, or the node is inside a PROTO body | `resolvePick` | `REFUSED_EXTERNAL` `inline-owner-unproven` **(proposed)** |
-| `snapshot.inline` present, but the AST `url` has zero or several local entries | `resolvePick` | `REFUSED_EXTERNAL` `inline-url-ambiguous` **(proposed)** |
+| Authored `url` has zero or several local entries | main, §6.2 step 2 | `REFUSED_EXTERNAL` `inline-url-ambiguous` **(proposed)** |
 | Any main-side refusal after the user confirms | main (§6) | `REFUSED_EXTERNAL` with the §6.5 reason |
 
 ### 5.4 New status and its consumers
@@ -226,6 +255,12 @@ handling of every existing consumer:
 - **QA counters** (`qa/wd2-d-picking/orchestrate.js`, `WRONG_SOURCE_SELECTIONS`):
   the status is tallied as a **non-selection**. It can never count as a wrong
   selection because it carries no `sceneTreeItemId` and no `source`.
+- **Existing QA gate expectation**: `worldPhases()` in
+  `qa/wd2-d-picking/orchestrate.js` runs the `world-inline` phase on fixture
+  `P16-inline` (screenshot `06-world-inline-refusal.png`), and
+  `qa/wd2-d-picking/RESULTS.json` records `REFUSED_EXTERNAL` for it. The
+  implementation lane must update that phase, its screenshot check and the
+  recorded results to the new expectation, in the same change.
 - **Rust/Tauri pick vocabulary** (`wrlforge_vrml::pick::Status`,
   `apps/desktop-tauri/protocol`): unchanged in this lane. The Tauri host keeps
   returning `REFUSED_EXTERNAL` for every Inline hit; adding the status there is
@@ -240,6 +275,10 @@ Each one is added as a new inventory row with its own structural check and
 probe. If any row fails on a pinned X_ITE build, `snapshot.inline` is never
 emitted and Inline hits keep `REFUSED_EXTERNAL`.
 
+One more **(proposed)** row covers the §4.1 rule 8 assumption: on each pinned
+build, a probe proves that every generation re-requests each Inline URL
+through the `wrlworld://` handler instead of reusing a cached scene.
+
 ## 6. Authorization and open
 
 ### 6.1 Request
@@ -253,10 +292,13 @@ authority except as described in §6.2.
 ### 6.2 Main-side resolution
 
 1. Session and generation: `sessionId` must be the live editor session and
-   `generationId` the currently accepted generation (§4.1 rule 6). Else
-   `inline-target-changed`.
-2. Authored entry: read from main's own registered copy (§4.2). Else
-   `inline-owner-unproven` or `inline-url-ambiguous`.
+   `generationId` both the accepted and the latest requested generation
+   (§4.1 rule 6). Else `inline-target-changed`.
+2. Authored entry: re-parse main's own registered text (§4.2) and require
+   exactly one `Inline` node at the span, outside any PROTO body; else
+   `inline-owner-unproven`. Its `url` must have exactly one entry that
+   `classifyReference` classifies as `CATEGORY.LOCAL`; zero or several refuse
+   `inline-url-ambiguous`.
 3. Classification: `classifyReference` must return `CATEGORY.LOCAL`. Remote
    categories refuse `inline-target-remote`; absolute, traversal, malformed and
    inline-script categories refuse `inline-target-unauthorized`.
@@ -331,7 +373,7 @@ D3.
 | `inline-target-remote` | Remote URL category |
 | `inline-target-missing` | Not a readable graph WRL node with the edited document as parent, or gone from disk |
 | `inline-target-unauthorized` | Unusual URL form (§6.2 step 4), absolute path, traversal, outside the root, not in `allowedWrl`, symlink escape |
-| `inline-target-changed` | Generation not the accepted one, ledger entry missing or ambiguous, digest mismatch at commit |
+| `inline-target-changed` | Generation not both the accepted and the latest requested one, ledger entry missing or ambiguous, digest mismatch at commit |
 | `inline-owner-unproven` | Main cannot find exactly one `Inline` at the span in its own copy, or authored and scene paths disagree |
 | `inline-url-ambiguous` | Zero or several local `url` entries |
 | `inline-target-is-document` | Self-Inline, or overlay-served target |
@@ -377,7 +419,8 @@ session are byte-for-byte and id-for-id identical before and after the click.
 | 1 | Authorized local Inline | `main.wrl`: `Inline { url "chair.wrl" }`; `chair.wrl` in the graph | `INLINE_OPEN_CANDIDATE`; prompt "Open chair.wrl in the editor?"; on Open (after the unsaved guard) the session is `chair.wrl` with exactly the served text; on Cancel, no change |
 | 2a | Stale parent | Case 1, then edit `main.wrl` without a preview refresh | `REFUSED_STALE` (existing reason); no change |
 | 2b | Target changed on disk | Case 1, then change `chair.wrl` on disk after the preview loaded, then Open | `REFUSED_EXTERNAL` `inline-target-changed`; no change |
-| 2c | Change during an in-progress reload | Case 1; change `chair.wrl`; start a reload; click the still-displayed old render before the new one is accepted, then Open after it is accepted | Before acceptance: the old ledger is used and the digest mismatch refuses `inline-target-changed`. After acceptance: the old generation id refuses `inline-target-changed`. No change |
+| 2c | Click during an in-progress reload | Case 1; change `chair.wrl`; start a reload; click the still-displayed old render before the new load completes | `REFUSED_STALE` in the renderer (pick map retired before the load); no prompt; no change |
+| 2c′ | Reload while the prompt is open | Case 1; click, prompt opens; change `chair.wrl` and start a reload; press Open | `REFUSED_EXTERNAL` `inline-target-changed` (generation no longer the latest requested); no change |
 | 2d | Symlink swapped between check and open | `chair.wrl` is a symlink inside the root; between the dry run and Open, repoint it outside the root, and separately to another in-root file with different text | Outside: `inline-target-unauthorized`. Other in-root file: `inline-target-changed` at commit. No change |
 | 3 | Remote target | `Inline { url "http://example.com/remote.wrl" }` | WRL Forge fetches and opens nothing. A hit refuses `REFUSED_EXTERNAL` `hit-belongs-to-another-document` (no scene, no `snapshot.inline`); a crafted open request refuses `inline-target-remote`; no change |
 | 4 | Missing target | `Inline { url "missing.wrl" }`, file absent; and `chair.wrl` deleted after the preview loaded | Absent: no scene loads, no offer. Deleted: `inline-target-missing`; no change |
@@ -400,8 +443,13 @@ Pass requirement for every case: `WRONG_SOURCE_SELECTIONS = 0`.
 - Adapter tests with fakes for each new inventory row, including the
   "row fails → no `snapshot.inline`" path.
 - Bridge tests for the per-generation ledger: keyed by generation, overlay and
-  ambiguous marking, workspace-preview requests not recorded, old ledgers
-  dropped on accept, pending and older generations refused (case 2c).
+  ambiguous marking, `saved()` and workspace-preview requests not recorded,
+  serving context cleared on leaving the editor, old ledgers dropped on a new
+  generation, pending and older generations refused (cases 2c, 2c′).
+- The X_ITE Inline re-fetch probe (§4.1 rule 8, §5.5) on every pinned build.
+- Update the existing `world-inline` phase in `qa/wd2-d-picking/orchestrate.js`
+  (`P16-inline`, `06-world-inline-refusal.png`) and
+  `qa/wd2-d-picking/RESULTS.json` to the new expectation (§5.4).
 - `test/editor/path-authorizer.test.js` and editor-controller tests for §6.2
   normalization and the canonical key (cases 3–5), and for verify-then-commit
   leaving the session untouched on mismatch (cases 2b, 2d).
