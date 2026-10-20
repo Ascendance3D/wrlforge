@@ -229,14 +229,14 @@ Every name marked *(proposed)* does not exist yet.
      `src/vrml/index.js`, beside `findingsForDocument`.
    - **Caller.** `renderer/editor.js`, step 4 of `onAnalysis` (today
      `rawFindings = sceneBridge.semanticFindings.findingsForDocument(graph)`).
-     That caller runs both producers on the same analysis and passes
-     `findingsForDocument(graph).concat(scriptPreviewFindings(session, graph))` to
+     That caller runs both producers on the same analysis, each in its own
+     `try`/`catch`, and passes the concatenation of the arrays that were returned to
      `presentDocumentFindings`. The parse session is created today inside
      `reanchorAfterAnalysis`, after step 4; the implementation creates it once
      from `a.text`/`a.parseResult` before step 4 and hands that same session to
-     `reanchorAfterAnalysis`, so both steps see one session. If either producer
-     throws, the error is logged like today's `findingsForDocument` failure and the
-     other producer's findings are still presented.
+     `reanchorAfterAnalysis`, so both steps see one session. A producer that
+     throws is logged like today's `findingsForDocument` failure and contributes
+     `[]`; the other producer's findings are still presented.
 5. **Recompute.** The producer runs on every new parse session. Its output replaces
    the previous set; nothing is accumulated or stored in undo history. Identity and
    dedup follow §5.
