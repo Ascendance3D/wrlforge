@@ -167,6 +167,38 @@ The final wording goes through the P4 message catalog
 (`docs/white-dune-2026/P4_B_DIAGNOSTIC_MESSAGE_CATALOG.md`, `src/vrml/messages.js`,
 `src/vrml/presentation.js`) and is an owner decision (§10).
 
+### 3.4 Advisory data flow (proposed)
+
+Every name marked *(proposed)* does not exist yet.
+
+1. **Producer.** A new function next to `findingsForDocument` in
+   `src/vrml/semantic-findings.js`, `scriptPreviewFindings(session, graph)`
+   *(proposed)*. It takes the current parse session and its scope graph and applies
+   §3.1 to each Script node. It is a separate function because `findingsForDocument`
+   only reports ISO facts (`iso` is derived from `ISO_BY_REASON`), and this advisory
+   is not one.
+2. **Record.** One frozen record per qualifying node, built with the existing
+   `createFinding` shape so the presentation chain accepts it unchanged:
+   - `code`: `FINDING_CODE.SCRIPT_PREVIEW_NOT_EXECUTED` *(proposed)*;
+   - `subject`: `createSubject({ node: N })`;
+   - `range`: **N**'s parser range;
+   - `iso`: `ISO_RESULT.NOT_STATED` (the advisory asserts nothing about the
+     standard), `rule`: `null`;
+   - `confidence`: `STATUS.RESOLVED`; `reason`: `REASON.SCRIPT_PREVIEW_NOT_EXECUTED`
+     *(proposed)*;
+   - `detail`: `{ urlKinds }` *(proposed)*, the sorted distinct `kind` values
+     (`inline-script`, `local`) of **N**'s qualifying `url` entries from
+     `extractAssetRefs`. The message uses it to word local-file advisories per §3.2
+     until T15 passes. `evidence`: empty.
+3. **Presentation.** The caller concatenates the result with `findingsForDocument`'s
+   array and passes it through the existing chain: `presentDocumentFindings` →
+   `messageForPresentation`. This needs a `GROUP_BY_FINDING_CODE` entry in
+   `src/vrml/presentation.js` and a message entry in `src/vrml/messages.js` and the
+   P4 catalog *(all proposed)*. No new presentation path is added.
+4. **Recompute.** The producer runs on every new parse session. Its output replaces
+   the previous set; nothing is accumulated or stored in undo history. Identity and
+   dedup follow §5.
+
 ## 4. Follow-on preview errors: not suppressed in this lane
 
 ### 4.1 This lane ships the advisory only
@@ -329,7 +361,7 @@ visible.
 | T3 | Script with an `exposedField` in its interface | Existing grammar error only; no advisory |
 | T4 | Script with only `url "http://example.com/s.js"` | No advisory; remote refusal unchanged |
 | T5 | Script with `url []` / no `url` | No advisory |
-| T6 | Two Scripts, one inline and one local `"b.js"` | Two advisories, one per node |
+| T6 | Two Scripts, one inline and one local `"b.js"` | Two advisories, one per node. Gated on T15: until T15 passes, the local-file advisory's message must not claim the code does not run (§3.2); the test asserts that wording |
 | T7 (future) | CSP eval violation correlated to flagged node, current generation | Folded into that node's advisory |
 | T8 (future) | CSP eval violation with no node / ambiguous node | Visible |
 | T9 (future) | Correlated violation from an older generation; unrelated texture error; generic error text containing "EvalError" | All visible |
