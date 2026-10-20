@@ -84,9 +84,11 @@ were never dispatched. The ROUTE lane therefore requires:
 1. The ROUTE planner returns, as its `edits`, exactly `receiptEdits(receipt)` — the
    frozen canonical set the WD1.4 receipt binds (`document-transaction.js`,
    *existing*, currently marked internal) — together with the receipt itself.
-2. The dispatch path (*proposed*: an optional `receipt` argument to
-   `applyVerifiedEdits`, or a thin ROUTE-only wrapper around it) refuses with a stable
-   reason (*proposed*: `receipt-mismatch`) **before dispatch** unless
+2. A dispatch-validation step — separate from the §5.4 scope gate, which runs before
+   any patch exists — runs after planning and WD1.4 verification, immediately before
+   dispatch (*proposed*: an optional `receipt` argument to `applyVerifiedEdits`, or a
+   thin ROUTE-only wrapper around it). It refuses with a stable reason (*proposed*:
+   `receipt-mismatch`, label "the edit could not be verified") unless
    `receiptBindsOldText(receipt, oldText)`, `receiptBindsNewText(receipt, newText)` and
    `edits === receiptEdits(receipt)` (the same frozen array, not an equal-looking copy)
    all hold, and then dispatches only that receipt-bound set.
@@ -234,7 +236,8 @@ id and label is *proposed*.
 on the parsed document **before any WD1.2 patch is built or dispatched**. Deleting an
 unresolved ROUTE (§6.2) is allowed only after this gate passes. Rows are checked in
 table order and the first match is the reported reason, so each refusal has exactly one
-deterministic reason.
+deterministic reason. `receipt-mismatch` is not part of this gate: it needs the WD1.4
+receipt and the edit array, so it belongs to the dispatch-validation step (§4.4).
 
 | Reason id | Applies to | Refuses when | Label |
 | --- | --- | --- | --- |
@@ -249,7 +252,6 @@ deterministic reason.
 | `route-insertion-point-not-unique` | create | the insertion point (§6.1) is not uniquely determined | "no single place to add this ROUTE" |
 | `document-line-endings-lone-cr` | create | the document's line breaks are lone CR only (§6.1) | "unsupported line endings (CR only)" |
 | `route-not-in-session` | delete, rewire | the selected ROUTE's span is not exactly one parsed ROUTE node of this session | "selection is from an older analysis" |
-| `receipt-mismatch` | all | dispatch-time receipt binding fails (§4.4) | "the edit could not be verified" |
 
 `IS` can only appear inside a PROTO body (ISO 4.8.3), so in this first slice every
 IS-mapped endpoint is already caught by `route-in-proto-body` or
@@ -348,10 +350,11 @@ ROUTE is untouched.
   `applyVerifiedEdits` (`buffer-changed`).
 
 **Atomic refusal.** WD1.2 validates the complete set before producing any output,
-WD1.4 refuses a set that does not exactly reproduce the planned new text, and
-`applyVerifiedEdits` dispatches nothing when it returns `editor-read-only`,
-`malformed-edit-set` or `buffer-changed`. On every one of these reachable refusal paths
-— planner refusal, WD1.2/WD1.4 rejection, and those three `applyVerifiedEdits`
+WD1.4 refuses a set that does not exactly reproduce the planned new text, the
+dispatch-validation step (§4.4) refuses `receipt-mismatch`, and `applyVerifiedEdits`
+dispatches nothing when it returns `editor-read-only`, `malformed-edit-set` or
+`buffer-changed`. On every one of these reachable refusal paths — planner refusal,
+WD1.2/WD1.4 rejection, `receipt-mismatch`, and those three `applyVerifiedEdits`
 reasons — nothing is dispatched, so the document text, the CodeMirror undo/redo
 history and the selection are exactly as they were.
 
@@ -493,7 +496,9 @@ Through the editor handle's existing `historyDepth()` / `undo()` / `redo()` seam
   T.fraction_changed TO S.set_fraction }` (parses cleanly; P2C reports the inner ROUTE
   `resolved`):
   - a create attempt `T.fraction_changed → S.set_fraction` is refused **before any patch
-    is built** with `route-endpoint-in-proto-body` (gate order, §5.4);
+    is built** with exactly `route-in-proto-body`: `S` and `T` are visible only inside
+    P's body, so that is the create's insertion point, and `route-in-proto-body` is
+    checked before `route-endpoint-in-proto-body` (gate order, §5.4);
   - a focused unit test calls the scope gate's IS check directly on `S.set_fraction`
     and asserts `route-endpoint-is-mapped`, so the IS rule is proven independently of
     the PROTO-body rule;
