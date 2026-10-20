@@ -51,7 +51,7 @@ The rule for every navigation action (go-to-definition, find references, symbol 
     | `INVALID` (`MISSING_NAME`, `SELF_REFERENTIAL_USE`, `USE_BEFORE_DEF`, …) | `refuse:invalid` | "Cannot navigate: <proposed text for the `REASON` code>." The scope graph returns reason codes only; the user-facing wording per code is proposed and needs owner approval (§11.1). `USE_BEFORE_DEF` may list the later declarations as information, not as a jump target. |
     | `UNRESOLVED` | `refuse:unresolved` | "No visible definition." |
     | `UNSUPPORTED` | `refuse:unsupported` | "Not supported here." |
-    | Command layer: cursor inside a Script `url` string (§6) | `refuse:unsupported` | "Not supported here." No lookup is made. |
+    | Command layer: cursor inside a complete Script `url` string (§6; an unterminated one is `refuse:incomplete`, §6 item 4) | `refuse:unsupported` | "Not supported here." No lookup is made. |
     | `RECOVERED` | `refuse:incomplete` | "Document structure incomplete." |
     | Session text differs from the current buffer (§3.5) | `refuse:stale` | "Document changed — try again." No lookup is made against the stale graph. |
     | Any status not listed above | `refuse:unknown` | Refuse. New statuses never default to navigation. |
