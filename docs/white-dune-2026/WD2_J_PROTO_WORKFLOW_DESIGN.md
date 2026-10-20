@@ -44,18 +44,20 @@ All four VRML97 access types (`ACCESS` in `src/vrml/symbols.js`) are displayed. 
 
 | Access | PROTO interface row | PROTO instance row | J1 instance edit | J2 default edit |
 |---|---|---|---|---|
-| `field` | name, type, default value (source span) | authored value, or "default" with the declared default shown read-only | Eligible (gated, §5.2) | Eligible (gated, §5.3) |
-| `exposedField` | name, type, default value (source span) | authored value, or "default" with the declared default shown read-only | Eligible (gated, §5.2) | Eligible (gated, §5.3) |
+| `field` | name, type, default value (source span) | authored value; otherwise "default" with the declared default shown read-only (PROTO), or "default — not declared locally" (EXTERNPROTO) | Eligible (gated, §5.2) | Eligible (gated, §5.3; local PROTO only) |
+| `exposedField` | name, type, default value (source span) | authored value; otherwise "default" with the declared default shown read-only (PROTO), or "default — not declared locally" (EXTERNPROTO) | Eligible (gated, §5.2) | Eligible (gated, §5.3; local PROTO only) |
 | `eventIn` | name, type, "event — no value" | listed as an input event; no value cell | Never — no value exists | Never — no default exists |
 | `eventOut` | name, type, "event — no value" | listed as an output event; no value cell | Never — no value exists | Never — no default exists |
 
-An authored value on an instance for an `eventIn`/`eventOut` member is a document error; it is displayed as authored with the existing diagnostic and is read-only.
+An authored value on an instance for an `eventIn`/`eventOut` member is a document error. No diagnostic for this case exists in `src/vrml` today (the nearest ids, `is-access-incompatible` and `field-name-is-event-alias`, cover different cases); a dedicated diagnostic is **proposed** for the implementation lane. Until it exists, the row is displayed as authored and is read-only.
 
 ### 4.2 PROTO interfaces
 Show each declared member (name, type, access, default where §4.1 allows) and, for a body node field bound with `IS`, the resolved interface member from `resolveIs`. An `IS` binding that does not resolve is shown with its scope-graph status and reason, never re-guessed.
 
 ### 4.3 PROTO instances
 Show the effective interface from `effectiveInterfaceOf` (`sourceOrigin` = `proto-interface` or `externproto-interface`) with authored values and their spans. Interface status `ambiguous`, `unresolved`, `invalid` or `unsupported` makes the whole instance view read-only with that status shown.
+
+For an EXTERNPROTO instance there is no local default: an omitted `field`/`exposedField` reads "default — not declared locally". The local declaration may not list every member the external definition has, so `effectiveInterfaceOf` reports `complete: false`. An authored member the local declaration does not list is shown read-only with reason `externproto-interface-not-locally-verifiable` and is **never** reported as an error.
 
 ### 4.4 EXTERNPROTO declarations
 Show the written URL list (as source text) and the locally declared interface: name, type, access. EXTERNPROTO interface declarations carry **no default values** (ISO A.2 `externInterfaceDeclarations`), so the default column reads "not declared locally" — never a guessed or remotely obtained value.
@@ -76,17 +78,18 @@ An edit is planned only when all of these are proven from the current parse; oth
 ### 5.2 J1 — instance-field edits (proposed)
 - Only `field`/`exposedField` members, authored exactly once on the instance, not `IS`-bound, with a type one of the WD2-B typed editors supports.
 - Type authority is the resolved interface declaration's type, never the lexical shape of the value.
-- Instances of an EXTERNPROTO are eligible only if the locally declared interface resolves; unresolved or unsupported EXTERNPROTO declarations make their instances read-only (§7).
+- Instances of an EXTERNPROTO are eligible only if the locally declared interface resolves and the member is listed in it; unresolved or unsupported EXTERNPROTO declarations make their instances read-only (§7). Members not listed locally stay read-only (`externproto-interface-not-locally-verifiable`, §4.3).
 - Instances inside a PROTO body are edited in that body's scope only; an instance whose scope cannot be proven refuses.
 
 ### 5.3 J2 — interface default-value edits (proposed)
 - Local `PROTO` declarations only; EXTERNPROTO declarations have no defaults to edit.
 - Only `field`/`exposedField` defaults; the replacement value must be valid for the **unchanged** declared type.
 - Only the default-value token span changes. The name, type and access tokens are never rewritten.
-- Changing a default changes the effective value of every instance that omits that field. The confirmation must state the number of affected instances in the current document; if any instance cannot be enumerated with proven identity, the edit refuses.
+- Changing a default changes the effective value of every instance that omits that field. The confirmation must state the number of affected instances in the current document; if any instance in the current document cannot be enumerated with proven identity, the edit refuses.
+- **Cross-file reach:** other World Project files that reach this PROTO through an EXTERNPROTO also change behaviour, and the current-document count does not include them. Whether J2 must refuse, or may proceed with an explicit warning, when cross-file instances cannot be enumerated is an **open owner decision** (§11). Until it is decided, the confirmation must disclose that instances in other files are not counted.
 
 ### 5.4 Interface type, access and name changes — refused
-Changing a member's type, access type or name, or adding/removing a member, can invalidate existing instance values, `IS` connections and ROUTEs. This design does not permit them. They refuse with a stable reason (proposed id: `proto-interface-change-requires-migration`) until a separately approved migration design specifies instance compatibility checks and atomic multi-site patching.
+Changing a member's type, access type or name, or adding/removing a member, can invalidate existing instance values, `IS` connections and ROUTEs. Renaming an `exposedField` also breaks ROUTEs that use its implicit `set_<name>` and `<name>_changed` events. This design does not permit them. They refuse with a stable reason (proposed id: `proto-interface-change-requires-migration`) until a separately approved migration design specifies instance compatibility checks and atomic multi-site patching.
 
 ## 6. Source-patch safety
 
@@ -126,6 +129,9 @@ Each refuses rather than anchoring:
 7. **Undo restoration:** multi-span J1 edit → one transaction; one Undo restores exact original text (byte-identical, including CRLF and comments); one Redo restores exact edited text.
 8. **Atomic refusal:** a set where one span is invalid → nothing dispatched, buffer unchanged, undo depth unchanged.
 9. **Interface change refusal:** a type/access/name change request → `proto-interface-change-requires-migration`.
+10. **Duplicate PROTO/EXTERNPROTO type names:** two declarations of one type name in one scope → instance edits of that type refuse.
+11. **J2 enumeration refusal:** a default edit where an affected instance cannot be enumerated with proven identity → refusal, buffer unchanged.
+12. **EXTERNPROTO local-only display:** an EXTERNPROTO instance with omitted fields shows "default — not declared locally"; an authored member not listed locally is read-only with `externproto-interface-not-locally-verifiable` and is not an error; the test asserts no network access is attempted.
 
 ### 9.2 Corpus tests
 Real-world corpus documents (including hyphenated DEF names and EXTERNPROTO chains): inspection completes; every J1 eligible field round-trips; **0 wrong-target edits**.
@@ -143,6 +149,7 @@ Real-world corpus documents (including hyphenated DEF names and EXTERNPROTO chai
 2. Whether J2 (default edits) is wanted at all, or only J1.
 3. Whether local EXTERNPROTO files authorized by the World Project may later be opened read-only for inspection (separate lane).
 4. Whether a migration design for interface type/access/name changes (§5.4) should ever be scheduled.
+5. Whether J2 refuses, or warns and proceeds, when instances in other World Project files cannot be enumerated (§5.3).
 
 ## 12. Limits and state
 - Owner review is **not complete**.
