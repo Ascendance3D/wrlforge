@@ -63,10 +63,10 @@
     "@codemirror/view": "^6.43.6",
     "@lezer/highlight": "^1.2.3",
     "@resvg/resvg-js": "^2.6.2",
-    "electron": "^41.7.1",
-    "electron-builder": "^26.15.3",
-    "esbuild": "^0.24.2",
-    "js-yaml": "^4.3.0"
+    "electron": "^41.10.7",
+    "electron-builder": "^26.17.0",
+    "esbuild": "^0.28.2",
+    "js-yaml": "^4.3.2"
   },
   "build": {
     "appId": "com.wrlforge.app",
@@ -220,5 +220,8 @@
     "afterAllArtifactBuild": "scripts/notarize-dmg.js",
     "compression": "normal",
     "npmRebuild": false
+  },
+  "overrides": {
+    "global-agent": "^4.1.3"
   }
 }
