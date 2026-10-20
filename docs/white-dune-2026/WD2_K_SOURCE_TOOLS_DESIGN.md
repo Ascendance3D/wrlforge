@@ -28,7 +28,7 @@ The exact text buffer is the only document authority. Every tool below is a read
 ## 2. Dependencies (existing code)
 
 1.  **UI-0 command registry** — `src/editor/command-registry.js` (`docs/ui/UI0_COMMAND_WORKSPACE_ARCHITECTURE.md`). The palette lists and dispatches only registered commands; no second dispatch mechanism.
-2.  **WD1.5 scope graph** — `buildScopeGraph`, `resolve`, `referencesTo`, `symbolFor`, `referenceFor`, `defIsUniqueInScope`, `typeDeclIsUniqueInScope`, and the `STATUS` / `REASON` constants exported from `src/vrml/scope-graph.js`.
+2.  **WD1.5 scope graph** — `buildScopeGraph`, `resolve`, `referencesTo`, `symbolFor`, `referenceFor`, `defIsUniqueInScope`, `typeDeclIsUniqueInScope`, `symbols`, `typeDeclarations`, and the `STATUS` / `REASON` constants exported from `src/vrml/scope-graph.js`.
 3.  **Parse sessions and verified transactions** — `createParseSession` and `verifyTransaction` in `src/vrml/document-transaction.js`, over the WD1.2 span algebra in `src/vrml/edit.js` (UTF-16 code-unit offsets, half-open ranges).
 4.  **Editor dispatch** — `applyVerifiedEdits({ oldText, edits, newText, userEvent })` in `src/editor/browser/editor-view.js`. It refuses with `buffer-changed` unless the buffer still equals `oldText` and dispatches the whole edit set as one isolated CodeMirror history event.
 5.  **Highlighting** — `analyze()` in `src/editor/language.js` produces highlight spans from `src/vrml` tokens. The editor has no CodeMirror grammar of its own.
@@ -64,9 +64,9 @@ The rule for every navigation action (go-to-definition, find references, symbol 
 ### 3.8 Find references
 
 1.  **Target acquisition.** The target is the symbol under the cursor, taken from the current session's graph: on a DEF name, `symbolFor(graph, node)`; on a USE name or node-type name, the symbol of its resolution only if that resolution maps to `navigate` or `navigate:external` in §3.3. For an `EXTERNPROTO` target the list is the in-document `EXTERNPROTO` declaration plus its references in this document; the external file is not opened. On a PROTO/EXTERNPROTO declaration name, that type declaration is the target. Any other resolution returns that row's result from §3.3 (for example `ambiguous` or `refuse:invalid`), and no reference list is produced. A cursor not on a name returns `refuse:no-target` ("No symbol at cursor.").
-2.  **Results.** `referencesTo(graph, symbol)` returns reference ranges only; it does not include the declaration. The command layer builds the list as the target symbol's `declRange` (the DEF, PROTO or in-document `EXTERNPROTO` declaration) followed by the ranges `referencesTo(graph, symbol)` returns. The scope graph indexes only `RESOLVED` references with a symbol, so ambiguous, invalid, unresolved, or recovered USEs never appear as references.
-3.  **Ordering and deduplication.** The declaration is always the first entry. The references after it are listed in ascending source offset. The combined list is deduplicated by range (`from`, `to`), so one declaration or reference node appears once.
-4.  **Incomplete or stale.** A recovered document returns `refuse:incomplete`; a stale session returns `refuse:stale` (§3.5). An empty list is a valid result ("No references.").
+2.  **Results.** `referencesTo(graph, symbol)` returns frozen reference records only; it does not include the declaration. Each record carries its parser range in `.range` (`start.offset`, `end.offset`); the symbol's `declRange` has the same shape. The command layer projects the target symbol's `declRange` (the DEF, PROTO or in-document `EXTERNPROTO` declaration) and each record's `.range` to `{ from: start.offset, to: end.offset }`, and builds the list as the declaration followed by the references. The scope graph indexes only `RESOLVED` references with a symbol, so ambiguous, invalid, unresolved, or recovered USEs never appear as references.
+3.  **Ordering and deduplication.** The declaration is always the first entry. The references after it are listed in ascending source offset. The projected ranges are deduplicated by `{ from, to }`, so one declaration or reference node appears once.
+4.  **Incomplete or stale.** A recovered document returns `refuse:incomplete`; a stale session returns `refuse:stale` (§3.5). A valid target always yields its declaration entry; when `referencesTo` returns no records the list is the declaration alone and the panel shows "No references."
 
 ### 3.9 Symbol search
 
@@ -114,7 +114,7 @@ Structural selection changes the selection only. It does not edit text.
 
 ## 7. Command Palette
 
-1.  A modal list of commands from `src/editor/command-registry.js`. It shows only registered commands and runs them through the registry's own `run` reference.
+1.  A modal list of commands from `src/editor/command-registry.js`. It shows only registered commands and dispatches them through the registry's public `execute(id, { source: 'palette' })`, which re-checks `enabled` immediately before `run`.
 2.  Disabled commands (the registry `enabled` function evaluates to false) are shown as disabled and cannot run.
 3.  Palette state (query text, highlighted row) is UI state only (§4.5).
 
@@ -149,7 +149,7 @@ Each step requires its own owner GO.
 2.  **Stale session:** Navigation and edits computed on one session refuse after an intervening edit to the buffer.
 3.  **Structural selection:** At least five nesting fixtures (value → field → node → parent node) with exact expected spans; a cursor in a string; a cursor in a comment; root and whitespace; a truncated document; non-BMP characters before the target span.
 4.  **Script strings:** `javascript:` and `vrmlscript:` URLs and an escaped quote inside a string — selection never crosses the string boundary, navigation inside the string returns `refuse:unsupported`, and no structural highlights appear inside the string. An unterminated Script string returns `refuse:incomplete` for navigation and has no structural highlights.
-5.  **Find references:** target on a DEF, on a resolved USE, on an `EXTERNPROTO` instance (declaration plus in-document references), and on an ambiguous USE (`ambiguous`, no list); the declaration's `declRange` is the first entry (it is not in `referencesTo`'s output), then references in ascending offset with no duplicate ranges; unresolved and invalid USEs of the same name excluded; cursor not on a name (`refuse:no-target`).
+5.  **Find references:** target on a DEF, on a resolved USE, on an `EXTERNPROTO` instance (declaration plus in-document references), and on an ambiguous USE (`ambiguous`, no list); the declaration's `declRange` is the first entry (it is not in `referencesTo`'s output), then references in ascending offset with no duplicate ranges; unresolved and invalid USEs of the same name excluded; a target with no references (declaration-only list, "No references."); cursor not on a name (`refuse:no-target`).
 6.  **Symbol search:** case-sensitive matching; empty query lists all; duplicate DEF names in one scope both listed and marked; same name in a PROTO body and at top level listed with their scopes; a `PROTO` and an `EXTERNPROTO` of one name in one scope both marked; choosing an EXTERNPROTO result returns `navigate:external` and selects its in-document declaration without file access; stale and recovered sessions refused.
 7.  **Command registry:** The palette provider returns only registry commands and respects `enabled`.
 8.  **Edits and undo (only for a later, separately approved editing step; §4):** A verified edit preserves all text outside its span (byte-exact, LF and CRLF fixtures); an overlapping or invalid edit set is rejected with no change; one action adds exactly one undo step (`historyDepth()`), and undo restores the exact previous text.
