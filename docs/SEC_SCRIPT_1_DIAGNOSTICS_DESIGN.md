@@ -177,6 +177,16 @@ Every name marked *(proposed)* does not exist yet.
    §3.1 to each Script node. It is a separate function because `findingsForDocument`
    only reports ISO facts (`iso` is derived from `ISO_BY_REASON`), and this advisory
    is not one.
+   - **Tree.** The syntax tree is `session.parse.tree`, the tree the session was
+     created from (the same access `src/vrml/field-edit.js` and
+     `src/vrml/structure-edit.js` use). The producer calls
+     `extractAssetRefs(session.parse.tree)` once per session; it never re-parses
+     `session.text` and never reads a tree from anywhere else.
+   - **N's `url` field.** For each Script node **N** in that tree, the `url` field is
+     the entry of **N**'s own `fields` array with `type` `NODE.FIELD` and `name`
+     `url` (not a field of a nested node). A record belongs to **N** only when
+     its `range` lies inside that field node's `range`. A Script with no `url` field
+     has no records and fails §3.1 clause 4.
 2. **Record.** One frozen record per qualifying node, built with the existing
    `createFinding` shape so the presentation chain accepts it unchanged:
    - `code`: `FINDING_CODE.SCRIPT_PREVIEW_NOT_EXECUTED` *(proposed)*;
