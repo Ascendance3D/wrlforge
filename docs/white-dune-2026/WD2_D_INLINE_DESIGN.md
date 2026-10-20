@@ -126,8 +126,19 @@ Required binding (mandatory, not an option):
    `beginGeneration` path. The bridge keeps one ledger **per generation id**.
    Each Inline WRL request served through a serving context that carries a
    generation is recorded in that generation's ledger, as canonical path
-   (§6.2) → { the exact request URL as received, SHA-256 of the exact bytes
-   served }. The `saved()` serving context
+   (§6.2) → { the exact request URL as received, the canonical digest }.
+
+   **Canonical digest** (one definition, used when serving and when opening):
+   SHA-256 of `Buffer.from(text, 'utf8')`, where `text` is the string returned
+   by `readWrlSource` (`src/preview/wrl-source.js`). Both paths already use
+   that one reader: `resolveWorldRequest` serves `Buffer.from(text, 'utf8')`
+   of its `text`, and the editor's `loadDocument` (`src/editor/file-io.js`)
+   takes `text` from the same `readWrlSource` by default. So gzip (`.wrz` or
+   gzip-magic `.wrl`) is detected and inflated by the same code on both paths,
+   invalid UTF-8 is decoded the same way, and neither path converts newlines.
+   The digest covers the decoded text the user saw, not the on-disk bytes. If
+   an implementation cannot route both paths through the same reader, the
+   target refuses `inline-target-unverifiable` **(proposed)**. The `saved()` serving context
    carries no generation and records nothing, so a pick on a saved-version
    render can never open a target.
 2. Requests served from the workspace disk preview context are never
@@ -364,7 +375,8 @@ a check-then-use gap: the file or a symlink could change between the two reads.
 
 1. **Load** the target once through the existing `loadDocument` reader
    (gzip-transparent), without touching `session.doc`.
-2. **Verify** the SHA-256 of exactly the loaded text against the ledger digest
+2. **Verify** the canonical digest (§4.1 rule 1) of exactly the loaded text
+   against the ledger digest
    from §6.2 step 8, and re-run `realpathInside` on the path.
 3. **Commit** — create the new document from those same loaded bytes and
    replace the session — only when step 2 matches.
@@ -396,6 +408,7 @@ D3.
 | `inline-owner-unproven` | Main cannot find exactly one `Inline` at the span in its own copy, or authored and scene paths disagree |
 | `inline-url-ambiguous` | Zero or several local `url` entries |
 | `inline-target-is-document` | Self-Inline, or overlay-served target |
+| `inline-target-unverifiable` | Serving and opening cannot be shown to use the same reader (§4.1 rule 1) |
 
 ### 6.6 Security posture
 
@@ -441,6 +454,7 @@ session are byte-for-byte and id-for-id identical before and after the click.
 | # | Case | Fixture | Expected |
 |---|---|---|---|
 | 1 | Authorized local Inline | `main.wrl`: `Inline { url "chair.wrl" }`; `chair.wrl` in the graph | `INLINE_OPEN_CANDIDATE`; prompt "Open chair.wrl in the editor?"; on Open (after the unsaved guard) the session is `chair.wrl` with exactly the served text; on Cancel, no change |
+| 1b | Gzip and CRLF targets | Case 1 with `chair.wrz` (gzip) and with a CRLF `chair.wrl` | Same as case 1; the served and loaded digests match; the opened text keeps its CRLF line endings |
 | 2a | Stale parent | Case 1, then edit `main.wrl` and click before the preview refreshes | `REFUSED_STALE` `source-changed-since-preview` (existing `resolvePick` step 1: `gen.text !== currentText`); no prompt; no change |
 | 2a′ | Parent edit while the prompt is open | Case 1; click, prompt opens; edit `main.wrl` | Prompt dismissed, candidate discarded, status line shows the `REFUSED_STALE` text; a crafted open with the old `bufferVersion` refuses `inline-target-changed`; no change beyond the user's own edit |
 | 2b | Target changed on disk | Case 1, then change `chair.wrl` on disk after the preview loaded, then Open | `REFUSED_EXTERNAL` `inline-target-changed`; no change |
