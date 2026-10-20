@@ -103,7 +103,7 @@ Changing a member's type, access type or name, or adding/removing a member, can 
 
 - **No remote fetching.** WD2-J adds no network access. The existing retrieval substrate enforces `network: false` (`src/external-proto/resolver-context.js`); this design does not change that.
 - **No invented interface data.** Only what is written in the local EXTERNPROTO declaration is shown. Missing defaults, missing members and unresolved implementations are displayed as such.
-- **Unsupported declarations** (unparseable URL list, interface the scope graph reports as `unsupported`/`invalid`, or a target that cannot be selected locally) are shown read-only with their stable reason and the text "Defined in an external file that WRL Forge does not open here." Instances of them are read-only.
+- **Unsupported declarations** are shown read-only with their stable reason, and instances of them are read-only. The text "Defined in an external file that WRL Forge does not open here." is used **only** when the locally declared interface is valid and the implementation is external and not opened. An unparseable URL list, or an interface the scope graph reports as `unsupported`/`invalid`, shows its own local parse or interface reason instead.
 - Local-file resolution through the World Project path (WD1.7-B/B2) is out of scope for this lane and needs its own decision (§9).
 
 ## 8. Fail-closed identity cases
@@ -126,7 +126,7 @@ Each refuses rather than anchoring:
 4. **Unsupported interfaces:** EXTERNPROTO with an unsupported/invalid interface → read-only, stable reason, no edit planned.
 5. **Stale edit spans:** plan against text A, mutate buffer to B → `buffer-changed`, buffer still B.
 6. **Invalid instance references:** instance of an undeclared type; USE of a missing DEF → read-only.
-7. **Undo restoration:** multi-span J1 edit → one transaction; one Undo restores exact original text (byte-identical, including CRLF and comments); one Redo restores exact edited text.
+7. **Undo restoration:** multi-span J1 edit → one transaction; one Undo restores the exact original source text, including CRLF line endings and comments; one Redo restores the exact edited source text, with the same preservation.
 8. **Atomic refusal:** a set where one span is invalid → nothing dispatched, buffer unchanged, undo depth unchanged.
 9. **Interface change refusal:** a type/access/name change request → `proto-interface-change-requires-migration`.
 10. **Duplicate PROTO/EXTERNPROTO type names:** two declarations of one type name in one scope → instance edits of that type refuse.
