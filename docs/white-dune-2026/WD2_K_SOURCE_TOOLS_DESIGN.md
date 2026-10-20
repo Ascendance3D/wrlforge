@@ -1,0 +1,170 @@
+# WD2-K — Source Tools Design
+
+**Status:** Draft — proposal for owner review; not approved. Merging this document does not authorize implementation; each step in §9 starts on its own explicit owner GO.
+
+**Lane:** WD2-K (Source Tools), issue #92
+**Goal:** Power-user source tooling in the native editor.
+**Deliverable:** This design document covering source-patch shape, failure modes, undo, and test plan.
+
+## 1. Overview and Scope
+
+This lane designs advanced source tools for the native WRL Forge editor. It relies on the lossless document core (`WD1_LOSSLESS_DOCUMENT_CORE_PLAN.md`), the `src/vrml` parser, and the WD1.5 scope graph (`src/vrml/scope-graph.js`).
+
+The exact text buffer is the only document authority. Every tool below is a read of a projection derived from that text, or a verified span edit of it. No tool creates a second editable model, writes identifiers into the source, or regenerates text from an AST.
+
+**In scope (design only):**
+*   Symbol search (DEF names, PROTO/EXTERNPROTO declarations)
+*   Go-to-definition and find references
+*   Structural selection (expand/shrink by `src/vrml` parse boundaries)
+*   Command palette integration (via the UI-0 command registry)
+*   Script string handling for navigation and selection (§6). Script syntax assistance beyond that is a separately approved later step (§9, step 5).
+
+**Explicitly out of scope:**
+*   **Script execution:** No VRML Script evaluation. The protected-preview CSP is unchanged.
+*   **Second grammar / language server:** `src/vrml` remains the sole grammar authority. No external language server, no additional parser, and no CodeMirror language package (for example a JavaScript grammar) is introduced by this lane.
+*   **Rename refactoring:** Deferred to a future lane.
+*   **Filesystem access:** The tools operate on the editor buffer and its `src/vrml` parse only. They do not read files, so filesystem authorization contracts are unchanged.
+
+## 2. Dependencies (existing code)
+
+1.  **UI-0 command registry** — `src/editor/command-registry.js` (`docs/ui/UI0_COMMAND_WORKSPACE_ARCHITECTURE.md`). The palette lists and dispatches only registered commands; no second dispatch mechanism.
+2.  **WD1.5 scope graph** — `buildScopeGraph`, `resolve`, `referencesTo`, `symbolFor`, `referenceFor`, `defIsUniqueInScope`, `typeDeclIsUniqueInScope`, `symbols`, `typeDeclarations`, and the `STATUS` / `REASON` constants exported from `src/vrml/scope-graph.js`.
+3.  **Parse sessions and verified transactions** — `createParseSession` and `verifyTransaction` in `src/vrml/document-transaction.js`, over the WD1.2 span algebra in `src/vrml/edit.js` (UTF-16 code-unit offsets, half-open ranges).
+4.  **Editor dispatch** — `applyVerifiedEdits({ oldText, edits, newText, userEvent })` in `src/editor/browser/editor-view.js`. It refuses with `buffer-changed` unless the buffer still equals `oldText` and dispatches the whole edit set as one isolated CodeMirror history event.
+5.  **Highlighting** — `analyze()` in `src/editor/language.js` produces highlight spans from `src/vrml` tokens. The editor has no CodeMirror grammar of its own.
+
+## 3. Navigation and Ambiguity
+
+The rule for every navigation action (go-to-definition, find references, symbol search): **never point confidently at the wrong node.**
+
+1.  **Scope graph is the reference authority.** Every lookup goes through `resolve(graph, reference)` on a graph built from the current parse session. The tools never match DEF names by text search, and never re-implement scoping.
+2.  **Navigate only on `STATUS.RESOLVED` with a symbol.** The command layer moves the cursor only when the resolution's `status` is `STATUS.RESOLVED` and it carries a `symbol` with a `declRange`. Every other status refuses navigation. The cursor does not move.
+3.  **Defined results.** The command layer maps each resolution to exactly one of these results. Result names and all quoted user text are proposed:
+
+    | Scope-graph result | Command result | User-facing behavior |
+    |---|---|---|
+    | `RESOLVED` with `symbol` that is an `EXTERNPROTO` declaration | `navigate:external` | Select the `EXTERNPROTO` declaration in this document and show "Defined externally." The external file is not opened or fetched. |
+    | `RESOLVED` with `symbol` that is not an `EXTERNPROTO` declaration | `navigate` | Select the declaration name span (`declRange`) and scroll it into view. |
+    | `RESOLVED`, reason `NODE_TYPE_IS_BUILTIN` | `refuse:builtin` | "Built-in node type — no source definition." |
+    | `RESOLVED` without `symbol`, any other reason | `refuse:unknown` | Refuse. A resolution without a symbol is never a jump target. |
+    | `AMBIGUOUS` (for example `DUPLICATE_DEF_IN_SCOPE`) | `ambiguous` | List every candidate from `evidence` in source order. Nothing is preselected; the user picks one explicitly. |
+    | `INVALID` (`MISSING_NAME`, `SELF_REFERENTIAL_USE`, `USE_BEFORE_DEF`, …) | `refuse:invalid` | "Cannot navigate: <proposed text for the `REASON` code>." The scope graph returns reason codes only; the user-facing wording per code is proposed and needs owner approval (§11.1). `USE_BEFORE_DEF` may list the later declarations as information, not as a jump target. |
+    | `UNRESOLVED` | `refuse:unresolved` | "No visible definition." |
+    | `UNSUPPORTED` | `refuse:unsupported` | "Not supported here." |
+    | Command layer: cursor inside a complete Script `url` string (§6; an unterminated one is `refuse:incomplete`, §6 item 4) | `refuse:unsupported` | "Not supported here." No lookup is made. |
+    | `RECOVERED` | `refuse:incomplete` | "Document structure incomplete." |
+    | Session text differs from the current buffer (§3.5) | `refuse:stale` | "Document changed — try again." No lookup is made against the stale graph. |
+    | Any status not listed above | `refuse:unknown` | Refuse. New statuses never default to navigation. |
+
+4.  **No first-match fallback.** When there are several candidates, the tool never jumps to the first, closest, or type-matching one. Choosing from the ambiguity list is a separate, explicit user action.
+5.  **Stale analysis.** Navigation uses the scope graph of the parse session for the current buffer. If the buffer changed after that session was created, the tool refuses with `refuse:stale` (fail-closed). The user can retry after the next analysis. It never maps a stale `declRange` onto newer text.
+6.  **PROTO scopes.** Resolution respects PROTO boundaries exactly as the scope graph does (`DEF_NOT_VISIBLE_ACROSS_PROTO_BOUNDARY` is a refusal, not a cross-scope jump).
+7.  **External definitions.** Go-to-definition on an `EXTERNPROTO` instance stops at the `EXTERNPROTO` declaration in this document. It does not open or fetch the external file. This is the `navigate:external` row in §3.3.
+
+### 3.8 Find references
+
+1.  **Target acquisition.** The target is the symbol under the cursor, taken from the current session's graph: on a DEF name, `symbolFor(graph, node)`; on a USE name or node-type name, the symbol of its resolution only if that resolution maps to `navigate` or `navigate:external` in §3.3. For an `EXTERNPROTO` target the list is the in-document `EXTERNPROTO` declaration plus its references in this document; the external file is not opened. On a PROTO/EXTERNPROTO declaration name, that type declaration is the target. Any other resolution returns that row's result from §3.3 (for example `ambiguous` or `refuse:invalid`), and no reference list is produced. A cursor not on a name returns `refuse:no-target` ("No symbol at cursor.").
+2.  **Results.** `referencesTo(graph, symbol)` returns frozen reference records only; it does not include the declaration. Each record carries its parser range in `.range` (`start.offset`, `end.offset`); the symbol's `declRange` has the same shape. The command layer projects the target symbol's `declRange` (the DEF, PROTO or in-document `EXTERNPROTO` declaration) and each record's `.range` to `{ from: start.offset, to: end.offset }`, and builds the list as the declaration followed by the references. The scope graph indexes only `RESOLVED` references with a symbol, so ambiguous, invalid, unresolved, or recovered USEs never appear as references.
+3.  **Ordering and deduplication.** The declaration is always the first entry. The references after it are listed in ascending source offset. The projected ranges are deduplicated by `{ from, to }`, so one declaration or reference node appears once.
+4.  **Incomplete or stale.** A recovered document returns `refuse:incomplete`; a stale session returns `refuse:stale` (§3.5). A valid target always yields its declaration entry; when `referencesTo` returns no records the list is the declaration alone and the panel shows "No references."
+
+### 3.9 Symbol search
+
+1.  **Source.** `symbols(graph)` (DEF declarations) and `typeDeclarations(graph)` (PROTO/EXTERNPROTO declarations) of the current session. No text search of the buffer.
+2.  **Query.** Case-sensitive prefix or substring match on the declared name (VRML names are case-sensitive). An empty query lists every declaration. No fuzzy matching in the first step.
+3.  **Results.** Each result shows the name, kind (DEF, PROTO, EXTERNPROTO), the node type where known, and the enclosing scope (top level or the PROTO name). Results are in source order. Duplicate names are all listed, each with its own scope, and marked as duplicates by the helper for its namespace: `defIsUniqueInScope(graph, symbol).unique` for a DEF, `typeDeclIsUniqueInScope(graph, symbol).unique` for a PROTO or EXTERNPROTO (one type namespace, so a `PROTO` and an `EXTERNPROTO` of one name in one scope are duplicates). Both return `{ unique, reason }`; `unique === false` for any reason, including a recovered scope, marks the entry. No entry is preselected or hidden.
+4.  **Choosing a result** selects that declaration's `declRange` with the matching §3.3 result: `navigate` for a DEF or PROTO, `navigate:external` for an EXTERNPROTO (its in-document declaration is selected; the external file is not opened or fetched). A recovered document or stale session returns `refuse:incomplete` or `refuse:stale`.
+
+## 4. Source Patches and Undo
+
+None of the five steps in §9 edits the document. These rules bind any later, separately approved step that does (for example, deleting a selected node span). Rename remains out of scope.
+
+1.  **Span-anchored edits only.** Edits are WD1.2 edit sets (`src/vrml/edit.js`) against the exact text of a parse session. Text outside each edit span is never touched.
+2.  **Stale-span guard.** Before dispatch, the planner checks that the current buffer equals the session text (the same gate as `documentGate` in `src/vrml/structure-edit.js`). It then builds a receipt with `verifyTransaction({ oldText, edits, newText })`. The editor dispatch re-checks the buffer (`applyVerifiedEdits` refuses with `buffer-changed`). On any mismatch the edit is refused and nothing is applied; the user can retry after the next analysis.
+3.  **Minimal patches.** Each edit is the smallest replacement that achieves the action. Surrounding whitespace, comments, and the document's LF or CRLF convention are preserved. Invalid, overlapping, or ambiguous spans are refused by the edit algebra and the whole set is rejected — no partial application.
+4.  **One action, one undo step.** Each user-visible action is dispatched through `applyVerifiedEdits` as one CodeMirror transaction with `isolateHistory`, so one Undo restores the exact previous text and one Redo reapplies it. A proposed new `userEvent` value for source tools (for example `input.source`) needs owner approval because that list is closed today.
+5.  **UI state is not document state.** Selection, ambiguity lists, and palette state are not written to the source, the analysis, or the CodeMirror undo history. Pure selection changes do not create undo steps.
+
+## 5. Structural Selection
+
+Structural selection changes the selection only. It does not edit text.
+
+1.  **Expansion order.** From the cursor or current selection, each "expand" step selects the smallest enclosing `src/vrml` parse range that strictly contains the current selection, in this order:
+    1.  **Value** — a single token value (number, string, `TRUE`), then, if that value is an element of a `[ … ]` list, the whole list. A node is never selected at this level; nodes are selected at level 3.
+    2.  **Field** — field name plus its value.
+    3.  **Node** — the node including its `DEF name` prefix, or the `USE name` statement.
+    4.  **Parent node** — the next enclosing node, then repeat steps 2–4 upward.
+    "Shrink" walks the same stack back down. It never invents a range that did not appear on the expansion stack.
+2.  **Strings.** A string literal is one value. Expansion inside a string first selects the whole string, including quotes. It never selects part of a string and part of the surrounding source. Text inside a string is not parsed further (§6).
+3.  **Comments.** A cursor inside a `#` comment selects the comment. The next step follows the same smallest-strictly-enclosing rule as §5.1: inside a `[ … ]` list it selects the list, otherwise the field or node that encloses the comment. A comment is never split. Comments adjacent to a node are not added to the node range.
+4.  **Root and whitespace.** At the top-level scene, expansion stops; another expand step leaves the selection unchanged. On whitespace between statements, the first step selects the smallest enclosing range (§5.1); whitespace at the root has none, so nothing changes.
+5.  **Incomplete source.** If the parse is truncated, depth-capped, has blocking syntax errors, or the enclosing node is marked `incomplete`, structural selection does not expand past the last complete range. It shows "Document structure incomplete." It never guesses a closing brace.
+6.  **Units.** All ranges use UTF-16 code-unit offsets from the tokenizer, the same units CodeMirror uses, so non-ASCII and non-BMP text select correctly.
+
+## 6. Script Strings
+
+`src/vrml` tokenizes each `url` entry of a Script node as one VRML string token. This lane keeps that as the only structure for Script content.
+
+1.  **`javascript:` strings** — Treated as one VRML string value. Highlighting stays the existing string highlight. Navigation inside a complete string returns `refuse:unsupported` (§3.3); the cursor does not move. Structural selection follows §5.2.
+2.  **`vrmlscript:` strings** — Same behavior as `javascript:`.
+3.  **Other or nested syntax** (`ecmascript:`, CDATA-style content, escaped quotes, embedded VRML-like text) — Same behavior. The content is opaque. No tool interprets it.
+4.  **Incomplete Script blocks** (an unterminated string, or a Script node with parse errors) — An unterminated string is reported by the tokenizer as `VRML010`, a blocking syntax error, so navigation returns `refuse:incomplete` (not `refuse:unsupported`) and structural selection follows §5.5. Nothing inside the string is highlighted structurally.
+5.  **Selection across string boundaries** — Never produced (§5.2).
+6.  **Fallback.** Because the above is "opaque string" in every case, no nested-language parser is required. Any future JavaScript-aware assistance needs a separate owner decision on whether a second grammar or a new runtime dependency is acceptable. It is not part of this lane.
+
+## 7. Command Palette
+
+1.  A modal list of commands from `src/editor/command-registry.js`. It shows only registered commands and dispatches them through the registry's public `execute(id, { source: 'palette' })`, which re-checks `enabled` immediately before `run`.
+2.  Disabled commands (the registry `enabled` function evaluates to false) are shown as disabled and cannot run.
+3.  Palette state (query text, highlighted row) is UI state only (§4.5).
+
+## 8. Failure Modes (Fail-Closed Cases)
+
+Each case returns a defined result. None of them crashes or produces a wrong answer.
+
+1.  **Parse incomplete or recovered** — Navigation returns `refuse:incomplete`. Structural selection stops at the last complete range.
+2.  **Ambiguous resolution** — `ambiguous` with a candidate list. No silent jump.
+3.  **Invalid or unresolved reference** — `refuse:invalid` or `refuse:unresolved`. The cursor does not move.
+4.  **Stale session** — `refuse:stale`. Edits refuse with `buffer-changed`.
+5.  **External definition** — `navigate:external` (§3.3). No file access or fetching.
+6.  **Root, or whitespace at the root** — Expansion stops with no change.
+7.  **Read-only editor** — Edits refuse with `editor-read-only`. Navigation and selection still work.
+
+## 9. Proposed Implementation Order
+
+Each step requires its own owner GO.
+
+1.  Read-only symbol navigation (symbol list from the scope graph).
+2.  Go-to-definition and find references (§3).
+3.  Structural selection (§5).
+4.  Command palette integration (§7).
+5.  Script syntax assistance — separately approved; see §6.6.
+
+## 10. Test Plan
+
+**Independent QA is required for this lane.**
+
+**Focused tests (Node, `node:test`):**
+1.  **Resolution mapping:** One fixture per row of the §3.3 table — resolved USE; duplicate DEF in one scope (`ambiguous`, cursor unchanged, no candidate preselected); missing name; self-referential USE outside any Script (`refuse:invalid`); a `USE` in a Script node field (for example `field SFNode me USE S`), outside its `url` string, referencing the Script's own DEF (`navigate`); an `EXTERNPROTO` instance (`navigate:external`); USE before DEF; DEF behind a PROTO boundary (`refuse:unresolved`); recovered document (`refuse:incomplete`); built-in node type (`refuse:builtin`); a resolved result without a symbol (`refuse:unknown`); an unknown status value (`refuse:unknown`).
+2.  **Stale session:** Navigation and edits computed on one session refuse after an intervening edit to the buffer.
+3.  **Structural selection:** At least five nesting fixtures (value → field → node → parent node) with exact expected spans; a cursor in a string; a cursor in a comment; root and whitespace; a truncated document; non-BMP characters before the target span.
+4.  **Script strings:** `javascript:` and `vrmlscript:` URLs and an escaped quote inside a string — selection never crosses the string boundary, navigation inside the string returns `refuse:unsupported`, and no structural highlights appear inside the string. An unterminated Script string returns `refuse:incomplete` for navigation and has no structural highlights.
+5.  **Find references:** target on a DEF, on a resolved USE, on an `EXTERNPROTO` instance (declaration plus in-document references), on a `PROTO` declaration name, on an `EXTERNPROTO` declaration name (no external file access), and on an ambiguous USE (`ambiguous`, no list); the declaration's `declRange` is the first entry (it is not in `referencesTo`'s output), then references in ascending offset with no duplicate ranges; unresolved and invalid USEs of the same name excluded; a target with no references (declaration-only list, "No references."); cursor not on a name (`refuse:no-target`).
+6.  **Symbol search:** case-sensitive matching; empty query lists all; duplicate DEF names in one scope both listed and marked; same name in a PROTO body and at top level listed with their scopes; a `PROTO` and an `EXTERNPROTO` of one name in one scope both marked; choosing an EXTERNPROTO result returns `navigate:external` and selects its in-document declaration without file access; stale and recovered sessions refused.
+7.  **Command registry:** The palette provider returns only registry commands and respects `enabled`; activating a command calls the registry's `execute(id, { source: 'palette' })`.
+8.  **Edits and undo (only for a later, separately approved editing step; §4):** A verified edit preserves all text outside its span (byte-exact, LF and CRLF fixtures); an overlapping or invalid edit set is rejected with no change; one action adds exactly one undo step (`historyDepth()`), and undo restores the exact previous text.
+
+**Visual QA (Electron, Linux first, then macOS 15+):**
+1.  **Palette:** Opens, filters by typing, runs a command with the keyboard.
+2.  **Navigation:** Go-to-definition on a `USE` selects and scrolls to the exact `DEF` name span.
+3.  **Ambiguity:** Go-to-definition on an ambiguous `USE` shows the candidate list; the cursor does not move.
+4.  **Refusal:** An invalid or unresolved `USE` shows the refusal message; the cursor does not move.
+5.  **Script string:** A Script with a `javascript:` URL keeps the normal string styling, and structural selection selects the whole string.
+
+## 11. Open Owner Decisions
+
+1.  Approve the result names (including `navigate:external`, `refuse:stale`, `refuse:unknown`, and `refuse:no-target`) and the proposed user text per `REASON` code in §3.3, or replace them.
+2.  Approve a new `userEvent` value for source-tool edits (§4.4), or reuse `input.model`.
+3.  Whether any JavaScript-aware Script assistance (second grammar or new dependency) should ever be considered (§6.6).
+4.  Whether structural selection should include leading comments attached to a node (§5.3 currently excludes them).
+5.  Owner review of this design; independent QA not yet performed.
