@@ -205,7 +205,39 @@ Every name marked *(proposed)* does not exist yet.
    `messageForPresentation`. This needs a `GROUP_BY_FINDING_CODE` entry in
    `src/vrml/presentation.js` and a message entry in `src/vrml/messages.js` and the
    P4 catalog *(all proposed)*. No new presentation path is added.
-4. **Recompute.** The producer runs on every new parse session. Its output replaces
+4. **Integration contract.** Every touch point the implementation needs, by file:
+   - **Construction path.** `createFinding` is module-internal and `finding()`
+     derives `iso`/`rule` from `ISO_BY_REASON` via `isoFor(reason)`, so no producer
+     supplies `iso`. `scriptPreviewFindings` lives in `src/vrml/semantic-findings.js`
+     and builds each record through that same internal `finding(code, subject,
+     range, answer)` call, with `answer = { status: STATUS.RESOLVED, reason:
+     REASON.SCRIPT_PREVIEW_NOT_EXECUTED, detail: { urlKinds }, evidence: [] }`.
+     No second factory and no `iso` parameter are added.
+   - **ISO table.** `ISO_BY_REASON` gains an explicit entry
+     `[REASON.SCRIPT_PREVIEW_NOT_EXECUTED]: notStated` *(proposed)*. Without it
+     `isoFor` would still fall back to `notStated`, but
+     `test/vrml/semantic-findings.test.js` asserts the table is total over every
+     producer-reachable reason, so the entry is required, not optional.
+   - **Registrations** *(all proposed)*: `REASON.SCRIPT_PREVIEW_NOT_EXECUTED`
+     where the other `REASON` values are defined; `FINDING_CODE.SCRIPT_PREVIEW_NOT_EXECUTED`
+     in semantic-findings.js; a `GROUP_BY_FINDING_CODE` entry in
+     `src/vrml/presentation.js`; a message entry in `src/vrml/messages.js` that
+     reads `detail.urlKinds`; and the matching row in
+     `docs/white-dune-2026/P4_B_DIAGNOSTIC_MESSAGE_CATALOG.md`.
+   - **Exports.** `scriptPreviewFindings` is added to semantic-findings.js
+     `module.exports` and to the `publicSemanticFindings` facade in
+     `src/vrml/index.js`, beside `findingsForDocument`.
+   - **Caller.** `renderer/editor.js`, step 4 of `onAnalysis` (today
+     `rawFindings = sceneBridge.semanticFindings.findingsForDocument(graph)`).
+     That caller runs both producers on the same analysis and passes
+     `findingsForDocument(graph).concat(scriptPreviewFindings(session, graph))` to
+     `presentDocumentFindings`. The parse session is created today inside
+     `reanchorAfterAnalysis`, after step 4; the implementation creates it once
+     from `a.text`/`a.parseResult` before step 4 and hands that same session to
+     `reanchorAfterAnalysis`, so both steps see one session. If either producer
+     throws, the error is logged like today's `findingsForDocument` failure and the
+     other producer's findings are still presented.
+5. **Recompute.** The producer runs on every new parse session. Its output replaces
    the previous set; nothing is accumulated or stored in undo history. Identity and
    dedup follow §5.
 
@@ -346,9 +378,9 @@ from §3 and §5.
 | A change relaxes the CSP to allow `unsafe-eval` | A focused test fails (§9.1, T10). |
 | A local-file Script `url` executes under `script-src 'self' file:` | Unverified; T15 is required. If it executes, report a separate security finding; no CSP change in this lane. |
 | A `data:`/`blob:`/`wrlworld:`/`about:` Script `url` executes (these schemes pass `isBlockedPreviewUrl` and get no advisory) | Unverified; T15 is required. If it executes, report a separate `SECURITY.md` finding; no CSP change in this lane. |
-| Suppression hides an unrelated preview error | Prevented by §4.2; tested by T7–T9, T17 and T18. |
-| An error cannot be mapped to one Script node | Error stays visible (T8). |
-| An error from an older preview generation | Error stays visible, never matched (T9). |
+| Suppression hides an unrelated preview error | Nothing is suppressed in this lane (T7-current–T9-current). A future proposal is held to §4.2 and tested by T7–T9, T17 and T18. |
+| An error cannot be mapped to one Script node | Error stays visible (T8-current; future T8). |
+| An error from an older preview generation | Error stays visible, never matched (T9-current; future T9). |
 | Advisory shown for an invalid Script | Prevented by §3.3 (T3). |
 | Advisory attached to the wrong node after edits | Prevented by §5; identity refusal re-issues (T12). |
 | Advisory spam on every keystroke | Advisories are a recomputed set per parse (T11). |
@@ -361,8 +393,8 @@ All proposed tests are deterministic and need no network.
 ### 9.1 Focused tests (proposed: `test/vrml/script-diagnostic.test.js`)
 
 Tests marked *future* belong to a separately approved suppression proposal (§4) and
-are not part of this lane. In this lane, the same inputs must leave every error
-visible.
+are not part of this lane. The current-lane variants below assert that the same
+inputs leave every error visible.
 
 | ID | Input | Expected |
 | --- | --- | --- |
@@ -375,6 +407,9 @@ visible.
 | T7 (future) | CSP eval violation correlated to flagged node, current generation | Folded into that node's advisory |
 | T8 (future) | CSP eval violation with no node / ambiguous node | Visible |
 | T9 (future) | Correlated violation from an older generation; unrelated texture error; generic error text containing "EvalError" | All visible |
+| T7-current | CSP eval violation correlated to a flagged node, current generation | Error stays visible; the advisory is unchanged (no fold, no count) |
+| T8-current | CSP eval violation with no node / ambiguous node | Error stays visible |
+| T9-current | Correlated violation from an older generation; unrelated texture error; generic error text containing "EvalError" | All visible |
 | T10 | Read `editor.html`, `world.html`, `index.html` | `script-src` has no `unsafe-eval` |
 | T11 | Apply ten edits inside one Script body | Advisory count stays 1 |
 | T12 | Duplicate DEF Scripts; rename DEF; anonymous Script across reload | No UI state carried; fresh advisories only |
