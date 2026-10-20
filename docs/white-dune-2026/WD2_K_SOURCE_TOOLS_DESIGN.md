@@ -28,7 +28,7 @@ The exact text buffer is the only document authority. Every tool below is a read
 ## 2. Dependencies (existing code)
 
 1.  **UI-0 command registry** — `src/editor/command-registry.js` (`docs/ui/UI0_COMMAND_WORKSPACE_ARCHITECTURE.md`). The palette lists and dispatches only registered commands; no second dispatch mechanism.
-2.  **WD1.5 scope graph** — `buildScopeGraph`, `resolve`, `referencesTo`, `symbolFor`, `referenceFor`, `defIsUniqueInScope`, and the `STATUS` / `REASON` constants exported from `src/vrml/scope-graph.js`.
+2.  **WD1.5 scope graph** — `buildScopeGraph`, `resolve`, `referencesTo`, `symbolFor`, `referenceFor`, `defIsUniqueInScope`, `typeDeclIsUniqueInScope`, and the `STATUS` / `REASON` constants exported from `src/vrml/scope-graph.js`.
 3.  **Parse sessions and verified transactions** — `createParseSession` and `verifyTransaction` in `src/vrml/document-transaction.js`, over the WD1.2 span algebra in `src/vrml/edit.js` (UTF-16 code-unit offsets, half-open ranges).
 4.  **Editor dispatch** — `applyVerifiedEdits({ oldText, edits, newText, userEvent })` in `src/editor/browser/editor-view.js`. It refuses with `buffer-changed` unless the buffer still equals `oldText` and dispatches the whole edit set as one isolated CodeMirror history event.
 5.  **Highlighting** — `analyze()` in `src/editor/language.js` produces highlight spans from `src/vrml` tokens. The editor has no CodeMirror grammar of its own.
