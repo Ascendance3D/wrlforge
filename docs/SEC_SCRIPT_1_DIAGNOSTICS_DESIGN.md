@@ -148,10 +148,12 @@ copies script source text into the UI.
 - **Valid, not executed** (`SCRIPT_PREVIEW_NOT_EXECUTED`): severity *advisory*,
   non-fatal. It does not block save, export, packaging or preview.
 - **Invalid declaration** (for example an `exposedField` in a Script interface): the
-  existing error finding from `semantic-findings.js` is shown, unchanged.
-  `SCRIPT_PREVIEW_NOT_EXECUTED` is **not** also shown for that node. The user must
-  fix the grammar error first; an advisory that says the node is valid would be
-  wrong.
+  existing semantic finding is kept and presented through the existing route,
+  unchanged: `findingsForDocument(graph)` (`src/vrml/semantic-findings.js`) →
+  `presentDocumentFindings(findings)` (`src/vrml/presentation.js`) →
+  `messageForPresentation(result)` (`src/vrml/messages.js`). This lane adds nothing to
+  that route for invalid Scripts. `SCRIPT_PREVIEW_NOT_EXECUTED` is **not** also shown
+  for that node. The user must fix the finding first.
 - **Incomplete parse** (half-typed source, recovery stop): no Script advisory is
   emitted for any node. Advisories from the last complete parse are withdrawn, not
   carried forward (§6).
@@ -165,19 +167,25 @@ The final wording goes through the P4 message catalog
 (`docs/white-dune-2026/P4_B_DIAGNOSTIC_MESSAGE_CATALOG.md`, `src/vrml/messages.js`,
 `src/vrml/presentation.js`) and is an owner decision (§10).
 
-## 4. Narrow suppression of follow-on preview errors
+## 4. Follow-on preview errors: not suppressed in this lane
 
-### 4.1 Default: nothing is suppressed
+### 4.1 This lane ships the advisory only
 
-Implementation starts with **no** suppression. Every preview error stays visible
-until each condition below is proven by a recorded spike against the bundled X_ITE
-version. The design never suppresses an error because the document contains a
-`Script` node.
+The SEC-SCRIPT-1 implementation lane ships the §3 advisory **only**. It suppresses
+no preview error. Every preview error stays visible, and nothing in this lane
+depends on suppression.
 
-### 4.2 Conditions for suppressing one error
+Suppressing follow-on errors is a **later, separately approved step**. It needs its
+own design proposal, and that proposal must define the full data flow before any
+code: where the CSP refusal is captured (the producer), what record the X_ITE
+adapter produces, what payload reaches the renderer and with which named fields,
+how it reaches the advisory store, and where the filter runs. None of that is
+defined here. Never suppress an error because the document contains a `Script` node.
 
-An error from the preview may be hidden from the user-facing panel only if **all**
-of these hold:
+### 4.2 Entry criteria for any future suppression proposal
+
+A future proposal may hide a preview error from the user-facing panel only if it
+proves that **all** of these hold for that error:
 
 1. **Proven origin.** The error is the evaluation refusal caused by the protected
    preview's CSP: a `securitypolicyviolation` event with
@@ -199,11 +207,11 @@ of these hold:
    runtime Script node instance, and that instance maps to exactly one parse node
    through WD2-D-style parse-local provenance (runtime identity plus exact source
    span) captured while parsing that same byte-identical text for that same
-   generation (conditions 2–3). The parse node is looked up in the current parse
+   generation (criteria 2–3). The parse node is looked up in the current parse
    only because the texts are equal; no Tier 1 or Tier 2 anchor is used to bridge
    a difference. Position, document order, DEF name, node type and field values are
-   **not** used as identity, in line with WD2-D. Extending that provenance to Script nodes is part of this lane and
-   needs the §4.3 spike. The mapped node must currently have an active
+   **not** used as identity, in line with WD2-D. Extending that provenance to Script nodes would be part of that
+   future proposal and needs §4.3 items 1–2. The mapped node must have an active
    `SCRIPT_PREVIEW_NOT_EXECUTED` advisory.
 5. **Exactly one occurrence.** A Script inside a PROTO body exists once in source
    but once per instance at runtime. An error from such a Script cannot name one
@@ -211,25 +219,30 @@ of these hold:
 6. **Counted, not lost.** The suppressed error is folded into the advisory (for
    example "1 blocked evaluation attempt"), so the event is still counted.
 
-If any condition is missing, unknown or ambiguous, the error stays visible. This
+If any criterion is missing, unknown or ambiguous, the error stays visible. This
 includes errors with no source, errors whose source cannot be mapped to one node,
 errors from ROUTE targets downstream of a Script, and every non-CSP runtime error
 (missing texture, failed Inline, X_ITE internal error, renderer crash).
 
 ### 4.3 Open spike
 
-The spike runs against the pinned Electron X_ITE (`15.1.10`) and records:
+The spike runs against the pinned Electron X_ITE (`15.1.10`).
 
-1. whether X_ITE exposes the runtime Script node behind a blocked evaluation, and
-   whether WD2-D provenance can bind it to one exact source span (conditions 2–4);
-2. the exact error/event shape of the CSP refusal (condition 1);
+**Required for this lane:**
+
 3. how X_ITE loads a Script `url` that is a local file (`"behavior.js"`,
    `"../x.js"`, `"/x.js"`, `file:///…`) or uses an allowed non-file scheme
    (`data:`, `blob:`, `wrlworld:`, `about:`), and whether any of them executes under
    the current CSP (the §3.2 unverified assumptions, proven by T15).
 
-If the spike cannot prove conditions 2–4, suppression is dropped from the lane and
-the advisory ships alone. Errors remain visible. This is the fail-closed outcome.
+**Input to a future suppression proposal only** (not a dependency of this lane):
+
+1. whether X_ITE exposes the runtime Script node behind a blocked evaluation, and
+   whether WD2-D provenance can bind it to one exact source span (criteria 2–4);
+2. the exact error/event shape of the CSP refusal (criterion 1).
+
+If items 1–2 cannot be proven, no suppression proposal is made. Errors remain
+visible. This is the fail-closed outcome, and it is also this lane's behavior.
 
 ## 5. Diagnostic identity and deduplication
 
@@ -265,9 +278,9 @@ from §3 and §5.
 | Script becomes invalid (grammar error) | The advisory is replaced by the existing error finding (§3.3). |
 | Parse becomes incomplete | All Script advisories are withdrawn until a complete parse returns. No stale advisory is shown against unparsed text. |
 | Undo / redo restores earlier source | The rule re-runs on the restored text and produces the same advisories as before for the same text. Undo restores source only; diagnostics are never stored in the undo stack. |
-| Several Script nodes | Each qualifying node gets its own advisory. Suppression (§4) matches each error to exactly one node or does not suppress it. |
+| Several Script nodes | Each qualifying node gets its own advisory. No preview error is suppressed (§4). |
 | Unrelated runtime error while a Script is present | Shown normally. §4 never applies to it. |
-| Script inside a PROTO body, several instances | One advisory on the single authored Script in the PROTO body. Runtime errors from its instances are ambiguous (§4.2 condition 5) and stay visible. |
+| Script inside a PROTO body, several instances | One advisory on the single authored Script in the PROTO body. Runtime errors from its instances stay visible; this lane suppresses nothing, and any future suppression must treat them as ambiguous (§4.2 criterion 5). |
 | Script in a file loaded through `Inline` | No advisory in the parent document; that file is not the parse being edited. Its runtime errors stay visible. Opening the Inline target as its own document gives it its own advisories. (Open decision 5.) |
 | Document replaced, reopened or recovered | Advisories are recomputed; carried state follows only Tier 2 rules. |
 | Feature reverted (code removed) | Source text, parsed Script nodes and preview security settings are unchanged, because the feature never wrote any of them. |
@@ -303,7 +316,11 @@ from §3 and §5.
 
 All proposed tests are deterministic and need no network.
 
-### 9.1 Focused tests (proposed: `test/vrml/script-diagnostic.test.js`, plus a preview filter test under `test/preview/`)
+### 9.1 Focused tests (proposed: `test/vrml/script-diagnostic.test.js`)
+
+Tests marked *future* belong to a separately approved suppression proposal (§4) and
+are not part of this lane. In this lane, the same inputs must leave every error
+visible.
 
 | ID | Input | Expected |
 | --- | --- | --- |
@@ -313,21 +330,23 @@ All proposed tests are deterministic and need no network.
 | T4 | Script with only `url "http://example.com/s.js"` | No advisory; remote refusal unchanged |
 | T5 | Script with `url []` / no `url` | No advisory |
 | T6 | Two Scripts, one inline and one local `"b.js"` | Two advisories, one per node |
-| T7 | CSP eval violation correlated to flagged node, current generation | Folded into that node's advisory |
-| T8 | CSP eval violation with no node / ambiguous node | Visible |
-| T9 | Correlated violation from an older generation; unrelated texture error; generic error text containing "EvalError" | All visible |
+| T7 (future) | CSP eval violation correlated to flagged node, current generation | Folded into that node's advisory |
+| T8 (future) | CSP eval violation with no node / ambiguous node | Visible |
+| T9 (future) | Correlated violation from an older generation; unrelated texture error; generic error text containing "EvalError" | All visible |
 | T10 | Read `editor.html`, `world.html`, `index.html` | `script-src` has no `unsafe-eval` |
 | T11 | Apply ten edits inside one Script body | Advisory count stays 1 |
 | T12 | Duplicate DEF Scripts; rename DEF; anonymous Script across reload | No UI state carried; fresh advisories only |
 | T13 | Remove Script; undo; redo | Advisory gone, back, gone; source text byte-identical to before each step |
 | T14 | Truncate document mid-Script (incomplete parse) | No Script advisories |
 | T15 (required) | In the protected preview page with the production CSP, a Script whose `url` is (a) a local file — `"behavior.js"`, `"../x.js"`, `"/x.js"`, `file:///…` — or (b) a `data:` URL (e.g. `data:text/javascript,…`), a `blob:` URL, a `wrlworld:` URL to a `.js` file, or an `about:` URL, each carrying code with an observable side effect | The side effect never occurs in any case. If it occurs, file a separate `SECURITY.md` finding; the CSP is not changed in this lane |
-| T19 | Script with `EXPOSED_FIELD_IN_SCRIPT_INTERFACE` (finding subject is the interface declaration) | No advisory (ownership via `N.interfaces`) |
+| T16 | Script with an `UNDEFINED` or `NOT_STATED` finding | Existing finding only, presented via `presentDocumentFindings` / `messageForPresentation`; no advisory |
+| T17 (future) | Correlated violation while the preview shows a last-good scene built from older text | Visible (criterion 2) |
+| T18 | Script in a PROTO body with two instances | One advisory. *(Future:* a correlated violation stays visible, criterion 5*)* |
+| T19 | Script with `EXPOSED_FIELD_IN_SCRIPT_INTERFACE` (finding subject is the interface declaration) | No advisory (ownership via `N.interfaces`); existing finding presented unchanged |
 | T20 | Valid Script plus an unrelated recoverable parser error elsewhere in the file | No Script advisories anywhere in the document |
 | T21 | Script `url "C:\\x.js"` | No advisory; preview request blocked |
-| T16 | Script with an `UNDEFINED` or `NOT_STATED` finding | Existing finding only; no advisory |
-| T17 | Correlated violation while the preview shows a last-good scene built from older text | Visible (condition 2) |
-| T18 | Script in a PROTO body with two instances; correlated violation | One advisory; error visible (condition 5) |
+| T22 | Parent document with `Inline { url "child.wrl" }`, where `child.wrl` contains a valid inline Script | No advisory in the parent's findings; the parent parse contains no Script node |
+| T23 | The same `child.wrl` parsed as its own document | One advisory for its Script |
 
 ### 9.2 Electron visual QA (Linux first, macOS 15+ second)
 
@@ -343,13 +362,19 @@ Uses the existing `test/visual/` harness and `docs/VISUAL_QA_SAFETY.md` rules.
 5. Fixture with a Script whose `url` names a missing local `.js` file. Record whether
    the texture wrapper files the failure as a "Texture:" warning, and report it if it
    does.
+6. World Project whose primary file Inlines a child `.wrl` containing a Script. The
+   primary document shows no Script advisory. Opening the child as its own document
+   shows its own advisory. Preview errors from either stay visible.
 
 ### 9.3 Independent security review criteria
 
 - Zero diff to CSP meta tags, Electron `webPreferences`, preload/IPC, URL policy,
   `preview-source.js` and network blocking.
 - No new remote origin, no `eval`/`new Function`, no script interpreter dependency.
-- Suppression code (if any ships) is reviewed against §4.2 with T7–T9, T17 and T18 evidence; T15 is required before any local-file advisory ships.
+- This lane adds no suppression code; any change that hides a preview error is out of
+  scope and blocks the review. T15 is required before any local-file advisory ships.
+- A future suppression proposal is reviewed against §4.2 with T7–T9, T17 and T18
+  evidence.
 
 ## 10. Open owner decisions
 
@@ -357,8 +382,8 @@ Uses the existing `test/visual/` harness and `docs/VISUAL_QA_SAFETY.md` rules.
    warnings box (`previewWarnings`) or both.
 2. Whether a document-level summary line is shown in addition to the per-node
    advisories.
-3. Whether follow-on suppression (§4) is in scope at all, or whether the lane ships
-   the advisory alone. Suppression requires the §4.3 spike regardless.
+3. Whether to open a separate suppression proposal (§4) after this lane. This
+   lane ships the advisory alone either way.
 4. Whether a local-file Script `url` should also be shown as an authorized asset in
    the World Project view (today's classifier decides; this design does not change it).
 5. Whether Scripts inside `Inline`-loaded files should ever be summarized in the
@@ -380,6 +405,6 @@ Uses the existing `test/visual/` harness and `docs/VISUAL_QA_SAFETY.md` rules.
 ## 12. Limits and review status
 
 - Design only. No production code, dependency, configuration, CI or CSP change.
-- §4, the local-file rows of §3.2 and the allowed-scheme rows of §3.2 depend on an
-  X_ITE spike (§4.3) and test T15 that have not been run.
+- The local-file and allowed-scheme rows of §3.2 depend on the §4.3 spike (item 3)
+  and test T15, which have not been run. Suppression (§4) is out of this lane.
 - Owner review is **not complete**. Draft — proposal for owner review; not approved.
