@@ -158,6 +158,7 @@ pub struct Tokenized {
 
 struct Lexer<'a> {
     src: &'a str,
+    bytes: &'a [u8],
     i: usize,
     u16: u32,
     line: u32,
@@ -177,32 +178,50 @@ impl<'a> Lexer<'a> {
         self.i >= self.src.len()
     }
     fn peek(&self) -> Option<char> {
-        self.src[self.i..].chars().next()
+        if self.i < self.bytes.len() && self.bytes[self.i] < 128 {
+            Some(self.bytes[self.i] as char)
+        } else {
+            self.src[self.i..].chars().next()
+        }
     }
     fn peek_at(&self, k: usize) -> Option<char> {
-        self.src[self.i..].chars().nth(k)
+        if self.i + k < self.bytes.len() && self.bytes[self.i..=self.i + k].iter().all(|&b| b < 128)
+        {
+            Some(self.bytes[self.i + k] as char)
+        } else {
+            self.src[self.i..].chars().nth(k)
+        }
     }
     /// One source position; CRLF and lone CR count as ONE line break.
     fn advance(&mut self) {
-        let Some(c) = self.peek() else { return };
-        if c == '\r' {
-            self.i += 1;
-            self.u16 += 1;
-            if self.peek() == Some('\n') {
+        if self.i < self.bytes.len() && self.bytes[self.i] < 128 {
+            let b = self.bytes[self.i];
+            if b == b'\r' {
                 self.i += 1;
                 self.u16 += 1;
+                if self.i < self.bytes.len() && self.bytes[self.i] == b'\n' {
+                    self.i += 1;
+                    self.u16 += 1;
+                }
+                self.line += 1;
+                self.col = 1;
+                return;
             }
-            self.line += 1;
-            self.col = 1;
-            return;
-        }
-        if c == '\n' {
+            if b == b'\n' {
+                self.i += 1;
+                self.u16 += 1;
+                self.line += 1;
+                self.col = 1;
+                return;
+            }
             self.i += 1;
             self.u16 += 1;
-            self.line += 1;
-            self.col = 1;
+            self.col += 1;
             return;
         }
+        let Some(c) = self.src[self.i..].chars().next() else {
+            return;
+        };
         self.i += c.len_utf8();
         let units = c.len_utf16() as u32;
         self.u16 += units;
@@ -219,6 +238,7 @@ impl<'a> Lexer<'a> {
 pub fn tokenize(src: &str) -> Tokenized {
     let mut lx = Lexer {
         src,
+        bytes: src.as_bytes(),
         i: 0,
         u16: 0,
         line: 1,
