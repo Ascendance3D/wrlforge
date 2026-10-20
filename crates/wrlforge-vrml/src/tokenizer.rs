@@ -158,6 +158,7 @@ pub struct Tokenized {
 
 struct Lexer<'a> {
     src: &'a str,
+    bytes: &'a [u8],
     i: usize,
     u16: u32,
     line: u32,
@@ -177,32 +178,50 @@ impl<'a> Lexer<'a> {
         self.i >= self.src.len()
     }
     fn peek(&self) -> Option<char> {
-        self.src[self.i..].chars().next()
+        if self.i < self.bytes.len() && self.bytes[self.i] < 128 {
+            Some(self.bytes[self.i] as char)
+        } else {
+            self.src[self.i..].chars().next()
+        }
     }
     fn peek_at(&self, k: usize) -> Option<char> {
-        self.src[self.i..].chars().nth(k)
+        if self.i + k < self.bytes.len() && self.bytes[self.i..=self.i + k].iter().all(|&b| b < 128)
+        {
+            Some(self.bytes[self.i + k] as char)
+        } else {
+            self.src[self.i..].chars().nth(k)
+        }
     }
     /// One source position; CRLF and lone CR count as ONE line break.
     fn advance(&mut self) {
-        let Some(c) = self.peek() else { return };
-        if c == '\r' {
-            self.i += 1;
-            self.u16 += 1;
-            if self.peek() == Some('\n') {
+        if self.i < self.bytes.len() && self.bytes[self.i] < 128 {
+            let b = self.bytes[self.i];
+            if b == b'\r' {
                 self.i += 1;
                 self.u16 += 1;
+                if self.i < self.bytes.len() && self.bytes[self.i] == b'\n' {
+                    self.i += 1;
+                    self.u16 += 1;
+                }
+                self.line += 1;
+                self.col = 1;
+                return;
             }
-            self.line += 1;
-            self.col = 1;
-            return;
-        }
-        if c == '\n' {
+            if b == b'\n' {
+                self.i += 1;
+                self.u16 += 1;
+                self.line += 1;
+                self.col = 1;
+                return;
+            }
             self.i += 1;
             self.u16 += 1;
-            self.line += 1;
-            self.col = 1;
+            self.col += 1;
             return;
         }
+        let Some(c) = self.src[self.i..].chars().next() else {
+            return;
+        };
         self.i += c.len_utf8();
         let units = c.len_utf16() as u32;
         self.u16 += units;
@@ -219,6 +238,7 @@ impl<'a> Lexer<'a> {
 pub fn tokenize(src: &str) -> Tokenized {
     let mut lx = Lexer {
         src,
+        bytes: src.as_bytes(),
         i: 0,
         u16: 0,
         line: 1,
@@ -665,6 +685,64 @@ mod tests {
         assert_eq!(t.tokens[1].range.start.offset, 3);
         assert_eq!(t.tokens[1].range.start.column, 4);
         assert_eq!(t.tokens[2].range.start.offset, 5);
+    }
+
+    #[test]
+    fn empty_source_is_a_single_eof_at_the_origin() {
+        let t = tokenize("");
+        assert!(t.diagnostics.is_empty());
+        assert_eq!(t.tokens.len(), 1);
+        assert_eq!(t.tokens[0].kind, TokKind::Eof);
+        assert_eq!(
+            t.tokens[0].range.start,
+            Pos {
+                offset: 0,
+                byte: 0,
+                line: 1,
+                column: 1
+            }
+        );
+    }
+
+    #[test]
+    fn ascii_fast_path_and_unicode_fallback_agree_at_every_boundary() {
+        // ASCII next to 2-, 4-byte chars; lookahead (`-.é`, `.é`, `\😀`) that
+        // reaches a non-ASCII char; lone CR before a string and at EOF.
+        let src = "aé😀b .5é -.é\r\"\\😀\"\r";
+        let t = tokenize(src);
+        let got: Vec<(&str, [u32; 4], [u32; 4])> = t
+            .tokens
+            .iter()
+            .map(|tok| {
+                let (s, e) = (tok.range.start, tok.range.end);
+                (
+                    tok.lexeme(src),
+                    [s.offset, s.byte, s.line, s.column],
+                    [e.offset, e.byte, e.line, e.column],
+                )
+            })
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("aé😀b", [0, 0, 1, 1], [5, 8, 1, 6]),
+                (".5é", [6, 9, 1, 7], [9, 13, 1, 10]),
+                (".", [11, 15, 1, 12], [12, 16, 1, 13]),
+                ("é", [12, 16, 1, 13], [13, 18, 1, 14]),
+                ("\"\\😀\"", [14, 19, 2, 1], [19, 26, 2, 6]),
+                ("", [20, 27, 3, 1], [20, 27, 3, 1]),
+            ]
+        );
+        assert_eq!(t.tokens[2].kind, TokKind::Period);
+        match &t.tokens[4].kind {
+            TokKind::Str { value, terminated } => {
+                assert_eq!(value, "\\😀");
+                assert!(terminated);
+            }
+            _ => panic!("Expected string"),
+        }
+        let codes: Vec<&str> = t.diagnostics.iter().map(|d| d.code.as_str()).collect();
+        assert_eq!(codes, ["VRML011", "VRML012"]);
     }
 
     #[test]
