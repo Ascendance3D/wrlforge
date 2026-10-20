@@ -62,20 +62,31 @@ cannot run in the protected preview. Keep every unrelated error visible.
 ### 3.1 The rule
 
 > Emit `SCRIPT_PREVIEW_NOT_EXECUTED` for a node **N** if and only if all of these hold
-> for the **current, complete parse** of the document:
+> for the **current parse** of the document:
 >
 > 1. **N** is a node whose type is the built-in VRML97 `Script` node (not a PROTO
 >    instance named `Script`, and not a node inside an unparsed EXTERNPROTO body).
 >    **N** may sit in the main scene or inside a PROTO body in this document; it
 >    must be in the document being edited, never in a file loaded through `Inline`
 >    (§6);
-> 2. the parse that produced **N** is complete (no recovery stop, no node or depth
->    limit), so the node and its fields are proven;
+> 2. the parse that produced **N** is complete. Concretely, for the result of
+>    `parse()` in `src/vrml/parser.js`: `truncated` is false, `depthCapped` is false,
+>    `diagnostics` contains no entry with severity `error` (`SEVERITY.ERROR` in
+>    `src/vrml/diagnostics.js`), and no AST node in the tree has `incomplete: true`.
+>    This is document-wide: **any** recoverable parser error anywhere in the file
+>    withdraws **every** Script advisory in that document, not just those near the
+>    error;
 > 3. **N** has no finding of its own from `src/vrml/semantic-findings.js` with any
->    ISO result (`PROHIBITED`, `UNDEFINED`, `NOT_STATED` or any other). A Script
->    with any finding is reported by that existing finding instead — see §3.3;
-> 4. **N**'s `url` field contains at least one entry, and at least one entry is in a
->    form the preview would attempt to run (§3.2).
+>    ISO result (`PROHIBITED`, `UNDEFINED`, `NOT_STATED` or any other). A finding
+>    `f` is **N**'s own if and only if `f.subject.node === N`, or `f.subject.node` is
+>    an element of `N.interfaces` (the Script's interface declarations), or
+>    `f.subject.parent === N`. The middle case is required: for
+>    `EXPOSED_FIELD_IN_SCRIPT_INTERFACE`, `interfaceDeclarationFindings` sets
+>    `subject.node` to the interface declaration (`member.node = decl` in
+>    `addMember`, `src/vrml/scope-graph.js`), not to the Script. A Script with any
+>    own finding is reported by that existing finding instead — see §3.3;
+> 4. **N**'s own `url` field contains at least one entry, and at least one entry is
+>    in a form that receives the advisory (§3.2).
 
 The rule is a pure function of `(parse session, node)`. It reads no preview state,
 no filesystem, no project root and no referrer directory, so the same source text
@@ -83,10 +94,13 @@ always produces the same advisories.
 
 ### 3.2 Supported and unsupported forms
 
-**Authoritative classifier:** `classify()` in `src/vrml/asset-refs.js`, which uses
-`isInlineScript` / `isRemote` from `src/world-project/url-fields.js`. It reads only the
-string, so the rule stays pure. It returns `inline-script`, `remote` or `local`.
-`asset-refs.js` already skips empty strings. No second classifier is added.
+**Authoritative classifier:** the `kind` of each record returned by the exported
+`extractAssetRefs(tree)` in `src/vrml/asset-refs.js`. (Its internal `classify()` is
+not exported; it uses `isInlineScript` / `isRemote` from
+`src/world-project/url-fields.js`.) The rule takes the records whose `range` lies
+inside **N**'s own `url` field. `kind` reads only the string, so the rule stays
+pure. It is one of `inline-script`, `remote` or `local`. `extractAssetRefs` already
+skips empty strings. No second classifier is added.
 
 `src/world-project/path-policy.js` (`classifyReference`) is **not** used by this rule,
 because it needs a referrer directory and project root. Its separate
@@ -102,7 +116,10 @@ view, unchanged.
 | Parent-relative path (`"../x.js"`) | local (path-policy separately reports `traversal` when it escapes the project) | Same as the row above |
 | Absolute path (`"/x.js"`) | local (path-policy separately reports `absolute-local`) | Same as the row above |
 | `file:///…` URL | local (`isRemote` treats `file:` as not remote; path-policy reports `absolute-local`) | Same as the row above |
-| Remote URL (`http:`, `https:`, other schemes) | remote | No Script advisory. The existing remote-URL refusal already reports it |
+| Network URL (`http:`, `https:`, `ws:`, `wss:`, `ftp:`, protocol-relative `//host/…`) | remote | No Script advisory. The preview blocks the request (`isBlockedPreviewUrl`) and `scanRemoteUrls` (`src/preview/url-policy.js`) reports it as a blocked remote URL |
+| `data:`, `blob:`, `wrlworld:`, `about:` (also `devtools:`, `chrome:`, `chrome-extension:`) | remote (`isRemote` treats every non-`file:` scheme as remote) | **No Script advisory, and not reported anywhere today.** `scanRemoteUrls` reports only http(s)/ws(s)/ftp and `//`, and `isBlockedPreviewUrl` **allows** these schemes (`ALLOWED_SCHEMES`). Whether a Script `url` in one of these schemes executes is **unverified** — §4.3 item 3 and required test T15 must prove it does not. Open decision 6 |
+| Other non-`file:` scheme (e.g. `mailto:`, `foo:`) | remote | No Script advisory. The preview blocks the request (not in `ALLOWED_SCHEMES`), but `scanRemoteUrls` does not report it |
+| Windows drive path (`"C:\x.js"`, `"C:/x.js"`) | remote (`schemeOf` reads `c` as a scheme) | No Script advisory. This fails safe: the preview blocks the request (`c` is not in `ALLOWED_SCHEMES`). `path-policy.js` separately reports it as `absolute-local` |
 | Empty string entry | skipped by `asset-refs.js` | Ignored |
 | Empty `url` (`url []`) or no `url` field | — | No advisory: there is no code to run |
 
@@ -114,6 +131,13 @@ or one it allows is unknown. Until the §4.3 spike and test T15 prove non-execut
 the advisory for local-file rows must not claim the code "does not run". If T15
 shows the code **can** run, that is a separate security finding, reported to the
 owner through `SECURITY.md`. It is not a reason to change the CSP in this lane.
+
+The same applies to Script `url` values in the `data:`, `blob:`, `wrlworld:` and
+`about:` schemes (and the other `ALLOWED_SCHEMES` entries): the preview's request
+policy lets them through, and CSP `script-src 'self' file:` does not list `data:` or
+`blob:`, but whether X_ITE can turn any of them into running code is unverified. T15
+covers them; a positive result is a separate `SECURITY.md` finding, with no CSP
+change in this lane.
 
 A Script with several entries (MFString fallback list) gets **one** advisory if any
 entry qualifies. The advisory names the qualifying entries by kind only. It never
@@ -162,20 +186,23 @@ of these hold:
    that same refusal. Text matching alone ("EvalError", "unsafe-eval", "CSP") is
    **not** sufficient.
 2. **Same source text.** The displayed preview generation was built from source
-   text byte-identical to the text of the current parse that holds the advisories
-   (or reached from it through an unbroken Tier 1 transaction-receipt chain). When
-   the preview is showing a last-good scene after a parse error, or the editor text
-   has changed since the preview was built, the two differ and suppression is
-   refused.
+   text byte-identical to the text of the current parse that holds the advisories.
+   Nothing else substitutes for this equality: a Tier 1 transaction receipt
+   re-anchors parse nodes across an edit but does not prove what the runtime scene
+   was built from. When the preview is showing a last-good scene after a parse
+   error, or the editor text has changed since the preview was built, the texts
+   differ and suppression is refused.
 3. **Same generation.** The error belongs to the preview `generation` that is
    currently displayed (`renderer/preview.js` already tracks it). An error from a
    previous generation is never matched against the current advisories.
 4. **Proven node.** The error carries, or the X_ITE adapter can supply, the exact
    runtime Script node instance, and that instance maps to exactly one parse node
    through WD2-D-style parse-local provenance (runtime identity plus exact source
-   span, bound to the generation and text in conditions 2–3). Position, document
-   order, DEF name, node type and field values are **not** used as identity, in line
-   with WD2-D. Extending that provenance to Script nodes is part of this lane and
+   span) captured while parsing that same byte-identical text for that same
+   generation (conditions 2–3). The parse node is looked up in the current parse
+   only because the texts are equal; no Tier 1 or Tier 2 anchor is used to bridge
+   a difference. Position, document order, DEF name, node type and field values are
+   **not** used as identity, in line with WD2-D. Extending that provenance to Script nodes is part of this lane and
    needs the §4.3 spike. The mapped node must currently have an active
    `SCRIPT_PREVIEW_NOT_EXECUTED` advisory.
 5. **Exactly one occurrence.** A Script inside a PROTO body exists once in source
@@ -196,9 +223,10 @@ The spike runs against the pinned Electron X_ITE (`15.1.10`) and records:
 1. whether X_ITE exposes the runtime Script node behind a blocked evaluation, and
    whether WD2-D provenance can bind it to one exact source span (conditions 2–4);
 2. the exact error/event shape of the CSP refusal (condition 1);
-3. how X_ITE loads a local-file Script `url` (`"behavior.js"`, `"../x.js"`,
-   `"/x.js"`, `file:///…`), and whether any of them executes under the current CSP
-   (the §3.2 unverified assumption, proven by T15).
+3. how X_ITE loads a Script `url` that is a local file (`"behavior.js"`,
+   `"../x.js"`, `"/x.js"`, `file:///…`) or uses an allowed non-file scheme
+   (`data:`, `blob:`, `wrlworld:`, `about:`), and whether any of them executes under
+   the current CSP (the §3.2 unverified assumptions, proven by T15).
 
 If the spike cannot prove conditions 2–4, suppression is dropped from the lane and
 the advisory ships alone. Errors remain visible. This is the fail-closed outcome.
@@ -262,6 +290,7 @@ from §3 and §5.
 | --- | --- |
 | A change relaxes the CSP to allow `unsafe-eval` | A focused test fails (§9.1, T10). |
 | A local-file Script `url` executes under `script-src 'self' file:` | Unverified; T15 is required. If it executes, report a separate security finding; no CSP change in this lane. |
+| A `data:`/`blob:`/`wrlworld:`/`about:` Script `url` executes (these schemes pass `isBlockedPreviewUrl` and get no advisory) | Unverified; T15 is required. If it executes, report a separate `SECURITY.md` finding; no CSP change in this lane. |
 | Suppression hides an unrelated preview error | Prevented by §4.2; tested by T7–T9, T17 and T18. |
 | An error cannot be mapped to one Script node | Error stays visible (T8). |
 | An error from an older preview generation | Error stays visible, never matched (T9). |
@@ -292,7 +321,10 @@ All proposed tests are deterministic and need no network.
 | T12 | Duplicate DEF Scripts; rename DEF; anonymous Script across reload | No UI state carried; fresh advisories only |
 | T13 | Remove Script; undo; redo | Advisory gone, back, gone; source text byte-identical to before each step |
 | T14 | Truncate document mid-Script (incomplete parse) | No Script advisories |
-| T15 (required) | In the protected preview page with the production CSP, a Script whose `url` is a local file (`"behavior.js"`, `"../x.js"`, `"/x.js"`, `file:///…`) containing code with an observable side effect | The side effect never occurs. If it occurs, file a separate security finding; the CSP is not changed in this lane |
+| T15 (required) | In the protected preview page with the production CSP, a Script whose `url` is (a) a local file — `"behavior.js"`, `"../x.js"`, `"/x.js"`, `file:///…` — or (b) a `data:` URL (e.g. `data:text/javascript,…`), a `blob:` URL, a `wrlworld:` URL to a `.js` file, or an `about:` URL, each carrying code with an observable side effect | The side effect never occurs in any case. If it occurs, file a separate `SECURITY.md` finding; the CSP is not changed in this lane |
+| T19 | Script with `EXPOSED_FIELD_IN_SCRIPT_INTERFACE` (finding subject is the interface declaration) | No advisory (ownership via `N.interfaces`) |
+| T20 | Valid Script plus an unrelated recoverable parser error elsewhere in the file | No Script advisories anywhere in the document |
+| T21 | Script `url "C:\\x.js"` | No advisory; preview request blocked |
 | T16 | Script with an `UNDEFINED` or `NOT_STATED` finding | Existing finding only; no advisory |
 | T17 | Correlated violation while the preview shows a last-good scene built from older text | Visible (condition 2) |
 | T18 | Script in a PROTO body with two instances; correlated violation | One advisory; error visible (condition 5) |
@@ -331,6 +363,10 @@ Uses the existing `test/visual/` harness and `docs/VISUAL_QA_SAFETY.md` rules.
    the World Project view (today's classifier decides; this design does not change it).
 5. Whether Scripts inside `Inline`-loaded files should ever be summarized in the
    parent document, for example as a count with no per-node advisory.
+6. Whether Script `url` entries in `data:`, `blob:`, `wrlworld:` or `about:` schemes
+   should get a notice of their own. Today they are classified `remote`, receive no
+   advisory and are not reported by `scanRemoteUrls`. This design adds no second
+   classifier; any notice for them is a separate owner decision.
 
 ## 11. Dependencies
 
@@ -344,6 +380,6 @@ Uses the existing `test/visual/` harness and `docs/VISUAL_QA_SAFETY.md` rules.
 ## 12. Limits and review status
 
 - Design only. No production code, dependency, configuration, CI or CSP change.
-- §4 and the local-file rows of §3.2 depend on an X_ITE spike (§4.3) and test T15
-  that have not been run.
+- §4, the local-file rows of §3.2 and the allowed-scheme rows of §3.2 depend on an
+  X_ITE spike (§4.3) and test T15 that have not been run.
 - Owner review is **not complete**. Draft — proposal for owner review; not approved.
