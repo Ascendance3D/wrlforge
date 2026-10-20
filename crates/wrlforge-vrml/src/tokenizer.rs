@@ -688,6 +688,64 @@ mod tests {
     }
 
     #[test]
+    fn empty_source_is_a_single_eof_at_the_origin() {
+        let t = tokenize("");
+        assert!(t.diagnostics.is_empty());
+        assert_eq!(t.tokens.len(), 1);
+        assert_eq!(t.tokens[0].kind, TokKind::Eof);
+        assert_eq!(
+            t.tokens[0].range.start,
+            Pos {
+                offset: 0,
+                byte: 0,
+                line: 1,
+                column: 1
+            }
+        );
+    }
+
+    #[test]
+    fn ascii_fast_path_and_unicode_fallback_agree_at_every_boundary() {
+        // ASCII next to 2-, 4-byte chars; lookahead (`-.é`, `.é`, `\😀`) that
+        // reaches a non-ASCII char; lone CR before a string and at EOF.
+        let src = "aé😀b .5é -.é\r\"\\😀\"\r";
+        let t = tokenize(src);
+        let got: Vec<(&str, [u32; 4], [u32; 4])> = t
+            .tokens
+            .iter()
+            .map(|tok| {
+                let (s, e) = (tok.range.start, tok.range.end);
+                (
+                    tok.lexeme(src),
+                    [s.offset, s.byte, s.line, s.column],
+                    [e.offset, e.byte, e.line, e.column],
+                )
+            })
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("aé😀b", [0, 0, 1, 1], [5, 8, 1, 6]),
+                (".5é", [6, 9, 1, 7], [9, 13, 1, 10]),
+                (".", [11, 15, 1, 12], [12, 16, 1, 13]),
+                ("é", [12, 16, 1, 13], [13, 18, 1, 14]),
+                ("\"\\😀\"", [14, 19, 2, 1], [19, 26, 2, 6]),
+                ("", [20, 27, 3, 1], [20, 27, 3, 1]),
+            ]
+        );
+        assert_eq!(t.tokens[2].kind, TokKind::Period);
+        match &t.tokens[4].kind {
+            TokKind::Str { value, terminated } => {
+                assert_eq!(value, "\\😀");
+                assert!(terminated);
+            }
+            _ => panic!("Expected string"),
+        }
+        let codes: Vec<&str> = t.diagnostics.iter().map(|d| d.code.as_str()).collect();
+        assert_eq!(codes, ["VRML011", "VRML012"]);
+    }
+
+    #[test]
     fn crlf_counts_as_one_line_break_while_byte_offsets_remain_exact() {
         let src = "#VRML V2.0 utf8\r\nGroup { }\r\n";
         let t = tokenize(src);
