@@ -66,14 +66,16 @@ caller then calls `applyVerifiedEdits({ oldText, edits, newText, userEvent })`
 (`src/editor/browser/editor-view.js`, *existing*) **exactly once**. That call already
 dispatches the whole set as one CodeMirror transaction annotated with
 `isolateHistory.of('full')`, refuses with `buffer-changed` if the buffer is no longer
-`oldText`, and takes the change back on `post-dispatch-mismatch`. The ROUTE layer must
+`oldText`, and takes the change back with `undo(view)` on `post-dispatch-mismatch`
+(see §6.5 for what that leaves in history). The ROUTE layer must
 never dispatch one transaction per patch and must never call `view.dispatch` directly.
 One Undo restores the exact prior source text (every byte, including line endings);
 one Redo restores the exact post-action text.
 
-The `userEvent` for ROUTE actions reuses the existing closed list (`input.model`).
-Adding a new user-event tag is an owner decision (§10), because `applyVerifiedEdits`
-deliberately accepts only `input.inspector` and `input.model`.
+ROUTE actions pass `userEvent: 'input.model'`. `applyVerifiedEdits` maps
+`'input.model'` to `input.model` and coerces every other value to `input.inspector`, so
+no caller can introduce a third user-event tag through it. Adding a dedicated ROUTE tag
+would change `applyVerifiedEdits` itself and is an owner decision (§10).
 
 ### 4.5. Proven, Half-Proven and Unresolved Edges
 
@@ -84,23 +86,60 @@ ROUTE legality comes only from WD1.5-P2C endpoint resolution in
 committed statuses of `STATUS` in `src/vrml/symbols.js` (*existing*): `resolved`,
 `unresolved`, `ambiguous`, `invalid`, `unsupported`, `recovered`.
 
-The authoring UI classifies every ROUTE statement in the document into exactly one
-display class, derived from those verdicts and nothing else:
+#### Reason class — exactly one per ROUTE
 
-| Display class | Definition (from P2C verdicts) | Shown as |
-| --- | --- | --- |
-| **Proven** | `routeVerdict(...).status === 'resolved'`: both node bindings, both endpoints, both directions and an exact type match resolved. Exactly the edges P2C admits to `routesFrom` / `routesTo`. | A solid edge between the two bound nodes. |
-| **Ambiguous endpoint** | Either node half or event half is `ambiguous` (e.g. more than one preceding DEF of that name in scope). | Not drawn as an edge. Listed as an unresolved ROUTE with its reason. |
-| **Missing endpoint** | A node half is `unresolved` (`def-not-declared-in-scope`, `route-node-not-defined-before-route`, cross-PROTO visibility) or an event half is `unresolved`/`invalid` (`route-endpoint-unknown-field`, `route-endpoint-node-type-unresolved`). | Not drawn as an edge. Listed with reason. |
-| **Type-incompatible** | Both endpoints resolve but the pair fails (`route-type-mismatch`, `route-type-unknown`, `route-source-not-an-event-out`, `route-dest-not-an-event-in`). | Not drawn as an edge. Listed with reason. |
-| **Half-proven** | One side resolves and the other does not (any mix of the rows above), or the ROUTE is `recovered`/`unsupported`. | At most a stub on the resolved node, visibly distinct (dashed, labelled "unresolved") and never in proven styling. |
+Every ROUTE statement gets **exactly one** reason class. The class is a pure function of
+that ROUTE's `routeVerdict(graph, route)` result, which P2C already reduces to a single
+`{status, reason, side}` by a fixed precedence: recovery of either node half first, then
+source node, destination node, source event, destination event, then the exact-type
+comparison (`computeRouteVerdict`, *existing*). The authoring layer applies the rows
+below **top to bottom and stops at the first match**:
 
-Hard rule: **only the Proven class is ever rendered or reported as a connection.** No
-UI element, tooltip, count, export, or command may present an Ambiguous, Missing,
-Type-incompatible or Half-proven ROUTE as a connection between two nodes. The graph
-reads proven edges from `routesFrom` / `routesTo` and everything else from
-`routeReferences`, so the P2C "whole ROUTE or nothing" index rule (WD1.5-P2C §15) is the
-single source of truth.
+| # | Reason class | Matches when the verdict has… | P2C reasons covered |
+| --- | --- | --- | --- |
+| 1 | **Proven** | `status === 'resolved'` | `ok` (the endpoint resolutions may carry `route-endpoint-via-shorthand` / `route-endpoint-via-implicit-alias` as non-binding detail) |
+| 2 | **Unsupported** | `status` is `recovered` or `unsupported` | e.g. `document-parse-incomplete` and other recovery reasons, `externproto-interface-not-locally-verifiable` |
+| 3 | **Ambiguous** | `status === 'ambiguous'` | `duplicate-def-in-scope`, `duplicate-interface-member` |
+| 4 | **Type-incompatible** | `reason` is one of the listed reasons | `route-source-not-an-event-out`, `route-dest-not-an-event-in`, `route-type-mismatch` |
+| 5 | **Missing** | `reason` is one of the listed reasons | `def-not-declared-in-scope`, `route-node-not-defined-before-route`, `def-not-visible-across-proto-boundary`, `missing-name`, `route-endpoint-unknown-field` |
+| 6 | **Unsupported** (fail-closed default) | anything else | `route-type-unknown`, `route-endpoint-node-type-unresolved`, and any reason not listed above, including reasons added to P2C later |
+
+Type-incompatible covers both direction incompatibility (an endpoint exists but cannot
+serve that side of a ROUTE) and field-type incompatibility; in both cases the named
+endpoints exist. Row 6 makes the table total: an unrecognised reason can never fall
+through into Proven or into a class that implies more than P2C proved.
+
+**Ambiguous is a deliberate house rule.** VRML97 (ISO/IEC 14772-1 §4.6.2) lets a USE
+— and a ROUTE node name — bind to the closest preceding DEF of that name. WRL Forge's
+scope graph instead reports more than one preceding DEF in the same scope as
+`ambiguous` / `duplicate-def-in-scope` and refuses to choose. This is stricter than the
+standard on purpose: it is the fail-closed identity gate (§4.3), so a ROUTE that a
+browser would wire to the later DEF is never shown as a proven edge here.
+
+#### Half-proven — a rendering attribute, not a class
+
+Independently of the reason class, the UI computes, for each side, whether that
+**endpoint is proven**: `resolveRouteEndpoint(graph, eventRef).status === 'resolved'`
+for that side's event reference (*existing*; a resolved event half implies a resolved
+node half and a usable direction). A ROUTE is **half-proven** when its reason class is
+not Proven **and exactly one** of its two endpoints is proven. Half-proven is
+therefore an attribute layered on top of rows 2–6, never a separate class:
+
+- Proven ROUTE (row 1): drawn as a solid edge between the two bound nodes. Never
+  half-proven.
+- Non-proven ROUTE with exactly one proven endpoint: listed under its reason class and
+  reason, **plus** a stub on the proven endpoint's node only — dashed, labelled
+  "unresolved", never in proven styling, never reaching a second node.
+- Non-proven ROUTE with zero proven endpoints, or with two proven endpoints whose pair
+  fails (Type-incompatible by `route-type-mismatch`): listed under its reason class
+  only. No stub and no edge. (A mismatched pair is not half-proven: both endpoints are
+  proven and the connection between them is refused.)
+
+Hard rule: **only Proven ROUTEs are ever rendered or reported as a connection.** No UI
+element, tooltip, count, export, or command may present a ROUTE of rows 2–6 as a
+connection between two nodes. The graph reads proven edges from `routesFrom` /
+`routesTo` and everything else from `routeReferences`, so the P2C "whole ROUTE or
+nothing" index rule (WD1.5-P2C §15) remains the single source of truth.
 
 ## 5. Type-Checked Creation and Wiring
 
@@ -140,10 +179,12 @@ a stable reason. Two layers already exist and are reused, not duplicated:
   UI and the analyzer never disagree on why.
 - **Document findings (*existing*).** Existing ROUTE statements in the document keep
   being reported by `src/vrml/semantic-findings.js`, which already maps P2C verdicts to
-  `FINDING_CODE.ROUTE_NODE_NOT_BOUND` (node half not bound),
-  `FINDING_CODE.ROUTE_ENDPOINT_NOT_BOUND` (event half not bound), and
-  `FINDING_CODE.ROUTE_CONNECTION_REJECTED` (both ends bound, pair rejected — direction or
-  type). User-facing text comes from `src/vrml/messages.js` and the P4-B diagnostic
+  `FINDING_CODE.ROUTE_NODE_NOT_BOUND` (a node half is not `resolved`),
+  `FINDING_CODE.ROUTE_ENDPOINT_NOT_BOUND` (an event half is not `resolved` while its
+  node half is — this includes the direction reasons `route-source-not-an-event-out` /
+  `route-dest-not-an-event-in`), and `FINDING_CODE.ROUTE_CONNECTION_REJECTED` (all four
+  halves resolved and the exact-type comparison failed). These de-duplication rules are
+  the producer's own and are not re-derived by the authoring layer. User-facing text comes from `src/vrml/messages.js` and the P4-B diagnostic
   catalog; grouping from `src/vrml/presentation.js`.
 
 The authoring UI shows the refusal using the message the P4-B catalog associates with
@@ -158,8 +199,11 @@ Independently of P2C, the planner refuses (reason ids *proposed*):
 - insertion into a document whose line breaks are lone CR only (§6.1);
 - either endpoint lies inside a PROTO body, or the insertion point would be inside one;
 - either endpoint node is an EXTERNPROTO instance;
-- the identical ROUTE (`A.out TO B.in`, same scope) already exists — no duplicate is
-  created silently;
+- the **resulting** ROUTE of a create or a rewire duplicates another ROUTE already in
+  the same scope: both ROUTEs bind the same source node and endpoint declaration and
+  the same destination node and endpoint declaration according to P2C (so `A.set_x`
+  and `A.x` count as the same destination when both resolve to `exposedField x`). No
+  duplicate is created silently by either action;
 - the target insertion point cannot be determined uniquely (§6.1).
 
 ## 6. Minimal Source-Span Patches
@@ -213,8 +257,9 @@ newline). The ROUTE planner never normalizes, re-indents, or re-prints any other
 
 Rewiring an endpoint is one user-visible action expressed as one edit set: a
 replacement of exactly the changed `node.event` token span(s) inside the existing ROUTE
-statement. The new ROUTE must verify as `resolved` (§5.1); otherwise the whole action
-refuses and the original ROUTE is untouched.
+statement. The rewired ROUTE must verify as `resolved` (§5.1) and must not duplicate
+another existing ROUTE (§5.4); otherwise the whole action refuses and the original
+ROUTE is untouched.
 
 ### 6.5. Invalid, ambiguous and overlapping spans; atomic refusal
 
@@ -230,11 +275,22 @@ refuses and the original ROUTE is untouched.
 - **Stale source** — the buffer changed between planning and apply — is refused by
   `applyVerifiedEdits` (`buffer-changed`).
 
-**Atomic refusal:** WD1.2 validates the complete set before producing any output,
+**Atomic refusal.** WD1.2 validates the complete set before producing any output,
 WD1.4 refuses a set that does not exactly reproduce the planned new text, and
-`applyVerifiedEdits` dispatches nothing unless the buffer still equals `oldText`. A
-refused action therefore leaves the document, the CodeMirror history, and the selection
-exactly as they were — no partial change is possible.
+`applyVerifiedEdits` dispatches nothing when it returns `editor-read-only`,
+`malformed-edit-set` or `buffer-changed`. On every one of these reachable refusal paths
+— planner refusal, WD1.2/WD1.4 rejection, and those three `applyVerifiedEdits`
+reasons — nothing is dispatched, so the document text, the CodeMirror undo/redo
+history and the selection are exactly as they were.
+
+**Edge case: `post-dispatch-mismatch`.** If a verified set ever dispatched and the
+buffer then differed from `newText` (unreachable for a verified receipt), the existing
+`applyVerifiedEdits` takes the change back with `undo(view)`. The document text is then
+exactly the old text again, but history is **not** untouched: the undone transaction
+remains as one redo entry, and the selection is whatever CodeMirror's undo restores.
+The ROUTE layer does not paper over this (it does not clear history or dispatch a second
+correcting transaction); it reports the refusal, and the implementation's test plan
+covers the text restoration only (§8.3).
 
 ## 7. Dependencies
 
@@ -259,22 +315,39 @@ harness. All are `node:test` focused tests except group 4.
 
 ### 8.1. Endpoint and scope validation (P2C consumer)
 
-Fixtures with expected display class (§4.5) for each ROUTE:
+Fixtures with the exact expected reason class, P2C verdict and half-proven attribute
+(§4.5). "Stub" means half-proven: exactly one endpoint proven. Finding codes follow the
+`semantic-findings.js` de-duplication rules (§5.3).
 
-- clean ROUTE → Proven; appears in `routesFrom` / `routesTo`;
-- ambiguous node (two preceding DEFs) → Ambiguous; not in the reverse index;
-- undeclared node, node defined after the ROUTE, node across a PROTO boundary →
-  Missing;
-- unknown field; `eventIn` used as source; `eventOut` used as destination → Missing or
-  Type-incompatible per P2C reason;
-- SFColor → SFVec3f, SFFloat → MFFloat → Type-incompatible (`route-type-mismatch`);
-- `exposedField` via `set_`/`_changed` alias and via bare name → Proven;
-- EXTERNPROTO instance endpoint → not Proven; offered as no new endpoint;
-- one side resolved, other not → Half-proven; never Proven.
+| Fixture | Reason class | `routeVerdict` status / reason | Half-proven stub | Finding code |
+| --- | --- | --- | --- | --- |
+| `ROUTE T.fraction_changed TO I.set_fraction` (TimeSensor → interpolator) | Proven | `resolved` / `ok`; in `routesFrom`/`routesTo` | no | none |
+| `exposedField` via `set_`/`_changed` alias (`A.translation_changed TO B.set_translation`) | Proven | `resolved` / `ok` (alias detail is carried on the endpoint resolution, not the verdict) | no | none |
+| `exposedField` by bare name (`A.translation TO B.translation`) | Proven | `resolved` / `ok` | no | none |
+| Two preceding `DEF S` in the same scope, used as source | Ambiguous | `ambiguous` / `duplicate-def-in-scope`, side `source` | yes, on destination | `ROUTE_NODE_NOT_BOUND` |
+| Source node never declared | Missing | `unresolved` / `def-not-declared-in-scope`, side `source` | yes, on destination | `ROUTE_NODE_NOT_BOUND` |
+| Source DEF appears only after the ROUTE | Missing | `unresolved` / `route-node-not-defined-before-route` | yes, on destination | `ROUTE_NODE_NOT_BOUND` |
+| Source DEF only inside a PROTO body, ROUTE outside it | Missing | `unresolved` / `def-not-visible-across-proto-boundary` | yes, on destination | `ROUTE_NODE_NOT_BOUND` |
+| Source and destination nodes both undeclared | Missing | `unresolved` / `def-not-declared-in-scope`, side `source` | no (zero proven) | `ROUTE_NODE_NOT_BOUND` ×2 |
+| Unknown field on a built-in source node (`T.nonesuch`) | Missing | `unresolved` / `route-endpoint-unknown-field`, side `source` | yes, on destination | `ROUTE_ENDPOINT_NOT_BOUND` |
+| `eventIn` used as source (`V.set_bind TO X.set_on`, Viewpoint `set_bind`) | Type-incompatible | `invalid` / `route-source-not-an-event-out`, side `source` | yes, on destination | `ROUTE_ENDPOINT_NOT_BOUND` |
+| `eventOut` used as destination (`X.isActive TO V.isBound`) | Type-incompatible | `invalid` / `route-dest-not-an-event-in`, side `destination` | yes, on source | `ROUTE_ENDPOINT_NOT_BOUND` |
+| SFColor eventOut → SFVec3f eventIn | Type-incompatible | `invalid` / `route-type-mismatch` | no (both proven) | `ROUTE_CONNECTION_REJECTED` |
+| SFFloat eventOut → MFFloat eventIn | Type-incompatible | `invalid` / `route-type-mismatch` | no (both proven) | `ROUTE_CONNECTION_REJECTED` |
+| EXTERNPROTO instance destination, field not in its local interface | Unsupported | `unsupported` / `externproto-interface-not-locally-verifiable` | yes, on source | `ROUTE_ENDPOINT_NOT_BOUND` |
+| Destination node of an undeclared type (`DEF A Foo {}`) | Unsupported | `unresolved` / `route-endpoint-node-type-unresolved`, side `destination` (row 6) | yes, on source | `ROUTE_ENDPOINT_NOT_BOUND` |
+| ROUTE inside a scope made unprovable by a syntax error | Unsupported | `recovered` / `scope-recovered` | no (zero proven) | `ROUTE_NODE_NOT_BOUND` (status `recovered`) |
 
-Each case asserts the finding code (`ROUTE_NODE_NOT_BOUND`,
-`ROUTE_ENDPOINT_NOT_BOUND`, `ROUTE_CONNECTION_REJECTED`) and its P4-B message id, and
-asserts that the planner's refusal reason equals the P2C reason.
+Each case asserts the reason class, the verdict, the half-proven attribute, the finding
+code and its P4-B message id. For each non-Proven fixture used as a creation attempt, it
+also asserts that the planner's refusal reason equals the P2C reason in the table. A
+further case feeds a verdict with an unrecognised reason to the classifier and asserts
+row 6 (Unsupported), never Proven.
+
+Every status / reason / side and per-endpoint status in this table was checked against
+the current P2C code (`buildScopeGraph` → `routeVerdict` / `resolveRouteEndpoint`) when
+this design was written. If a later P2C change moves a row, that is a design defect to
+resolve before UI work, not a test to adjust.
 
 ### 8.2. WD1.2 source-patch correctness (ROUTE planner)
 
@@ -287,10 +360,14 @@ Independent of the P2C corpus harness:
   another statement (only its span removed), and of a ROUTE with a trailing and a
   leading comment (comments kept byte-for-byte);
 - rewiring replaces only the changed `node.event` token(s);
-- invalid span, overlapping patches, two insertions at one offset, stale session,
-  lone-CR-only document (insertion),
-  syntax-error document, PROTO-body target, duplicate ROUTE — each refuses, and the
-  returned text equals the input text exactly (atomic refusal);
+- planner-level refusals — stale session, lone-CR-only document (insertion),
+  syntax-error document, PROTO-body target, duplicate ROUTE from a create, duplicate
+  ROUTE from a rewire — each refuses, and the text is unchanged (atomic refusal);
+- invalid span, overlapping patches and two insertions at one offset: the planner never
+  produces these, so these tests **inject the malformed edit set directly** into WD1.2
+  `validateEdits`/`applyEdits` and WD1.4 `verifyTransaction`, and assert `EEDITBOUNDS`
+  / `EEDITSHAPE`, `EEDITOVERLAP`, `EEDITAMBIGUOUS` (and the WD1.4 `rejected` receipt)
+  with no output text produced;
 - the WD1.4 receipt binds exactly `oldText` → `newText`; the token stream outside the
   edit is unchanged.
 
@@ -303,15 +380,23 @@ Through the editor handle's existing `historyDepth()` / `undo()` / `redo()` seam
 - Undo restores the exact previous text (string equality, CRLF fixture included);
   Redo restores the exact post-action text;
 - a refused action adds no history entry and leaves the buffer unchanged;
-- a buffer change between plan and apply refuses with `buffer-changed`.
+- a buffer change between plan and apply refuses with `buffer-changed` and adds no
+  history entry (§6.5; the unreachable `post-dispatch-mismatch` path is out of this
+  test's claim).
 
 ### 8.4. Visual display of proven and half-proven edges (Electron visual QA)
 
 - a document with one Proven ROUTE: the edge is drawn with proven styling;
-- a document with an existing Half-proven ROUTE (one endpoint undeclared): no proven
-  edge is drawn, and any stub is visibly distinct and labelled unresolved;
-- Ambiguous, Missing and Type-incompatible ROUTEs appear only in the unresolved list,
-  with their reasons;
+- a document with an existing ROUTE whose source node is undeclared (reason class
+  Missing, half-proven): no edge is drawn; a dashed stub labelled "unresolved" appears
+  on the destination node only, never in proven styling; the ROUTE is listed as Missing
+  with `def-not-declared-in-scope`;
+- a ROUTE with both nodes undeclared (Missing, not half-proven): no edge and no stub;
+  listed as Missing;
+- an SFColor → SFVec3f ROUTE (Type-incompatible, both endpoints proven, not half-proven):
+  no edge and no stub; listed as Type-incompatible with `route-type-mismatch`;
+- Ambiguous and Unsupported ROUTEs appear only in the unresolved list with their
+  reasons, with a stub only when exactly one endpoint is proven;
 - one-transaction undo/redo after a visual create, checked by byte-exact text.
 
 ### 8.5. Refusal of illegal connection creation
