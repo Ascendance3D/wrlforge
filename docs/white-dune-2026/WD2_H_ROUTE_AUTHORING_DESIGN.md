@@ -72,6 +72,29 @@ never dispatch one transaction per patch and must never call `view.dispatch` dir
 One Undo restores the exact prior source text (every byte, including line endings);
 one Redo restores the exact post-action text.
 
+**Receipt binding (required before ROUTE actions ship).** Today
+`applyVerifiedEdits` checks only that the buffer equals `oldText` before dispatch and
+equals `newText` after it; it never sees the WD1.4 receipt, and the existing WD2-B/WD2-C
+callers (`renderer/editor.js`) pass the planner's `edits` array alongside it. Two
+different edit sets can turn the same `oldText` into the same `newText`, so those two
+text checks alone do not prove that the dispatched spans are the spans that were
+verified — and receipt-based identity mapping (WD1.4) would then describe spans that
+were never dispatched. The ROUTE lane therefore requires:
+
+1. The ROUTE planner returns, as its `edits`, exactly `receiptEdits(receipt)` — the
+   frozen canonical set the WD1.4 receipt binds (`document-transaction.js`,
+   *existing*, currently marked internal) — together with the receipt itself.
+2. The dispatch path (*proposed*: an optional `receipt` argument to
+   `applyVerifiedEdits`, or a thin ROUTE-only wrapper around it) refuses with a stable
+   reason (*proposed*: `receipt-mismatch`) **before dispatch** unless
+   `receiptBindsOldText(receipt, oldText)`, `receiptBindsNewText(receipt, newText)` and
+   `edits === receiptEdits(receipt)` (the same frozen array, not an equal-looking copy)
+   all hold, and then dispatches only that receipt-bound set.
+
+Where that check lives (inside `applyVerifiedEdits` for every caller, or ROUTE-only) is
+an owner decision (§10), because it changes an existing shared API and promotes
+internal WD1.4 helpers. A ROUTE action without this check does not ship.
+
 ROUTE actions pass `userEvent: 'input.model'`. `applyVerifiedEdits` maps
 `'input.model'` to `input.model` and coerces every other value to `input.inspector`, so
 no caller can introduce a third user-event tag through it. Adding a dedicated ROUTE tag
@@ -187,24 +210,64 @@ a stable reason. Two layers already exist and are reused, not duplicated:
   the producer's own and are not re-derived by the authoring layer. User-facing text comes from `src/vrml/messages.js` and the P4-B diagnostic
   catalog; grouping from `src/vrml/presentation.js`.
 
-The authoring UI shows the refusal using the message the P4-B catalog associates with
-the corresponding finding code; it never invents new wording for a P2C reason.
+The authoring UI shows a P2C-originated refusal using the message the P4-B catalog
+associates with the corresponding finding code; it never invents new wording for a P2C
+reason.
+
+**Planner-only reasons are not P4-B findings.** They describe an edit attempt, not a
+fact about the parsed document, so they have no P2C reason and no finding code. They
+follow the existing planner convention instead: a stable reason id returned by the pure
+planner, mapped to a short presentation label in the renderer (as
+`renderer/scene-inspector.js` `REASON_TEXT` does today for `field-edit.js` reasons).
+Every planner-only reason is listed in §5.4 with its id and label; ids and labels marked
+*proposed* do not exist yet. Whether ROUTE planner reasons should instead get P4-B
+catalog entries is an owner decision (§10).
 
 ### 5.4. First-Slice Refusals
 
-Independently of P2C, the planner refuses (reason ids *proposed*):
+Independently of P2C, the planner refuses with the reasons below. The first three rows
+reuse existing `field-edit.js` reason ids that already have renderer labels; every other
+id and label is *proposed*.
 
-- the document has a syntax error, an incomplete parse, or a stale parse session
-  (reuse `structure-edit.js` / `field-edit.js` document-gate reasons);
-- insertion into a document whose line breaks are lone CR only (§6.1);
-- either endpoint lies inside a PROTO body, or the insertion point would be inside one;
-- either endpoint node is an EXTERNPROTO instance;
-- the **resulting** ROUTE of a create or a rewire duplicates another ROUTE already in
-  the same scope: both ROUTEs bind the same source node and endpoint declaration and
-  the same destination node and endpoint declaration according to P2C (so `A.set_x`
-  and `A.x` count as the same destination when both resolve to `exposedField x`). No
-  duplicate is created silently by either action;
-- the target insertion point cannot be determined uniquely (§6.1).
+**Shared scope gate.** Rows marked "all" form one check (*proposed*:
+`routeScopeGate`) that runs for **every** ROUTE action — create, delete and rewire —
+on the parsed document **before any WD1.2 patch is built or dispatched**. Deleting an
+unresolved ROUTE (§6.2) is allowed only after this gate passes. Rows are checked in
+table order and the first match is the reported reason, so each refusal has exactly one
+deterministic reason.
+
+| Reason id | Applies to | Refuses when | Label |
+| --- | --- | --- | --- |
+| `parse-session-is-stale` (*existing*) | all | the parse session is not for the current text | "the document changed; waiting for analysis" (*existing*) |
+| `document-parse-incomplete` (*existing*) | all | the parse hit a cap | "the document exceeded a parse limit" (*existing*) |
+| `document-has-syntax-errors` (*existing*) | all | the document has a syntax error | "the document has syntax errors" (*existing*) |
+| `route-in-proto-body` | all | the ROUTE (delete, rewire) or the insertion point (create) is inside a PROTO body | "ROUTEs inside a PROTO are not editable yet" |
+| `route-endpoint-in-proto-body` | all | either endpoint's bound DEF is inside a PROTO body | "this node is inside a PROTO" |
+| `route-endpoint-is-mapped` | all | either endpoint's node or event is connected to a PROTO interface by `IS` | "this event is mapped through IS" |
+| `route-endpoint-externproto-instance` | create, rewire | an endpoint the action would newly bind is an EXTERNPROTO instance | "EXTERNPROTO events cannot be verified locally" |
+| `route-duplicate` | create, rewire | the resulting ROUTE duplicates another ROUTE in the same scope (key below) | "this ROUTE already exists" |
+| `route-insertion-point-not-unique` | create | the insertion point (§6.1) is not uniquely determined | "no single place to add this ROUTE" |
+| `document-line-endings-lone-cr` | create | the document's line breaks are lone CR only (§6.1) | "unsupported line endings (CR only)" |
+| `route-not-in-session` | delete, rewire | the selected ROUTE's span is not exactly one parsed ROUTE node of this session | "selection is from an older analysis" |
+| `receipt-mismatch` | all | dispatch-time receipt binding fails (§4.4) | "the edit could not be verified" |
+
+`IS` can only appear inside a PROTO body (ISO 4.8.3), so in this first slice every
+IS-mapped endpoint is already caught by `route-in-proto-body` or
+`route-endpoint-in-proto-body`. `route-endpoint-is-mapped` is kept as its own reason and
+check so the IS rule survives a later decision to allow PROTO-body ROUTEs (§10), and so
+a test can prove it independently (§8.5).
+
+**Duplicate key.** Each side of a ROUTE is keyed by **(bound DEF symbol, endpoint
+`effectiveName`)** as reported by P2C, and the scope is the ROUTE's enclosing scope. The
+key uses the endpoint's `effectiveName` rather than its written name because 4.7 alias
+expansion maps `set_x` to an `eventIn` whose `effectiveName` is `x`, and `x_changed` to
+an `eventOut` whose `effectiveName` is `x`; so `A.x_changed TO B.set_x` and
+`A.x TO B.x` (both `exposedField x`) are the same connection. The key deliberately does
+not use an interface-member declaration: for built-in endpoints (`origin`
+`builtin-schema`) the internal acquisition record carries `member: null`, and the
+published ROUTE endpoint record (`createEndpoint` in `symbols.js`) has no member field
+at all, so only the DEF symbol plus `effectiveName` identifies built-in and
+PROTO-interface endpoints the same way.
 
 ## 6. Minimal Source-Span Patches
 
@@ -219,9 +282,13 @@ check the operation's own post-condition.
 
 - Inserts exactly one `ROUTE A.out TO B.in` statement, as a pure insertion
   (`from === to`), on its own line.
-- Placement (default, pending §10): after the last existing top-level statement of the
-  root scene, and after both DEFs (ISO 4.10.2 requires the nodes to be defined before
-  the ROUTE). If that position is not uniquely determined, the action refuses.
+- Placement (default, pending §10): in the **root scene only**. Both endpoint DEFs
+  must be bound in the root scope — not inside any PROTO body (§5.4 shared scope gate)
+  — so the root scene is the smallest scope in which both names are visible. The ROUTE
+  goes after the last existing top-level statement of the root scene and after both
+  DEFs (ISO 4.10.2 requires the nodes to be defined before the ROUTE). If that position
+  is not uniquely determined, the action refuses (`route-insertion-point-not-unique`).
+  Insertion into any nested scope, including a PROTO body, is out of this slice.
 - Line ending: the document's own EOL convention (`detectEol` in `structure-edit.js`,
   *existing* — CRLF when the first LF is preceded by CR, else LF). A CRLF document gets
   CRLF, an LF document gets LF; mixed documents use that detected EOL and no other line
@@ -243,9 +310,12 @@ check the operation's own post-condition.
 - Comments are never removed: a comment on the same line, before or after the ROUTE,
   stays byte-for-byte, and a ROUTE that has a trailing comment on its line is not
   treated as alone on that line.
-- Deleting an unresolved (non-proven) ROUTE is allowed, because it is a source-level
-  operation on a node whose span is proven; the UI must say it is removing an
-  unresolved ROUTE.
+- The §5.4 shared scope gate runs first: a ROUTE inside a PROTO body, or with an
+  endpoint inside a PROTO body or mapped through `IS`, is refused before any patch is
+  built.
+- Once the gate passes, deleting an unresolved (non-proven) ROUTE is allowed, because
+  it is a source-level operation on a node whose span is proven; the UI must say it is
+  removing an unresolved ROUTE.
 
 ### 6.3. Comments, whitespace and line endings
 
@@ -255,7 +325,9 @@ newline). The ROUTE planner never normalizes, re-indents, or re-prints any other
 
 ### 6.4. Rewiring
 
-Rewiring an endpoint is one user-visible action expressed as one edit set: a
+The §5.4 shared scope gate runs first, on both the existing ROUTE and the proposed new
+endpoint, before any patch is built. Rewiring an endpoint is then one user-visible
+action expressed as one edit set: a
 replacement of exactly the changed `node.event` token span(s) inside the existing ROUTE
 statement. The rewired ROUTE must verify as `resolved` (§5.1) and must not duplicate
 another existing ROUTE (§5.4); otherwise the whole action refuses and the original
@@ -326,7 +398,7 @@ Fixtures with the exact expected reason class, P2C verdict and half-proven attri
 | `exposedField` by bare name (`A.translation TO B.translation`) | Proven | `resolved` / `ok` | no | none |
 | Two preceding `DEF S` in the same scope, used as source | Ambiguous | `ambiguous` / `duplicate-def-in-scope`, side `source` | yes, on destination | `ROUTE_NODE_NOT_BOUND` |
 | Source node never declared | Missing | `unresolved` / `def-not-declared-in-scope`, side `source` | yes, on destination | `ROUTE_NODE_NOT_BOUND` |
-| Source DEF appears only after the ROUTE | Missing | `unresolved` / `route-node-not-defined-before-route` | yes, on destination | `ROUTE_NODE_NOT_BOUND` |
+| Source DEF appears only after the ROUTE | Missing | `unresolved` / `route-node-not-defined-before-route`, side `source` | yes, on destination | `ROUTE_NODE_NOT_BOUND` |
 | Source DEF only inside a PROTO body, ROUTE outside it | Missing | `unresolved` / `def-not-visible-across-proto-boundary` | yes, on destination | `ROUTE_NODE_NOT_BOUND` |
 | Source and destination nodes both undeclared | Missing | `unresolved` / `def-not-declared-in-scope`, side `source` | no (zero proven) | `ROUTE_NODE_NOT_BOUND` ×2 |
 | Unknown field on a built-in source node (`T.nonesuch`) | Missing | `unresolved` / `route-endpoint-unknown-field`, side `source` | yes, on destination | `ROUTE_ENDPOINT_NOT_BOUND` |
@@ -336,10 +408,15 @@ Fixtures with the exact expected reason class, P2C verdict and half-proven attri
 | SFFloat eventOut → MFFloat eventIn | Type-incompatible | `invalid` / `route-type-mismatch` | no (both proven) | `ROUTE_CONNECTION_REJECTED` |
 | EXTERNPROTO instance destination, field not in its local interface | Unsupported | `unsupported` / `externproto-interface-not-locally-verifiable` | yes, on source | `ROUTE_ENDPOINT_NOT_BOUND` |
 | Destination node of an undeclared type (`DEF A Foo {}`) | Unsupported | `unresolved` / `route-endpoint-node-type-unresolved`, side `destination` (row 6) | yes, on source | `ROUTE_ENDPOINT_NOT_BOUND` |
-| ROUTE inside a scope made unprovable by a syntax error | Unsupported | `recovered` / `scope-recovered` | no (zero proven) | `ROUTE_NODE_NOT_BOUND` (status `recovered`) |
+| Source PROTO interface `eventOut SFFoo o` (unknown field type) → `I.set_fraction` | Unsupported (row 6) | `unresolved` / `route-type-unknown` | no (both endpoints proven) | `ROUTE_CONNECTION_REJECTED` |
+| Stray `}` after the ROUTE: `DEF T TimeSensor {} DEF I PositionInterpolator {} ROUTE T.fraction_changed TO I.set_fraction }` | Unsupported | `recovered` / `scope-recovered` | no (zero proven) | `ROUTE_NODE_NOT_BOUND` ×2 (both node halves, status `recovered`) |
 
 Each case asserts the reason class, the verdict, the half-proven attribute, the finding
-code and its P4-B message id. For each non-Proven fixture used as a creation attempt, it
+code and its P4-B message id. Note the `route-type-unknown` row: its reason class is
+Unsupported (§4.5 row 6, because the type is unknown rather than proven different), but
+`semantic-findings.js` reports it as `ROUTE_CONNECTION_REJECTED`, since all four halves
+resolved and only the type comparison failed. The class and the finding code are
+independent outputs; the test pins both so neither is "corrected" into the other. For each non-Proven fixture used as a creation attempt, it
 also asserts that the planner's refusal reason equals the P2C reason in the table. A
 further case feeds a verdict with an unrecognised reason to the classifier and asserts
 row 6 (Unsupported), never Proven.
@@ -379,10 +456,16 @@ Through the editor handle's existing `historyDepth()` / `undo()` / `redo()` seam
 - one create / delete / rewire adds exactly one undo step (`historyDepth`);
 - Undo restores the exact previous text (string equality, CRLF fixture included);
   Redo restores the exact post-action text;
-- a refused action adds no history entry and leaves the buffer unchanged;
+- a **pre-dispatch** refusal (any planner reason in §5.4, a WD1.2/WD1.4 rejection,
+  `receipt-mismatch`, or `applyVerifiedEdits` returning `editor-read-only`,
+  `malformed-edit-set` or `buffer-changed`) adds no undo or redo entry and leaves the
+  buffer unchanged;
 - a buffer change between plan and apply refuses with `buffer-changed` and adds no
-  history entry (§6.5; the unreachable `post-dispatch-mismatch` path is out of this
-  test's claim).
+  history entry;
+- these no-history assertions do not cover `post-dispatch-mismatch`: that path
+  dispatches and then undoes, so it restores the text but leaves one redo entry (§6.5).
+  It is unreachable for a receipt-bound set; if a test forces it, it asserts the text
+  restoration and the single redo entry, not "no history".
 
 ### 8.4. Visual display of proven and half-proven edges (Electron visual QA)
 
@@ -405,6 +488,17 @@ Through the editor handle's existing `historyDepth()` / `undo()` / `redo()` seam
   `ROUTE_CONNECTION_REJECTED` message; the document and history are unchanged;
 - connection attempts to an ambiguous, missing, PROTO-body or EXTERNPROTO endpoint are
   refused with their reasons;
+- an IS-mapped endpoint, using the fixture `PROTO P [ eventIn SFFloat f ] { DEF S
+  PositionInterpolator { set_fraction IS f } DEF T TimeSensor {} ROUTE
+  T.fraction_changed TO S.set_fraction }` (parses cleanly; P2C reports the inner ROUTE
+  `resolved`):
+  - a create attempt `T.fraction_changed → S.set_fraction` is refused **before any patch
+    is built** with `route-endpoint-in-proto-body` (gate order, §5.4);
+  - a focused unit test calls the scope gate's IS check directly on `S.set_fraction`
+    and asserts `route-endpoint-is-mapped`, so the IS rule is proven independently of
+    the PROTO-body rule;
+  - delete and rewire of the inner ROUTE are refused by the same shared scope gate with
+    `route-in-proto-body`, with no patch built (text and history unchanged);
 - the UI never offers an illegal endpoint as a valid drop target once the planner has
   refused it.
 
@@ -427,7 +521,11 @@ proves verdict stability only; it is not evidence for the source-patch invariant
 3. **Undo user-event tag.** Reuse `input.model`, or add a new tag (e.g. `input.route`)
    to `applyVerifiedEdits`' closed list.
 4. **Half-proven presentation.** Dashed stub vs. list-only (no stub at all).
-5. **Sensor / TimeSensor / Interpolator editing UX.** This document covers wiring
+5. **Receipt binding location (§4.4).** Add the receipt check to `applyVerifiedEdits`
+   for all callers (also closing the same gap for WD2-B/WD2-C), or keep it ROUTE-only.
+6. **Planner refusal text (§5.3).** Renderer-local labels (current convention) or new
+   P4-B catalog entries for ROUTE planner reasons.
+7. **Sensor / TimeSensor / Interpolator editing UX.** This document covers wiring
    between them; their field editing reuses WD2-B typed inspector editing, and any
    dedicated UI needs its own owner-approved design.
 
