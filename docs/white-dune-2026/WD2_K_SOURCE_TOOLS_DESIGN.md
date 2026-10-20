@@ -43,8 +43,8 @@ The rule for every navigation action (go-to-definition, find references, symbol 
 
     | Scope-graph result | Command result | User-facing behavior |
     |---|---|---|
-    | `RESOLVED` with `symbol` | `navigate` | Select the declaration name span (`declRange`) and scroll it into view. |
     | `RESOLVED` with `symbol` that is an `EXTERNPROTO` declaration | `navigate:external` | Select the `EXTERNPROTO` declaration in this document and show "Defined externally." The external file is not opened or fetched. |
+    | `RESOLVED` with `symbol` that is not an `EXTERNPROTO` declaration | `navigate` | Select the declaration name span (`declRange`) and scroll it into view. |
     | `RESOLVED`, reason `NODE_TYPE_IS_BUILTIN` | `refuse:builtin` | "Built-in node type — no source definition." |
     | `RESOLVED` without `symbol`, any other reason | `refuse:unknown` | Refuse. A resolution without a symbol is never a jump target. |
     | `AMBIGUOUS` (for example `DUPLICATE_DEF_IN_SCOPE`) | `ambiguous` | List every candidate from `evidence` in source order. Nothing is preselected; the user picks one explicitly. |
@@ -63,7 +63,7 @@ The rule for every navigation action (go-to-definition, find references, symbol 
 
 ### 3.8 Find references
 
-1.  **Target acquisition.** The target is the symbol under the cursor, taken from the current session's graph: on a DEF name, `symbolFor(graph, node)`; on a USE name, the symbol of its resolution only if that resolution maps to `navigate` in §3.3. On a PROTO/EXTERNPROTO name or a node-type name, the type declaration is used the same way. Any other resolution returns that row's result from §3.3 (for example `ambiguous` or `refuse:invalid`), and no reference list is produced. A cursor not on a name returns `refuse:no-target` ("No symbol at cursor.").
+1.  **Target acquisition.** The target is the symbol under the cursor, taken from the current session's graph: on a DEF name, `symbolFor(graph, node)`; on a USE name or node-type name, the symbol of its resolution only if that resolution maps to `navigate` or `navigate:external` in §3.3. For an `EXTERNPROTO` target the list is the in-document `EXTERNPROTO` declaration plus its references in this document; the external file is not opened. On a PROTO/EXTERNPROTO declaration name, that type declaration is the target. Any other resolution returns that row's result from §3.3 (for example `ambiguous` or `refuse:invalid`), and no reference list is produced. A cursor not on a name returns `refuse:no-target` ("No symbol at cursor.").
 2.  **Results.** `referencesTo(graph, symbol)`. The scope graph indexes only `RESOLVED` references with a symbol, so ambiguous, invalid, unresolved, or recovered USEs never appear as references. The list shows the declaration first, then each reference range.
 3.  **Ordering and deduplication.** References are listed in ascending source offset. The list is deduplicated by range (`from`, `to`); one reference node appears once.
 4.  **Incomplete or stale.** A recovered document returns `refuse:incomplete`; a stale session returns `refuse:stale` (§3.5). An empty list is a valid result ("No references.").
@@ -149,7 +149,7 @@ Each step requires its own owner GO.
 2.  **Stale session:** Navigation and edits computed on one session refuse after an intervening edit to the buffer.
 3.  **Structural selection:** At least five nesting fixtures (value → field → node → parent node) with exact expected spans; a cursor in a string; a cursor in a comment; root and whitespace; a truncated document; non-BMP characters before the target span.
 4.  **Script strings:** `javascript:` and `vrmlscript:` URLs and an escaped quote inside a string — selection never crosses the string boundary, navigation inside the string returns `refuse:unsupported`, and no structural highlights appear inside the string. An unterminated Script string returns `refuse:incomplete` for navigation and has no structural highlights.
-5.  **Find references:** target on a DEF, on a resolved USE, and on an ambiguous USE (`ambiguous`, no list); results in ascending offset with no duplicate ranges; unresolved and invalid USEs of the same name excluded; cursor not on a name (`refuse:no-target`).
+5.  **Find references:** target on a DEF, on a resolved USE, on an `EXTERNPROTO` instance (declaration plus in-document references), and on an ambiguous USE (`ambiguous`, no list); results in ascending offset with no duplicate ranges; unresolved and invalid USEs of the same name excluded; cursor not on a name (`refuse:no-target`).
 6.  **Symbol search:** case-sensitive matching; empty query lists all; duplicate DEF names in one scope both listed and marked; same name in a PROTO body and at top level listed with their scopes; stale and recovered sessions refused.
 7.  **Command registry:** The palette provider returns only registry commands and respects `enabled`.
 8.  **Edits and undo (only for a later, separately approved editing step; §4):** A verified edit preserves all text outside its span (byte-exact, LF and CRLF fixtures); an overlapping or invalid edit set is rejected with no change; one action adds exactly one undo step (`historyDepth()`), and undo restores the exact previous text.
