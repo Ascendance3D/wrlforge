@@ -97,6 +97,29 @@ test('predicate: a browser with no context at all is not usable', () => {
   assert.equal(R.isBrowserUsable({}), false);
 });
 
+test('predicate: exceptions during state interrogation do not crash the gate', () => {
+  // 1. getContext() throws
+  const throwGetContext = { getContext: () => { throw new Error('getContext boom'); } };
+  const s1 = R.readGlState(throwGetContext);
+  assert.equal(s1.hasBrowser, true);
+  assert.equal(s1.hasContext, false);
+  assert.match(s1.error, /getContext boom/);
+  assert.equal(R.isGlStateUsable(s1), false);
+
+  // 2. gl methods throw
+  const throwGl = { getContext: () => ({
+    isContextLost: () => { throw new Error('lost boom'); },
+    getParameter: () => { throw new Error('param boom'); },
+    getError: () => { throw new Error('error boom'); },
+  }) };
+  const s2 = R.readGlState(throwGl);
+  assert.equal(s2.hasContext, true);
+  assert.equal(s2.lost, null, 'lost defaults to null on exception');
+  assert.match(s2.error, /param boom/, 'getParameter exception is captured');
+  assert.equal(s2.contextLostError, false, 'getError exception is swallowed and does not set contextLostError');
+  assert.equal(R.isGlStateUsable(s2), false);
+});
+
 // ---- bounded wait ----------------------------------------------------------
 
 test('already-ready browser resolves immediately, without sleeping or recreating', async () => {
