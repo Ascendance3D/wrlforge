@@ -112,6 +112,41 @@ test('B2: safeSave unknown error falls back to ESAVE and a generic message', () 
   assert.equal(res.backup, null);
 });
 
+test('B2: safeSave unmapped error with code passes the code but falls back to generic message', () => {
+  const p = path.join(tmpDir('err-unmapped'), 'item.wrl');
+  const res = repackMall({ mallPath: p, text: WRL, asGzip: true }, {
+    safeSave: () => {
+      const e = new Error('permission denied');
+      e.code = 'EACCES';
+      throw e;
+    },
+  });
+
+  assert.equal(res.saved, false);
+  assert.equal(res.errorCode, 'EACCES');
+  assert.equal(res.message, 'Not saved — permission denied');
+  assert.equal(res.writtenBytes, 0);
+  assert.equal(res.backup, null);
+});
+
+test('B2: safeSave error with candidateBytes of 0 returns 0, not null', () => {
+  const p = path.join(tmpDir('err-zero-bytes'), 'item.wrl');
+  const res = repackMall({ mallPath: p, text: WRL, asGzip: true }, {
+    safeSave: () => {
+      const e = new Error('simulated empty candidate');
+      e.code = 'EEMPTY';
+      e.candidateBytes = 0;
+      e.maxBytes = 0;
+      e.overBytes = 0;
+      throw e;
+    },
+  });
+
+  assert.equal(res.candidateBytes, 0);
+  assert.equal(res.maxBytes, 0);
+  assert.equal(res.overBytes, 0);
+});
+
 test('B2: safeSave EVERIFY gives the exact EVERIFY message text', () => {
   const p = path.join(tmpDir('err-everify'), 'item.wrl');
   const res = repackMall({ mallPath: p, text: WRL, asGzip: true }, {
