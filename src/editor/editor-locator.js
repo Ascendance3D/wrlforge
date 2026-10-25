@@ -177,16 +177,11 @@ function resolveEditor(deps = {}) {
 
 // Build the exact spawn arguments for a resolution + a target file, handling
 // spaces / non-ASCII safely. Pure — returned shape is asserted in tests without
-// spawning. For a `.cmd` shim it goes through the shell with BOTH the command and
-// the file explicitly double-quoted (so a path with spaces or Unicode survives
-// cmd.exe re-parsing); otherwise the file is passed as a plain argv entry (which
-// Node quotes for the child without a shell).
+// spawning. All launches, including `.cmd` shims, pass the file as a plain argv
+// entry with shell injection risks disabled (which Node quotes for the child
+// without a shell).
 function buildLaunch(resolution, file) {
   const base = { detached: true, stdio: 'ignore', windowsHide: true };
-  if (resolution.shell) {
-    const q = (s) => `"${String(s).replace(/"/g, '')}"`;
-    return { command: `${q(resolution.command)} ${q(file)}`, args: [], options: { ...base, shell: true } };
-  }
   return { command: resolution.command, args: [file], options: { ...base, shell: false } };
 }
 

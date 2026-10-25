@@ -180,13 +180,13 @@ test('buildLaunch: .exe passes the file as a plain argv entry (spaces safe, no s
   assert.equal(spec.command, vscodiumExe());
 });
 
-test('buildLaunch: .cmd shim double-quotes BOTH command and file for the shell', () => {
+test('buildLaunch: .cmd shim passes the file as a plain argv entry (spaces safe, no shell)', () => {
   const cmd = vscodiumCmd();
   const file = '/win/My Worlds/naïve scene.edit.wrl';
   const spec = buildLaunch({ command: cmd, shell: true }, file);
-  assert.equal(spec.options.shell, true);
-  assert.deepEqual(spec.args, []);
-  assert.equal(spec.command, `"${cmd}" "${file}"`, 'both quoted so spaces + non-ASCII survive cmd.exe');
+  assert.equal(spec.options.shell, false);
+  assert.deepEqual(spec.args, [file]);
+  assert.equal(spec.command, cmd);
 });
 
 test('isCmdShim recognizes .cmd/.bat, not .exe', () => {
