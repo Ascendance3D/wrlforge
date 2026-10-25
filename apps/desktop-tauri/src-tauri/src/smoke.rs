@@ -320,19 +320,56 @@ pub fn only_lines_changed(before: &str, after: &str, eol: &str, allowed: &[usize
 
 /// Every regular file below `dir` (symlinks are not followed).
 fn regular_files(dir: &Path, out: &mut Vec<(PathBuf, Vec<u8>)>) -> Result<(), String> {
-    let mut entries: Vec<_> = std::fs::read_dir(dir)
-        .map_err(|e| e.to_string())?
-        .filter_map(Result::ok)
-        .collect();
-    entries.sort_by_key(|e| e.file_name());
-    for e in entries {
-        let t = e.file_type().map_err(|e| e.to_string())?;
-        if t.is_dir() {
-            regular_files(&e.path(), out)?;
-        } else if t.is_file() {
-            out.push((e.path(), std::fs::read(e.path()).map_err(|e| e.to_string())?));
+    fn collect_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<(), String> {
+        let mut entries: Vec<_> = std::fs::read_dir(dir)
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            let t = e.file_type().map_err(|e| e.to_string())?;
+            if t.is_dir() {
+                collect_paths(&e.path(), paths)?;
+            } else if t.is_file() {
+                paths.push(e.path());
+            }
+        }
+        Ok(())
+    }
+
+    let mut paths = Vec::new();
+    collect_paths(dir, &mut paths)?;
+
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    let num_threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    let chunk_size = (paths.len() / num_threads).max(1);
+
+    let mut handles = Vec::new();
+    for chunk in paths.chunks(chunk_size) {
+        let chunk = chunk.to_vec();
+        handles.push(std::thread::spawn(move || {
+            let mut results = Vec::with_capacity(chunk.len());
+            for path in chunk {
+                let data = std::fs::read(&path).map_err(|e| e.to_string());
+                results.push((path, data));
+            }
+            results
+        }));
+    }
+
+    out.reserve(paths.len());
+    for handle in handles {
+        let results = handle.join().map_err(|_| "thread panicked".to_string())?;
+        for (path, data) in results {
+            out.push((path, data?));
         }
     }
+
     Ok(())
 }
 
