@@ -24,6 +24,7 @@ function makeBridge(over = {}) {
     open: true, sessionId: 1, context: 'mall', sourcePath: SRC, ...(over.session || {}),
   };
   const bridge = createMallPreviewBridge({
+    overlay: over.overlay,
     describeSession: over.describeSession || (() => ({ ...session })),
     getAuthorizedMallSource: over.getAuthorizedMallSource || (() => SRC),
     scanRemoteUrls: over.scanRemoteUrls || ((t) => (/https?:\/\//.test(String(t)) ? ['http://blocked/x.png'] : [])),
@@ -126,6 +127,42 @@ test('a stale generation cannot be accepted after a newer one begins', () => {
   assert.equal(stale.ok, false);
   const fresh = bridge.accept({ sessionId: 1, generation: g1 + 1 });
   assert.equal(fresh.ok, true);
+});
+
+// ---- overlay error paths ---------------------------------------------------
+
+test('load returns unauthorized when the overlay rejects the authorization proof', () => {
+  const err = new Error();
+  err.code = 'ENOAUTH';
+  const { bridge } = makeBridge({ overlay: { register: () => { throw err; } } });
+  const res = bridge.load({ sessionId: 1, text: 'a', bufferVersion: 1 });
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, 'unauthorized');
+});
+
+test('load returns register-failed for unknown overlay registration errors', () => {
+  const err = new Error();
+  err.code = 'EUNKNOWN';
+  const { bridge } = makeBridge({ overlay: { register: () => { throw err; } } });
+  const res = bridge.load({ sessionId: 1, text: 'a', bufferVersion: 1 });
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, 'register-failed');
+  assert.equal(res.code, 'EUNKNOWN');
+});
+
+test('load returns resolve-failed if the overlay resolution fails', () => {
+  const { bridge } = makeBridge({
+    overlay: {
+      register: () => ({ sizeTier: 'manual' }),
+      beginGeneration: () => 1,
+      resolve: () => ({ status: 'stale' }),
+      invalidateSession: () => {},
+    },
+  });
+  const res = bridge.load({ sessionId: 1, text: 'a', bufferVersion: 1 });
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, 'resolve-failed');
+  assert.equal(res.status, 'stale');
 });
 
 // ---- size thresholds -------------------------------------------------------
