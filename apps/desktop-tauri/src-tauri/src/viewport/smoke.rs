@@ -331,8 +331,14 @@ fn next(s: &mut Smoke, step: u32) {
 fn render_threads() -> usize {
     std::fs::read_dir("/proc/self/task")
         .map(|d| {
+            let mut buf = [0u8; 15]; // "wrlforge-render".len() is 15
             d.filter_map(|e| e.ok())
-                .filter(|e| std::fs::read_to_string(e.path().join("comm")).is_ok_and(|c| c.starts_with("wrlforge-render")))
+                .filter(|e| {
+                    use std::io::Read;
+                    std::fs::File::open(e.path().join("comm"))
+                        .and_then(|mut f| f.read(&mut buf))
+                        .is_ok_and(|n| buf[..n] == *b"wrlforge-render")
+                })
                 .count()
         })
         .unwrap_or(0)
