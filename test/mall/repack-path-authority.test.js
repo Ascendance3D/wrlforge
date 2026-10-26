@@ -41,27 +41,31 @@ function recordingFs(log) {
     log.push({ kind, path: String(args[0]) });
     return real(...args);
   };
-  return Object.assign(Object.create(fs), {
+  const mockFs = Object.assign(Object.create(fs), {
     readFileSync: wrap('readFileSync', fs.readFileSync.bind(fs), 'read'),
     writeFileSync: wrap('writeFileSync', fs.writeFileSync.bind(fs), 'write'),
     openSync: wrap('openSync', fs.openSync.bind(fs), 'open'),
     renameSync: wrap('renameSync', fs.renameSync.bind(fs), 'rename'),
     copyFileSync: wrap('copyFileSync', fs.copyFileSync.bind(fs), 'copy'),
   });
+  const mockPromises = Object.create(fs.promises);
+  mockPromises.readFile = wrap('readFile', fs.promises.readFile.bind(fs.promises), 'read');
+  Object.defineProperty(mockFs, 'promises', { value: mockPromises, writable: true, configurable: true });
+  return mockFs;
 }
 
 // The `mall:repack` handler body. Only `asGzip` comes from the renderer
 // request; `mallPath`/`editFile` are accepted on the wire (preload compat) and
 // ignored. Session paths are the only paths.
-function handler(session, request, fsImpl) {
+async function handler(session, request, fsImpl) {
   const { mallPath, editFile } = activeRepackPaths(session);
-  const text = fsImpl.readFileSync(editFile, 'utf8');
+  const text = await fsImpl.promises.readFile(editFile, 'utf8');
   return repackMall({ mallPath, text, asGzip: request.asGzip }, { fs: fsImpl });
 }
 
 // --- 1. live session: renderer paths cannot redirect the write ---------------
 
-test('B2 path authority: renderer-supplied paths cannot redirect a live Repack', () => {
+test('B2 path authority: renderer-supplied paths cannot redirect a live Repack', async () => {
   const dir = tmpDir('spoof');
   const SAFE_TARGET = path.join(dir, 'safe.wrl');
   const SAFE_EDIT = path.join(dir, 'safe.edit.wrl');
@@ -76,7 +80,7 @@ test('B2 path authority: renderer-supplied paths cannot redirect a live Repack',
 
   const log = [];
   const session = { mallPath: SAFE_TARGET, editFile: SAFE_EDIT };
-  const res = handler(session, { mallPath: EVIL_TARGET, editFile: EVIL_EDIT, asGzip: true }, recordingFs(log));
+  const res = await handler(session, { mallPath: EVIL_TARGET, editFile: EVIL_EDIT, asGzip: true }, recordingFs(log));
 
   assert.equal(res.saved, true, 'the legitimate session save still succeeds');
 
@@ -105,7 +109,7 @@ test('B2 path authority: renderer-supplied paths cannot redirect a live Repack',
 
 // --- 2. no session: the operation is rejected outright -----------------------
 
-test('B2 path authority: Repack with no open session is rejected and touches nothing', () => {
+test('B2 path authority: Repack with no open session is rejected and touches nothing', async () => {
   const dir = tmpDir('nosession');
   const EVIL_TARGET = path.join(dir, 'evil.wrl');
   const EVIL_EDIT = path.join(dir, 'evil.edit.wrl');
@@ -115,7 +119,7 @@ test('B2 path authority: Repack with no open session is rejected and touches not
   const evilTargetBefore = fs.readFileSync(EVIL_TARGET);
 
   const log = [];
-  assert.throws(
+  await assert.rejects(
     () => handler(null, { mallPath: EVIL_TARGET, editFile: EVIL_EDIT, asGzip: true }, recordingFs(log)),
     (err) => err instanceof Error && err.message === 'No file is open.' && err.code === 'ENOSESSION',
   );
@@ -147,6 +151,7 @@ test('B2 path authority: main.js mall:repack has no renderer-path fallback', () 
   const m = code.match(/ipcMain\.handle\('mall:repack'[\s\S]*?\n\}\);/);
   assert.ok(m, 'the mall:repack handler is present');
   const body = m[0];
+  assert.ok(body.includes('await fs.promises.readFile'), 'reads via async promises API');
 
   assert.ok(body.includes('activeRepackPaths(currentSession)'),
     'paths come from the main-owned session helper');

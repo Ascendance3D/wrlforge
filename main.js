@@ -1226,7 +1226,7 @@ ipcMain.handle('preview:load', async (_evt, role) => {
 // Re-read the plain .edit.wrl working copy, validate it, and report status
 // without repacking -- used for a live "Check" button while editing.
 ipcMain.handle('mall:check', async (_evt, editFile) => {
-  const text = fs.readFileSync(editFile, 'utf8');
+  const text = await fs.promises.readFile(editFile, 'utf8');
   // Measure the REAL mall artifact and prove whether it still decompresses to
   // the working copy being checked. Without this the check would report the
   // size of a file WRLForge has not written yet.
@@ -1254,7 +1254,7 @@ ipcMain.handle('mall:check', async (_evt, editFile) => {
 // src/mall/repack-paths.js for why the old `? :` fallback was a defect.
 ipcMain.handle('mall:repack', async (_evt, { asGzip }) => {
   const { mallPath, editFile } = activeRepackPaths(currentSession);
-  const text = fs.readFileSync(editFile, 'utf8');
+  const text = await fs.promises.readFile(editFile, 'utf8');
 
   return repackMall({ mallPath, text, asGzip });
 });
