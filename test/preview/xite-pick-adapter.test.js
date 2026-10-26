@@ -262,6 +262,38 @@ test('G5: the hook is restored and the coordinator released on every exit path',
     assert.equal(r.reason, 'generation-unprovable');
     await assertCoordinatorIdle(page, 'recording throw');
   }
+  // installCopyHook throws -> parse still succeeds, no generation copies
+  {
+    const page = freshPage();
+    const browser = createFakeBrowser(page.X3D);
+    const adapter = await readyAdapter(page, browser);
+    const NodeProto = page.X3D.X3DNode.prototype;
+    const realCopy = NodeProto.copy;
+
+    let throwOnCopy = true;
+    Object.defineProperty(NodeProto, 'copy', {
+      configurable: true,
+      get() {
+        if (throwOnCopy) throw new Error('fake install error');
+        return realCopy;
+      },
+      set(v) { realCopy = v; }
+    });
+
+    const p = adapter.parseWithProvenance(BOX.text, { generationId: 1 });
+    throwOnCopy = false;
+    const r = await p;
+
+    Object.defineProperty(NodeProto, 'copy', {
+      configurable: true,
+      value: realCopy,
+      writable: true,
+    });
+
+    assert.ok(r.scene, 'installation throw never breaks the parse');
+    assert.ok(r.generation);
+    await assertCoordinatorIdle(page, 'install throw');
+  }
   // map building throws -> no generation, still restored
   {
     const page = freshPage();
